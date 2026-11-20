@@ -71,7 +71,9 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
       </div>
     );
   }
-  if (!state) return null;
+  if (!state) {
+    return <p className="mb-6 flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading answer tests…</p>;
+  }
 
   const save = async (d: AnswerTestDraft) => {
     await saveAnswerTest(orgId, libraryId, { id: d.id, question: d.question, expect: d.expect, tags: d.tags, notes: d.notes, sourceQuestionId: d.sourceQuestionId });
@@ -84,15 +86,15 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 mb-6">
       <div className="flex items-center gap-3 flex-wrap">
         <div className="w-9 h-9 rounded-lg bg-[var(--color-text-muted)] flex items-center justify-center shrink-0">
-          <FlaskConical className="w-4 h-4 text-white" />
+          <FlaskConical className="w-4 h-4 text-[var(--color-surface)]" />
         </div>
-        <button onClick={() => setOpen((v) => !v)} className="flex-1 min-w-0 text-left">
+        <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex-1 min-w-0 text-left">
           <div className="text-sm font-black text-[var(--color-text)] flex items-center gap-1.5">
             Answer tests {open ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
           </div>
           <div className="text-xs text-[var(--color-text-muted)]">
             {cases.length === 0
-              ? "No tests yet - under any answer, “Make this a test case” marks what a right answer must do."
+              ? "No tests yet. Under any answer, “Make this a test case” marks what a right answer must do."
               : shownRun
                 ? <>{cases.length} test{cases.length === 1 ? "" : "s"} · last run {when(shownRun.created_at)}: <b className={shownRun.failed ? "text-rose-600" : "text-emerald-600"}>{shownRun.passed} of {shownRun.total} passed</b>{shownRun.status === "stopped" ? ` · stopped - ${shownRun.stop_reason ?? ""}` : ""} · ${Number(shownRun.cost_usd).toFixed(2)}</>
                 : <>{cases.length} test{cases.length === 1 ? "" : "s"} · never run</>}
@@ -107,7 +109,7 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
             <label className="text-[11px] text-[var(--color-text-muted)] flex items-center gap-1" title="The run stops when it has spent this much on your key">
               up to $<input value={cap} onChange={(e) => setCap(e.target.value.replace(/[^0-9.]/g, ""))} className="w-10 rounded border border-[var(--color-border)] bg-transparent px-1 py-0.5 text-xs" />
             </label>
-            <button onClick={() => void run()} className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-3 py-1.5 text-xs font-bold text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]">
+            <button onClick={() => void run()} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-1.5 text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
               <Play className="w-3.5 h-3.5" /> Run tests
             </button>
           </div>
@@ -121,13 +123,13 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
           </div>
           <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
             <Loader2 className="w-3 h-3 animate-spin inline mr-1" />
-            Asking test {Math.min(running.done + 1, running.total)} of {running.total} - each is a full question, about a minute · {running.run.passed} passed, {running.run.failed} failed so far · ${Number(running.run.cost_usd).toFixed(2)} of ${Number(running.run.cost_cap_usd).toFixed(2)}
+            Asking test {Math.min(running.done + 1, running.total)} of {running.total} (each is a full question, about a minute) · {running.run.passed} passed, {running.run.failed} failed so far · ${Number(running.run.cost_usd).toFixed(2)} of ${Number(running.run.cost_cap_usd).toFixed(2)}
           </div>
         </div>
       )}
 
       {regressions.length > 0 && (
-        <div className="mt-3 rounded-lg border border-rose-300 bg-rose-50 dark:bg-rose-950/30 dark:border-rose-900 px-3 py-2 text-xs text-rose-900 dark:text-rose-200 flex gap-2">
+        <div role="alert" className="mt-3 border-l-2 border-rose-500 pl-3 text-xs text-rose-900 dark:text-rose-200 flex gap-2">
           <AlertTriangle className="w-4 h-4 shrink-0" />
           <span><b>Regression:</b> {regressions.length} critical test{regressions.length === 1 ? "" : "s"} passed on the baseline run and fail{regressions.length === 1 ? "s" : ""} now. Don&apos;t promote this version until they pass.</span>
         </div>
@@ -155,7 +157,7 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
                 ))}
               </select>
               {shownRun && !shownRun.is_baseline && shownRun.status !== "running" && (
-                <button onClick={() => void setAnswerTestBaseline(orgId, shownRun.id).then(() => load(shownRun.id))} className="inline-flex items-center gap-1 font-bold text-[var(--color-accent)] hover:underline">
+                <button onClick={() => void setAnswerTestBaseline(orgId, shownRun.id).then(() => load(shownRun.id), (e: unknown) => setError(`Not kept as the baseline: ${e instanceof Error ? e.message : String(e)}`))} className="inline-flex items-center gap-1 font-bold text-[var(--color-accent)] hover:underline">
                   <Flag className="w-3 h-3" /> Keep as baseline
                 </button>
               )}
@@ -188,7 +190,7 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
                     </button>
                     <button aria-label="Run this test" title="Run this test" disabled={!!running} onClick={() => void run([c.id])} className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-accent-hover)] disabled:opacity-40"><Play className="w-3.5 h-3.5" /></button>
                     <button aria-label="Edit test" title="Edit" onClick={() => setEditing(toDraft(c))} className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><Pencil className="w-3.5 h-3.5" /></button>
-                    <button aria-label="Remove test" title="Remove" onClick={() => void archiveAnswerTest(orgId, c.id).then(() => load(state.runId ?? undefined))} className="p-1 text-[var(--color-text-muted)] hover:text-rose-600"><Trash2 className="w-3.5 h-3.5" /></button>
+                    <button aria-label="Remove test" title="Remove" onClick={() => void archiveAnswerTest(orgId, c.id).then(() => load(state.runId ?? undefined), (e: unknown) => setError(`The test wasn't removed: ${e instanceof Error ? e.message : String(e)}`))} className="p-1 text-[var(--color-text-muted)] hover:text-rose-600"><Trash2 className="w-3.5 h-3.5" /></button>
                   </div>
                   {isOpen && r && (
                     <div className="mt-2 ml-6 space-y-2">

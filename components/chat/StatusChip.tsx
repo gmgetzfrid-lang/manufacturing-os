@@ -9,6 +9,8 @@ import Link from "next/link";
 import { getAiConnections, getAiUsage } from "@/lib/knowledge";
 
 interface Snap {
+  /** The status couldn't be read this time (not the same as "no key"). */
+  failed?: boolean;
   model: string | null;
   keyOk: boolean;
   spentUsd: number;
@@ -35,6 +37,11 @@ export default function StatusChip({ orgId, bump }: { orgId: string; /** Change 
         getAiUsage(orgId).catch(() => null),
       ]);
       if (cancelled) return;
+      if (!conns) {
+        // A failed read says so; the last snapshot, if any, stays.
+        setSnap((prev) => ({ ...prev, failed: !prev.known || prev.failed === true, known: true }));
+        return;
+      }
       const next: Snap = {
         model: conns?.personal?.model ?? null,
         keyOk: !!conns?.personal?.keyLast4,
@@ -49,21 +56,22 @@ export default function StatusChip({ orgId, bump }: { orgId: string; /** Change 
   }, [orgId, key, bump]);
 
   const pct = snap.capUsd > 0 ? Math.min(100, Math.round((snap.spentUsd / snap.capUsd) * 100)) : 0;
-  const tone = !snap.known ? "bg-[var(--color-border-strong)]"
+  const tone = !snap.known || snap.failed ? "bg-[var(--color-border-strong)]"
     : !snap.keyOk ? "bg-amber-500"
       : pct >= 90 ? "bg-rose-500" : "";
 
   return (
     <Link href="/intelligence/setup"
       title={!snap.known ? "Checking AI status…"
-        : !snap.keyOk ? "No API key saved - questions can't run. Open AI setup."
+        : snap.failed ? "Couldn't check the AI status. Open AI setup."
+        : !snap.keyOk ? "No API key saved, so questions can't run. Open AI setup."
           : `${snap.model ?? "model"} · $${snap.spentUsd.toFixed(2)}${snap.capUsd > 0 ? ` of $${snap.capUsd.toFixed(2)}` : ""} this month`}
       className="inline-flex items-center gap-2 h-7 pl-2 pr-2.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] transition-colors max-w-[220px]">
       {tone && <span className={`w-2 h-2 rounded-full shrink-0 ${tone}`} />}
       <span className="truncate">
-        {!snap.known ? "AI status" : !snap.keyOk ? "No AI key" : (snap.model ?? "model")}
+        {!snap.known ? "AI status" : snap.failed ? "AI status unknown" : !snap.keyOk ? "No AI key" : (snap.model ?? "model")}
       </span>
-      {snap.known && snap.keyOk && (
+      {snap.known && !snap.failed && snap.keyOk && (
         <span className="tabular-nums text-[var(--color-text-faint)] shrink-0">
           ${snap.spentUsd.toFixed(2)}{snap.capUsd > 0 ? `/${snap.capUsd.toFixed(0)}` : ""}
         </span>

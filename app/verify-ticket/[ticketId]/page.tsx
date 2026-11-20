@@ -165,13 +165,13 @@ export default function VerifyTicketPage() {
             </div>
 
             <div className="mt-5 text-[11px] text-white/60">
-              Checked {new Date(result.checkedAt).toLocaleString()} · Refinery OS drafting portal
+              Checked {new Date(result.checkedAt).toLocaleString()} · Drafting portal
             </div>
             <button
               onClick={() => void check()}
               className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/15 hover:bg-white/25 text-white text-xs font-bold"
             >
-              <RefreshCw className="w-3 h-3" /> Re-check
+              <RefreshCw className="w-3 h-3" /> Check again
             </button>
           </>
         )}

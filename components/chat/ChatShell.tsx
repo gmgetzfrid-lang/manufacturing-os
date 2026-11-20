@@ -23,6 +23,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import { useToast } from "@/components/providers/ToastProvider";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { tryUpload } from "@/lib/uploadRetry";
 import {
   listThreads, getThread, createThread, updateThread, deleteThread, listMessages, insertReplayedTurn,
   searchPastAnswers, citedSourcesChanged, getProfile, saveProfile, uploadChatAttachment, classifyAttachment,
@@ -77,6 +78,10 @@ export default function ChatShell() {
   // ── The conversation ──
   const [active, setActive] = useState<ChatThread | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // Opening a conversation: never a blank stream while its turns load, and
+  // a failed read says so instead of looking empty.
+  const [threadLoading, setThreadLoading] = useState(false);
+  const [threadError, setThreadError] = useState<string | null>(null);
   const [draftScope, setDraftScope] = useState<ChatScope>("library");
   const [draftLibraryId, setDraftLibraryId] = useState<string | null>(null);
   const [draftInstructions, setDraftInstructions] = useState("");
@@ -119,7 +124,10 @@ export default function ChatShell() {
     let cancelled = false;
     void (async () => {
       const [libs, prof, count] = await Promise.all([
-        listKnowledgeLibraries(orgId),
+        listKnowledgeLibraries(orgId).catch((e: unknown) => {
+          showToast({ type: "error", title: "Couldn't load the libraries", message: e instanceof Error ? e.message : String(e) });
+          return [] as KnowledgeLibrary[];
+        }),
         uid ? getProfile(orgId, uid).catch(() => null) : Promise.resolve(null),
         countActiveInstructions(orgId, "knowledge").catch(() => 0),
       ]);
@@ -176,15 +184,28 @@ export default function ChatShell() {
     if (!orgId) return;
     let cancelled = false;
     if (!threadParam) {
-      queueMicrotask(() => { if (!cancelled) { setActive(null); setMessages([]); } });
+      queueMicrotask(() => { if (!cancelled) { setActive(null); setMessages([]); setThreadLoading(false); setThreadError(null); } });
       return () => { cancelled = true; };
     }
     void (async () => {
-      const t = await getThread(threadParam).catch(() => null);
+      // A thread that just landed is already on screen: refresh it quietly.
+      if (active?.id !== threadParam) setThreadLoading(true);
+      setThreadError(null);
+      let t: ChatThread | null;
+      try { t = await getThread(threadParam); }
+      catch (e) {
+        if (cancelled) return;
+        setThreadLoading(false);
+        setThreadError(`Couldn't open this conversation: ${e instanceof Error ? e.message : String(e)}`);
+        return;
+      }
       if (cancelled) return;
-      if (!t || t.orgId !== orgId) { showToast({ type: "error", title: "That conversation isn't here anymore." }); router.replace("/assistant"); return; }
-      const ms = await listMessages(t.id).catch(() => []);
+      if (!t || t.orgId !== orgId) { setThreadLoading(false); showToast({ type: "error", title: "That conversation isn't here anymore." }); router.replace("/assistant"); return; }
+      let ms: ChatMessage[] = [];
+      try { ms = await listMessages(t.id); }
+      catch (e) { if (!cancelled) setThreadError(`Couldn't load this conversation's turns: ${e instanceof Error ? e.message : String(e)}`); }
       if (cancelled) return;
+      setThreadLoading(false);
       setActive(t); setMessages(ms); setPanel(null); setPast(null);
       // Outcomes already recorded on turns come back as done.
       const next: Record<string, ActionState> = {};
@@ -197,6 +218,8 @@ export default function ChatShell() {
       setActions(next);
     })();
     return () => { cancelled = true; };
+    // `active` is read only to keep a reload of the thread on screen quiet.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threadParam, orgId, router, showToast]);
 
   // Documents of the library in play (plus linked libraries), for citations.
@@ -204,12 +227,18 @@ export default function ChatShell() {
     if (!libraryId || scope === "tools") { queueMicrotask(() => setDocs([])); return; }
     let cancelled = false;
     void (async () => {
-      const [own, links] = await Promise.all([listKnowledgeDocuments(libraryId), listLibraryLinks(libraryId).catch(() => [])]);
+      const [own, links] = await Promise.all([
+        listKnowledgeDocuments(libraryId).catch((e: unknown) => {
+          showToast({ type: "error", title: "Couldn't load this library's documents", message: e instanceof Error ? e.message : String(e) });
+          return [] as KnowledgeDocument[];
+        }),
+        listLibraryLinks(libraryId).catch(() => []),
+      ]);
       const linked = await Promise.all(links.map((l) => listKnowledgeDocuments(l.linkedLibraryId).catch(() => [])));
       if (!cancelled) { setDocs([...own, ...linked.flat()]); setDocsFor(libraryId); }
     })();
     return () => { cancelled = true; };
-  }, [libraryId, scope]);
+  }, [libraryId, scope, showToast]);
 
   // Remember the source for next time.
   useEffect(() => {
@@ -261,13 +290,18 @@ export default function ChatShell() {
     setThreads((ts) => ts.map((t) => (t.id === id ? { ...t, ...patch } : t)));
     setActive((a) => (a && a.id === id ? { ...a, ...patch } : a));
   };
-  const onPin = async (t: ChatThread, pinned: boolean) => { patchThread(t.id, { pinned }); await updateThread(t.id, { pinned }).catch(() => refreshThreads()); };
-  const onSettle = async (t: ChatThread, settled: boolean) => {
-    const settledAt = settled ? new Date().toISOString() : null;
-    patchThread(t.id, { settledAt });
-    await updateThread(t.id, { settledAt }).catch(() => refreshThreads());
+  // Shown at once; on failure it's put back and the person is told.
+  const saveThread = async (t: ChatThread, patch: Partial<ChatThread>, what: string) => {
+    patchThread(t.id, patch);
+    try { await updateThread(t.id, patch); }
+    catch (e) {
+      patchThread(t.id, { pinned: t.pinned, settledAt: t.settledAt, title: t.title });
+      showToast({ type: "error", title: `Couldn't ${what}`, message: e instanceof Error ? e.message : String(e) });
+    }
   };
-  const onRename = async (t: ChatThread, title: string) => { patchThread(t.id, { title }); await updateThread(t.id, { title }).catch(() => refreshThreads()); };
+  const onPin = (t: ChatThread, pinned: boolean) => saveThread(t, { pinned }, pinned ? "pin it" : "unpin it");
+  const onSettle = (t: ChatThread, settled: boolean) => saveThread(t, { settledAt: settled ? new Date().toISOString() : null }, settled ? "settle it" : "reopen it");
+  const onRename = (t: ChatThread, title: string) => saveThread(t, { title }, "rename it");
   const onDelete = async (t: ChatThread) => {
     const ok = await appConfirm({ title: "Delete this conversation?", message: `"${t.title || "Untitled"}" and its turns will be removed for everyone. Attachments stay in storage.`, confirmLabel: "Delete" });
     if (!ok) return;
@@ -291,16 +325,30 @@ export default function ChatShell() {
         continue;
       }
       const previewUrl = cls.kind === "image" ? URL.createObjectURL(file) : undefined;
-      setAttachments((as) => [...as, { localId, att: null, name: file.name, size: file.size, kind: cls.kind, percent: 0, previewUrl }]);
-      void uploadChatAttachment({
-        orgId, threadId: active?.id ?? null, uid, file, kind: cls.kind,
-        onProgress: (p) => setAttachments((as) => as.map((a) => (a.localId === localId ? { ...a, percent: p.percent } : a))),
-      }).then(
-        (att) => setAttachments((as) => as.map((a) => (a.localId === localId ? { ...a, att, percent: 100 } : a))),
-        (e) => setAttachments((as) => as.map((a) => (a.localId === localId ? { ...a, error: (e as Error).message } : a))),
-      );
+      setAttachments((as) => [...as, { localId, att: null, name: file.name, size: file.size, kind: cls.kind, percent: 0, previewUrl, file }]);
+      startUpload(localId, file, cls.kind);
     }
+    // startUpload only reads ids that don't change while this runs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, uid, attachments.length, active?.id, showToast]);
+  // One file's upload, on its own: a failure shows on its pill with Try
+  // again (and on the corner card), and never holds up the others.
+  const startUpload = (localId: string, file: File, kind: "image" | "pdf") => {
+    if (!orgId || !uid) return;
+    const put = (patch: Partial<PendingAttachment>) => setAttachments((as) => as.map((a) => (a.localId === localId ? { ...a, ...patch } : a)));
+    put({ error: undefined, retryable: false, percent: 0 });
+    void tryUpload(file.name, () => uploadChatAttachment({
+      orgId, threadId: active?.id ?? null, uid, file, kind,
+      onProgress: (p) => put({ percent: p.percent }),
+    }), { onRetried: (att) => put({ att, percent: 100, error: undefined, retryable: false }) }).then(
+      (att) => put({ att, percent: 100 }),
+      (e) => put({ error: (e as Error).message, retryable: true }),
+    );
+  };
+  const retryAttachment = (localId: string) => {
+    const a = attachments.find((x) => x.localId === localId);
+    if (a?.file) startUpload(localId, a.file, a.kind);
+  };
   const removeAttachment = (localId: string) => setAttachments((as) => {
     const a = as.find((x) => x.localId === localId);
     if (a?.previewUrl) URL.revokeObjectURL(a.previewUrl);
@@ -439,7 +487,7 @@ export default function ChatShell() {
             const now = new Date().toISOString();
             setThreads((ts) => ts.map((t) => (t.id === ev.threadId ? { ...t, lastMessageAt: now, settledAt: null } : t)));
             setActive((a) => (a && a.id === ev.threadId ? { ...a, lastMessageAt: now, settledAt: null } : a));
-            if (active?.settledAt) void updateThread(ev.threadId, { settledAt: null }).catch(() => undefined);
+            if (active?.settledAt) void updateThread(ev.threadId, { settledAt: null }).catch((e: unknown) => showToast({ type: "error", title: "Couldn't move it back to Active", message: e instanceof Error ? e.message : String(e) }));
             break;
           }
           case "error": {
@@ -452,7 +500,7 @@ export default function ChatShell() {
               showToast({ type: "error", title: String(ev.error ?? "The question didn't run."), duration: 8000 });
             } else if (ev.threadId) {
               // The server recorded the failed turn — show it as it is.
-              void listMessages(ev.threadId).then(setMessages).catch(() => undefined);
+              void listMessages(ev.threadId).then(setMessages).catch((e: unknown) => setThreadError(`Couldn't reload the conversation: ${e instanceof Error ? e.message : String(e)}`));
             }
             break;
           }
@@ -481,21 +529,22 @@ export default function ChatShell() {
     if (needsAgreement) {
       setMessages((ms) => ms.filter((m) => m.id !== tmpId));
       const agreed = await appConfirm({
-        title: "Before your first question - the ground rules",
+        title: "Before your first question",
         message: (needsAgreement as { text: string }).text ||
-          "Everything you type is sent to the workspace's AI provider. Never enter passwords, financial details, or personal identity information - work questions only.",
+          "Everything you type is sent to the workspace's AI provider. Never enter passwords, financial details or personal identity information. Work questions only.",
         confirmLabel: "I agree",
       });
       if (!agreed) return;
-      await acceptAiAgreement(orgId);
+      try { await acceptAiAgreement(orgId); }
+      catch (e) { setValue(q); showToast({ type: "error", title: "Your agreement wasn't saved", message: e instanceof Error ? e.message : String(e) }); return; }
       setValue(q);
-      showToast({ type: "success", title: "Thanks - send your question again." });
+      showToast({ type: "success", title: "Thanks. Send your question again." });
       return;
     }
     if (overloaded) {
       overloadRetried.current = true;
       setMessages((ms) => ms.filter((m) => m.id !== tmpId));
-      showToast({ type: "info", title: "The AI provider is briefly overloaded - retrying in a few seconds…" });
+      showToast({ type: "info", title: "The AI provider is busy. Trying again in a few seconds…" });
       setTimeout(() => { void send(q, { ...opts, retry: true }); }, 6_000);
       return;
     }
@@ -524,7 +573,7 @@ export default function ChatShell() {
     abortRef.current?.abort();
     setStreaming(null);
     showToast({ type: "info", title: "Stopped. If the answer still lands, reopen the conversation to see it." });
-    if (active) void listMessages(active.id).then(setMessages).catch(() => undefined);
+    if (active) void listMessages(active.id).then(setMessages).catch((e: unknown) => setThreadError(`Couldn't reload the conversation: ${e instanceof Error ? e.message : String(e)}`));
   };
 
   // ── Citations open the real page ──
@@ -574,8 +623,9 @@ export default function ChatShell() {
       next = { approved: outcome.ok ? [...cur.approved, fp] : cur.approved, outcomes: { ...cur.outcomes, [fp]: outcome }, executing: null };
       return { ...as, [m.id]: next };
     });
-    void mergeMessagePayload(m.id, { approved: next.approved, outcomes: next.outcomes }).catch(() => undefined);
-  }, [orgId]);
+    void mergeMessagePayload(m.id, { approved: next.approved, outcomes: next.outcomes }).catch((e: unknown) =>
+      showToast({ type: "error", title: "The result shows here but wasn't saved with the conversation", message: e instanceof Error ? e.message : String(e) }));
+  }, [orgId, showToast]);
 
   // ── Memory: reuse a past answer here ──
   const reusePast = useCallback(async (p: PastAnswer) => {
@@ -609,7 +659,7 @@ export default function ChatShell() {
     if (!uid) return;
     await saveAiInstruction(orgId, { scope: "knowledge", title: `From a conversation${active?.title ? `: ${active.title.slice(0, 60)}` : ""}`, body: text }, uid, userName ?? undefined);
     setStandingCount((c) => c + 1);
-    showToast({ type: "success", title: "Added to the org playbook - applies to every library answer from now on." });
+    showToast({ type: "success", title: "Added to the org playbook. It applies to every library answer from now on." });
   };
 
   // ── Thumbs-up settles the conversation (the answered-questions shelf) ──
@@ -623,7 +673,7 @@ export default function ChatShell() {
 
   const readyDocs = scope === "library" ? docs.filter((d) => d.libraryId === libraryId && d.status === "ready").length : 1;
   const disabledReason = scope === "library" && libraryId && docsFor === libraryId && readyDocs === 0
-    ? "Nothing indexed in this library yet - add PDFs on its page, or pick another source."
+    ? "Nothing indexed in this library yet. Add PDFs on its page, or pick another source."
     : scope !== "tools" && !libraryId ? "Pick a library to ask." : null;
   const libraryFilter = libraryFilterId ? { id: libraryFilterId, name: libraryNames.get(libraryFilterId) ?? "This library" } : null;
   const panelOpen = panel !== null;
@@ -647,18 +697,18 @@ export default function ChatShell() {
           />
         </div>
       )}
-      {isMobile && railOpen && <div className="absolute inset-0 z-30 bg-black/40" onClick={() => setRailOpen(false)} />}
+      {isMobile && railOpen && <div className="absolute inset-0 z-30 bg-black/50" onClick={() => setRailOpen(false)} />}
 
       {/* Stream */}
       <div className="flex-1 min-w-0 flex flex-col">
         <div className="h-11 px-3 sm:px-4 border-b border-[var(--color-border)] flex items-center gap-2 shrink-0 bg-[var(--color-surface)]/70 backdrop-blur">
           {!railOpen && (
-            <button onClick={() => setRailOpen(true)} title="Conversations"
+            <button onClick={() => setRailOpen(true)} title="Conversations" aria-label="Show conversations"
               className="h-8 w-8 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
               <PanelLeftOpen className="w-4 h-4" />
             </button>
           )}
-          <ScopeIcon className={`w-4 h-4 shrink-0 ${scope === "internet" ? "text-[var(--color-text-muted)]" : scope === "tools" ? "text-[var(--color-text-muted)]" : "text-[var(--color-text-muted)]"}`} />
+          <ScopeIcon className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" />
           <div className="min-w-0 flex-1">
             <div className="text-sm font-black text-[var(--color-text)] truncate">{active?.title || "New conversation"}</div>
           </div>
@@ -680,8 +730,14 @@ export default function ChatShell() {
             ]} />
         </div>
 
+        {threadError && (
+          <p role="alert" className="mx-auto max-w-3xl w-full px-4 pt-3 text-xs font-semibold text-red-700 dark:text-red-400">
+            <span className="border-l-2 border-red-500 pl-2">{threadError}</span>
+          </p>
+        )}
         <MessageStream
           messages={messages} streaming={streaming} scope={scope}
+          loading={threadLoading}
           emptyNote={disabledReason}
           onExample={(q) => void send(q)}
           renderUser={(m) => (
@@ -724,7 +780,7 @@ export default function ChatShell() {
                 else { setDraftScope(s); setDraftLibraryId(lib); }
               }}
               scopeLocked={!!active}
-              attachments={attachments} onAddFiles={addFiles} onRemoveAttachment={removeAttachment}
+              attachments={attachments} onAddFiles={addFiles} onRemoveAttachment={removeAttachment} onRetryAttachment={retryAttachment}
               instructionsActive={!!instructions.trim()}
               instructionCount={standingCount + (instructions.trim() ? 1 : 0)}
               onToggleInstructions={() => setPanel((p) => (p?.kind === "instructions" ? null : { kind: "instructions" }))}
@@ -736,7 +792,7 @@ export default function ChatShell() {
             />
             <p className="mt-1.5 px-1 text-[11px] text-[var(--color-text-faint)] truncate">
               {scope === "library" && useWeb
-                ? "Documents first - they govern. Web is on: every web statement links to the page it came from."
+                ? "Documents first, they govern. Web is on: every web statement links to the page it came from."
                 : SCOPE_META[scope].hint}
             </p>
           </div>

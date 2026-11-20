@@ -83,7 +83,7 @@ export default function AssistantAnswer({ answer, mentionedDocs }: {
         }
         if (b.type === "important") {
           return (
-            <div key={i} className="flex items-start gap-2.5 rounded-xl border-2 border-amber-400 dark:border-amber-600 px-4 py-3 bg-[var(--color-surface-2)]">
+            <div key={i} className="flex items-start gap-2.5 border-l-2 border-amber-500 pl-3 py-1">
               <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
               <span className="text-[14px] font-bold text-amber-900 dark:text-amber-200 leading-snug">
                 <Inline text={b.text} docs={docs} />

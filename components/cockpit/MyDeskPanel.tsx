@@ -46,6 +46,9 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
   const [staleCopies, setStaleCopies] = useState<StaleCopy[]>([]);
   const [branches, setBranches] = useState<MyBranch[]>([]);
   const [releasingId, setReleasingId] = useState<string | null>(null);
+  const [releaseError, setReleaseError] = useState<string | null>(null);
+  // Never a blank gap while it loads; nothing at all once it's known empty.
+  const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     // 1. My active checkouts.
@@ -82,7 +85,7 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
     } catch { /* quiet */ }
 
     // 2. My stale copies.
-    setStaleCopies(await listMyStaleCopies(uid, orgId));
+    try { setStaleCopies(await listMyStaleCopies(uid, orgId)); } catch (e) { console.warn("[desk] stale copies read failed", e); }
 
     // 3. My unresolved branches.
     try {
@@ -115,12 +118,14 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
         createdAt: String(r.created_at),
       })));
     } catch { /* pre-migration env */ }
+    setLoading(false);
   }, [orgId, uid]);
 
   useEffect(() => { void load(); }, [load]);
 
   const release = async (c: MyCheckout) => {
     setReleasingId(c.sessionId);
+    setReleaseError(null);
     try {
       const { finishMySession } = await import("@/lib/checkoutEpisodes");
       await finishMySession({
@@ -138,12 +143,16 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
       await load();
     } catch (e) {
       console.error("Release from desk failed", e);
+      setReleaseError(`${c.docLabel} wasn't released: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setReleasingId(null);
     }
   };
 
   const total = checkouts.length + staleCopies.length + branches.length;
+  if (loading && total === 0) {
+    return <p className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading your desk…</p>;
+  }
   if (total === 0) return null;
 
   const clock = (c: MyCheckout): { text: string; hot: boolean } => {
@@ -172,6 +181,7 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
       </div>
 
       <div className="p-3 space-y-3">
+        {releaseError && <p role="alert" className="border-l-2 border-red-500 pl-2 text-[11px] font-semibold text-red-700 dark:text-red-400">{releaseError}</p>}
         {checkouts.length > 0 && (
           <div className="space-y-1">
             <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Checked out to me</div>
@@ -190,8 +200,8 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
                   <button
                     onClick={() => void release(c)}
                     disabled={releasingId === c.sessionId}
-                    title="Release - no changes"
-                    className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 sm:py-1 rounded-md text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 opacity-100 sm:opacity-0 group-hover:opacity-100 hover:bg-emerald-100 transition-all disabled:opacity-50"
+                    title="Release: no changes"
+                    className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 sm:py-1 rounded-md text-[11px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border-strong)] opacity-100 sm:opacity-0 group-hover:opacity-100 focus:opacity-100 hover:bg-[var(--color-surface-2)] transition-all disabled:opacity-50"
                   >
                     {releasingId === c.sessionId ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
                     Release

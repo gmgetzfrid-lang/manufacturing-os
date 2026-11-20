@@ -16,6 +16,7 @@ import { appAlert } from "@/components/providers/DialogProvider";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { X, BellRing, Inbox } from "lucide-react";
+import LoadingBlock from "@/components/ui/LoadingBlock";
 import { useTicketNotifications } from "@/hooks/useTicketNotifications";
 import { AttentionFeed, type AttnFilter } from "@/components/cockpit/AttentionFeed";
 
@@ -81,7 +82,7 @@ function CenterPanel({
     if (isOpen) { seen.current = true; return; }
     if (!seen.current) return;
     seen.current = false;
-    void markAllRead().catch(() => { /* the bell keeps them; nothing is lost */ });
+    void markAllRead().catch((e: unknown) => console.warn("[notifications] clearing seen news failed; the bell keeps them", e));
   }, [isOpen, markAllRead]);
 
   if (typeof document === "undefined") return null;
@@ -118,7 +119,7 @@ function CenterPanel({
         style={{ transitionTimingFunction: "var(--ease-spring)" }}
       >
         <div className="px-4 py-3.5 border-b border-[var(--color-border)] flex items-center gap-3 shrink-0 bg-[var(--color-surface-2)]">
-          <span className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-[var(--color-surface-2)] text-[var(--color-text)] shadow-lg shrink-0">
+          <span className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] shrink-0">
             <BellRing className="w-4.5 h-4.5" />
           </span>
           <div className="flex-1 min-w-0">
@@ -126,12 +127,13 @@ function CenterPanel({
             <div className="text-[11px] text-[var(--color-text-muted)]">
               {counts.all === 0
                 ? "You're all caught up."
-                : `${counts.all} item${counts.all === 1 ? "" : "s"} - every badge in the app counts these.`}
+                : `${counts.action > 0 ? `${counts.action} waiting on you` : ""}${counts.action > 0 && counts.unread > 0 ? " · " : ""}${counts.unread > 0 ? `${counts.unread} new` : ""}`}
             </div>
           </div>
           <button
             onClick={onClose}
             title="Close (Esc)"
+            aria-label="Close"
             className="p-2 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-colors"
           >
             <X className="w-4 h-4" />
@@ -140,18 +142,14 @@ function CenterPanel({
 
         <div className="flex-1 min-h-0 overflow-y-auto p-4">
           {loading && items.length === 0 ? (
-            <div className="space-y-2">
-              {[0, 1, 2, 3].map((i) => (
-                <div key={i} className="h-14 rounded-xl bg-[var(--color-surface-2)] animate-pulse" />
-              ))}
-            </div>
+            <LoadingBlock what="notifications" rows={4} />
           ) : (
             <AttentionFeed
               items={filtered}
               counts={counts}
               filter={filter}
               onFilter={onFilter}
-              onMarkRead={(id) => { void markRead(id); }}
+              onMarkRead={(id) => { void markRead(id).catch((e: unknown) => appAlert({ title: "Couldn't mark it read", message: e instanceof Error ? e.message : String(e), tone: "danger" })); }}
               onMarkAll={handleMarkAll}
               markingAll={markingAll}
             />

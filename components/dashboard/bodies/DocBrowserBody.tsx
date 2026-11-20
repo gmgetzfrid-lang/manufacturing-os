@@ -112,12 +112,14 @@ export default function DocBrowserBody() {
     if (!libId) return null;
     const fq = supabase.from("collections").select("*").eq("library_id", libId).order("name");
     const folderRes = await (folderId ? fq.eq("parent_id", folderId) : fq.is("parent_id", null));
+    if (folderRes.error) throw new Error(folderRes.error.message);
     const folders = ((folderRes.data ?? []) as FolderRow[])
       .filter((f) => !f.deleted_at && (isControllerRole(activeRole) || (f.visibility ?? "normal") === "normal"));
     let dq2 = supabase.from("documents").select(DOC_COLS, { count: "exact" })
       .eq("org_id", orgId).eq("library_id", libId).neq("status", "Archived");
     dq2 = folderId ? dq2.eq("collection_id", folderId) : dq2.is("collection_id", null);
     const docRes = await dq2.order("updated_at", { ascending: false }).limit(expanded ? 200 : 60);
+    if (docRes.error) throw new Error(docRes.error.message);
     return { at: `${libId}|${folderId ?? ""}`, folders, docs: (docRes.data ?? []) as unknown as DocRow[], docCount: docRes.count ?? 0 };
   }, [libId, folderId, expanded]);
 
@@ -274,7 +276,7 @@ export default function DocBrowserBody() {
               {here.folders.map((f) => (
                 <button key={f.id} type="button" onClick={() => { setPath((p) => [...p, f]); setQ(""); }} data-widget-folder={f.id}
                   className="group w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-[var(--color-surface-2)] transition-colors">
-                  <Folder className="w-4 h-4 shrink-0 text-amber-500" fill="currentColor" fillOpacity={0.25} />
+                  <Folder className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" fill="currentColor" fillOpacity={0.2} />
                   <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[var(--color-text)] group-hover:text-[var(--color-text)]">{f.name}</span>
                   <ChevronRight className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-faint)]" />
                 </button>

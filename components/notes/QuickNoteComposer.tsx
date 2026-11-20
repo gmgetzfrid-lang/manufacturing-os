@@ -31,6 +31,7 @@ export default function QuickNoteComposer({ orgId, userId, userEmail, userName, 
   const [notes, setNotes] = useState<Note[]>([]);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -43,6 +44,10 @@ export default function QuickNoteComposer({ orgId, userId, userEmail, userName, 
         limit: 5,
       });
       setNotes(list);
+      setLoadError(null);
+    } catch (e) {
+      // A failed read says so, instead of "No notes yet".
+      setLoadError((e as Error).message);
     } finally { setLoading(false); }
   }, [orgId, scope.documentId, scope.projectId, scope.assetId]);
 
@@ -75,7 +80,7 @@ export default function QuickNoteComposer({ orgId, userId, userEmail, userName, 
       await deleteNote(noteId, userId, orgId);
       await refresh();
     } catch (e) {
-      showToast({ type: "error", title: "Something went wrong", message: (e as Error).message });
+      showToast({ type: "error", title: "Couldn't delete the note", message: (e as Error).message });
     }
   };
 
@@ -88,6 +93,8 @@ export default function QuickNoteComposer({ orgId, userId, userEmail, userName, 
 
       {loading ? (
         <div className="py-2 text-[11px] text-[var(--color-text-faint)] inline-flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" /> Loading…</div>
+      ) : loadError ? (
+        <div role="alert" className="py-2 text-[11px] font-semibold text-red-700 dark:text-red-400">Couldn&apos;t load the notes: {loadError}</div>
       ) : notes.length === 0 ? (
         <div className="py-2 text-[11px] italic text-[var(--color-text-faint)]">No notes yet.</div>
       ) : (
@@ -103,6 +110,7 @@ export default function QuickNoteComposer({ orgId, userId, userEmail, userName, 
                   onClick={() => void remove(n.id)}
                   className="opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity p-1 text-[var(--color-text-faint)] hover:text-red-600 hover:bg-red-50 rounded"
                   title="Delete"
+                  aria-label="Delete note"
                 >
                   <Trash2 className="w-3 h-3" />
                 </button>
@@ -132,6 +140,7 @@ export default function QuickNoteComposer({ orgId, userId, userEmail, userName, 
           disabled={!body.trim() || busy}
           className="p-2 rounded bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] transition-colors disabled:opacity-50"
           title="Post note"
+          aria-label="Post note"
         >
           {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
         </button>

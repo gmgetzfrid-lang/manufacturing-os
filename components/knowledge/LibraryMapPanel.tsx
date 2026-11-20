@@ -79,7 +79,9 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
     }
   }, [data, mapping, runMap]);
 
-  if (!data && !error) return null;
+  if (!data && !error) {
+    return <p className="mb-6 flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading the library map…</p>;
+  }
   const entries = data?.entries ?? [];
   const counts = new Map<string, number>();
   for (const e of entries) counts.set(e.type, (counts.get(e.type) ?? 0) + 1);
@@ -90,17 +92,17 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 mb-6">
       <div className="flex items-center gap-3 flex-wrap">
         <div className="w-9 h-9 rounded-lg bg-[var(--color-text-muted)] flex items-center justify-center shrink-0">
-          <MapIcon className="w-4 h-4 text-white" />
+          <MapIcon className="w-4 h-4 text-[var(--color-surface)]" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="text-sm font-black text-[var(--color-text)]">Library map</div>
           <div className="text-[11px] text-[var(--color-text-muted)]">
-            What the assistant knows is here - so it can point you to the right form, checklist or spec without being asked.
+            What the assistant knows is here, so it can point you to the right form, checklist or spec.
           </div>
         </div>
         {data?.canMap && data.unmapped > 0 && !mapping && (
           <button type="button" onClick={() => void runMap()}
-            className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)]">
+            className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-xs font-black hover:bg-[var(--color-surface-2)]">
             <MapIcon className="w-4 h-4" /> Map {data.unmapped} document{data.unmapped === 1 ? "" : "s"}
           </button>
         )}
@@ -109,7 +111,7 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
       {mapping && (
         <div className="mt-3 flex items-center gap-2 text-[12px] text-[var(--color-text)]" role="status">
           <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)]" />
-          Mapping - {mapping.profiled} profiled
+          Mapping: {mapping.profiled} profiled
           {mapping.remaining > 0 ? `, ${mapping.remaining} to go` : ""}. You can keep working; it continues while this page is open.
         </div>
       )}

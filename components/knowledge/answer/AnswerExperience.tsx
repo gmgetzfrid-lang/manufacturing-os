@@ -30,7 +30,10 @@ import { copyText } from "@/lib/clipboard";
 import EquipmentTablePanel from "@/components/knowledge/EquipmentTablePanel";
 import AnswerTestEditor from "@/components/knowledge/AnswerTestEditor";
 import CandidateTablePanel from "@/components/knowledge/answer/CandidateTablePanel";
-import { Modal } from "@/components/ui/Modal";
+import { Modal, ModalHeader } from "@/components/ui/Modal";
+import FileThumb from "@/components/ui/FileThumb";
+import { useFileDrag } from "@/hooks/useFileDrag";
+import { useDraft } from "@/hooks/useDraft";
 
 export type DocLink = NonNullable<KnowledgeAnswer["mentionedDocs"]>[number];
 const DocLinkContext = React.createContext<{ links: DocLink[]; open: ((d: DocLink) => void) | null }>({ links: [], open: null });
@@ -80,7 +83,7 @@ function ProofQuote({ c, context, className }: { c: KnowledgeCitation; context?:
       {win ? (
         <>
           <span className="text-[var(--color-text-muted)]">{win.clippedStart ? "… " : ""}{win.before}</span>
-          <mark className="rounded px-0.5 bg-yellow-200 dark:bg-yellow-700/60 text-[var(--color-text)] font-bold">{win.hit}</mark>
+          <mark className="rounded px-0.5 bg-amber-200 dark:bg-amber-700/60 text-[var(--color-text)] font-bold">{win.hit}</mark>
           <span className="text-[var(--color-text-muted)]">{win.after}{win.clippedEnd ? " …" : ""}</span>
         </>
       ) : segs.map((sg, i) => sg.hit
@@ -149,7 +152,7 @@ function ProofCard({ proof, onClose, onOpenPage }: {
             <span className="text-[11px] font-bold text-[var(--color-text-muted)] shrink-0">
               {pastJob ? "Past job" : <>p.{c.page}{c.section ? ` · ${c.section.slice(0, 30)}` : ""}</>}
             </span>
-            <button onClick={onClose} aria-label="Close proof"
+            <button onClick={onClose} aria-label="Close"
               className="ml-auto shrink-0 p-1 rounded-md text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
               <X className="w-3.5 h-3.5" />
             </button>
@@ -167,7 +170,7 @@ function ProofCard({ proof, onClose, onOpenPage }: {
             ) : (
             <button onClick={() => onOpenPage(c)}
               className="inline-flex items-center gap-1.5 text-[11px] font-black px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm hover:bg-[var(--color-accent-hover)] transition-colors">
-              <Eye className="w-3.5 h-3.5" /> Open the page - highlighted
+              <Eye className="w-3.5 h-3.5" /> Open the page, highlighted
             </button>
             )}
             {c.highlight ? (
@@ -301,8 +304,8 @@ function ImportantCallout({ text, citations, onCite }: {
   onCite: (c: KnowledgeCitation) => void;
 }) {
   return (
-    <div className="flex items-start gap-2.5 rounded-xl border-2 border-amber-400 dark:border-amber-600 px-4 py-3 shadow-sm bg-[var(--color-surface-2)]">
-      <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
+    <div className="flex items-start gap-2 border-l-2 border-amber-500 pl-3 py-1">
+      <AlertTriangle className="w-4 h-4 text-amber-600 mt-1 shrink-0" />
       <span className="text-[15px] font-bold text-amber-900 dark:text-amber-200 leading-snug">
         <InlineAnswer text={text} citations={citations} onCite={onCite} />
       </span>
@@ -310,16 +313,10 @@ function ImportantCallout({ text, citations, onCite }: {
   );
 }
 
-/** Per-section accent colors. One orange everything IS the wall — color is
- *  how the eye tells "Joint type" from "Alignment" from "Hold points" at a
- *  glance. Full class strings (Tailwind can't build them dynamically). */
+/** Section look: one quiet ink. Status colors mean status only, so sections
+ *  are told apart by their numbered steps and headings, not by hue. */
 const SECTION_ACCENTS = [
-  { band: "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] border border-[var(--color-border)] dark:border-[var(--color-border)]", text: "text-[var(--color-text-muted)] dark:text-[var(--color-text)]", bar: "bg-[var(--color-text-muted)]", pill: "bg-[var(--color-surface-2)] text-[var(--color-text)]", num: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-transparent", hover: "hover:border-[var(--color-border)] dark:hover:border-[var(--color-border)]" },
-  { band: "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] border border-[var(--color-border)] dark:border-[var(--color-border)]", text: "text-[var(--color-text-muted)] dark:text-[var(--color-text)]", bar: "bg-[var(--color-text-muted)]", pill: "bg-[var(--color-surface-2)] text-[var(--color-text)]", num: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-transparent", hover: "hover:border-[var(--color-border)] dark:hover:border-[var(--color-border)]" },
-  { band: "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] border border-[var(--color-border)] dark:border-[var(--color-border)]", text: "text-[var(--color-text-muted)] dark:text-[var(--color-text)]", bar: "bg-[var(--color-text-muted)]", pill: "bg-[var(--color-surface-2)] text-[var(--color-text)]", num: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-transparent", hover: "hover:border-[var(--color-border)] dark:hover:border-[var(--color-border)]" },
-  { band: "bg-emerald-100/80 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-900", text: "text-emerald-950 dark:text-emerald-200", bar: "bg-emerald-600", pill: "bg-emerald-600 text-white", num: "bg-emerald-600 text-white border-transparent", hover: "hover:border-emerald-300 dark:hover:border-emerald-800" },
-  { band: "bg-rose-100/80 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900", text: "text-rose-950 dark:text-rose-200", bar: "bg-rose-600", pill: "bg-rose-600 text-white", num: "bg-rose-600 text-white border-transparent", hover: "hover:border-rose-300 dark:hover:border-rose-800" },
-  { band: "bg-amber-100/80 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900", text: "text-amber-950 dark:text-amber-200", bar: "bg-amber-600", pill: "bg-amber-600 text-white", num: "bg-amber-600 text-white border-transparent", hover: "hover:border-amber-300 dark:hover:border-amber-800" },
+  { band: "bg-[var(--color-surface-2)] border border-[var(--color-border)]", text: "text-[var(--color-text-muted)] dark:text-[var(--color-text)]", bar: "bg-[var(--color-text)] text-[var(--color-surface)]", pill: "bg-[var(--color-surface-2)] text-[var(--color-text)]", num: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-transparent", hover: "hover:border-[var(--color-border-strong)]" },
 ];
 
 /** A value chip you can TAKE with you: tap copies the exact value (torque,
@@ -459,7 +456,7 @@ function SectionedBlocks({ blocks, citations, onCite }: {
       }
       if (isCheck(b.text)) {
         return (
-          <div key={i} style={enter(i)} className="flex items-start gap-2 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-3 py-2.5 text-[13px] text-amber-800 dark:text-amber-300">
+          <div key={i} style={enter(i)} className="flex items-start gap-2 border-l-2 border-amber-500 pl-3 py-1 text-[13px] text-amber-800 dark:text-amber-300">
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
             <span><InlineAnswer text={b.text.replace(/^\*{0,2}Check:?\*{0,2}\s*/i, "")} citations={citations} onCite={onCite} /></span>
           </div>
@@ -502,7 +499,7 @@ function SectionedBlocks({ blocks, citations, onCite }: {
               className="group/step w-full flex items-center gap-3 pt-4 pb-1.5 text-left"
             >
               {/* Numbered step node — the stepper's anchor point. */}
-              <span className={`shrink-0 w-6 h-6 rounded-full ${a.bar} text-white text-[11px] font-black flex items-center justify-center shadow-sm ring-2 ring-[var(--color-surface)] transition-transform duration-200 group-hover/step:scale-110`}>
+              <span className={`shrink-0 w-6 h-6 rounded-full ${a.bar} text-[11px] font-black flex items-center justify-center shadow-sm ring-2 ring-[var(--color-surface)] transition-transform duration-200 group-hover/step:scale-110`}>
                 {step}
               </span>
               <span className="text-[16px] sm:text-[17px] font-black tracking-tight leading-tight text-[var(--color-text)] group-hover/step:text-[var(--color-text)] transition-colors">{sec.label}</span>
@@ -517,7 +514,7 @@ function SectionedBlocks({ blocks, citations, onCite }: {
                 <div className="space-y-1.5">{renderItems(sec.items)}</div>
               ) : (
                 <div className="text-[11px] text-[var(--color-text-faint)] font-medium pl-3">
-                  {facts > 0 ? `${facts} ${facts === 1 ? "item" : "items"} - tap to expand` : "tap to expand"}
+                  {facts > 0 ? `${facts} ${facts === 1 ? "item" : "items"}, tap to open` : "tap to open"}
                 </div>
               )}
             </div>
@@ -616,7 +613,7 @@ export function ClarifyCard({ prompt, options, onAnswer }: {
     <div className="mt-4 rounded-2xl border-2 border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] p-4 animate-rise">
       <div className="flex items-start gap-2.5">
         <div className="w-7 h-7 rounded-lg bg-[var(--color-text-muted)] flex items-center justify-center shrink-0">
-          <Sparkles className="w-3.5 h-3.5 text-white" />
+          <Sparkles className="w-3.5 h-3.5 text-[var(--color-surface)]" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="text-xs font-black text-[var(--color-text)]">One thing before I answer</div>
@@ -654,11 +651,14 @@ export function NeedCard({ prompt, onProvide }: {
   onProvide: (values: string) => void;
 }) {
   const [value, setValue] = useState("");
+  // The typed values wait on this device until they're sent.
+  const valueDraft = useDraft<string>(`need:${prompt.slice(0, 120)}`, value, setValue, (v) => !v.trim());
+  const provide = (v: string) => { valueDraft.clear(); onProvide(v); };
   return (
     <div className="mt-4 rounded-2xl border-2 border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] p-4 animate-rise">
       <div className="flex items-start gap-2.5">
         <div className="w-7 h-7 rounded-lg bg-[var(--color-text-muted)] flex items-center justify-center shrink-0">
-          <Sparkles className="w-3.5 h-3.5 text-white" />
+          <Sparkles className="w-3.5 h-3.5 text-[var(--color-surface)]" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="text-xs font-black text-[var(--color-text)]">I need a value from you to run this calculation</div>
@@ -667,10 +667,10 @@ export function NeedCard({ prompt, onProvide }: {
             <Textarea value={value} onChange={(e) => setValue(e.target.value)} rows={1}
               placeholder='e.g. "test temperature = 150°F, design pressure = 285 psig"'
               onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && value.trim()) onProvide(value.trim());
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && value.trim()) provide(value.trim());
               }}
               className="flex-1 text-xs" />
-            <Button size="sm" onClick={() => onProvide(value.trim())} disabled={!value.trim()}>
+            <Button size="sm" onClick={() => provide(value.trim())} disabled={!value.trim()}>
               <Send className="w-3.5 h-3.5" /> Calculate
             </Button>
           </div>
@@ -1047,27 +1047,27 @@ function SettleBox({ items, inline, onAttach, onRethink }: {
   onAttach?: (files: File[]) => void;
   onRethink?: () => void;
 }) {
-  const [added, setAdded] = useState<string[]>([]);
-  const [over, setOver] = useState(false);
+  const [added, setAdded] = useState<File[]>([]);
   const pick = React.useRef<HTMLInputElement>(null);
-  const take = (list: FileList | null) => {
+  const take = (list: FileList | File[] | null) => {
     const files = list ? [...list] : [];
     if (files.length === 0 || !onAttach) return;
     onAttach(files);
-    setAdded((a) => [...a, ...files.map((f) => f.name)]);
+    setAdded((a) => [...a, ...files]);
   };
+  const drag = useFileDrag((fs) => take(fs), !onAttach);
   const best = items.filter((b) => /^\*{0,2}best answer/i.test(b.text));
   // An item with no words (a stray "*" left when an ask for a document the
   // library holds was removed) is not something to ask for.
   const needs = items.filter((b) => b.type !== "label" && !best.includes(b) && b.text.replace(/[*_\s:—–-]/g, "").length > 0);
   if (needs.length === 0 && best.length === 0) return null;
   return (
-    <div className="rounded-xl border border-slate-300 dark:border-slate-700 bg-[var(--color-surface)] px-4 py-3.5 space-y-2.5">
+    <div className="rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-4 py-3.5 space-y-2.5">
       {needs.length > 0 && <div className="text-[14px] font-bold text-[var(--color-text)]">I can settle this if you give me:</div>}
       <ul className={needs.length ? "space-y-1.5" : "hidden"}>
         {needs.map((b, i) => (
           <li key={i} className="grid grid-cols-[1rem_minmax(0,1fr)] gap-2 items-start text-[14px] leading-relaxed text-[var(--color-text)]">
-            <span className="mt-2 w-1.5 h-1.5 rounded-full bg-slate-500" />
+            <span className="mt-2 w-1.5 h-1.5 rounded-full bg-[var(--color-text-muted)]" />
             <span>{inline(b.text)}</span>
           </li>
         ))}
@@ -1077,25 +1077,31 @@ function SettleBox({ items, inline, onAttach, onRethink }: {
       ))}
       {onAttach && (
         <div
-          onDragOver={(e) => { e.preventDefault(); setOver(true); }}
-          onDragLeave={() => setOver(false)}
-          onDrop={(e) => { e.preventDefault(); setOver(false); take(e.dataTransfer.files); }}
+          {...drag.bind}
           onClick={() => pick.current?.click()}
           onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick.current?.click(); } }}
           role="button" tabIndex={0}
-          className={`rounded-lg border-2 border-dashed px-3 py-3 text-center cursor-pointer transition-colors ${over
-            ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] dark:bg-[var(--color-accent-soft)]"
-            : "border-[var(--color-border)] hover:border-[var(--color-accent)]"}`}>
+          className={`rounded-lg border-2 border-dashed px-3 py-3 text-center cursor-pointer transition-colors border-[var(--color-border)] hover:border-[var(--color-border-strong)] ${drag.ring}`}>
           <input ref={pick} id="settle-drop" type="file" multiple hidden
             accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
             onChange={(e) => { take(e.target.files); e.target.value = ""; }} />
           <div className="text-[13px] font-bold text-[var(--color-text)] inline-flex items-center gap-1.5">
-            <Upload className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Drop the document here - or a photo of the page
+            <Upload className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {drag.over ? drag.say : "Drop the document here, or a photo of the page"}
           </div>
           <div className="text-[11.5px] text-[var(--color-text-muted)]">
-            {added.length > 0 ? `Added: ${added.join(", ")} - it goes with the rethink` : "PDF or image · it's read for this question, not added to the library"}
+            {added.length > 0 ? "Added below; it goes with the rethink" : "PDF or image · it's read for this question, not added to the library"}
           </div>
         </div>
+      )}
+      {added.length > 0 && (
+        <ul className="flex flex-wrap gap-1.5">
+          {added.map((f, i) => (
+            <li key={`${f.name}-${i}`} className="inline-flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] pl-1 pr-2 py-1 text-[11px] font-bold text-[var(--color-text)] max-w-[260px]">
+              <FileThumb file={f} size={32} />
+              <span className="min-w-0 flex flex-col leading-tight"><span className="truncate">{f.name}</span><span className="font-semibold text-[var(--color-text-muted)]">{f.size >= 1048576 ? `${(f.size / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(f.size / 1024))} KB`}</span></span>
+            </li>
+          ))}
+        </ul>
       )}
       {onRethink && (
         <button type="button" onClick={onRethink}
@@ -1354,7 +1360,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
     }
     if (b.type === "important") {
       return (
-        <div key={i} className="grid grid-cols-[1.125rem_minmax(0,1fr)] gap-2 items-start rounded-md bg-amber-50 dark:bg-amber-950/30 px-2 py-1.5">
+        <div key={i} className="grid grid-cols-[1.125rem_minmax(0,1fr)] gap-2 items-start border-l-2 border-amber-500 px-2 py-1">
           <AlertTriangle className="mt-0.5 w-4 h-4 text-amber-600" />
           <div className="text-[14px] font-semibold leading-relaxed text-amber-950 dark:text-amber-100">{sourced(b.text)}</div>
         </div>
@@ -1629,21 +1635,21 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
 
       {/* You-need-this-book cards: referenced documents no library holds */}
       {(answer.missingDocs ?? []).length > 0 && (
-        <div className="rounded-2xl border-2 border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/30 p-4 animate-rise">
+        <div className="border-l-2 border-rose-500 pl-3 py-1 animate-rise">
           <div className="flex items-center gap-2 text-sm font-black text-rose-800 dark:text-rose-300 mb-1.5">
             <BookOpen className="w-4 h-4" /> You need {answer.missingDocs!.length === 1 ? "this document" : "these documents"}
           </div>
           <div className="flex flex-wrap gap-1.5">
             {answer.missingDocs!.map((d) => (
-              <span key={d} className="text-[11px] font-black px-2.5 py-1 rounded-lg bg-white dark:bg-rose-950/60 border border-rose-300 dark:border-rose-800 text-rose-800 dark:text-rose-200">
+              <span key={d} className="text-[11px] font-black px-2.5 py-1 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)]">
                 {d}
               </span>
             ))}
           </div>
           <p className="mt-2 text-[11px] text-rose-700 dark:text-rose-400">
             The passages reference {answer.missingDocs!.length === 1 ? "this document" : "these documents"} for part of the answer,
-            but {answer.missingDocs!.length === 1 ? "it isn't" : "they aren't"} in this library or its linked libraries -
-            add {answer.missingDocs!.length === 1 ? "it" : "them"} to a linked library or pull the physical copy.
+            but {answer.missingDocs!.length === 1 ? "it isn't" : "they aren't"} in this library or its linked libraries.
+            Add {answer.missingDocs!.length === 1 ? "it" : "them"} to a linked library or pull the physical copy.
           </p>
         </div>
       )}
@@ -1684,27 +1690,37 @@ export function AnswerFeedback({ questionId, onRated, question, citations }: {
   const [reasonsSent, setReasonsSent] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testSaved, setTestSaved] = useState(false);
+  // A rating shows at once; if it doesn't save, it's put back and said so.
+  const [rateError, setRateError] = useState<string | null>(null);
   const rate = async (r: 1 | -1) => {
+    const prev = state;
     const next = state === r ? 0 : r;    // clicking again clears the rating
     setState(next);
-    setReasons([]); setReasonsSent(false);
-    onRated?.(next);
+    setReasons([]); setReasonsSent(false); setRateError(null);
     try {
       const { rateKnowledgeAnswer } = await import("@/lib/knowledge");
       await rateKnowledgeAnswer(questionId, next);
-    } catch { /* best-effort — never interrupt reading the answer */ }
+      onRated?.(next);
+    } catch (e) {
+      setState(prev);
+      setRateError(`Your rating wasn't saved: ${e instanceof Error ? e.message : String(e)}`);
+    }
   };
   const sendReasons = async (list: string[]) => {
-    setReasons(list);
+    const prev = reasons;
+    setReasons(list); setRateError(null);
     try {
       const { rateKnowledgeAnswer } = await import("@/lib/knowledge");
       await rateKnowledgeAnswer(questionId, -1, { reasons: list });
       setReasonsSent(true);
-    } catch { /* best-effort */ }
+    } catch (e) {
+      setReasons(prev);
+      setRateError(`That wasn't saved: ${e instanceof Error ? e.message : String(e)}`);
+    }
   };
   const btn = (active: boolean) =>
     `p-1.5 rounded-lg border transition-colors ${active
-      ? "border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-primary)]/10"
+      ? "border-[var(--color-text)] text-[var(--color-surface)] bg-[var(--color-text)]"
       : "border-[var(--color-border)] text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`;
   return (
     <div className="mt-2">
@@ -1714,14 +1730,15 @@ export function AnswerFeedback({ questionId, onRated, question, citations }: {
             <FlaskConical className="w-3.5 h-3.5" /> Make this a test case
           </button>
         )}
-        {testSaved && <span className="mr-auto font-bold text-[var(--color-text)]">Saved as a test case - see Answer tests on the library page.</span>}
-        {state === 1 && <span className="font-bold text-emerald-600 dark:text-emerald-400">Saved - similar questions will start from these pages.</span>}
-        {state === -1 && <span className="font-bold">{reasonsSent ? "Thanks - that tells us where to look." : "What went wrong?"}</span>}
-        {state === 0 && <span className="font-bold">Did this answer it?</span>}
-        <button onClick={() => void rate(1)} className={btn(state === 1)} title="Right answer - teach retrieval these pages">
+        {testSaved && <span className="mr-auto font-bold text-[var(--color-text)]">Saved as a test case. See Answer tests on the library page.</span>}
+        {rateError && <span role="alert" className="font-bold text-red-700 dark:text-red-400">{rateError}</span>}
+        {!rateError && state === 1 && <span className="font-bold text-emerald-600 dark:text-emerald-400">Saved. Similar questions will start from these pages.</span>}
+        {!rateError && state === -1 && <span className="font-bold">{reasonsSent ? "Thanks. That tells us where to look." : "What went wrong?"}</span>}
+        {!rateError && state === 0 && <span className="font-bold">Did this answer it?</span>}
+        <button onClick={() => void rate(1)} className={btn(state === 1)} aria-pressed={state === 1} aria-label="Right answer" title="Right answer: teach retrieval these pages">
           <ThumbsUp className="w-3.5 h-3.5" />
         </button>
-        <button onClick={() => void rate(-1)} className={btn(state === -1)} title="Wrong or missed the point">
+        <button onClick={() => void rate(-1)} className={btn(state === -1)} aria-pressed={state === -1} aria-label="Wrong answer" title="Wrong or missed the point">
           <ThumbsDown className="w-3.5 h-3.5" />
         </button>
       </div>
@@ -1740,7 +1757,8 @@ export function AnswerFeedback({ questionId, onRated, question, citations }: {
       )}
       {testing && activeOrgId && question && (
         <Modal onClose={() => setTesting(false)} size="lg">
-          <div className="p-5">
+          <ModalHeader icon={FlaskConical} title="Make this a test case" onClose={() => setTesting(false)} />
+          <div className="p-5 overflow-y-auto">
             <AnswerTestEditor
               initial={{ question, expect: {}, tags: [], sourceQuestionId: questionId }}
               citations={citations ?? []}
@@ -1846,10 +1864,7 @@ function StageTracker({ stage, status, compact }: { stage: number; status: strin
   if (compact) {
     return (
       <div className="flex items-center gap-2 text-[11.5px] text-[var(--color-text-muted)]" role="status" aria-live="polite">
-        <span className="relative flex w-2 h-2">
-          <span className="motion-safe:animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-text-muted)] opacity-60" />
-          <span className="relative inline-flex rounded-full w-2 h-2 bg-[var(--color-text-muted)]" />
-        </span>
+        <Loader2 className="w-3 h-3 animate-spin shrink-0" />
         {STAGES[stage].label}<span className="text-[var(--color-text-faint)]">· {elapsed}s</span>
       </div>
     );
@@ -1860,7 +1875,7 @@ function StageTracker({ stage, status, compact }: { stage: number; status: strin
         {STAGES.map((s, i) => (
           <div key={s.label} className="flex-1 h-1 rounded-full overflow-hidden bg-[var(--color-surface-2)]">
             <div className={`h-full rounded-full transition-all duration-700 ease-out ${i < stage ? "w-full bg-[var(--color-text-muted)]"
-              : i === stage ? "w-full bg-[linear-gradient(90deg,#f97316_0%,#fdba74_50%,#f97316_100%)] bg-[length:200%_100%] motion-safe:animate-[shimmer_1.6s_linear_infinite]"
+              : i === stage ? "w-full bg-[var(--color-text)] motion-safe:animate-pulse"
               : "w-0"}`} />
           </div>
         ))}

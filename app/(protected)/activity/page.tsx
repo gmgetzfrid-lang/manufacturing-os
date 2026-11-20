@@ -18,7 +18,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
-import { Spinner } from "@/components/ui/Spinner";
+import LoadingBlock from "@/components/ui/LoadingBlock";
 import ViewTabs, { ACTIVITY_VIEWS } from "@/components/navigation/ViewTabs";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
@@ -47,16 +47,16 @@ const ACTION_VERBS: Record<string, { verb: string; emoji?: string; icon: React.C
   ARCHIVE_DOC:         { verb: "archived", icon: Trash2, tone: "slate" },
   DOC_SPLIT:           { verb: "split", icon: GitBranch, tone: "fuchsia" },
   DOC_MERGED:          { verb: "merged", icon: GitBranch, tone: "fuchsia" },
-  DOC_RENUMBERED:      { verb: "renumbered", icon: Pencil, tone: "amber" },
+  DOC_RENUMBERED:      { verb: "renumbered", icon: Pencil, tone: "slate" },
   HOLD_OPENED:         { verb: "opened a hold on", icon: AlertOctagon, tone: "rose" },
   HOLD_RELEASED:       { verb: "released the hold on", icon: Unlock, tone: "emerald" },
-  MILESTONE_CREATED:   { verb: "added a milestone to", icon: Zap, tone: "emerald" },
+  MILESTONE_CREATED:   { verb: "added a milestone to", icon: Zap, tone: "slate" },
   MILESTONE_COMPLETED: { verb: "completed a milestone for", icon: Zap, tone: "emerald" },
   MILESTONE_MISSED:    { verb: "missed a milestone for", icon: AlertOctagon, tone: "amber" },
   MILESTONE_BLOCKED:   { verb: "blocked a milestone for", icon: AlertOctagon, tone: "rose" },
-  EQUIPMENT_STATE_CHANGED: { verb: "changed the equipment state of", icon: Layers, tone: "amber" },
+  EQUIPMENT_STATE_CHANGED: { verb: "changed the equipment state of", icon: Layers, tone: "slate" },
   NOTE_CREATED:        { verb: "added a note to", icon: Pencil, tone: "slate" },
-  NOTE_DELETED:        { verb: "deleted a note from", icon: Trash2, tone: "rose" },
+  NOTE_DELETED:        { verb: "deleted a note from", icon: Trash2, tone: "slate" },
   PROJECT_CREATED:     { verb: "created project", icon: Briefcase, tone: "indigo" },
   MARKUP_REQUESTED:    { verb: "requested markups on", icon: FileSignature, tone: "violet" },
   DATA_EXPORT:         { verb: "exported data from", icon: Download, tone: "sky" },
@@ -205,8 +205,8 @@ export default function ActivityFeedPage() {
         <ViewTabs title="History" tabs={ACTIVITY_VIEWS} />
         <PageHeaderBar
           icon={Activity}
-          title="Activity Feed"
-          subtitle={<>What&apos;s been happening in the workspace, in plain language. For raw event detail, see the Audit Log.</>}
+          title="Activity feed"
+          subtitle={<>What happened in the workspace, in plain words. The Audit Log has the raw detail.</>}
           actions={
             <Button variant="secondary" size="sm" onClick={refresh} disabled={loading}>
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
@@ -215,7 +215,7 @@ export default function ActivityFeedPage() {
         />
 
         {error && (
-          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800 flex items-start gap-2">
+          <div role="alert" className="mb-4 border-l-2 border-red-500 pl-3 text-xs font-semibold text-red-700 dark:text-red-400 flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
           </div>
         )}
@@ -232,8 +232,8 @@ export default function ActivityFeedPage() {
                 ["Revisions", pulse.revisions, GitBranch, "text-[var(--color-text)] bg-[var(--color-surface-2)]"],
                 ["Checkouts", pulse.locks, Lock, "text-[var(--color-text)] bg-[var(--color-surface-2)]"],
                 ["Holds", pulse.holds, AlertOctagon, "text-rose-600 bg-rose-50"],
-                ["Milestones", pulse.milestones, Zap, "text-emerald-600 bg-emerald-50"],
-                ["Equipment", pulse.equipment, Layers, "text-amber-600 bg-amber-50"],
+                ["Milestones", pulse.milestones, Zap, "text-[var(--color-text)] bg-[var(--color-surface-2)]"],
+                ["Equipment", pulse.equipment, Layers, "text-[var(--color-text)] bg-[var(--color-surface-2)]"],
               ] as const).map(([label, n, Icon, cls]) => (
                 <div key={label} className="rounded-xl border border-[var(--color-border)] p-2.5">
                   <div className={`w-7 h-7 rounded-lg flex items-center justify-center mb-1.5 ${cls}`}><Icon className="w-3.5 h-3.5" /></div>
@@ -246,7 +246,7 @@ export default function ActivityFeedPage() {
         )}
 
         {loading && rows.length === 0 ? (
-          <div className="py-16 flex justify-center"><Spinner /></div>
+          <LoadingBlock what="activity" rows={6} />
         ) : rows.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-12 text-center text-sm italic text-[var(--color-text-faint)]">No activity recorded yet.</div>
         ) : (

@@ -170,7 +170,7 @@ export default function TopBar({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
         ) : (
           crumbs.map((c, i) => (
             <React.Fragment key={i}>
-              {i > 0 && <ChevronRight className="w-3.5 h-3.5 text-slate-300 shrink-0" />}
+              {i > 0 && <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />}
               {c.href ? (
                 <Link
                   href={c.href}
@@ -210,7 +210,7 @@ export default function TopBar({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
         >
           <Search className="w-3.5 h-3.5" />
           <span className="text-xs font-medium pr-1">Search</span>
-          <kbd className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-[var(--color-surface-2)] group-hover:bg-slate-200 rounded text-[11px] font-mono text-[var(--color-text-muted)] font-bold">
+          <kbd className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-[var(--color-surface-2)] group-hover:bg-[var(--color-border)] rounded text-[11px] font-mono text-[var(--color-text-muted)] font-bold">
             <Command className="w-2.5 h-2.5" />K
           </kbd>
         </button>
@@ -230,7 +230,7 @@ export default function TopBar({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
         {uid && <NotificationBell variant="header" />}
       </div>
 
-      {/* Subtle gradient underline that ties to the sidebar's orange edge */}
+      {/* Hairline under the bar */}
       <div className="absolute inset-x-0 bottom-0 h-px pointer-events-none bg-[var(--color-surface-2)]" />
     </header>
   );

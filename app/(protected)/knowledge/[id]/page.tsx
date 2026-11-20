@@ -17,8 +17,12 @@ import { useRole } from "@/components/providers/RoleContext";
 import { useToast } from "@/components/providers/ToastProvider";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
-import { Spinner } from "@/components/ui/Spinner";
 import { appConfirm } from "@/components/providers/DialogProvider";
+import LoadingBlock from "@/components/ui/LoadingBlock";
+import MoreMenu from "@/components/ui/MoreMenu";
+import { useFileDrag } from "@/hooks/useFileDrag";
+import { useDraft } from "@/hooks/useDraft";
+import { tryUpload } from "@/lib/uploadRetry";
 import {
   getKnowledgeLibrary, listKnowledgeDocuments, addKnowledgeDocument,
   ingestKnowledgeDocument, deleteKnowledgeDocuments, deleteKnowledgeLibrary,
@@ -78,6 +82,7 @@ export default function KnowledgeLibraryPage() {
   // collapsed by default, live counts always in the header.
   const [docsOpen, setDocsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Opening the library quietly advances any pending meaning-index build
   // server-side (fire-and-forget) — large builds no longer depend on a tab.
@@ -87,7 +92,8 @@ export default function KnowledgeLibraryPage() {
 
   const fileInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
-  const [dragOver, setDragOver] = useState(false);
+  // Files whose upload failed in a batch: each keeps its own Try again.
+  const [failedUploads, setFailedUploads] = useState<Array<{ file: File; error: string }>>([]);
   // Multi-select on the shelf: remove many at once instead of one by one.
   const [selected, setSelected] = useState<Set<string>>(new Set());
   // A long removal (a big library, many documents) shows progress in place.
@@ -134,15 +140,22 @@ export default function KnowledgeLibraryPage() {
   }, [searchParams, docs]);
 
   const refresh = useCallback(async () => {
-    const [lib, documents, libLinks] = await Promise.all([
-      getKnowledgeLibrary(libraryId),
-      listKnowledgeDocuments(libraryId),
-      listLibraryLinks(libraryId),
-    ]);
-    setLibrary(lib);
-    setDocs(documents);
-    setLinks(libLinks);
-    setLoading(false);
+    try {
+      const [lib, documents, libLinks] = await Promise.all([
+        getKnowledgeLibrary(libraryId),
+        listKnowledgeDocuments(libraryId),
+        listLibraryLinks(libraryId),
+      ]);
+      setLibrary(lib);
+      setDocs(documents);
+      setLinks(libLinks);
+      setLoadError(null);
+    } catch (e) {
+      // A failed read says so, instead of "not found" or an empty shelf.
+      setLoadError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
   }, [libraryId]);
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -222,70 +235,101 @@ export default function KnowledgeLibraryPage() {
   // Uploads go up THREE at a time and only queue the document; the
   // library's indexer (above) drains the queue. A dropped folder of 300 PDFs
   // used to upload-then-index one file at a time with a toast per file.
+  // One file up and on the shelf (queued, not indexed): the step that's safe
+  // to repeat, so the corner card's Try again can run it with the same file.
+  // Indexing runs after, once, on the record that now exists.
+  const upOne = (file: File, onUpload?: (p: { percent: number }) => void) => {
+    if (!activeOrgId || !uid) return Promise.reject(new Error("Pick a workspace first."));
+    const orgId = activeOrgId, userId = uid;
+    return tryUpload(file.name, () => addKnowledgeDocument({
+      orgId, libraryId, file, index: false,
+      userId, userName: userEmail ?? "Member", onUpload,
+    }), {
+      onRetried: () => {
+        setFailedUploads((fs) => fs.filter((f) => f.file !== file));
+        void refresh();
+      },
+    });
+  };
+  const retryUpload = async (file: File) => {
+    setFailedUploads((fs) => fs.filter((f) => f.file !== file));
+    try { await upOne(file); showToast({ type: "success", title: `${file.name} uploaded. Indexing it now.` }); }
+    catch (e) { setFailedUploads((fs) => [...fs, { file, error: (e as Error).message }]); }
+    await refresh();
+  };
+
   const onFiles = async (input: File[] | FileList | null) => {
     if (!input || !activeOrgId || !uid) return;
     const all = Array.from(input);
     const pdfs = all.filter((f) => /\.pdf$/i.test(f.name));
     const skipped = all.length - pdfs.length;
     if (pdfs.length === 0) {
-      showToast({ type: "error", title: skipped ? `Only PDF files can be indexed - ${skipped} other file(s) skipped.` : "No files." });
+      showToast({ type: "error", title: skipped ? `Only PDF files can be indexed. ${skipped} other file(s) skipped.` : "No files." });
       return;
     }
     if (pdfs.length === 1) {
       // One file: upload and index it right here, with page progress.
       const file = pdfs[0];
+      let doc: KnowledgeDocument | null = null;
       try {
         setUploadState({ name: file.name, phase: "Uploading…" });
-        await addKnowledgeDocument({
-          orgId: activeOrgId, libraryId, file,
-          userId: uid, userName: userEmail ?? "Member",
-          onUpload: (p) => setUploadState({ name: file.name, phase: `Uploading… ${Math.round(p.percent)}%` }),
-          onIndex: (indexed, total) => {
-            setUploadState({ name: file.name, phase: `Indexing… ${indexed}${total ? ` / ${total}` : ""} pages` });
-            void listKnowledgeDocuments(libraryId).then(setDocs);
-          },
-        });
-        showToast({ type: "success", title: `${file.name} indexed and searchable.` });
+        doc = await upOne(file, (p) => setUploadState({ name: file.name, phase: `Uploading… ${Math.round(p.percent)}%` }));
       } catch (e) {
-        showToast({ type: "error", title: `${file.name}: ${(e as Error).message}` });
+        setFailedUploads((fs) => [...fs, { file, error: (e as Error).message }]);
+      }
+      if (doc) {
+        // Say what it read, not just that it finished.
+        let read = 0;
+        let of: number | null = null;
+        try {
+          await ingestKnowledgeDocument(doc.id, (indexed, total) => {
+            read = indexed; of = total;
+            setUploadState({ name: file.name, phase: `Reading… ${indexed}${total ? ` / ${total}` : ""} pages` });
+            void listKnowledgeDocuments(libraryId).then(setDocs, () => undefined);
+          });
+          showToast({ type: "success", title: `Read ${read}${of ? ` of ${of}` : ""} page${(of ?? read) === 1 ? "" : "s"} of ${file.name}. It's searchable now.` });
+        } catch (e) {
+          showToast({ type: "error", title: `${file.name} is on the shelf but wasn't fully read: ${(e as Error).message}. Use Resume indexing on its row.` });
+        }
       }
     } else {
       let done = 0;
-      const failed: string[] = [];
+      const failed: Array<{ file: File; error: string }> = [];
       const queue = [...pdfs];
       setUploadState({ name: `${pdfs.length} PDFs`, phase: `Uploading 0 of ${pdfs.length}…` });
       const worker = async () => {
         for (let file = queue.shift(); file; file = queue.shift()) {
-          try {
-            await addKnowledgeDocument({
-              orgId: activeOrgId, libraryId, file, index: false,
-              userId: uid, userName: userEmail ?? "Member",
-            });
-          } catch { failed.push(file.name); }
+          try { await upOne(file); }
+          catch (e) { failed.push({ file, error: (e as Error).message }); }
           done++;
           if (mountedRef.current) setUploadState({ name: `${pdfs.length} PDFs`, phase: `Uploading ${done} of ${pdfs.length}…` });
         }
       };
       await Promise.all(Array.from({ length: 3 }, () => worker()));
+      if (failed.length) setFailedUploads((fs) => [...fs, ...failed]);
       showToast(failed.length
-        ? { type: "error", title: `${pdfs.length - failed.length} uploaded; ${failed.length} failed: ${failed.slice(0, 3).join(", ")}${failed.length > 3 ? "…" : ""}` }
-        : { type: "success", title: `${pdfs.length} PDFs uploaded - indexing them now.` });
+        ? { type: "error", title: `${pdfs.length - failed.length} uploaded; ${failed.length} didn't. Each has Try again on the shelf.` }
+        : { type: "success", title: `${pdfs.length} PDFs uploaded. Indexing them now.` });
     }
-    if (skipped > 0) showToast({ type: "info", title: `${skipped} non-PDF file(s) skipped - only PDFs can be indexed.` });
+    if (skipped > 0) showToast({ type: "info", title: `${skipped} non-PDF file(s) skipped. Only PDFs can be indexed.` });
     setUploadState(null);
     await refresh();
   };
 
+  // The drop box answers back while files are over it. Folders need the
+  // drop's items (read here, before the event ends), so the hook only
+  // lights the box; the files are collected below.
+  const docsDrag = useFileDrag(() => undefined, !isController || uploadState !== null);
   const onDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragOver(false);
-    if (!isController || uploadState !== null) return;
-    const { promise } = collectDroppedFiles(e.dataTransfer.items);
-    setDocsOpen(true);
-    void promise.then(
-      (files) => onFiles(files.map((f) => f.file)),
-      (err) => showToast({ type: "error", title: (err as Error).message }),
-    );
+    if (isController && uploadState === null && Array.from(e.dataTransfer?.types ?? []).includes("Files")) {
+      const { promise } = collectDroppedFiles(e.dataTransfer.items);
+      setDocsOpen(true);
+      void promise.then(
+        (files) => onFiles(files.map((f) => f.file)),
+        (err) => showToast({ type: "error", title: (err as Error).message }),
+      );
+    }
+    docsDrag.bind.onDrop(e);
   };
 
   const resumeIndex = async (doc: KnowledgeDocument) => {
@@ -387,12 +431,18 @@ export default function KnowledgeLibraryPage() {
     return next;
   });
 
-  if (loading) return <PageShell><div className="py-16 text-center"><Spinner /></div></PageShell>;
+  if (loading) return <PageShell><LoadingBlock what="the library" rows={6} /></PageShell>;
   if (!library) {
     return (
       <PageShell>
         <div className="py-16 text-center text-sm text-[var(--color-text-muted)]">
-          Library not found. <button className="underline" onClick={() => router.push("/knowledge")}>Back to Knowledge</button>
+          {loadError
+            ? <p role="alert" className="font-semibold text-red-700 dark:text-red-400">Couldn&apos;t open this library: {loadError}</p>
+            : <p>This library isn&apos;t there. It may have been deleted.</p>}
+          <div className="mt-3 flex justify-center gap-2">
+            {loadError && <Button variant="secondary" onClick={() => { setLoading(true); void refresh(); }}><RefreshCw className="w-4 h-4" /> Try again</Button>}
+            <Button variant="secondary" onClick={() => router.push("/knowledge")}>Go to Knowledge</Button>
+          </div>
         </div>
       </PageShell>
     );
@@ -405,7 +455,7 @@ export default function KnowledgeLibraryPage() {
     <PageShell>
       <PageHeaderBar
         icon={BookOpen}
-        eyebrow={<button onClick={() => router.push("/knowledge")} className="inline-flex items-center gap-1 hover:underline"><ArrowLeft className="w-3 h-3" /> Knowledge</button>}
+        eyebrow={<button onClick={() => router.push("/knowledge")} aria-label="Back to Knowledge" className="inline-flex items-center gap-1 hover:underline"><ArrowLeft className="w-3 h-3" /> Knowledge</button>}
         title={library.name}
         subtitle={library.description || `${readyDocs} of ${docs.length} documents indexed and searchable`}
         actions={isController ? (
@@ -413,9 +463,9 @@ export default function KnowledgeLibraryPage() {
             <Button variant="secondary" onClick={() => setShowAiSetup(true)}>
               <Wand2 className="w-4 h-4" /> Library AI setup
             </Button>
-            <Button variant="secondary" onClick={() => void removeLibrary()} disabled={removing !== null}>
-              <Trash2 className="w-4 h-4" /> Delete library
-            </Button>
+            <MoreMenu iconOnly label="More" items={[
+              { icon: <Trash2 className="w-4 h-4" />, label: "Delete library", tone: "bad", onClick: () => { if (removing === null) void removeLibrary(); } },
+            ]} />
           </div>
         ) : undefined}
       />
@@ -428,20 +478,26 @@ export default function KnowledgeLibraryPage() {
               {l.linkedLibraryName} · REFERENCE
             </span>
           ))}
-          <span className="italic">- this library governs; answers say which document won.</span>
+          <span className="italic">This library governs; answers say which document won.</span>
         </div>
       )}
 
+      {loadError && (
+        <p role="alert" className="mb-4 border-l-2 border-red-500 pl-3 text-xs font-semibold text-red-700 dark:text-red-400">
+          Couldn&apos;t refresh the library: {loadError} <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
+        </p>
+      )}
+
       {removing && (
-        <div className="mb-4 rounded-xl border border-rose-300 dark:border-rose-800 bg-rose-50/60 dark:bg-rose-950/20 px-3 py-2.5 text-xs">
+        <div className="mb-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2.5 text-xs">
           <div className="flex items-center gap-2">
-            <Loader2 className="w-4 h-4 animate-spin text-rose-600 shrink-0" />
+            <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" />
             <span className="font-bold">{removing.label}…</span>
             <span className="text-[var(--color-text-muted)] ml-auto">{removing.done} of {removing.total} documents removed</span>
           </div>
           {removing.total > 0 && (
             <div className="mt-1.5 h-1 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-              <div className="h-full bg-rose-500 transition-all" style={{ width: `${Math.round((removing.done / removing.total) * 100)}%` }} />
+              <div className="h-full bg-[var(--color-text-muted)] transition-all" style={{ width: `${Math.round((removing.done / removing.total) * 100)}%` }} />
             </div>
           )}
         </div>
@@ -471,11 +527,11 @@ export default function KnowledgeLibraryPage() {
         {/* The whole section is a drop target: files or folders (every PDF
             inside, any depth), straight from the desktop. */}
         <div
-          onDragOver={(e) => { if (isController && e.dataTransfer.types.includes("Files")) { e.preventDefault(); setDragOver(true); } }}
-          onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragOver(false); }}
+          {...docsDrag.bind}
           onDrop={onDrop}
-          className={dragOver ? "rounded-2xl outline-2 outline-dashed outline-orange-400 outline-offset-4 bg-[var(--color-accent-soft)] dark:bg-[var(--color-accent-soft)]" : undefined}
+          className={docsDrag.over ? `rounded-2xl ${docsDrag.ring}` : undefined}
         >
+          {docsDrag.over && <p className="mb-2 text-center text-sm font-bold text-[var(--color-text)]">{docsDrag.say}: PDFs and whole folders</p>}
           {activeOrgId && (
             <SourcesPanel orgId={activeOrgId} libraryId={libraryId}
               isController={isController} onChanged={() => void refresh()} />
@@ -531,10 +587,10 @@ export default function KnowledgeLibraryPage() {
                   }} />
                 <div className="flex items-center gap-1.5">
                   <Button size="sm" variant="secondary" onClick={() => folderInput.current?.click()} disabled={uploadState !== null}
-                    title="Pick a folder - every PDF inside it, in any subfolder, is added">
+                    title="Pick a folder: every PDF inside it, in any subfolder, is added">
                     <FolderUp className="w-3.5 h-3.5" /> Add folder
                   </Button>
-                  <Button size="sm" onClick={() => fileInput.current?.click()} disabled={uploadState !== null}>
+                  <Button size="sm" variant="secondary" onClick={() => fileInput.current?.click()} disabled={uploadState !== null}>
                     <Upload className="w-3.5 h-3.5" /> Add PDFs
                   </Button>
                 </div>
@@ -549,20 +605,31 @@ export default function KnowledgeLibraryPage() {
               <span className="text-[var(--color-text-muted)] shrink-0 ml-auto">{uploadState.phase}</span>
             </div>
           )}
+          {failedUploads.length > 0 && (
+            <ul className="mb-2 space-y-1">
+              {failedUploads.map(({ file, error }) => (
+                <li key={`${file.name}-${file.size}-${file.lastModified}`} className="flex items-center gap-2 border-l-2 border-red-500 pl-2 text-xs">
+                  <span className="min-w-0 flex-1 truncate"><b className="text-[var(--color-text)]">{file.name}</b> <span className="text-[var(--color-text-muted)]">({(file.size / 1024 / 1024).toFixed(1)} MB)</span> <span className="text-red-700 dark:text-red-400 font-semibold">didn&apos;t upload: {error}</span></span>
+                  <button type="button" onClick={() => void retryUpload(file)} disabled={uploadState !== null} className="shrink-0 h-7 px-2.5 rounded-lg border border-[var(--color-border)] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Try again</button>
+                  <button type="button" onClick={() => setFailedUploads((fs) => fs.filter((f) => f.file !== file))} aria-label={`Dismiss ${file.name}`} className="shrink-0 px-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]">×</button>
+                </li>
+              ))}
+            </ul>
+          )}
           {autoIndexing && (
             <div className="mb-2 rounded-xl border border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] px-3 py-2.5 text-xs">
               <div className="flex items-center gap-2">
                 <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" />
                 <span className="font-bold truncate">Indexing {autoIndexing.name}</span>
                 <span className="text-[var(--color-text-muted)] shrink-0 ml-auto">
-                  {autoIndexing.remaining} in queue - continues anywhere in the app
+                  {autoIndexing.remaining} in queue. Keeps going anywhere in the app.
                 </span>
               </div>
               {(autoIndexing.visionPages ?? 0) > 0 && (
                 <div className="mt-1 flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
                   <Eye className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
                   <b className="text-[var(--color-text)]">{autoIndexing.visionPages}</b> page(s) had no text
-                  layer - read by AI vision (billed to your key, slower per page).
+                  layer, so AI vision read them (billed to your key, slower per page).
                 </div>
               )}
               {autoIndexing.visionSkipReason && (
@@ -581,7 +648,7 @@ export default function KnowledgeLibraryPage() {
           {!docsOpen && docs.length > 0 ? null : docs.length === 0 && !uploadState ? (
             <div className="rounded-xl border border-dashed border-[var(--color-border)] p-8 text-center text-xs text-[var(--color-text-muted)]">
               <FileText className="w-6 h-6 mx-auto mb-2 opacity-50" />
-              {isController ? "Drag PDFs or whole folders here to build the shelf." : "No documents yet - Admin or Doc Control can add PDFs."}
+              {isController ? "Drag PDFs or whole folders here to build the shelf." : "No documents yet. Admin or Doc Control can add PDFs."}
             </div>
           ) : (
             <>
@@ -609,14 +676,14 @@ export default function KnowledgeLibraryPage() {
               <div className="relative flex-1 min-w-[200px]">
                 <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
                 <input id="kdoc-search" value={docQuery} onChange={(e) => { setDocQuery(e.target.value); setDocLimit(200); }}
-                  placeholder={`Search ${docs.length.toLocaleString()} documents - "EP 5-2-3", "piping specs"…`}
-                  className="w-full h-8 pl-8 pr-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-accent)]" />
+                  placeholder={`Search ${docs.length.toLocaleString()} documents: "EP 5-2-3", "piping specs"…`}
+                  className="w-full h-8 pl-8 pr-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-border-strong)]" />
               </div>
               <div className="flex items-center gap-1 flex-wrap">
                 {([
                   ["all", "All"], ["ready", "Fully indexed"], ["partial", "Partly read"], ["working", "In progress"], ["failed", "Failed"], ["uploaded", "Uploaded here"],
                 ] as const).filter(([k]) => k === "all" || docGroups[k] > 0).map(([k, label]) => (
-                  <button key={k} onClick={() => { setDocFilter(k); setDocLimit(200); }}
+                  <button key={k} onClick={() => { setDocFilter(k); setDocLimit(200); }} aria-pressed={docFilter === k}
                     className={`h-7 px-2 rounded-lg text-[11px] font-black border transition-colors ${docFilter === k
                       ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]"
                       : `border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] ${k === "failed" ? "text-rose-700 dark:text-rose-400" : k === "partial" ? "text-amber-700 dark:text-amber-400" : ""}`}`}>
@@ -665,13 +732,13 @@ export default function KnowledgeLibraryPage() {
                       )}
                       {doc.status === "ready" && !((doc.pageCount ?? 0) > 0 && doc.pagesIndexed >= (doc.pageCount ?? 0)) && (
                         <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-400 font-black" title="Reading stopped before the last page. Repair in Library health, at the top of this page, resumes it - pages already read aren't paid for again.">
-                          <AlertTriangle className="w-3 h-3" /> {doc.pagesIndexed} of {doc.pageCount ?? "?"} pages indexed - partly read
+                          <AlertTriangle className="w-3 h-3" /> {doc.pagesIndexed} of {doc.pageCount ?? "?"} pages indexed, partly read
                         </span>
                       )}
                       {doc.status === "indexing" && <span className="text-amber-700 dark:text-amber-400 font-black">Indexing {doc.pagesIndexed}{doc.pageCount ? ` / ${doc.pageCount}` : ""} pages…</span>}
                       {doc.status === "pending" && <span>Waiting to index</span>}
-                      {doc.status === "stale" && <span className="text-amber-700 dark:text-amber-400 font-black">New revision published - waiting to re-index</span>}
-                      {doc.status === "error" && <span className="text-rose-700 dark:text-rose-400 font-black" title={doc.error ?? undefined}>Indexing failed - {doc.error?.slice(0, 80)}</span>}
+                      {doc.status === "stale" && <span className="text-amber-700 dark:text-amber-400 font-black">New revision published, waiting to re-index</span>}
+                      {doc.status === "error" && <span className="text-rose-700 dark:text-rose-400 font-black" title={doc.error ?? undefined}>Indexing failed: {doc.error?.slice(0, 80)}</span>}
                     </div>
                     {doc.status === "indexing" && doc.pageCount ? (
                       <div className="mt-1 h-1 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
@@ -682,12 +749,13 @@ export default function KnowledgeLibraryPage() {
                   {isController && doc.status !== "ready" && (
                     <button onClick={() => void resumeIndex(doc)} disabled={reindexing !== null}
                       title="Resume indexing"
+                      aria-label={`Resume indexing ${doc.name}`}
                       className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
                       {reindexing === doc.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
                     </button>
                   )}
                   {isController && !doc.sourceDocumentId && (
-                    <button onClick={() => void removeDocs([doc.id])} title="Remove" disabled={removing !== null}
+                    <button onClick={() => void removeDocs([doc.id])} title="Remove" aria-label={`Remove ${doc.name}`} disabled={removing !== null}
                       className="p-1.5 rounded-lg hover:bg-rose-500/10 text-[var(--color-text-muted)] hover:text-rose-600">
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -698,7 +766,7 @@ export default function KnowledgeLibraryPage() {
             {shownDocs.length > docLimit && (
               <button onClick={() => setDocLimit((n) => n + 500)}
                 className="mt-1.5 w-full h-8 rounded-lg border border-[var(--color-border)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
-                Showing {docLimit.toLocaleString()} of {shownDocs.length.toLocaleString()} - show more
+                Showing {docLimit.toLocaleString()} of {shownDocs.length.toLocaleString()}. Show more
               </button>
             )}
             </>
@@ -751,20 +819,24 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
   orgId: string; libraryId: string; libraryName: string; readyDocs: number; docsTotal: number;
 }) {
   const [recent, setRecent] = useState<ChatThread[] | null>(null);
+  const [recentError, setRecentError] = useState<string | null>(null);
   const [instructionCount, setInstructionCount] = useState(0);
   useEffect(() => {
     let cancelled = false;
     void listThreads(orgId, { libraryId, limit: 4 }).then(
-      (ts) => { if (!cancelled) setRecent(ts); },
-      () => { if (!cancelled) setRecent([]); },
+      (ts) => { if (!cancelled) { setRecent(ts); setRecentError(null); } },
+      (e: unknown) => { if (!cancelled) { setRecent([]); setRecentError(e instanceof Error ? e.message : String(e)); } },
     );
     void import("@/lib/aiInstructions").then((m) =>
-      m.countActiveInstructions(orgId, "knowledge").then((n) => { if (!cancelled) setInstructionCount(n); }));
+      m.countActiveInstructions(orgId, "knowledge").then((n) => { if (!cancelled) setInstructionCount(n); }))
+      .catch(() => undefined); // only a count beside the heading
     return () => { cancelled = true; };
   }, [orgId, libraryId]);
   const askHref = `/assistant?library=${libraryId}`;
   const router = useRouter();
   const [q, setQ] = useState("");
+  // A half-typed question waits here on this device.
+  const askDraft = useDraft<string>(`library-ask:${libraryId}`, q, setQ, (v) => !v.trim());
   // The same choices as the chat's prompt bar — they travel with the
   // question into the chat, so asking here is never the lesser way to ask.
   const skills = useAnswerSkills(orgId);
@@ -779,13 +851,14 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
     if (mode) params.set("mode", mode);
     if (web) params.set("web", "1");
     if (picked) params.set("skills", picked.join(","));
+    askDraft.clear();
     router.push(`/assistant?${params.toString()}`);
   };
   return (
-    <div className="rounded-2xl border-2 border-[var(--color-border)] dark:border-[var(--color-border)] p-5 mb-6 bg-[var(--color-surface-2)]">
+    <div className="rounded-2xl border border-[var(--color-border)] p-5 mb-6 bg-[var(--color-surface-2)]">
       <div className="flex items-center gap-3 flex-wrap">
         <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 bg-[var(--color-text)]">
-          <Sparkles className="w-4 h-4 text-white" />
+          <Sparkles className="w-4 h-4 text-[var(--color-surface)]" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="text-sm font-black text-[var(--color-text)]">Ask this library</div>
@@ -799,7 +872,7 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
           </div>
         </div>
         <Link href={askHref}
-          className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] transition-colors">
+          className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-xs font-black hover:bg-[var(--color-surface-2)] transition-colors">
           <MessageSquare className="w-4 h-4" /> All conversations <ArrowRight className="w-3.5 h-3.5" />
         </Link>
       </div>
@@ -808,7 +881,7 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
       <form onSubmit={ask} className="mt-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] focus-within:border-[var(--color-border-strong)]">
         <textarea id="library-ask" value={q} onChange={(e) => setQ(e.target.value)} disabled={readyDocs === 0} rows={2}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } }}
-          placeholder={readyDocs === 0 ? "Asking unlocks when the first document is indexed" : "Ask this library - e.g. \"What piping spec should I use for 150 class sour gas?\""}
+          placeholder={readyDocs === 0 ? "Asking unlocks when the first document is indexed" : "Ask this library, e.g. \"What piping spec should I use for 150 class sour gas?\""}
           className="w-full resize-none bg-transparent px-4 pt-3 pb-1 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none disabled:opacity-60" />
         <div className="px-4 pb-1"><SkillHint skills={skills} picked={picked} question={q} answerMode={mode} /></div>
         <div className="flex items-center gap-1.5 px-2 pb-2">
@@ -824,9 +897,12 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
       {readyDocs === 0 && (
         <p className="mt-3 text-[11px] text-amber-700 dark:text-amber-400 font-bold">
           {docsTotal > 0
-            ? "Documents are indexing below - asking unlocks as soon as the first one finishes."
-            : "Nothing indexed yet - link a source or add PDF documents below first."}
+            ? "Documents are indexing below. Asking unlocks as soon as the first one finishes."
+            : "Nothing indexed yet. Link a source or add PDFs below first."}
         </p>
+      )}
+      {recentError && (
+        <p role="alert" className="mt-3 text-[11px] font-semibold text-red-700 dark:text-red-400">Couldn&apos;t load the recent conversations: {recentError}</p>
       )}
       {recent && recent.length > 0 && (
         <div className="mt-4">

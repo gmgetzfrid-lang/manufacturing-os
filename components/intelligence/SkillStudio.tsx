@@ -22,6 +22,8 @@ import {
 import { supabase } from "@/lib/supabase";
 import { createLinkRule, testSkillPatterns, type LinkRuleVisibility } from "@/lib/linkRules";
 import { createAnswerSkill } from "@/lib/answerSkills";
+import StepPath from "@/components/ui/StepPath";
+import { useDraft } from "@/hooks/useDraft";
 
 export type StudioKind = "connection" | "reasoning";
 
@@ -48,6 +50,17 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
   const [visibility, setVisibility] = useState<LinkRuleVisibility>("org");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Everything typed waits on this device until the skill is published.
+  type StudioDraft = { describeText: string; name: string; description: string; instructions: string; patternsRaw: string; sample: string };
+  const studioDraft: StudioDraft = useMemo(() => ({ describeText, name, description, instructions, patternsRaw, sample }), [describeText, name, description, instructions, patternsRaw, sample]);
+  const saved = useDraft<StudioDraft>(`skill:new:${orgId}:${kind}`, studioDraft,
+    (d) => {
+      setDescribeText(d.describeText ?? ""); setName(d.name ?? ""); setDescription(d.description ?? "");
+      setInstructions(d.instructions ?? ""); setPatternsRaw(d.patternsRaw ?? ""); setSample(d.sample ?? "");
+      if (d.name || d.instructions || d.patternsRaw) setPhase("edit");
+    },
+    (d) => !Object.values(d).some((v) => (v ?? "").trim()));
 
   const patterns = useMemo(
     () => patternsRaw.split("\n").map((p) => p.trim()).filter(Boolean),
@@ -98,19 +111,26 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
       } else {
         await createLinkRule({ orgId, name, description, patterns, visibility, userId, userName });
       }
+      saved.clear();
       onCreated();
     } catch (e) { setError((e as Error).message); }
     finally { setSaving(false); }
   };
 
+  // Escape closes, as the X does.
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !saving && !drafting) onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, saving, drafting]);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
       <div className="w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl"
         onClick={(e) => e.stopPropagation()}>
-        <div className="h-1.5 motion-safe:animate-[shimmer_6s_linear_infinite] bg-[var(--color-text)]" style={{ backgroundSize: "200% 100%" }} />
         <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)]">
           {phase === "edit" && (
-            <button onClick={() => setPhase("describe")} title="Back to the description"
+            <button onClick={() => setPhase("describe")} title="Back to the description" aria-label="Back"
               className="p-1 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
               <ArrowLeft className="w-4 h-4" />
             </button>
@@ -125,17 +145,20 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
             <div className="text-[11px] text-[var(--color-text-muted)]">
               {phase === "describe"
                 ? (kind === "reasoning"
-                  ? "Teach the AI a discipline for HOW it answers - when it applies, and what it must do."
+                  ? "Teach the AI a discipline for how it answers: when it applies, and what it must do."
                   : "Teach the engine how YOUR facility's documents reference each other.")
                 : (kind === "reasoning"
-                  ? "The pack must open with APPLIES WHEN - it rides every question and gates itself."
-                  : "The tester runs the exact compiler the engine runs - what matches here is what it will match.")}
+                  ? "The pack must open with APPLIES WHEN. It rides every question and gates itself."
+                  : "The tester runs the same matcher the engine runs: what matches here is what it will match.")}
             </div>
           </div>
           <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
             <X className="w-4 h-4" />
           </button>
         </div>
+
+        <StepPath className="px-4 pt-3" steps={["Describe it", kind === "reasoning" ? "Refine and publish" : "Prove and publish"]}
+          current={phase === "describe" ? 0 : 1} onPick={() => setPhase("describe")} />
 
         {phase === "describe" ? (
           <div className="p-4 space-y-3">
@@ -149,7 +172,7 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
               className="w-full px-3 py-2.5 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm leading-relaxed"
             />
             {error && (
-              <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 dark:bg-rose-950/40 px-2.5 py-2 text-[11px] text-rose-700 dark:text-rose-300">
+              <div role="alert" className="flex items-start gap-2 border-l-2 border-rose-500 pl-2.5 text-[11px] text-rose-700 dark:text-rose-300">
                 <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
               </div>
             )}
@@ -165,13 +188,13 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
               </button>
             </div>
             <p className="text-[11px] text-[var(--color-text-faint)]">
-              Drafting runs on your own AI key and lands in an editor - you publish, never the model.
+              Drafting runs on your own AI key and lands in an editor. You publish it, never the model.
             </p>
           </div>
         ) : (
           <div className="p-4 space-y-3">
             {draftNote && (
-              <div className="text-[11px] text-amber-700 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 rounded-lg px-2.5 py-1.5">{draftNote}</div>
+              <div className="text-[11px] text-amber-700 dark:text-amber-300 border-l-2 border-amber-500 pl-2.5">{draftNote}</div>
             )}
             <div>
               <label className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Name</label>
@@ -193,7 +216,7 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
             {kind === "reasoning" && (
               <div>
                 <label className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
-                  The discipline - must open with when it applies
+                  The discipline (open with when it applies)
                 </label>
                 <textarea value={instructions} onChange={(e) => setInstructions(e.target.value)}
                   placeholder={"APPLIES WHEN the question asks about torque values. Otherwise ignore this skill.\n- State the lubrication condition the value assumes.\n- Warn when the passage does not say."}
@@ -201,7 +224,7 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
                   className="mt-1 w-full px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm leading-relaxed" />
                 {instructions.trim().length > 0 && !/applies when/i.test(instructions) && (
                   <div className="mt-1 text-[11px] text-amber-700">
-                    Start with &ldquo;APPLIES WHEN …&rdquo; - the pack rides every question and must gate itself.
+                    Start with &ldquo;APPLIES WHEN …&rdquo;. The pack rides every question and must gate itself.
                   </div>
                 )}
               </div>
@@ -210,7 +233,7 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
             {kind === "connection" && (
             <div>
               <label className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
-                Patterns - one per line (regular expressions)
+                Patterns, one per line (regular expressions)
               </label>
               <textarea value={patternsRaw} onChange={(e) => setPatternsRaw(e.target.value)}
                 placeholder={"\\bWO-\\d{5}\\b\n\\bPERMIT-\\d{4}\\b"}
@@ -249,13 +272,13 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
             <div>
               <label className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Sharing</label>
               <div className="mt-1 flex items-center gap-2">
-                <button type="button" onClick={() => setVisibility("org")}
+                <button type="button" onClick={() => setVisibility("org")} aria-pressed={visibility === "org"}
                   className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border text-[11px] font-black ${visibility === "org"
                     ? "border-[var(--color-text)] text-[var(--color-surface)] bg-[var(--color-text)] dark:bg-[var(--color-surface-2)]"
                     : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`}>
                   <Users className="w-3.5 h-3.5" /> Share org-wide
                 </button>
-                <button type="button" onClick={() => setVisibility("private")}
+                <button type="button" onClick={() => setVisibility("private")} aria-pressed={visibility === "private"}
                   className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border text-[11px] font-black ${visibility === "private"
                     ? "border-[var(--color-text)] text-[var(--color-surface)] bg-[var(--color-text)] dark:bg-[var(--color-surface-2)]"
                     : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`}>
@@ -264,13 +287,13 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
               </div>
               <p className="mt-1 text-[11px] text-[var(--color-text-faint)]">
                 {kind === "reasoning"
-                  ? "Org-wide rides every member's questions; private rides only yours. It shapes reasoning and reporting - never the citation or safety rules."
-                  : "Either way its findings only ever QUEUE for review - custom skills never apply links by themselves."}
+                  ? "Org-wide rides every member's questions; private rides only yours. It shapes reasoning and reporting, never the citation or safety rules."
+                  : "Either way its findings only queue for review. Custom skills never apply links by themselves."}
               </p>
             </div>
 
             {error && (
-              <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 dark:bg-rose-950/40 px-2.5 py-2 text-[11px] text-rose-700 dark:text-rose-300">
+              <div role="alert" className="flex items-start gap-2 border-l-2 border-rose-500 pl-2.5 text-[11px] text-rose-700 dark:text-rose-300">
                 <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
               </div>
             )}

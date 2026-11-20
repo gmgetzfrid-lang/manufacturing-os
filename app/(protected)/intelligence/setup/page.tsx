@@ -31,23 +31,23 @@ export default function IntelligenceSetupPage() {
     return () => { cancelled = true; };
   }, [activeOrgId, reloadTick]);
 
-  if (!activeOrgId) return <div className="p-8 text-sm text-slate-500">Select a workspace to continue.</div>;
+  if (!activeOrgId) return <div className="p-8 text-sm text-[var(--color-text-muted)]">Pick a workspace to continue.</div>;
 
   return (
     <PageShell>
       <ViewTabs title="Intelligence" tabs={INTELLIGENCE_VIEWS} />
       <PageHeaderBar
         title="AI setup"
-        subtitle="Your keys, your money, your caps - plus the org-level teaching surfaces"
+        subtitle={data ? (data.personal?.keyLast4 ? "Your key is saved. Caps and models are below." : "Add your AI key to start asking questions.") : "Your keys, spending caps and models."}
         icon={Settings2}
       />
 
       <div className="max-w-2xl space-y-4">
         {loadError && (
-          <div className="rounded-xl border border-rose-300 bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-xs font-bold text-rose-700 dark:text-rose-300">{loadError}</div>
+          <p role="alert" className="border-l-2 border-rose-500 pl-3 text-xs font-bold text-rose-700 dark:text-rose-300">Couldn&apos;t load your AI setup: {loadError}</p>
         )}
         {!data && !loadError && (
-          <div className="py-10 text-center text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin inline" /></div>
+          <div className="py-10 text-center text-sm text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin inline mr-2" /> Loading your AI setup…</div>
         )}
         {data && (
           <>
@@ -68,7 +68,7 @@ export default function IntelligenceSetupPage() {
           {isController && (
             <SetupLink href="/admin/ai-instructions" icon={GraduationCap}
               title="AI instructions (playbooks)"
-              body="Standing org instructions folded into every AI prompt - 'our drawing types never include vendor codes'." />
+              body="Standing org instructions added to every AI prompt, e.g. 'our drawing types never include vendor codes'." />
           )}
           {isController && (
             <SetupLink href="/admin/codebook" icon={BookMarked}

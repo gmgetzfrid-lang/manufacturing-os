@@ -253,7 +253,7 @@ export default function CitedPageViewer({
   const [locating, setLocating] = useState(false);
   const [locateNote, setLocateNote] = useState<string | null>(null);
   const [findTag, setFindTag] = useState("");
-  // The applied find term — highlighted sky in the text layer on EVERY
+  // The applied find term — highlighted gray in the text layer on EVERY
   // document (the tag-locate API additionally marks drawings).
   const [findApplied, setFindApplied] = useState("");
   // A tag to point at as soon as a jump lands on its page.
@@ -328,7 +328,7 @@ export default function CitedPageViewer({
 
   // Highlight any text-layer item that belongs to a cited passage on the
   // page being viewed (yellow — ALL of this document's citations, not just
-  // the clicked one), and any item matching the find box (sky). The
+  // the clicked one), and any item matching the find box (gray). The
   // significant-words fallback handles FRAGMENTED text layers, where each
   // item is a word or two and containment never fires.
   const textRenderer = useCallback(
@@ -336,7 +336,7 @@ export default function CitedPageViewer({
       const safe = escapeHtml(str);
       const norm = normalize(str);
       if (searchNorm && norm.includes(searchNorm)) {
-        return `<mark style="background: rgba(56, 189, 248, 0.55); color: transparent; border-radius: 2px;">${safe}</mark>`;
+        return `<mark style="background: rgba(100, 116, 139, 0.45); color: transparent; border-radius: 2px;">${safe}</mark>`;
       }
       const pq = pageQuotes.get(pageNumber);
       if (!pq) return safe;
@@ -384,7 +384,7 @@ export default function CitedPageViewer({
           </div>
           <div className="flex items-center gap-1 sm:gap-1.5 flex-wrap justify-end max-w-full">
             <button onClick={() => setPageNumber((p) => Math.max(1, p - 1))} disabled={pageNumber <= 1}
-              className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] disabled:opacity-40" title="Previous page">
+              className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] disabled:opacity-40" title="Previous page" aria-label="Previous page">
               <ChevronLeft className="w-4 h-4" />
             </button>
             <span className="text-[11px] font-bold text-[var(--color-text-muted)] tabular-nums">
@@ -392,12 +392,12 @@ export default function CitedPageViewer({
             </span>
             <button onClick={() => setPageNumber((p) => (numPages ? Math.min(numPages, p + 1) : p + 1))}
               disabled={numPages !== null && pageNumber >= numPages}
-              className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] disabled:opacity-40" title="Next page">
+              className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] disabled:opacity-40" title="Next page" aria-label="Next page">
               <ChevronRight className="w-4 h-4" />
             </button>
             <span className="w-px h-4 bg-[var(--color-border)] mx-0.5" />
             <button onClick={() => setZoom((z) => Math.max(0.4, z / 1.2))}
-              className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)]" title="Zoom out (Ctrl+scroll)">
+              className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)]" title="Zoom out (Ctrl+scroll)" aria-label="Zoom out">
               <ZoomOut className="w-4 h-4" />
             </button>
             <button onClick={() => setZoom(1)}
@@ -406,7 +406,7 @@ export default function CitedPageViewer({
               {Math.round(zoom * 100)}%
             </button>
             <button onClick={() => setZoom((z) => Math.min(5, z * 1.2))}
-              className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)]" title="Zoom in (Ctrl+scroll)">
+              className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)]" title="Zoom in (Ctrl+scroll)" aria-label="Zoom in">
               <ZoomIn className="w-4 h-4" />
             </button>
             {(pageNumber !== page || view.documentId !== documentId) && (
@@ -428,14 +428,14 @@ export default function CitedPageViewer({
                 <ExternalLink className="w-4 h-4" />
               </a>
             )}
-            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)]" title="Close (Esc)">
+            <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)]" title="Close (Esc)">
               <X className="w-4 h-4" />
             </button>
           </div>
         </div>
 
         {/* Find on this page — works on EVERY document: the term lights up
-            sky-blue in the text layer; on drawings the tag-locate API also
+            gray in the text layer; on drawings the tag-locate API also
             marks the sheet (text layers on SHX exports are empty). */}
         {(
           <div className="px-4 py-2 border-b border-[var(--color-border)] shrink-0 flex items-center gap-2 flex-wrap">
@@ -466,7 +466,7 @@ export default function CitedPageViewer({
             </form>
             {marks.some((m) => m.source === "vision") && (
               <span className="text-[11px] text-[var(--color-text)] dark:text-[var(--color-text)]">
-                Blue swipes are approximate - this sheet was read by AI, not extracted.
+                Gray marks are approximate: this sheet was read by AI, not extracted.
               </span>
             )}
             {elsewhere.map((e) => (
@@ -508,7 +508,7 @@ export default function CitedPageViewer({
                 setPageNumber((p) => Math.min(p, n));
               }}
               onLoadError={(e) => setError(`Couldn't open the PDF: ${e.message}`)}
-              loading={<div className="mt-16"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-muted)]" /></div>}
+              loading={<div className="mt-16 flex items-center gap-2 text-sm text-[var(--color-text-muted)]"><Loader2 className="w-6 h-6 animate-spin" /> Opening the PDF…</div>}
             >
               {/* The wrapper hugs the rendered page exactly, so a marker at
                   (0.42, 0.18) lands where it does on paper at any zoom. */}
@@ -519,7 +519,7 @@ export default function CitedPageViewer({
                   customTextRenderer={textRenderer}
                   renderAnnotationLayer={false}
                   className="shadow-xl"
-                  loading={<div className="py-16 text-center"><Loader2 className="w-5 h-5 animate-spin inline text-[var(--color-text-muted)]" /></div>}
+                  loading={<div className="py-16 text-center text-sm text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin inline mr-2" /> Loading page {pageNumber}…</div>}
                 />
                 {/* A marker is a HIGHLIGHTER SWIPE over the tag, not a vague
                     ring around a neighborhood: engineers mark up drawings by
@@ -539,8 +539,8 @@ export default function CitedPageViewer({
                       )}
                       <span className={`block rounded-[3px] ${
                         approx
-                          ? "w-20 h-5 bg-sky-400/45 ring-1 ring-[var(--color-border-strong)]"
-                          : "w-14 h-4 bg-yellow-300/60 ring-1 ring-amber-500/70"
+                          ? "w-20 h-5 bg-slate-400/45 ring-1 ring-[var(--color-border-strong)]"
+                          : "w-14 h-4 bg-amber-300/60 ring-1 ring-amber-500/70"
                       }`} />
                       <span className="absolute left-1/2 -translate-x-1/2 top-full mt-1 whitespace-nowrap
  px-1.5 py-0.5 rounded text-[11px] font-black text-white bg-slate-900/85">

@@ -22,6 +22,8 @@ export interface WidgetCtx {
   refresh: () => void;
   /** A body reports each completed load (drives "updated 2m ago"). */
   reportLoaded: () => void;
+  /** A body reports a failed load (null clears it), so the frame can say so. */
+  reportError?: (message: string | null) => void;
   /** Merge into this widget's saved settings. */
   updateSettings: (patch: Record<string, unknown>) => void;
   /** Rendering inside the expanded (full-size) view. */
@@ -80,18 +82,21 @@ export function useWidgetData<T>(
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const { reportError } = useWidget();
   const runRef = useRef(run);
   const reportRef = useRef(reportLoaded);
+  const errRef = useRef(reportError);
   // Declared before the fetch effect, so it runs first in the same commit.
-  useEffect(() => { runRef.current = run; reportRef.current = reportLoaded; });
+  useEffect(() => { runRef.current = run; reportRef.current = reportLoaded; errRef.current = reportError; });
   const depKey = JSON.stringify(deps);
   useEffect(() => {
     let alive = true;
     if (!activeOrgId) return;
     void Promise.resolve().then(() => { if (alive) setRefreshing(true); });
     runRef.current(activeOrgId, uid)
-      .then((d) => { if (alive) setData(d); })
-      .catch(() => { /* keep what's on screen */ })
+      .then((d) => { if (alive) { setData(d); errRef.current?.(null); } })
+      // Keep what's on screen, and say the load failed (the frame shows it).
+      .catch((e: unknown) => { if (alive) errRef.current?.(e instanceof Error ? e.message : String(e)); })
       .finally(() => {
         if (!alive) return;
         setLoading(false);
@@ -116,10 +121,11 @@ export function BodyShell({ children }: { children: React.ReactNode }) {
 
 export function Skeleton({ rows = 3 }: { rows?: number }) {
   return (
-    <div className="mt-3 flex-1 min-h-0 space-y-2">
+    <div className="mt-3 flex-1 min-h-0 space-y-2" aria-busy="true">
       {Array.from({ length: rows }).map((_, i) => (
         <div key={i} className="h-8 rounded-lg bg-[var(--color-surface-2)] animate-pulse" />
       ))}
+      <p className="text-[11px] text-[var(--color-text-muted)]">Loading…</p>
     </div>
   );
 }

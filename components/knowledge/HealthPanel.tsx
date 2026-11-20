@@ -90,18 +90,22 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
   const repair = async () => {
     setRepairing(true);
     setError(null);
+    // Kept past the fresh check below (which clears its own error line).
+    let note: string | null = null;
     try {
       setLast(await repairLibrary(orgId, libraryId));
       onRepaired?.();
     } catch (e) {
-      setError(isWeather(e)
-        ? "Repair ran longer than the host allows - common while the meaning index is being written. What it did is saved; press Repair again to finish."
-        : friendly(e));
+      note = isWeather(e)
+        ? "Repair ran longer than the host allows, which is common while the meaning index is being written. What it did is saved; press Repair again to finish."
+        : friendly(e);
+      setError(note);
     } finally {
       setRepairing(false);
     }
     // The fresh report is its own request — together they outran the limit.
     await check();
+    if (note) setError(note);
   };
 
   // Rounds that each fit the host's time limit; every round's corrections
@@ -109,6 +113,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
   const fixNames = async () => {
     setNaming({ fixed: 0 });
     setError(null);
+    let note: string | null = null;
     const total: NameRepairResult = { fixed: 0, skipped: 0, conflicts: [], failed: [], remaining: 0 };
     let weather = 0;
     try {
@@ -135,15 +140,18 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
       setNameResult(total);
       // Bring the index's names up to date (a sync — label changes only,
       // nothing re-read), then a fresh report.
-      if (total.fixed > 0) await repairLibrary(orgId, libraryId).catch(() => undefined);
+      if (total.fixed > 0) await repairLibrary(orgId, libraryId).catch((e: unknown) => {
+        note = `Names corrected, but the index's labels weren't refreshed: ${friendly(e)} Press Repair to finish.`;
+      });
       onRepaired?.();
     } catch (e) {
       setNameResult(total);
-      setError(`${friendly(e)}${total.fixed ? ` ${total.fixed} corrected before it stopped are saved - press Correct again to finish.` : ""}`);
+      note = `${friendly(e)}${total.fixed ? ` ${total.fixed} corrected before it stopped are saved. Press Correct again to finish.` : ""}`;
     } finally {
       setNaming(null);
     }
     await check();
+    if (note) setError(note);
   };
 
   if (!report) {
@@ -204,12 +212,12 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
           {isController && (
             <button onClick={() => void repair()} disabled={repairing || checking}
               className={`inline-flex items-center gap-1 h-8 px-3 rounded-lg text-[11px] font-black disabled:opacity-50 ${
-                fixable > 0 || report.incomplete ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+                fixable > 0 || report.incomplete ? "bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90" : "border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
               {repairing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wrench className="w-3.5 h-3.5" />}
               {repairing ? "Repairing…" : "Repair"}
             </button>
           )}
-          <button onClick={() => setExpanded((v) => !v)} className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]" title={expanded ? "Hide details" : "Show every status"}>
+          <button onClick={() => setExpanded((v) => !v)} aria-expanded={expanded} aria-label={expanded ? "Hide details" : "Show every status"} className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]" title={expanded ? "Hide details" : "Show every status"}>
             {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
           </button>
         </div>
@@ -227,7 +235,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
       )}
 
       {last && (
-        <div className="mx-4 mb-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 px-3 py-2 text-[11px] text-emerald-900 dark:text-emerald-200 flex items-start gap-2">
+        <div className="mx-4 mb-2 border-l-2 border-emerald-500 pl-3 py-1 text-[11px] text-emerald-900 dark:text-emerald-200 flex items-start gap-2">
           <CheckCircle2 className="w-4 h-4 shrink-0 mt-px" />
           <span>
             Repair done.{" "}
@@ -240,26 +248,26 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
       )}
       {error && <div className="mx-4 mb-2 text-[11px] text-rose-700 dark:text-rose-300">{error}</div>}
       {report.incomplete && (
-        <div className="mx-4 mb-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200 flex gap-2">
+        <div className="mx-4 mb-2 border-l-2 border-amber-500 pl-3 py-1 text-[11px] text-amber-900 dark:text-amber-200 flex gap-2">
           <AlertTriangle className="w-4 h-4 shrink-0" />
           Part of the check couldn&apos;t be read, so some numbers may be short. Nothing is ever removed on an incomplete read. {report.errors.slice(0, 2).join(" · ")}
         </div>
       )}
       {report.skipped?.length > 0 && (
-        <div className="mx-4 mb-2 rounded-lg bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] border border-[var(--color-border)] dark:border-[var(--color-border)] px-3 py-2 text-[11px] text-[var(--color-text)] dark:text-[var(--color-text)] flex gap-2">
+        <div className="mx-4 mb-2 border-l-2 border-[var(--color-border-strong)] pl-3 py-1 text-[11px] text-[var(--color-text)] dark:text-[var(--color-text)] flex gap-2">
           <Info className="w-4 h-4 shrink-0" />
           <span>The database is slow right now (usually: the meaning index is being written), so to answer quickly this check left out: {report.skipped.join(", ")}. Press Re-check in a few minutes for the full picture.</span>
         </div>
       )}
       {deadSources.length > 0 && (
-        <div className="mx-4 mb-2 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900 px-3 py-2 text-[11px] text-rose-800 dark:text-rose-200 flex gap-2">
+        <div className="mx-4 mb-2 border-l-2 border-rose-500 pl-3 py-1 text-[11px] text-rose-800 dark:text-rose-200 flex gap-2">
           <Unlink className="w-4 h-4 shrink-0" />
           {deadSources.length === 1 ? "A linked source no longer exists" : `${deadSources.length} linked sources no longer exist`}: {deadSources.map((s) => s.name).join(", ")}. Unlink {deadSources.length === 1 ? "it" : "them"} in Sources below.
         </div>
       )}
 
       {N && N.wrong > 0 && (
-        <div className="mx-4 mb-2 rounded-lg border border-amber-200 dark:border-amber-900 bg-amber-50/60 dark:bg-amber-950/20">
+        <div className="mx-4 mb-2 border-l-2 border-amber-500">
           <div className="px-3 py-2 flex items-start gap-2 text-[11px] text-amber-900 dark:text-amber-200">
             <Tag className="w-4 h-4 shrink-0 mt-px" />
             <div className="flex-1 min-w-0">
@@ -280,7 +288,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
             </div>
             {isController && nameFixable > 0 && (
               <button onClick={() => void fixNames()} disabled={!!naming || repairing}
-                className="shrink-0 inline-flex items-center gap-1 h-8 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
+                className="shrink-0 inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[11px] font-black hover:bg-[var(--color-surface-2)] disabled:opacity-60">
                 {naming ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wrench className="w-3.5 h-3.5" />}
                 {naming ? `Correcting… ${naming.fixed.toLocaleString()}` : `Correct ${nameFixable.toLocaleString()}`}
               </button>
@@ -306,7 +314,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
         </div>
       )}
       {nameResult && (
-        <div className="mx-4 mb-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 px-3 py-2 text-[11px] text-emerald-900 dark:text-emerald-200">
+        <div className="mx-4 mb-2 border-l-2 border-emerald-500 pl-3 py-1 text-[11px] text-emerald-900 dark:text-emerald-200">
           <div className="flex items-start gap-2">
             <CheckCircle2 className="w-4 h-4 shrink-0 mt-px" />
             <span>

@@ -2,8 +2,7 @@
 
 // WidgetFrame — the shared shell every dashboard widget renders inside.
 //
-// Visual: the Command Deck's "console" flare — ambient tone-tinted corner
-// glows, a vivid gradient top-rule, a glowing gradient icon badge, depth.
+// Visual: a quiet card, its icon, title and tools; color is left to status.
 //
 // Behaviour every widget gets for free:
 //   • ⟳ refresh (plus every 5 minutes, and on coming back to the tab after a
@@ -20,7 +19,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
-import { GripVertical, X, Settings2, ChevronRight, RotateCw, Maximize2, Minimize2 } from "lucide-react";
+import { GripVertical, X, Settings2, ChevronRight, RotateCw, Maximize2 } from "lucide-react";
 import type { DashboardWidget } from "@/lib/dashboard/types";
 import { WIDGET_CATALOG } from "./widgets";
 import { WidgetContextProvider, timeAgo, type WidgetCtx } from "./kit";
@@ -41,7 +40,10 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings,
   const [loadedAt, setLoadedAt] = useState<number | null>(null);
   const [spinning, setSpinning] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  // A body's failed load, said on the card instead of an empty-looking body.
+  const [loadError, setLoadError] = useState<string | null>(null);
   const loadedAtRef = useRef<number | null>(null);
+  const reportError = useCallback((m: string | null) => { setLoadError(m); if (m) setSpinning(false); }, []);
 
   const refresh = useCallback(() => { setSpinning(true); setRefreshKey((k) => k + 1); }, []);
   const reportLoaded = useCallback(() => {
@@ -71,8 +73,8 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings,
   }, [expanded]);
 
   const ctx = useMemo<WidgetCtx>(() => ({
-    widget, refreshKey, refresh, reportLoaded, updateSettings: onUpdateSettings, expanded: false,
-  }), [widget, refreshKey, refresh, reportLoaded, onUpdateSettings]);
+    widget, refreshKey, refresh, reportLoaded, reportError, updateSettings: onUpdateSettings, expanded: false,
+  }), [widget, refreshKey, refresh, reportLoaded, reportError, onUpdateSettings]);
   const expandedCtx = useMemo<WidgetCtx>(() => ({ ...ctx, expanded: true }), [ctx]);
 
   if (!meta) return null;
@@ -92,7 +94,7 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings,
             <>
               <GripVertical className="absolute top-3 left-3 z-20 w-4 h-4 text-white/70 drop-shadow pointer-events-none" />
               <div data-no-drag className="absolute top-3 right-3 z-20 flex items-center gap-1">
-                <button type="button" onClick={onRemove} title="Remove widget"
+                <button type="button" onClick={onRemove} title="Remove widget" aria-label="Remove widget"
                   className="p-1.5 rounded-lg bg-black/40 backdrop-blur text-white/80 hover:text-white hover:bg-black/60 transition-colors">
                   <X className="w-4 h-4" />
                 </button>
@@ -117,26 +119,37 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings,
       </div>
       {!editing && (
         <div className="shrink-0 flex items-center gap-0.5 opacity-70 group-hover/widget:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
-          <button type="button" onClick={refresh} className={iconBtn}
-            title={loadedAt ? `Refresh - updated ${timeAgo(loadedAt) === "now" ? "just now" : `${timeAgo(loadedAt)} ago`}` : "Refresh"}>
+          <button type="button" onClick={refresh} className={iconBtn} aria-label="Refresh"
+            title={loadedAt ? `Refresh (updated ${timeAgo(loadedAt) === "now" ? "just now" : `${timeAgo(loadedAt)} ago`})` : "Refresh"}>
             <RotateCw className={`w-3.5 h-3.5 ${spinning ? "animate-spin" : ""}`} />
           </button>
-          <button type="button" onClick={onOpenSettings} className={iconBtn} title="Widget settings - rename, filters…">
+          <button type="button" onClick={onOpenSettings} className={iconBtn} aria-label="Widget settings" title="Widget settings: rename, filters…">
             <Settings2 className="w-3.5 h-3.5" />
           </button>
-          <button type="button" onClick={() => setExpanded((v) => !v)} className={iconBtn}
-            title={isExpanded ? "Back to the dashboard (Esc)" : "Expand - work in it full-size"}>
-            {isExpanded ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
-          </button>
+          {!isExpanded && (
+            <button type="button" onClick={() => setExpanded(true)} className={iconBtn} aria-label="Expand" title="Expand: work in it full-size">
+              <Maximize2 className="w-3.5 h-3.5" />
+            </button>
+          )}
           <Link href={meta.href} title={meta.cta}
             className="ml-0.5 inline-flex items-center gap-1 pl-2 pr-1.5 py-2 sm:py-1.5 rounded-lg text-[11px] font-bold text-[var(--color-text-muted)] border border-transparent hover:border-[var(--color-border)] hover:text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] transition-all">
             Open
             <ChevronRight className="w-3.5 h-3.5 transition-transform group-hover/widget:translate-x-0.5" />
           </Link>
+          {isExpanded && (
+            <button type="button" onClick={() => setExpanded(false)} className={iconBtn} aria-label="Close" title="Close (Esc)">
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
       )}
     </div>
   );
+  const errorLine = loadError ? (
+    <p role="alert" className="mt-2 border-l-2 border-red-500 pl-2 text-[11px] font-semibold text-red-700 dark:text-red-400">
+      Couldn&apos;t load this: {loadError} <button type="button" onClick={refresh} className="underline font-bold">Try again</button>
+    </p>
+  ) : null;
 
   return (
     <WidgetContextProvider value={ctx}>
@@ -155,11 +168,11 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings,
           <>
             <GripVertical className="absolute top-4 left-2 w-4 h-4 text-[var(--color-text-muted)]/60 z-10 pointer-events-none" />
             <div data-no-drag className="absolute top-2 right-2 flex items-center gap-1.5 z-10 rounded-xl bg-[var(--color-surface)]/85 backdrop-blur border border-[var(--color-border)] px-0.5 py-0.5">
-              <button type="button" onClick={onOpenSettings} title="Widget settings"
+              <button type="button" onClick={onOpenSettings} title="Widget settings" aria-label="Widget settings"
                 className="p-2.5 sm:p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
                 <Settings2 className="w-4 h-4" />
               </button>
-              <button type="button" onClick={onRemove} title="Remove widget"
+              <button type="button" onClick={onRemove} title="Remove widget" aria-label="Remove widget"
                 className="p-2.5 sm:p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-red-600 hover:bg-red-50 transition-colors">
                 <X className="w-4 h-4" />
               </button>
@@ -169,12 +182,13 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings,
 
         <div className={`relative flex-1 min-h-0 flex flex-col p-5 ${editing ? "pl-7 pr-16" : ""}`}>
           {header(false)}
+          {!expanded && errorLine}
           {/* While expanded, the full-size copy is the live one — the tile
               doesn't fetch the same data twice. */}
           {expanded ? (
             <button type="button" onClick={() => setExpanded(false)}
               className="mt-3 flex-1 min-h-0 grid place-items-center rounded-xl border border-dashed border-[var(--color-border)] text-[12px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent)]">
-              Open in the expanded view - click to bring it back here
+              Open in the expanded view. Tap to bring it back here
             </button>
           ) : (
             <div className={`flex-1 min-h-0 flex flex-col ${editing ? "pointer-events-none opacity-90" : ""}`}>
@@ -192,6 +206,7 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings,
               className="group/widget relative w-full max-w-6xl flex flex-col rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl overflow-hidden">
               <div className="relative flex-1 min-h-0 flex flex-col p-5 sm:p-6">
                 {header(true)}
+                {errorLine}
                 <div className="flex-1 min-h-0 flex flex-col">
                   <Body widget={widget} />
                 </div>

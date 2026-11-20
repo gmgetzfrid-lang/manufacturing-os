@@ -18,7 +18,7 @@ import type { CitedSource } from "@/components/knowledge/CitedPageViewer";
 import { AnswerExperience, AnswerView, CitationChips } from "@/components/knowledge/answer/AnswerExperience";
 import AssistantAnswer from "@/components/assistant/AssistantAnswer";
 import { AttachmentCard } from "./Turns";
-import { relativeTime, fmtBytes } from "./shared";
+import { fmtBytes } from "./shared";
 
 const CitedPageViewer = dynamic(() => import("@/components/knowledge/CitedPageViewer"), { ssr: false });
 
@@ -67,7 +67,7 @@ export default function RightPanel({
       <Icon className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
       <span className="text-xs font-black text-[var(--color-text)] truncate flex-1">{title}</span>
       {extra}
-      <button onClick={onClose} title="Close panel" className="p-1 rounded-md text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+      <button onClick={onClose} title="Close panel" aria-label="Close" className="p-1 rounded-md text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
         <X className="w-4 h-4" />
       </button>
     </div>
@@ -87,7 +87,7 @@ export default function RightPanel({
     return (
       <div className="h-full flex flex-col">
         {header(t.title.replace(/\.pdf$/i, ""), FileText, (
-          <button onClick={() => setPopped(true)} title="Open large" className="p-1 rounded-md text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+          <button onClick={() => setPopped(true)} title="Open large" aria-label="Open large" className="p-1 rounded-md text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
             <Maximize2 className="w-4 h-4" />
           </button>
         ))}
@@ -112,12 +112,12 @@ export default function RightPanel({
         {header("Asked before", History)}
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
           <div className="text-[11px] text-[var(--color-text-muted)]">
-            {(past.userName ?? "Someone").split("@")[0]} asked {relativeTime(past.createdAt)} ago
+            {(past.userName ?? "Someone").split("@")[0]} asked on {new Date(past.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
             {past.threadTitle ? <> in <Link className="font-bold hover:underline" href={`/assistant?thread=${past.threadId}`}>{past.threadTitle}</Link></> : null}
           </div>
           <div className="rounded-xl bg-[var(--color-surface-2)] border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-text)]">{past.question}</div>
           {changed && changed.length > 0 && (
-            <div className="flex items-start gap-2 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-[11px] font-bold text-amber-800 dark:text-amber-300">
+            <div className="flex items-start gap-2 border-l-2 border-amber-500 pl-2 text-[11px] font-bold text-amber-800 dark:text-amber-300">
               <AlertTriangle className="w-4 h-4 shrink-0 mt-px" />
               <span>The sources moved on since this was answered: {changed.join("; ")}. Ask fresh to be safe.</span>
             </div>
@@ -138,7 +138,7 @@ export default function RightPanel({
         <div className="p-3 border-t border-[var(--color-border)] shrink-0">
           <button onClick={() => onReuse(past)}
             className="w-full inline-flex items-center justify-center gap-1.5 h-9 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] transition-colors">
-            <Redo2 className="w-3.5 h-3.5" /> Use this answer here - no AI call
+            <Redo2 className="w-3.5 h-3.5" /> Use this answer here (no AI call)
           </button>
         </div>
       </div>
@@ -163,9 +163,10 @@ function AttachmentPane({ att, header }: {
   header: (title: string, Icon: React.ComponentType<{ className?: string }>, extra?: React.ReactNode) => React.ReactNode;
 }) {
   const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
-    void attachmentUrl(att.path).then((u) => { if (!cancelled) setUrl(u); }, () => undefined);
+    void attachmentUrl(att.path).then((u) => { if (!cancelled) setUrl(u); }, (e: unknown) => { if (!cancelled) setFailed(e instanceof Error ? e.message : String(e)); });
     return () => { cancelled = true; };
   }, [att.path]);
   return (
@@ -173,14 +174,16 @@ function AttachmentPane({ att, header }: {
       {header(att.name, Paperclip)}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         <p className="text-[11px] text-[var(--color-text-muted)]">
-          {fmtBytes(att.size)} · context for that question only - not indexed, not a controlled document.
+          {fmtBytes(att.size)} · for that question only. Not indexed, not a controlled document.
         </p>
         {att.kind === "image" ? (
           <AttachmentCard a={att} onOpen={() => { if (url) window.open(url, "_blank", "noopener"); }} large />
         ) : url ? (
           <iframe src={url} title={att.name} className="w-full h-[70vh] rounded-lg border border-[var(--color-border)] bg-white" />
+        ) : failed ? (
+          <p role="alert" className="text-xs font-semibold text-red-700 dark:text-red-400">Couldn&apos;t open the file: {failed}</p>
         ) : (
-          <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>
+          <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Loading the file…</div>
         )}
         {url && (
           <a href={url} target="_blank" rel="noopener noreferrer" className="inline-block text-[11px] font-black text-[var(--color-accent)] hover:underline">Open in a new tab</a>
@@ -208,6 +211,14 @@ function InstructionsPane({
   const [prof, setProf] = useState<ChatProfile>(profile);
   const [saving, setSaving] = useState<"instructions" | "profile" | "promote" | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<{ what: string; msg: string } | null>(null);
+  // Every save says when it didn't go through, in place.
+  const run = async (what: "instructions" | "profile" | "promote", fn: () => Promise<void>) => {
+    setSaving(what); setSaveError(null);
+    try { await fn(); flash(what); }
+    catch (e) { setSaveError({ what, msg: e instanceof Error ? e.message : String(e) }); }
+    finally { setSaving(null); }
+  };
   useEffect(() => { setText(instructions); }, [instructions]);
   useEffect(() => { setProf(profile); }, [profile]);
 
@@ -228,20 +239,21 @@ function InstructionsPane({
             className={`${field} resize-y min-h-[88px]`} />
           <div className="mt-2 flex items-center gap-2 flex-wrap">
             <button disabled={saving !== null || text === instructions}
-              onClick={async () => { setSaving("instructions"); try { await onSaveInstructions(text); flash("instructions"); } finally { setSaving(null); } }}
+              onClick={() => void run("instructions", () => onSaveInstructions(text))}
               className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-40 transition-colors">
               {saving === "instructions" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Save
             </button>
             {canPromote && text.trim() && (
               <button disabled={saving !== null}
                 title="Make this a standing instruction for everyone's library answers (Org Playbook)"
-                onClick={async () => { setSaving("promote"); try { await onPromote(text.trim()); flash("promote"); } finally { setSaving(null); } }}
+                onClick={() => void run("promote", () => onPromote(text.trim()))}
                 className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)] text-[11px] font-black hover:bg-[var(--color-surface-2)] disabled:opacity-40 transition-colors">
                 {saving === "promote" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowUpToLine className="w-3.5 h-3.5" />} Promote to playbook
               </button>
             )}
-            {saved && <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-400"><CheckCircle2 className="w-3.5 h-3.5" /> Saved</span>}
+            {saved && saved !== "profile" && <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-400"><CheckCircle2 className="w-3.5 h-3.5" /> Saved</span>}
           </div>
+          {saveError && saveError.what !== "profile" && <p role="alert" className="mt-1.5 text-[11px] font-semibold text-red-700 dark:text-red-400">Not saved: {saveError.msg}</p>}
         </section>
 
         <section>
@@ -257,29 +269,31 @@ function InstructionsPane({
         <section>
           <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1">About you</div>
           <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
-            Your own standing profile, sent with every question you ask. Plain text you can read and change - nothing is inferred.
+            Sent with every question you ask. Nothing here is guessed.
           </p>
           <div className="space-y-2">
             <input value={prof.discipline} onChange={(e) => setProf({ ...prof, discipline: e.target.value })}
-              placeholder="Discipline - e.g. Mechanical / rotating equipment" className={field} />
+              placeholder="Discipline, e.g. Mechanical / rotating equipment" className={field} />
             <input value={prof.units} onChange={(e) => setProf({ ...prof, units: e.target.value })}
-              placeholder="Preferred units - e.g. US customary, SI" className={field} />
+              placeholder="Preferred units, e.g. US customary, SI" className={field} />
             <select value={prof.defaultLibraryId ?? ""} onChange={(e) => setProf({ ...prof, defaultLibraryId: e.target.value || null })}
               className={field}>
-              <option value="">Default library - none</option>
+              <option value="">Default library: none</option>
               {libraries.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
             </select>
             <textarea value={prof.notes} onChange={(e) => setProf({ ...prof, notes: e.target.value })} rows={3}
-              placeholder="Anything every answer should know - e.g. &quot;I work the crude unit; assume carbon steel unless told.&quot;"
+              placeholder="Anything every answer should know, e.g. &quot;I work the crude unit; assume carbon steel unless told.&quot;"
               className={`${field} resize-y`} />
           </div>
           <div className="mt-2 flex items-center gap-2">
             <button disabled={saving !== null}
-              onClick={async () => { setSaving("profile"); try { await onSaveProfile(prof); flash("profile"); } finally { setSaving(null); } }}
-              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-40 transition-colors">
+              onClick={() => void run("profile", () => onSaveProfile(prof))}
+              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[11px] font-black hover:bg-[var(--color-surface-2)] disabled:opacity-40 transition-colors">
               {saving === "profile" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Save profile
             </button>
+            {saved === "profile" && <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-400"><CheckCircle2 className="w-3.5 h-3.5" /> Saved</span>}
           </div>
+          {saveError?.what === "profile" && <p role="alert" className="mt-1.5 text-[11px] font-semibold text-red-700 dark:text-red-400">Not saved: {saveError.msg}</p>}
         </section>
       </div>
     </div>

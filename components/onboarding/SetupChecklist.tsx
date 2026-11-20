@@ -81,7 +81,14 @@ export default function SetupChecklist() {
             <h2 className="text-sm font-black text-[var(--color-text)]">Get your workspace ready</h2>
             <span className="text-[11px] font-bold text-[var(--color-text-muted)]">{doneCount}/{steps.length} done</span>
           </div>
-          <p className="text-xs text-[var(--color-text-muted)] mt-0.5">A few steps to go from empty to operational.</p>
+          {(() => {
+            const next = steps.find((s) => !s.done);
+            return next ? (
+              <Link href={next.href} className="mt-2 inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-bold hover:bg-[var(--color-accent-hover)]">
+                Next: {next.label} <ChevronRight className="w-3.5 h-3.5" />
+              </Link>
+            ) : null;
+          })()}
         </div>
         <button onClick={dismiss} aria-label="Dismiss" className="p-1.5 rounded-md text-[var(--color-text-faint)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
       </div>
@@ -93,15 +100,15 @@ export default function SetupChecklist() {
             <Link
               key={s.key}
               href={s.href}
-              className={`flex items-center gap-3 rounded-xl border p-3 transition-colors ${s.done ? "border-emerald-200 bg-emerald-50/60" : "border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-border)]"}`}
+              className={`flex items-center gap-3 rounded-xl border p-3 transition-colors ${s.done ? "border-[var(--color-border)] bg-[var(--color-surface-2)]" : "border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-border-strong)]"}`}
             >
-              {s.done ? <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" /> : <Circle className="w-5 h-5 text-slate-300 shrink-0" />}
+              {s.done ? <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" /> : <Circle className="w-5 h-5 text-[var(--color-text-faint)] shrink-0" />}
               <div className="flex-1 min-w-0">
                 <div className={`text-sm font-bold ${s.done ? "text-[var(--color-text-muted)] line-through" : "text-[var(--color-text)]"}`}>{s.label}</div>
                 {!s.done && <div className="text-[11px] text-[var(--color-text-muted)] truncate">{s.blurb}</div>}
               </div>
-              {!s.done && <Icon className="w-4 h-4 text-slate-300 shrink-0" />}
-              {!s.done && <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />}
+              {!s.done && <Icon className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />}
+              {!s.done && <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />}
             </Link>
           );
         })}

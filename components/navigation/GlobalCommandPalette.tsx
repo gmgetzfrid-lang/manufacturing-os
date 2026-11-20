@@ -26,6 +26,7 @@ import {
   CornerDownLeft, Loader2, X, Command, ArrowUp, ArrowDown, Send,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
+import { appAlert } from "@/components/providers/DialogProvider";
 import { globalSearch, type GlobalHit, type GlobalHitKind } from "@/lib/globalSearch";
 import { findEstate } from "@/lib/find/client";
 import type { FindResult } from "@/lib/find/types";
@@ -48,8 +49,8 @@ const KIND_TONE: Record<GlobalHitKind, string> = {
   ticket: "text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]",
   project: "text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]",
   asset: "text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]",
-  note: "text-slate-700 bg-slate-50 border-slate-200",
-  transmittal: "text-emerald-700 bg-emerald-50 border-emerald-200",
+  note: "text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]",
+  transmittal: "text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]",
 };
 
 interface QuickNav { keys: string; label: string; href: string }
@@ -123,6 +124,8 @@ export default function GlobalCommandPalette() {
   const [hits, setHits] = useState<GlobalHit[]>([]);
   const [findHits, setFindHits] = useState<FindResult[]>([]);
   const [busy, setBusy] = useState(false);
+  // A failed search says so, instead of "No matches".
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   // Set when the palette is opened via the global `?` so it lands directly
@@ -195,8 +198,10 @@ export default function GlobalCommandPalette() {
         setHits(found);
         setFindHits(est?.results ?? []);
         setActiveIdx(0);
+        setSearchError(null);
       } catch (e) {
         console.warn("[GlobalCommandPalette] search failed", e);
+        setSearchError(e instanceof Error ? e.message : String(e));
       } finally { setBusy(false); }
     }, 200);
     return () => clearTimeout(handle);
@@ -310,7 +315,13 @@ export default function GlobalCommandPalette() {
 
   const onSelect = useCallback((item: { label?: string; subtitle?: string; href?: string; kind?: GlobalHitKind; isAction?: boolean; run?: () => void | Promise<void> }) => {
     setOpen(false);
-    if (item.run) { void Promise.resolve(item.run()).catch((e) => console.warn("[palette] action failed", e)); return; }
+    if (item.run) {
+      void Promise.resolve(item.run()).catch((e: unknown) => {
+        console.warn("[palette] action failed", e);
+        void appAlert({ title: `${item.label ?? "That"} didn't work`, message: e instanceof Error ? e.message : String(e), tone: "danger" });
+      });
+      return;
+    }
     if (item.href) {
       // Remember real resource navigations (not pure actions/quick-nav) so they
       // surface under Recents next time.
@@ -340,18 +351,18 @@ export default function GlobalCommandPalette() {
         onClick={(e) => e.stopPropagation()}
         className="w-full max-w-xl bg-[var(--color-surface)] text-[var(--color-text)] rounded-2xl shadow-xl ring-1 ring-black/5 border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95 slide-in-from-top-2 duration-200"
       >
-        <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-2">
-          <Search className="w-4 h-4 text-slate-400" />
+        <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
+          <Search className="w-4 h-4 text-[var(--color-text-faint)]" />
           <input
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKey}
             placeholder="Search or run an action - docs, tickets, 'new request', 'export data'… · 'g i' to go · '?' shortcuts"
-            className="flex-1 outline-none text-base sm:text-sm placeholder:text-slate-400"
+            className="flex-1 outline-none text-base sm:text-sm placeholder:text-[var(--color-text-faint)]"
           />
-          {busy && <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" />}
-          <button onClick={() => setOpen(false)} className="p-1 text-slate-400 hover:text-slate-700 rounded">
+          {busy && <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-faint)]" />}
+          <button onClick={() => setOpen(false)} aria-label="Close" className="p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)] rounded">
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -361,30 +372,30 @@ export default function GlobalCommandPalette() {
         ) : (
           <ul className="max-h-[60vh] overflow-y-auto py-1">
             {visible.length === 0 ? (
-              <li className="px-4 py-6 text-center text-xs italic text-slate-400">
-                {query.trim().length < 2 ? "Start typing to search" : busy ? "Searching…" : "No matches"}
+              <li className="px-4 py-6 text-center text-xs italic text-[var(--color-text-faint)]">
+                {query.trim().length < 2 ? "Start typing to search" : busy ? "Searching…" : searchError ? <span className="not-italic font-semibold text-red-700 dark:text-red-400">Search didn&apos;t work: {searchError}</span> : "No matches"}
               </li>
             ) : (
               visible.map((it, i) => {
                 const Icon = it.kind ? KIND_ICON[it.kind] : Command;
-                const tone = it.kind ? KIND_TONE[it.kind] : "text-slate-600 bg-slate-50 border-slate-200";
+                const tone = it.kind ? KIND_TONE[it.kind] : "text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]";
                 const isActive = i === activeIdx;
                 return (
                   <li key={it.key}>
                     <button
                       onClick={() => onSelect(it)}
                       onMouseEnter={() => setActiveIdx(i)}
-                      className={`w-full px-3 py-2 flex items-center gap-3 text-left ${isActive ? "bg-slate-100" : "hover:bg-slate-50"}`}
+                      className={`w-full px-3 py-2 flex items-center gap-3 text-left ${isActive ? "bg-[var(--color-surface-2)]" : "hover:bg-[var(--color-surface-2)]"}`}
                     >
                       <div className={`shrink-0 w-7 h-7 rounded-md border flex items-center justify-center ${tone}`}>
                         <Icon className="w-3.5 h-3.5" />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <div className="text-xs font-bold text-slate-900 truncate">{it.label}</div>
-                        {it.subtitle && <div className="text-[11px] text-slate-500 truncate">{it.subtitle}</div>}
+                        <div className="text-xs font-bold text-[var(--color-text)] truncate">{it.label}</div>
+                        {it.subtitle && <div className="text-[11px] text-[var(--color-text-muted)] truncate">{it.subtitle}</div>}
                       </div>
-                      {it.badge && <span className="text-[11px] font-bold uppercase text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded shrink-0">{it.badge}</span>}
-                      {isActive && <CornerDownLeft className="w-3.5 h-3.5 text-slate-400 shrink-0" />}
+                      {it.badge && <span className="text-[11px] font-bold uppercase text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded shrink-0">{it.badge}</span>}
+                      {isActive && <CornerDownLeft className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />}
                     </button>
                   </li>
                 );
@@ -393,7 +404,7 @@ export default function GlobalCommandPalette() {
           </ul>
         )}
 
-        <div className="px-4 py-2 border-t border-slate-200 bg-slate-50 flex items-center justify-between text-[11px] text-slate-500">
+        <div className="px-4 py-2 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
           <div className="flex items-center gap-3">
             <span className="inline-flex items-center gap-1"><ArrowUp className="w-2.5 h-2.5" /><ArrowDown className="w-2.5 h-2.5" /> navigate</span>
             <span className="inline-flex items-center gap-1"><CornerDownLeft className="w-2.5 h-2.5" /> open</span>
@@ -408,7 +419,7 @@ export default function GlobalCommandPalette() {
                 See all results →
               </button>
             )}
-            <button onClick={() => setShowShortcuts((v) => !v)} className="font-bold text-slate-600 hover:text-slate-900">
+            <button onClick={() => setShowShortcuts((v) => !v)} className="font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
               {showShortcuts ? "Search" : "Shortcuts (?)"}
             </button>
           </div>
@@ -421,21 +432,21 @@ export default function GlobalCommandPalette() {
 function Shortcuts() {
   return (
     <div className="p-4 max-h-[60vh] overflow-y-auto">
-      <div className="text-[11px] font-black text-slate-500 uppercase tracking-widest mb-2">Quick Navigation</div>
+      <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-2">Quick Navigation</div>
       <ul className="space-y-1 text-xs mb-4">
         {QUICK_NAV.map((n) => (
           <li key={n.href} className="flex items-center gap-2">
-            <kbd className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-[11px]">{n.keys}</kbd>
-            <span className="text-slate-700">{n.label}</span>
+            <kbd className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] font-mono text-[11px]">{n.keys}</kbd>
+            <span className="text-[var(--color-text)]">{n.label}</span>
           </li>
         ))}
       </ul>
-      <div className="text-[11px] font-black text-slate-500 uppercase tracking-widest mb-2">Global</div>
+      <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-2">Global</div>
       <ul className="space-y-1 text-xs">
-        <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-[11px]">⌘ K</kbd><span>Open this palette</span></li>
-        <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-[11px]">/</kbd><span>Open this palette (when not typing)</span></li>
-        <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-[11px]">esc</kbd><span>Close any modal</span></li>
-        <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-[11px]">?</kbd><span>Show shortcuts</span></li>
+        <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] font-mono text-[11px]">⌘ K</kbd><span>Open this palette</span></li>
+        <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] font-mono text-[11px]">/</kbd><span>Open this palette (when not typing)</span></li>
+        <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] font-mono text-[11px]">esc</kbd><span>Close any modal</span></li>
+        <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] font-mono text-[11px]">?</kbd><span>Show shortcuts</span></li>
       </ul>
     </div>
   );

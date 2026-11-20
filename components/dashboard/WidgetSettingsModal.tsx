@@ -104,7 +104,7 @@ export default function WidgetSettingsModal({ widget, onClose, onSave }: Props) 
   };
 
   return (
-    <div className="fixed inset-0 z-[210] flex items-center justify-center p-4">
+    <div role="dialog" aria-modal="true" aria-label={`${meta.title} settings`} className="fixed inset-0 z-[210] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
       <div className="relative w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden max-h-[85vh] flex flex-col">
         <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]">
@@ -115,14 +115,14 @@ export default function WidgetSettingsModal({ widget, onClose, onSave }: Props) 
               <p className="text-xs text-[var(--color-text-muted)]">Only this widget changes.</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-5 h-5" /></button>
+          <button onClick={onClose} aria-label="Close" className="p-2 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-5 h-5" /></button>
         </div>
         <div className="p-5 overflow-y-auto space-y-4">
           <div>
             <label className="block text-xs font-black text-[var(--color-text)] mb-1">Title</label>
             <input value={(draft.title as string) ?? ""} onChange={(e) => set("title", e.target.value.slice(0, 60))}
               placeholder={meta.title} className={input} />
-            <p className="text-[11px] text-[var(--color-text-muted)] mt-1">Name this one - useful when you have two (e.g. “Ask - Piping”).</p>
+            <p className="text-[11px] text-[var(--color-text-muted)] mt-1">Handy when you have two, e.g. “Ask: Piping”.</p>
           </div>
           {fields.map((f) => (
             <div key={f.key}>
@@ -138,7 +138,7 @@ export default function WidgetSettingsModal({ widget, onClose, onSave }: Props) 
             <RotateCcw className="w-3.5 h-3.5" /> Reset
           </button>
           <button onClick={onClose} className="px-4 py-2 rounded-xl bg-[var(--color-surface-2)] border border-[var(--color-border)] text-sm font-bold text-[var(--color-text)] hover:bg-[var(--color-canvas)]">Cancel</button>
-          <button onClick={() => onSave(draft)} className="px-4 py-2 rounded-xl bg-[var(--color-accent)] text-white text-sm font-bold hover:opacity-90">Save</button>
+          <button onClick={() => onSave(draft)} className="px-4 py-2 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-bold hover:bg-[var(--color-accent-hover)]">Save</button>
         </div>
       </div>
     </div>

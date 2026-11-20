@@ -1,7 +1,13 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { useDraft } from '@/hooks/useDraft';
+import { useDraft, clearDraft } from '@/hooks/useDraft';
+import { useFileDrag } from '@/hooks/useFileDrag';
+import { tryUpload } from '@/lib/uploadRetry';
+import { Modal, ModalHeader, ModalBody, ModalFooter } from '@/components/ui/Modal';
+import LoadingBlock from '@/components/ui/LoadingBlock';
+import StepPath from '@/components/ui/StepPath';
+import FileThumb from '@/components/ui/FileThumb';
 import dynamic from 'next/dynamic';
 import MoreMenu from '@/components/ui/MoreMenu';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
@@ -17,7 +23,7 @@ import EngineerPickerModal from '@/components/requests/EngineerPickerModal';
 import MentionableTextarea from '@/components/requests/MentionableTextarea';
 import TicketArchiveViewer from '@/components/archive/TicketArchiveViewer';
 import CommentBody from '@/components/requests/CommentBody';
-import WorkflowDiagramModal from '@/components/requests/WorkflowDiagramModal';
+import WorkflowDiagramModal, { REQUEST_STEPS, requestStepIndex } from '@/components/requests/WorkflowDiagramModal';
 import SignaturePanel from '@/components/signatures/SignaturePanel';
 import { extractMentionUids, isPastDue, isNearingDue } from '@/lib/notifications';
 import { downloadStampedPdf } from '@/lib/stamping';
@@ -49,7 +55,6 @@ import {
   Flag,
   ShieldAlert,
   ChevronDown,
-  Trash2,
   UserPlus,
   CheckSquare,
   AlertTriangle,
@@ -80,24 +85,9 @@ const toDate = (date: unknown): Date => {
   return new Date(date as string | number);
 };
 
-// Distinct, stable bubble colors per comment author, so a multi-person thread
-// is readable at a glance. "You" stays blue + right-aligned; everyone else gets
-// a deterministic color (more people in a thread -> more colors).
-const AUTHOR_BUBBLE_PALETTE = [
-  'bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text)]',
-  'bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text)]',
-  'bg-rose-50 border border-rose-200 text-rose-900',
-  'bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text)]',
-  'bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text)]',
-  'bg-lime-50 border border-lime-200 text-lime-900',
-  'bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text)]',
-  'bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text)]',
-];
-function authorColorIndex(user: string): number {
-  let h = 0;
-  for (let i = 0; i < (user || '').length; i++) h = (h * 31 + user.charCodeAt(i)) >>> 0;
-  return h % AUTHOR_BUBBLE_PALETTE.length;
-}
+// Other people's comments: one quiet bubble (the name on top tells them
+// apart); yours sit on the right.
+const OTHER_BUBBLE = 'bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)]';
 function authorLabel(user: string): string {
   return (user || 'Unknown').split('@')[0];
 }
@@ -128,7 +118,6 @@ const REVISION_REASONS = [
 // SUB-COMPONENT: ACTION MODAL (Comments / Rejection)
 // =========================================================================================
 interface ActionModalProps {
-  isOpen: boolean;
   onClose: () => void;
   onSubmit: (text: string, category?: string) => void;
   onRedline?: () => void;
@@ -138,36 +127,25 @@ interface ActionModalProps {
   isLoading?: boolean;
   defaultValue?: string;
   showCategorySelection?: boolean;
+  /** Where the typed reason is kept until it's sent. */
+  draftKey: string | null;
 }
 
-const ActionModal = ({ isOpen, onClose, onSubmit, onRedline, title, description, isDestructive, isLoading, defaultValue, showCategorySelection }: ActionModalProps) => {
-  const [comment, setComment] = useState('');
+// Mounted only while open, so each opening starts from the prefilled text
+// (or the unsent draft, which wins).
+const ActionModal = ({ onClose, onSubmit, onRedline, title, description, isDestructive, isLoading, defaultValue, showCategorySelection, draftKey }: ActionModalProps) => {
+  const [comment, setComment] = useState(defaultValue || '');
   const [category, setCategory] = useState(REVISION_REASONS[0]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    // Seed fields when the modal opens; IIFE keeps these out of the effect's
-    // direct body so they aren't read as cascading synchronous updates.
-    void (async () => {
-      setComment(defaultValue || '');
-      setCategory(REVISION_REASONS[0]);
-    })();
-  }, [isOpen, defaultValue]);
-
-  if (!isOpen) return null;
+  const draft = useDraft<string>(draftKey, comment, setComment, (v) => !v.trim());
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-[var(--color-border)] animate-in fade-in zoom-in-95">
-        <div className={`px-6 py-4 border-b ${isDestructive ? 'bg-red-50 border-red-100' : 'bg-[var(--color-surface-2)] border-[var(--color-border)]'}`}>
-          <h3 className={`text-lg font-bold ${isDestructive ? 'text-red-900' : 'text-[var(--color-text)]'}`}>{title}</h3>
-          <p className="text-xs text-[var(--color-text-muted)] mt-1">{description}</p>
-        </div>
-        <div className="p-6 space-y-4">
+    <Modal onClose={onClose} dismissable={!isLoading}>
+      <ModalHeader title={<span className={isDestructive ? 'text-red-700 dark:text-red-400' : ''}>{title}</span>} subtitle={description} onClose={isLoading ? undefined : onClose} />
+      <ModalBody className="space-y-4">
           {showCategorySelection && (
             <div>
               <label className="block text-sm font-bold text-[var(--color-text)] mb-2">
-                Reason Category <span className="text-red-500">*</span>
+                Reason <span className="text-red-500">*</span>
               </label>
               <select
                 value={category}
@@ -180,41 +158,43 @@ const ActionModal = ({ isOpen, onClose, onSubmit, onRedline, title, description,
           )}
           <div>
             <label className="block text-sm font-bold text-[var(--color-text)] mb-2">
-              {showCategorySelection ? 'Additional Details' : 'Reason / Comment'} <span className="text-red-500">*</span>
+              {showCategorySelection ? 'What to fix' : 'Comment'} <span className="text-red-500">*</span>
             </label>
             <textarea 
-              className="w-full h-32 p-3 border border-[var(--color-border-strong)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none resize-none"
-              placeholder="Please provide details..."
+              className="w-full h-32 p-3 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none resize-none"
+              placeholder="Say what and where"
               value={comment}
               onChange={(e) => setComment(e.target.value)}
+              autoFocus
             />
-            {defaultValue && (
-              <p className="text-[11px] text-green-600 mt-2 flex items-center">
+            {draft.restored ? (
+              <p className="text-[11px] text-[var(--color-text-muted)] mt-2">Your unsent note is back.</p>
+            ) : defaultValue ? (
+              <p className="text-[11px] text-[var(--color-text-muted)] mt-2 flex items-center">
                 <CheckCircle2 className="w-3 h-3 mr-1" />
-                Pre-filled from your recent comment.
+                Filled in from your last comment.
               </p>
-            )}
+            ) : null}
           </div>
-          <div className="flex justify-between pt-2">
-            {onRedline && (
+      </ModalBody>
+      <ModalFooter className="justify-between">
+            {onRedline ? (
               <button 
                 onClick={onRedline}
-                className="flex items-center px-3 py-2 text-sm font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg transition-colors border border-[var(--color-border)]"
+                className="flex items-center px-3 py-2 text-sm font-bold text-[var(--color-text)] hover:bg-[var(--color-surface)] rounded-lg transition-colors border border-[var(--color-border)]"
                 disabled={isLoading}
               >
-                <Pen className="w-4 h-4 mr-2" /> Add Redlines
+                <Pen className="w-4 h-4 mr-2" /> Add redlines
               </button>
-            )}
-            <div className="flex space-x-3 ml-auto">
-              <button onClick={onClose} className="px-4 py-2 text-sm font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] rounded-lg transition-colors" disabled={isLoading}>Cancel</button>
-              <button onClick={() => onSubmit(comment, showCategorySelection ? category : undefined)} disabled={!comment.trim() || isLoading} className={`px-6 py-2 text-sm font-bold text-white rounded-lg shadow-sm transition-all flex items-center ${isDestructive ? 'bg-red-600 hover:bg-red-700 disabled:bg-red-300' : 'bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400'}`}>
-                {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />} Confirm
+            ) : <span />}
+            <div className="flex space-x-3">
+              <button onClick={onClose} className="px-4 py-2 text-sm font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] rounded-lg transition-colors" disabled={isLoading}>Cancel</button>
+              <button onClick={() => onSubmit(comment, showCategorySelection ? category : undefined)} disabled={!comment.trim() || isLoading} className={`px-6 py-2 text-sm font-bold rounded-lg shadow-sm transition-all flex items-center disabled:opacity-50 disabled:cursor-not-allowed ${isDestructive ? 'bg-rose-600 hover:bg-rose-500 text-white' : 'bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)]'}`}>
+                {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />} {isDestructive ? 'Send back' : 'Confirm'}
               </button>
             </div>
-          </div>
-        </div>
-      </div>
-    </div>
+      </ModalFooter>
+    </Modal>
   );
 };
 
@@ -222,101 +202,93 @@ const ActionModal = ({ isOpen, onClose, onSubmit, onRedline, title, description,
 // SUB-COMPONENT: ASSIGNMENT MODAL
 // =========================================================================================
 interface AssignmentModalProps {
-  isOpen: boolean;
   onClose: () => void;
   onSubmit: (drafterId: string, drafterName: string, reason?: string) => void;
   isLoading?: boolean;
   activeOrgId: string | null;
   isReassignment?: boolean;
+  /** The drafter on it now (marked, so a reassignment picks someone else). */
+  currentDrafterId?: string | null;
+  draftKey: string | null;
 }
 
-const AssignmentModal = ({ isOpen, onClose, onSubmit, isLoading, activeOrgId, isReassignment }: AssignmentModalProps) => {
+// Mounted only while open.
+const AssignmentModal = ({ onClose, onSubmit, isLoading, activeOrgId, isReassignment, currentDrafterId, draftKey }: AssignmentModalProps) => {
   const [drafters, setDrafters] = useState<{uid: string, email: string, role: string}[]>([]);
-  const [loadingList, setLoadingList] = useState(true);
+  const [loadingList, setLoadingList] = useState(!!activeOrgId);
+  const [listError, setListError] = useState<string | null>(null);
   const [reason, setReason] = useState('');
+  useDraft<string>(isReassignment ? draftKey : null, reason, setReason, (v) => !v.trim());
+  const [reasonMissing, setReasonMissing] = useState(false);
 
   useEffect(() => {
-    if (isOpen) {
-      setReason(''); // Reset reason on open
-      if (activeOrgId) {
-        const fetchDrafters = async () => {
-          try {
-            const { data } = await supabase
-              .from('org_members')
-              .select('uid, email, role')
-              .eq('org_id', activeOrgId)
-              .eq('role', 'Drafter')
-              .eq('status', 'active');
-            setDrafters((data || []).map(r => ({ uid: r.uid, email: r.email, role: r.role })));
-          } catch (error) {
-            console.error("Error fetching drafters:", error);
-          } finally {
-            setLoadingList(false);
-          }
-        };
-        fetchDrafters();
-      }
-    }
-  }, [isOpen, activeOrgId]);
-
-  if (!isOpen) return null;
+    if (!activeOrgId) return;
+    let alive = true;
+    void (async () => {
+      const { data, error } = await supabase
+        .from('org_members')
+        .select('uid, email, role')
+        .eq('org_id', activeOrgId)
+        .eq('role', 'Drafter')
+        .eq('status', 'active');
+      if (!alive) return;
+      if (error) setListError(error.message);
+      else setDrafters((data || []).map(r => ({ uid: r.uid, email: r.email, role: r.role })));
+      setLoadingList(false);
+    })();
+    return () => { alive = false; };
+  }, [activeOrgId]);
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-[var(--color-border)] animate-in fade-in zoom-in-95">
-        <div className={`px-6 py-4 border-b ${isReassignment ? 'bg-[var(--color-surface-2)] border-[var(--color-border)]' : 'bg-[var(--color-surface-2)] border-[var(--color-border)]'}`}>
-          <h3 className={`text-lg font-bold ${isReassignment ? 'text-[var(--color-text)]' : 'text-[var(--color-text)]'}`}>{isReassignment ? 'Reassign Ticket' : 'Assign Ticket'}</h3>
-          <p className="text-xs text-[var(--color-text-muted)] mt-1">{isReassignment ? 'Select a new drafter and provide a reason.' : 'Select a Drafter to handle this request.'}</p>
-        </div>
-        
-        <div className="p-4 space-y-4">
+    <Modal onClose={onClose} dismissable={!isLoading} size="lg">
+      <ModalHeader icon={UserPlus} title={isReassignment ? 'Reassign request' : 'Assign a drafter'} subtitle={isReassignment ? 'Pick the new drafter and say why.' : 'Pick who draws it.'} onClose={isLoading ? undefined : onClose} />
+      <ModalBody className="space-y-4">
           {isReassignment && (
             <div>
               <label className="block text-sm font-bold text-[var(--color-text)] mb-2">
-                Reason for Change <span className="text-red-500">*</span>
+                Why the change <span className="text-red-500">*</span>
               </label>
               <textarea 
-                className="w-full p-3 border border-[var(--color-border-strong)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none resize-none bg-[var(--color-surface-2)]"
+                className="w-full p-3 border border-[var(--color-border-strong)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none resize-none bg-[var(--color-surface)]"
                 rows={3}
-                placeholder="Why is this ticket being reassigned?"
+                placeholder="e.g. Out this week"
                 value={reason}
-                onChange={(e) => setReason(e.target.value)}
+                onChange={(e) => { setReason(e.target.value); setReasonMissing(false); }}
               />
+              {reasonMissing && <p role="alert" className="mt-1 text-xs font-semibold text-red-700 dark:text-red-400">Say why first.</p>}
             </div>
           )}
 
           <div className="max-h-[300px] overflow-y-auto custom-scrollbar border border-[var(--color-border)] rounded-lg">
             {loadingList ? (
-              <div className="flex justify-center py-8"><Loader2 className="w-8 h-8 animate-spin text-[var(--color-text-muted)]" /></div>
+              <div className="flex items-center justify-center gap-2 py-8 text-sm text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin" /> Loading drafters…</div>
+            ) : listError ? (
+              <p role="alert" className="p-4 text-sm font-semibold text-red-700 dark:text-red-400">Couldn&apos;t load the drafters: {listError}</p>
             ) : drafters.length === 0 ? (
-              <div className="p-4 text-center text-[var(--color-text-muted)] italic">No drafters found in the system.</div>
+              <div className="p-4 text-center text-[var(--color-text-muted)]">No drafters in this workspace yet.</div>
             ) : (
               <div className="grid grid-cols-1 gap-1">
                 {drafters.map(drafter => (
                   <button 
                     key={drafter.uid} 
-                    onClick={async () => {
-                      if (isReassignment && !reason.trim()) {
-                        await appAlert({ message: "Please provide a reason for reassignment." });
-                        return;
-                      }
+                    onClick={() => {
+                      if (isReassignment && !reason.trim()) { setReasonMissing(true); return; }
                       onSubmit(drafter.uid, drafter.email.split('@')[0], reason);
                     }}
-                    disabled={isLoading} 
-                    className="flex items-center p-3 hover:bg-[var(--color-surface-2)] rounded-lg transition-colors group text-left w-full border border-transparent hover:border-[var(--color-border)]"
+                    disabled={isLoading || drafter.uid === currentDrafterId} 
+                    className="flex items-center p-3 hover:bg-[var(--color-surface-2)] rounded-lg transition-colors group text-left w-full border border-transparent hover:border-[var(--color-border)] disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <div className="h-10 w-10 rounded-full bg-[var(--color-surface-2)] group-hover:bg-[var(--color-surface)] flex items-center justify-center text-[var(--color-text-muted)] group-hover:text-[var(--color-text)] mr-4 border border-[var(--color-border)]"><User className="w-5 h-5" /></div>
-                    <div><p className="font-bold text-[var(--color-text)] text-sm">{drafter.email}</p><p className="text-xs text-[var(--color-text-muted)] uppercase tracking-wide">Drafter</p></div>
-                    <ChevronDown className="w-4 h-4 ml-auto text-slate-300 group-hover:text-[var(--color-text-muted)] -rotate-90" />
+                    <UserAvatar uid={drafter.uid} email={drafter.email} size={36} rounded="full" className="mr-3" />
+                    <div className="min-w-0"><p className="font-bold text-[var(--color-text)] text-sm truncate">{drafter.email}</p><p className="text-xs text-[var(--color-text-muted)]">{drafter.uid === currentDrafterId ? 'On it now' : 'Drafter'}</p></div>
+                    <ChevronDown className="w-4 h-4 ml-auto text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)] -rotate-90" />
                   </button>
                 ))}
               </div>
             )}
           </div>
-        </div>
-        <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex justify-end"><button onClick={onClose} className="text-sm font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button></div>
-      </div>
-    </div>
+      </ModalBody>
+      <ModalFooter><button onClick={onClose} disabled={isLoading} className="text-sm font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button></ModalFooter>
+    </Modal>
   );
 };
 
@@ -324,57 +296,54 @@ const AssignmentModal = ({ isOpen, onClose, onSubmit, isLoading, activeOrgId, is
 // SUB-COMPONENT: UPLOAD IFC MODAL
 // =========================================================================================
 interface UploadIFCModalProps {
-  isOpen: boolean;
   onClose: () => void;
   onSubmit: (file: File) => void;
   isLoading?: boolean;
+  /** Why the last try didn't go through, shown in place. */
+  error?: string | null;
 }
 
-const UploadIFCModal = ({ isOpen, onClose, onSubmit, isLoading }: UploadIFCModalProps) => {
+const UploadIFCModal = ({ onClose, onSubmit, isLoading, error }: UploadIFCModalProps) => {
   const [file, setFile] = useState<File | null>(null);
-
-  if (!isOpen) return null;
+  const drag = useFileDrag((fs) => { if (fs[0]) setFile(fs[0]); }, isLoading);
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-[var(--color-border)] animate-in fade-in zoom-in-95">
-        <div className="px-6 py-4 bg-[var(--color-surface-2)] border-b border-[var(--color-border)]">
-          <h3 className="text-lg font-bold text-[var(--color-text)] flex items-center">
-            <Stamp className="w-5 h-5 mr-2 text-[var(--color-text-muted)]" />
-            Issue For Construction
-          </h3>
-          <p className="text-xs text-[var(--color-text)] mt-1">Please upload the finalized, stamped PDF.</p>
-        </div>
-        <div className="p-6">
-          <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-[var(--color-border)] rounded-xl cursor-pointer bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] transition-colors">
-            {file ? (
-              <div className="text-center">
-                <FileCheck className="w-8 h-8 text-[var(--color-text-muted)] mx-auto mb-2" />
-                <p className="text-sm font-bold text-[var(--color-text)]">{file.name}</p>
-                <p className="text-xs text-[var(--color-text)]">{formatBytes(file.size)}</p>
+    <Modal onClose={onClose} dismissable={!isLoading}>
+      <ModalHeader icon={Stamp} title="Issue for construction" subtitle="Add the final stamped PDF." onClose={isLoading ? undefined : onClose} />
+      <ModalBody className="space-y-3">
+          <label {...drag.bind} className={`flex flex-col items-center justify-center w-full min-h-32 p-4 border-2 border-dashed border-[var(--color-border-strong)] rounded-xl cursor-pointer bg-[var(--color-surface-2)] hover:border-[var(--color-text-muted)] transition-colors ${drag.ring}`}>
+            {drag.over ? (
+              <p className="text-sm font-bold text-[var(--color-text)]">{drag.say}</p>
+            ) : file ? (
+              <div className="flex items-center gap-3 min-w-0">
+                <FileThumb file={file} />
+                <div className="min-w-0 text-left">
+                  <p className="text-sm font-bold text-[var(--color-text)] truncate">{file.name}</p>
+                  <p className="text-xs text-[var(--color-text-muted)]">{formatBytes(file.size)} · tap to pick another</p>
+                </div>
               </div>
             ) : (
               <div className="text-center">
                 <UploadCloud className="w-8 h-8 text-[var(--color-text-muted)] mx-auto mb-2" />
-                <p className="text-sm font-medium text-[var(--color-text)]">Click to upload Stamped PDF</p>
+                <p className="text-sm font-medium text-[var(--color-text)]">Drop the stamped PDF here, or tap to pick it</p>
               </div>
             )}
-            <input type="file" className="hidden" accept=".pdf" onChange={(e) => e.target.files && setFile(e.target.files[0])} />
+            <input type="file" className="hidden" accept=".pdf" onChange={(e) => { const f = e.target.files?.[0]; if (f) setFile(f); e.target.value = ''; }} />
           </label>
-        </div>
-        <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex justify-end space-x-3">
-           <button onClick={onClose} className="text-sm font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
+          {error && <p role="alert" className="border-l-2 border-red-500 pl-2 text-xs font-semibold text-red-700 dark:text-red-400">{error}</p>}
+      </ModalBody>
+      <ModalFooter>
+           <button onClick={onClose} disabled={isLoading} className="text-sm font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
            <button 
              onClick={() => file && onSubmit(file)}
              disabled={!file || isLoading}
              className="px-4 py-2 bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-bold rounded-lg hover:bg-[var(--color-accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center"
            >
              {isLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
-             Issue Final Package
+             {isLoading ? 'Issuing…' : error ? 'Try again' : 'Issue final package'}
            </button>
-        </div>
-      </div>
-    </div>
+      </ModalFooter>
+    </Modal>
   );
 };
 
@@ -382,45 +351,26 @@ const UploadIFCModal = ({ isOpen, onClose, onSubmit, isLoading }: UploadIFCModal
 // SUB-COMPONENT: COMPLIANCE DOWNLOAD MODAL (Prevention Mechanism)
 // =========================================================================================
 interface DownloadComplianceModalProps {
-  isOpen: boolean;
   onClose: () => void;
   onConfirm: () => void;
   fileName: string;
 }
 
-const DownloadComplianceModal = ({ isOpen, onClose, onConfirm, fileName }: DownloadComplianceModalProps) => {
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 z-[200] flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl max-w-sm w-full overflow-hidden border-2 border-amber-300 animate-in fade-in zoom-in-95">
-        <div className="p-6 text-center">
-          <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4">
-             <AlertTriangle className="w-8 h-8 text-amber-600" />
-          </div>
-          <h3 className="text-lg font-bold text-[var(--color-text)] mb-2">Preliminary Document</h3>
-          <p className="text-sm text-[var(--color-text-muted)] mb-6">
-            You are downloading <strong>{fileName}</strong>. This file is <span className="font-bold text-red-600">NOT FOR CONSTRUCTION</span>. It is for review purposes only.
-          </p>
-          <div className="space-y-3">
-            <button 
-              onClick={onConfirm}
-              className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-lg transition-colors shadow-lg"
-            >
-              I Acknowledge
-            </button>
-            <button 
-              onClick={onClose}
-              className="w-full py-3 bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-muted)] font-bold rounded-lg hover:bg-[var(--color-surface-2)] transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
+const DownloadComplianceModal = ({ onClose, onConfirm, fileName }: DownloadComplianceModalProps) => (
+  <Modal onClose={onClose} size="sm" zIndex={500}>
+    <ModalHeader icon={AlertTriangle} title="This is a draft" onClose={onClose} />
+    <ModalBody>
+      <p className="text-sm text-[var(--color-text)]"><strong className="break-all">{fileName}</strong></p>
+      <p className="mt-2 border-l-2 border-amber-500 pl-2 text-sm font-semibold text-amber-800 dark:text-amber-300">Not for construction. For review only.</p>
+    </ModalBody>
+    <ModalFooter>
+      <button onClick={onClose} className="px-3 py-2 text-sm font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
+      <button onClick={onConfirm} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-bold bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]">
+        <Download className="w-4 h-4" /> Download the draft
+      </button>
+    </ModalFooter>
+  </Modal>
+);
 
 // =========================================================================================
 // SUB-COMPONENT: WATERMARK OVERLAY
@@ -475,12 +425,10 @@ function RedlineEditorMount({
   }, [file.url]);
   if (error) {
     return (
-      <div className="fixed inset-0 z-[200] bg-slate-900/80 flex items-start sm:items-center justify-center overflow-y-auto p-6">
-        <div className="bg-[var(--color-surface)] rounded-2xl p-6 max-w-md text-center">
-          <p className="text-sm text-red-700 font-bold">Couldn&apos;t load the file: {error}</p>
-          <button onClick={onClose} className="mt-3 px-3 py-2 rounded-lg bg-slate-900 text-white text-xs font-bold">Close</button>
-        </div>
-      </div>
+      <Modal onClose={onClose} size="sm" zIndex={500}>
+        <ModalHeader icon={AlertTriangle} title="Couldn't open the markup" onClose={onClose} />
+        <ModalBody><p className="text-sm font-semibold text-red-700 dark:text-red-400">Couldn&apos;t load the file: {error}</p></ModalBody>
+      </Modal>
     );
   }
   if (!resolvedUrl) {
@@ -537,6 +485,22 @@ const FileViewerModal = ({
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
   const [resolveError, setResolveError] = useState<string | null>(null);
   const { userEmail } = useRole();
+  const { showToast } = useToast();
+  // Every pull is logged; if the log write fails, say so instead of
+  // pretending it was recorded.
+  const logPull = (row: Record<string, unknown>) => {
+    void supabase.from("download_audits").insert(row).then(({ error }) => {
+      if (error) showToast({ type: "error", title: "Not logged", message: `This copy wasn't added to the download log: ${error.message}` });
+    }, (e: unknown) => showToast({ type: "error", title: "Not logged", message: `This copy wasn't added to the download log: ${e instanceof Error ? e.message : String(e)}` }));
+  };
+
+  // Escape closes the viewer (the warning on top closes first).
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !showCompliance) onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isOpen, onClose, showCompliance]);
 
   useEffect(() => {
     // Archived tickets have had their attachment binaries shed to the cold
@@ -585,21 +549,24 @@ const FileViewerModal = ({
     } catch {
       // Stamping failed (odd PDF / CORS): warn loudly instead of silently
       // printing an unmarked copy.
-      const proceed = window.confirm(
-        "Couldn't apply the watermark/QR stamp to this file. Print the UNSTAMPED copy anyway?",
-      );
+      const proceed = await appConfirm({
+        title: "Print without the stamp?",
+        message: "The watermark and QR stamp couldn't be added to this file. Print the unstamped copy anyway?",
+        tone: "danger",
+        confirmLabel: "Print unstamped",
+      });
       if (!proceed) return;
     }
     // Record the print on the audit trail either way.
     if (orgId && userId) {
-      void supabase.from("download_audits").insert({
+      logPull({
         org_id: orgId, ticket_id: ticketId ?? null, attachment_id: file.id,
         attachment_type: file.type, filename: file.name, user_id: userId,
         user_email: userEmail ?? null,
         expires_at: new Date(Date.now() + 30 * 24 * 3600 * 1000),
         watermark_text: stamped ? "UNCONTROLLED COPY" : "UNSTAMPED (stamping failed)",
         source: "drafting_print",
-      }).then(() => {}, () => {});
+      });
     }
     const iframe = document.createElement('iframe');
     iframe.style.display = 'none';
@@ -659,7 +626,7 @@ const FileViewerModal = ({
       // FALLBACK WITH A VOICE: the user still gets their file, but they are
       // told it's unmarked — a raw copy must never masquerade as a stamped one.
       await appAlert({
-        message: "The watermark/QR stamp couldn't be applied to this file, so you're getting the ORIGINAL, unmarked copy. Treat it as uncontrolled and don't distribute it.",
+        message: "The watermark and QR stamp couldn't be added to this file, so you're getting the original, unmarked copy. Treat it as uncontrolled and don't hand it out.",
         tone: "danger",
       });
       const link = document.createElement("a");
@@ -674,7 +641,7 @@ const FileViewerModal = ({
       // The audit row records the pull EITHER WAY — an unstamped fallback is
       // exactly the copy the distribution record most needs to know about.
       if (orgId && userId) {
-        void supabase.from("download_audits").insert({
+        logPull({
           org_id: orgId, ticket_id: ticketId ?? null, attachment_id: file.id,
           attachment_type: file.type, filename: file.name, user_id: userId,
           user_email: userEmail ?? null, expires_at: expiresAt,
@@ -682,7 +649,7 @@ const FileViewerModal = ({
             ? (file.type === "Draft" ? "REVIEW ONLY - DO NOT DISTRIBUTE" : "CONTROLLED COPY")
             : "UNSTAMPED (stamping failed)",
           source: "drafting",
-        }).then(() => {}, () => {});
+        });
       }
       setShowCompliance(false);
     }
@@ -690,25 +657,26 @@ const FileViewerModal = ({
 
   return (
     <>
-      <DownloadComplianceModal 
-        isOpen={showCompliance} 
-        onClose={() => setShowCompliance(false)} 
-        onConfirm={performDownload}
-        fileName={file.name}
-      />
+      {showCompliance && (
+        <DownloadComplianceModal 
+          onClose={() => setShowCompliance(false)} 
+          onConfirm={performDownload}
+          fileName={file.name}
+        />
+      )}
       
-      <div className="fixed inset-0 z-[100] bg-slate-950/95 backdrop-blur-md flex flex-col animate-in fade-in duration-300">
-        <div className="flex items-center justify-between px-6 py-4 bg-slate-900 border-b border-slate-800 text-white shadow-md relative z-50">
-          <div className="flex items-center space-x-4">
-            <div className={`p-2 rounded-lg border ${file.type === 'Draft' ? 'bg-amber-900/50 border-amber-500/50 text-amber-500' : 'bg-slate-800 border-slate-700 text-[var(--color-text-muted)]'}`}>
-               {file.type === 'Draft' ? <AlertTriangle className="w-6 h-6" /> : <FileCheck className="w-6 h-6" />}
+      <div role="dialog" aria-modal="true" aria-label={file.name} className="fixed inset-0 z-[100] bg-slate-950/95 backdrop-blur-md flex flex-col animate-in fade-in duration-300">
+        <div className="flex items-center justify-between gap-3 px-4 sm:px-6 py-4 bg-slate-900 border-b border-slate-800 text-white shadow-md relative z-50">
+          <div className="flex items-center space-x-4 min-w-0">
+            <div className="p-2 rounded-lg border bg-slate-800 border-slate-700 text-slate-300 shrink-0">
+               {file.type === 'Draft' ? <AlertTriangle className="w-6 h-6 text-amber-400" /> : <FileCheck className="w-6 h-6" />}
             </div>
-            <div>
-              <h3 className="font-bold text-lg leading-none flex items-center">
-                {file.name}
-                {file.type === 'Draft' && <span className="ml-3 px-2 py-0.5 bg-amber-500 text-black text-[11px] font-black rounded uppercase tracking-wider">Preliminary</span>}
+            <div className="min-w-0">
+              <h3 className="font-bold text-lg leading-none flex items-center min-w-0">
+                <span className="truncate">{file.name}</span>
+                {file.type === 'Draft' && <span className="ml-3 shrink-0 px-2 py-0.5 border border-amber-400/60 text-amber-300 text-[11px] font-black rounded uppercase tracking-wider">Draft, not for construction</span>}
               </h3>
-              <div className="flex items-center text-xs text-[var(--color-text-faint)] mt-1.5 space-x-2">
+              <div className="flex items-center text-xs text-slate-400 mt-1.5 space-x-2">
                 <span className="bg-slate-800 px-2 py-0.5 rounded border border-slate-700">{file.type}</span>
                 <span>•</span>
                 <span>{file.size}</span>
@@ -717,29 +685,30 @@ const FileViewerModal = ({
               </div>
             </div>
           </div>
-          <div className="flex items-center space-x-3">
+          <div className="flex items-center gap-2 shrink-0">
+            {!archived && file.type !== 'Draft' && (
+               <button onClick={handlePrint} className="flex items-center px-3 sm:px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-sm font-medium transition-colors border border-slate-700">
+                 <Printer className="w-4 h-4 sm:mr-2" /><span className="hidden sm:inline">Print</span>
+               </button>
+            )}
+            {/* One main button: Approve when it's yours to approve, else Download. */}
+            {!archived && (
+              <button
+                onClick={handleDownloadClick}
+                className={`flex items-center px-3 sm:px-4 py-2 rounded-lg text-sm font-bold transition-colors ${onApprove && file.type === 'Draft' ? 'bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white' : 'bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]'}`}
+              >
+                <Download className="w-4 h-4 sm:mr-2" /><span className="hidden sm:inline">Download</span>
+              </button>
+            )}
             {onApprove && file.type === 'Draft' && (
               <button 
                 onClick={onApprove}
-                className="flex items-center px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg text-sm font-bold transition-colors shadow-lg animate-in fade-in slide-in-from-right-4"
+                className="flex items-center px-4 py-2 rounded-lg text-sm font-bold transition-colors bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"
               >
                 <CheckCircle2 className="w-4 h-4 mr-2" /> Approve
               </button>
             )}
-            {!archived && file.type !== 'Draft' && (
-               <button onClick={handlePrint} className="flex items-center px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-sm font-medium transition-colors border border-slate-700">
-                 <Printer className="w-4 h-4 mr-2" /> Print
-               </button>
-            )}
-            {!archived && (
-              <button
-                onClick={handleDownloadClick}
-                className={`flex items-center px-4 py-2 rounded-lg text-sm font-bold transition-colors bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]`}
-              >
-                <Download className="w-4 h-4 mr-2" /> {file.type === 'Draft' ? 'Download w/ Warning' : 'Download'}
-              </button>
-            )}
-            <button onClick={onClose} className="p-2 hover:bg-slate-800 rounded-full transition-colors text-[var(--color-text-faint)] hover:text-white">
+            <button onClick={onClose} aria-label="Close" className="p-2 hover:bg-slate-800 rounded-full transition-colors text-slate-400 hover:text-white">
               <X className="w-6 h-6" />
             </button>
           </div>
@@ -756,9 +725,9 @@ const FileViewerModal = ({
               </div>
               <h3 className="text-xl font-bold text-[var(--color-text)] mb-2">This file is in the archive</h3>
               <p className="text-[var(--color-text-muted)] leading-relaxed">
-                It&apos;s not gone - because this ticket is long-closed, its files were moved to{' '}
-                {archiveId ? <span className="font-mono font-bold">{archiveId}</span> : 'the offline archive'} to save storage.
-                An admin can restore the ticket{archiveId && <> from <span className="font-mono break-all">&lt;root&gt;/data/{archiveId}.zip</span></>} to open it again.
+                The request closed a while ago, so its files moved to{' '}
+                {archiveId ? <span className="font-mono font-bold">{archiveId}</span> : 'the offline archive'}.
+                An admin can restore it{archiveId && <> from <span className="font-mono break-all">&lt;root&gt;/data/{archiveId}.zip</span></>}.
               </p>
             </div>
           ) : isPdf ? (
@@ -767,7 +736,7 @@ const FileViewerModal = ({
             ) : resolveError ? (
               <div className="text-red-300 text-sm">Couldn&apos;t load the file: {resolveError}</div>
             ) : (
-              <div className="text-slate-300 text-sm flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Preparing preview…</div>
+              <div className="text-slate-300 text-sm flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading the preview…</div>
             )
           ) : isImage ? (
             resolvedUrl ? (
@@ -776,18 +745,15 @@ const FileViewerModal = ({
             ) : resolveError ? (
               <div className="text-red-300 text-sm">Couldn&apos;t load the file: {resolveError}</div>
             ) : (
-              <div className="text-slate-300 text-sm flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Preparing preview…</div>
+              <div className="text-slate-300 text-sm flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading the preview…</div>
             )
           ) : (
             <div className="text-center p-12 bg-[var(--color-surface)] rounded-xl shadow-2xl max-w-md border border-[var(--color-border)] relative z-10">
               <div className="w-24 h-24 bg-[var(--color-surface-2)] rounded-full flex items-center justify-center mx-auto mb-6 border border-[var(--color-border)]">
-                <FileIcon className="w-12 h-12 text-slate-300" />
+                <FileIcon className="w-12 h-12 text-[var(--color-text-faint)]" />
               </div>
-              <h3 className="text-xl font-bold text-[var(--color-text)] mb-2">Preview Unavailable</h3>
-              <p className="text-[var(--color-text-muted)] mb-8 leading-relaxed">This file format cannot be previewed directly.<br/>Please download to view.</p>
-              <button onClick={handleDownloadClick} className="inline-flex items-center px-8 py-3 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-lg transition-colors shadow-lg">
-                <Download className="w-4 h-4 mr-2" /> Download File
-              </button>
+              <h3 className="text-xl font-bold text-[var(--color-text)] mb-2">No preview for this type</h3>
+              <p className="text-[var(--color-text-muted)] leading-relaxed">Download it to open it.</p>
             </div>
           )}
         </div>
@@ -820,6 +786,7 @@ export default function TicketDetailView() {
   // --- STATE ---
   const [ticket, setTicket] = useState<Ticket | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   
   // Tab State
   const [activeTab, setActiveTab] = useState<'discussion' | 'audit'>('discussion');
@@ -852,6 +819,11 @@ export default function TicketDetailView() {
   const [fileToUpload, setFileToUpload] = useState<File | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [ifcError, setIfcError] = useState<string | null>(null);
+  // A redline that already went up, kept so pressing Send back again after a
+  // failed step doesn't upload it twice.
+  const redlineUpRef = useRef<{ blob: Blob; att: TicketAttachment } | null>(null);
   const [highlightCommentId, setHighlightCommentId] = useState<string | null>(null);
   const searchParams = useSearchParams();
   
@@ -914,23 +886,29 @@ export default function TicketDetailView() {
     });
 
     const fetchTicket = async () => {
-      const { data } = await supabase.from('tickets').select('*').eq('id', ticketId).single();
+      const { data, error } = await supabase.from('tickets').select('*').eq('id', ticketId).maybeSingle();
       if (!alive) return;
-      if (!data) { router.push('/requests'); return; }
+      // A failed read says so (it isn't the same as "not there").
+      if (error) { setLoadError(`Couldn't open this request: ${error.message}`); setLoading(false); return; }
+      if (!data) { setLoadError("This request isn't there. It may have been removed, or it's in another workspace."); setLoading(false); return; }
       const t = fromRow(data as Record<string, unknown>);
-      if (activeOrgId && t.orgId && t.orgId !== activeOrgId) { router.push('/requests'); return; }
+      if (activeOrgId && t.orgId && t.orgId !== activeOrgId) { setLoadError("This request is in another workspace. Switch to it in the sidebar to open it."); setLoading(false); return; }
+      setLoadError(null);
       setTicket(t);
+      // Marking it seen happens in the background; a failure only means the
+      // dot stays, so it's noted in the console, not in the way.
       if (uid && t.unreadBy?.includes(uid)) {
-        supabase.from('tickets').update({ unread_by: t.unreadBy.filter(id => id !== uid) }).eq('id', ticketId).then(() => {});
+        void supabase.from('tickets').update({ unread_by: t.unreadBy.filter(id => id !== uid) }).eq('id', ticketId)
+          .then(({ error: e }) => { if (e) console.warn('[request] mark seen failed', e.message); });
       }
       // Opening the ticket counts as reviewing its activity: mark this ticket's
       // in-app notifications read so the bell + sidebar bubble actually clears
       // (clearing unread_by alone left the notification rows unread).
       if (uid) {
-        supabase.from('notifications')
+        void supabase.from('notifications')
           .update({ read_at: new Date().toISOString() })
           .eq('user_id', uid).eq('resource_id', ticketId).is('read_at', null)
-          .then(() => {});
+          .then(({ error: e }) => { if (e) console.warn('[request] mark notifications read failed', e.message); });
       }
       setLoading(false);
     };
@@ -943,7 +921,7 @@ export default function TicketDetailView() {
       .subscribe();
 
     return () => { alive = false; supabase.removeChannel(channel); };
-  }, [ticketId, router, activeOrgId, uid]);
+  }, [ticketId, activeOrgId, uid]);
 
   // --- 2. SAFE SCROLL ---
   useEffect(() => {
@@ -979,7 +957,8 @@ export default function TicketDetailView() {
     });
 
     try {
-      await supabase.from('tickets').update({ comments: updatedComments }).eq('id', ticketId);
+      const { error: upErr } = await supabase.from('tickets').update({ comments: updatedComments }).eq('id', ticketId);
+      if (upErr) throw upErr;
       await logAuditAction({
         action: 'TICKET_ROOT_CAUSE_UPDATE', resourceId: ticketId, resourceType: 'ticket',
         orgId: activeOrgId || undefined, userId: uid || 'unknown', userRole: activeRole,
@@ -988,18 +967,24 @@ export default function TicketDetailView() {
       setEditingCommentId(null);
     } catch (e) {
       console.error("Failed to update category", e);
-      await appAlert({ message: "Failed to update root cause.", tone: "danger" });
+      await appAlert({ message: `The reason wasn't changed: ${e instanceof Error ? e.message : String(e)}`, tone: "danger" });
     }
   };
 
   const handleFileUpload = async (type: 'Draft' | 'Final' | 'Source' | 'Reference', fileOverride?: File) => {
     const file = fileOverride || fileToUpload;
     if (!file || !ticket) return;
+    if (!activeOrgId) { setUploadError("Pick a workspace first."); return; }
     setIsUploading(true);
-    try {
-      if (!activeOrgId) throw new Error("No active workspace selected.");
+    setUploadError(null);
+    const orgId = activeOrgId;
+    const ticketNo = ticket.ticketId;
+    // The transfer and the save after it, as one step that's safe to repeat:
+    // it reads the current file list right before adding to it, and nothing
+    // is added unless the file went up.
+    const run = async () => {
       const result = await uploadTicketAttachment({
-        file, orgId: activeOrgId, ticketId: ticket.ticketId,
+        file, orgId, ticketId: ticketNo,
         onProgress: (p) => setUploadProgress(p.percent),
       });
       const newAttachment: TicketAttachment = {
@@ -1009,25 +994,35 @@ export default function TicketDetailView() {
       };
       const now = new Date().toISOString();
       const historyEntry = { action: 'File Uploaded', user: userEmail || 'Unknown', role: activeRole, date: now, details: `Uploaded ${type} file: ${file.name}` };
-      const currentAttachments = ticket.attachments || [];
-      const currentHistory = ticket.history || [];
-      await supabase.from('tickets').update({
-        attachments: [...currentAttachments, newAttachment],
+      const { data: cur, error: readErr } = await supabase.from('tickets').select('attachments, history').eq('id', ticketId).single();
+      if (readErr) throw readErr;
+      const { error: upErr } = await supabase.from('tickets').update({
+        attachments: [...((cur?.attachments as TicketAttachment[] | null) ?? []), newAttachment],
         last_modified: now,
-        history: [...currentHistory, historyEntry],
+        history: [...((cur?.history as unknown[] | null) ?? []), historyEntry],
       }).eq('id', ticketId);
-
+      if (upErr) throw new Error(`The file went up but wasn't added to the request: ${upErr.message}`);
+    };
+    try {
+      await tryUpload(file.name, run, { onRetried: () => setUploadError(null) });
       await logAuditAction({
         action: 'TICKET_FILE_UPLOAD', resourceId: ticketId, resourceType: 'ticket',
-        orgId: activeOrgId, userId: uid || 'unknown', userEmail: userEmail || 'unknown', userRole: activeRole,
+        orgId, userId: uid || 'unknown', userEmail: userEmail || 'unknown', userRole: activeRole,
         details: { fileName: file.name, fileType: type, fileSize: file.size }
       });
-
-      setIsUploading(false);
       setFileToUpload(null);
+    } catch (err) {
+      console.error(err);
+      setUploadError(`${file.name} wasn't added: ${err instanceof Error ? err.message : String(err)}`);
+      setFileToUpload(null);
+    } finally {
+      setIsUploading(false);
       setUploadProgress(0);
-    } catch (err) { console.error(err); await appAlert({ message: "Upload failed. Please try again.", tone: "danger" }); setIsUploading(false); }
+    }
   };
+
+  // Drop a file anywhere on the Files card: it asks what kind it is, then adds it.
+  const filesDrag = useFileDrag((fs) => { if (fs[0]) { setUploadError(null); setFileToUpload(fs[0]); } }, isUploading || !!ticket?.archivedAt);
 
   const initiateWorkflowAction = async (action: WorkflowAction) => {
     if (!ticket) return;
@@ -1077,20 +1072,30 @@ export default function TicketDetailView() {
   const handleIFCUpload = async (file: File) => {
     if (!ticket || !pendingAction) return;
     setActionLoading('submit_final');
+    setIfcError(null);
+    const action = pendingAction;
+    const toFinal = (url: string): TicketAttachment => ({
+      id: crypto.randomUUID(), name: file.name, url, type: 'Final',
+      status: 'submitted', size: formatBytes(file.size), uploadedBy: userEmail || 'Unknown',
+      uploadedAt: new Date().toISOString()
+    });
+    let finalAttachment: TicketAttachment;
     try {
       if (!activeOrgId) throw new Error("No active workspace selected.");
-      const result = await uploadTicketAttachment({ file, orgId: activeOrgId, ticketId: ticket.ticketId });
-      const finalAttachment: TicketAttachment = {
-        id: crypto.randomUUID(), name: file.name, url: result.url, type: 'Final',
-        status: 'submitted', size: formatBytes(file.size), uploadedBy: userEmail || 'Unknown',
-        uploadedAt: new Date().toISOString()
-      };
-      await executeWorkflowAction(pendingAction, undefined, undefined, finalAttachment);
+      const orgId = activeOrgId;
+      // Only the transfer is retried from the corner card; the issue step
+      // then runs once with the file that went up.
+      const result = await tryUpload(file.name, () => uploadTicketAttachment({ file, orgId, ticketId: ticket.ticketId }), {
+        onRetried: (r) => { setIfcError(null); void executeWorkflowAction(action, undefined, undefined, toFinal(r.url)); },
+      });
+      finalAttachment = toFinal(result.url);
     } catch (err) {
       console.error(err);
-      await appAlert({ message: "Failed to upload IFC package.", tone: "danger" });
+      setIfcError(`The PDF didn't upload: ${err instanceof Error ? err.message : String(err)}`);
       setActionLoading(null);
+      return;
     }
+    await executeWorkflowAction(action, undefined, undefined, finalAttachment);
   };
 
   const handleRedlineSave = async (blob: Blob) => {
@@ -1111,6 +1116,11 @@ export default function TicketDetailView() {
     setShowCommentModal(true);
   };
 
+  // Where a dialog's typed reason waits until it's sent.
+  const actionDraftKey = (a: WorkflowAction | null) => (a ? `request-action:${ticketId}:${a.action}${isReassigning ? ':reassign' : ''}` : null);
+
+  // True when it went through; on failure the dialog stays open with what
+  // was typed, and a toast says why.
   const executeWorkflowAction = async (
     action: WorkflowAction,
     comment?: string,
@@ -1118,8 +1128,8 @@ export default function TicketDetailView() {
     newFinalFile?: TicketAttachment,
     category?: string,
     engineerData?: {id: string, name: string, email: string}
-  ) => {
-    if (!ticket) return;
+  ): Promise<boolean> => {
+    if (!ticket) return false;
     setActionLoading(action.action);
     try {
       // Handle Redline Upload if pending — files upload from the client;
@@ -1129,20 +1139,31 @@ export default function TicketDetailView() {
 
       if (pendingRedlineBlob && fileToRedline) {
          if (!activeOrgId) throw new Error("No active workspace.");
+         const blob = pendingRedlineBlob;
+         const orgId = activeOrgId;
          const fileName = `REDLINE_${Date.now()}_${fileToRedline.name}`;
-         const redlineFile = new File([pendingRedlineBlob], fileName, { type: pendingRedlineBlob.type });
-         const result = await uploadTicketAttachment({ file: redlineFile, orgId: activeOrgId, ticketId: ticket.ticketId });
-
-         redlineAttachment = {
+         const toAtt = (url: string): TicketAttachment => ({
            id: crypto.randomUUID(),
            name: fileName,
-           url: result.url,
+           url,
            type: 'Reference',
            status: 'submitted',
-           size: formatBytes(pendingRedlineBlob.size),
+           size: formatBytes(blob.size),
            uploadedBy: userEmail || 'Unknown',
            uploadedAt: new Date().toISOString()
-         };
+         });
+         if (redlineUpRef.current?.blob === blob) {
+           redlineAttachment = redlineUpRef.current.att;
+         } else {
+           // Only the transfer: a Try again from the corner card keeps the
+           // file that went up, and the next Send back uses it.
+           const redlineFile = new File([blob], fileName, { type: blob.type });
+           const result = await tryUpload(fileName, () => uploadTicketAttachment({ file: redlineFile, orgId, ticketId: ticket.ticketId }), {
+             onRetried: (r) => { redlineUpRef.current = { blob, att: toAtt(r.url) }; },
+           });
+           redlineAttachment = toAtt(result.url);
+           redlineUpRef.current = { blob, att: redlineAttachment };
+         }
 
          // Append system note to comment
          finalComment = `${comment || ''}\n\n[System: Attached Redlines for ${fileToRedline.name}]`;
@@ -1186,8 +1207,8 @@ export default function TicketDetailView() {
         setShowUploadIFC(false);
         setPendingRedlineBlob(null);
         setFileToRedline(null);
-        await appAlert({ message: "This request was just updated by someone else, so your action wasn't applied. The latest state is loading - please review the change and try again.", tone: "danger" });
-        return;
+        await appAlert({ message: "Someone else just changed this request, so this wasn't applied. The latest version is loading. Check it and try again.", tone: "danger" });
+        return false;
       }
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
@@ -1200,14 +1221,20 @@ export default function TicketDetailView() {
         showToast({ type: "success", title: "Progress saved", message: "Files staged. The request stays in Drafting until you submit." });
       }
 
+      const sentKey = actionDraftKey(action);
+      if (sentKey) clearDraft(sentKey);
       setActionLoading(null);
       setPendingAction(null);
       setShowCommentModal(false);
       setShowAssignModal(false);
+      setIsReassigning(false);
       setShowUploadIFC(false);
+      setIfcError(null);
       setPendingRedlineBlob(null); // Clear redline state
       setFileToRedline(null);
-    } catch (err) { console.error(err); showToast({ type: "error", title: "Workflow action failed", message: (err as Error).message }); setActionLoading(null); }
+      redlineUpRef.current = null;
+      return true;
+    } catch (err) { console.error(err); showToast({ type: "error", title: "That didn't go through", message: (err as Error).message }); setActionLoading(null); return false; }
   };
 
   const handlePostComment = async (text: string) => {
@@ -1331,7 +1358,13 @@ export default function TicketDetailView() {
     const next = current.includes(uid)
       ? current.filter((w) => w !== uid)
       : [...current, uid];
-    await supabase.from("tickets").update({ watchers: next }).eq("id", ticketId);
+    // Shows at once; put back if the save fails.
+    setTicket((prev) => prev ? { ...prev, watchers: next } : prev);
+    const { error } = await supabase.from("tickets").update({ watchers: next }).eq("id", ticketId);
+    if (error) {
+      setTicket((prev) => prev ? { ...prev, watchers: current } : prev);
+      await appAlert({ message: `Couldn't change watching: ${error.message}`, tone: "danger" });
+    }
   };
 
   const getStatusStyle = (status: TicketStatus) => {
@@ -1344,11 +1377,18 @@ export default function TicketDetailView() {
     }
   };
 
+  if (loadError && !ticket) {
+    return (
+      <div className="max-w-2xl mx-auto p-6">
+        <p role="alert" className="border-l-2 border-red-500 pl-3 text-sm font-semibold text-red-700 dark:text-red-400">{loadError}</p>
+        <button type="button" onClick={() => router.push('/requests')} className="mt-4 h-10 px-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Go to drafting requests</button>
+      </div>
+    );
+  }
   if (loading || !ticket) {
     return (
-      <div className="flex h-full w-full flex-col items-center justify-center gap-4">
-        <Loader2 className="w-16 h-16 animate-spin text-[var(--color-text-muted)]" />
-        <div className="flex flex-col items-center"><h2 className="text-xl font-bold text-[var(--color-text)]">Loading Ticket Details...</h2><p className="text-[var(--color-text-muted)] text-sm">Retrieving latest workflow state and assets.</p></div>
+      <div className="max-w-[1920px] mx-auto p-4 sm:p-6 lg:p-8">
+        <LoadingBlock what="the request" rows={6} />
       </div>
     );
   }
@@ -1404,11 +1444,12 @@ export default function TicketDetailView() {
           return action ? () => { setViewerFile(null); initiateWorkflowAction(action); } : undefined;
         })()}
       />
+      {showCommentModal && (
       <ActionModal 
-        isOpen={showCommentModal} 
+        draftKey={actionDraftKey(pendingAction)}
         onClose={() => setShowCommentModal(false)} 
-        title={pendingAction?.action === 'approve_minor_correction' ? 'Approve with Minor Correction' : pendingAction?.action === 'request_revision' || pendingAction?.action === 'reject' ? 'Request Revision' : pendingAction?.variant === 'destructive' ? 'Reject & Return' : 'Workflow Comment'}
-        description={pendingAction?.action === 'approve_minor_correction' ? 'Describe the small fix (typo, mislabel). The deliverable is approved NOW - your note goes to the drafter to fold into the issued file, with no new review round.' : pendingAction?.action === 'request_revision' || pendingAction?.action === 'reject' ? 'Please provide feedback on what needs to be revised.' : pendingAction?.variant === 'destructive' ? 'Please explain why this request is being returned or rejected.' : 'Add an optional comment to this action.'}
+        title={pendingAction?.action === 'approve_minor_correction' ? 'Approve with a small fix' : pendingAction?.action === 'request_revision' || pendingAction?.action === 'reject' ? 'Ask for a revision' : pendingAction?.variant === 'destructive' ? 'Send it back' : (pendingAction?.label ?? 'Add a comment')}
+        description={pendingAction?.action === 'approve_minor_correction' ? 'Say what to fix (a typo, a label). It is approved now; the drafter fixes it in the issued file with no new review.' : pendingAction?.action === 'request_revision' || pendingAction?.action === 'reject' ? 'Say what needs to change.' : pendingAction?.variant === 'destructive' ? 'Say why it is going back.' : 'Add a comment for the record.'}
         isDestructive={pendingAction?.variant === 'destructive' || pendingAction?.action === 'request_revision'} 
         showCategorySelection={pendingAction?.action === 'request_revision' || pendingAction?.action === 'reject'}
         onSubmit={(comment, category) => pendingAction && executeWorkflowAction(pendingAction, comment, undefined, undefined, category)}
@@ -1432,8 +1473,13 @@ export default function TicketDetailView() {
           : undefined
         }
       />
-      <AssignmentModal isOpen={showAssignModal} onClose={() => { setShowAssignModal(false); setIsReassigning(false); }} onSubmit={(id, name, reason) => pendingAction && executeWorkflowAction(pendingAction, reason, {id, name})} isLoading={!!actionLoading} activeOrgId={activeOrgId} isReassignment={isReassigning} />
-      <UploadIFCModal isOpen={showUploadIFC} onClose={() => setShowUploadIFC(false)} onSubmit={handleIFCUpload} isLoading={!!actionLoading} />
+      )}
+      {showAssignModal && (
+        <AssignmentModal onClose={() => { setShowAssignModal(false); setIsReassigning(false); }} onSubmit={(id, name, reason) => pendingAction && executeWorkflowAction(pendingAction, reason, {id, name})} isLoading={!!actionLoading} activeOrgId={activeOrgId} isReassignment={isReassigning} currentDrafterId={isReassigning ? ticket.assignedDrafterId : null} draftKey={actionDraftKey(pendingAction)} />
+      )}
+      {showUploadIFC && (
+        <UploadIFCModal onClose={() => { setShowUploadIFC(false); setIfcError(null); }} onSubmit={handleIFCUpload} isLoading={!!actionLoading} error={ifcError} />
+      )}
 
       {showWorkflowDiagram && (
         <WorkflowDiagramModal current={ticket.status} onClose={() => setShowWorkflowDiagram(false)} />
@@ -1445,17 +1491,18 @@ export default function TicketDetailView() {
           onClose={() => { setShowEngineerPicker(false); setPendingAction(null); }}
           orgId={activeOrgId}
           currentEngineerId={pendingAction.action === 'reassign_engineer' ? ticket?.assignedEngineerId ?? undefined : undefined}
+          draftKey={actionDraftKey(pendingAction)}
           title={
-            pendingAction.action === 'request_final_engineer_approval' ? 'Send for Engineer Final Approval' :
-            pendingAction.action === 'reassign_engineer' ? 'Reassign Engineer Reviewer' :
-            'Flag for Engineering Review'
+            pendingAction.action === 'request_final_engineer_approval' ? 'Send for engineer sign-off' :
+            pendingAction.action === 'reassign_engineer' ? 'Change the engineer reviewer' :
+            'Send for engineering review'
           }
           description={
             pendingAction.action === 'request_final_engineer_approval'
-              ? 'Engineering policy: drawings need an engineer sign-off before IFC. The engineer you pick will get a notification and review the draft.'
+              ? 'Drawings need an engineer sign-off before IFC. The engineer you pick is notified.'
               : pendingAction.action === 'reassign_engineer'
-                ? 'Pick a different engineer to take over the final approval review.'
-                : 'Route this ticket to a specific engineer for a scope review.'
+                ? 'Pick who takes over the sign-off.'
+                : 'Pick the engineer who checks the scope.'
           }
           commentLabel={pendingAction.action === 'request_final_engineer_approval' ? 'Note to the engineer *' : 'What needs to be reviewed? *'}
           commentPlaceholder={
@@ -1465,7 +1512,7 @@ export default function TicketDetailView() {
           }
           onSubmit={async ({ engineerId, engineerName, engineerEmail, comment }) => {
             if (!pendingAction) return;
-            await executeWorkflowAction(
+            const ok = await executeWorkflowAction(
               pendingAction,
               comment,
               undefined,
@@ -1473,6 +1520,8 @@ export default function TicketDetailView() {
               undefined,
               { id: engineerId, name: engineerName, email: engineerEmail }
             );
+            // Keeps the dialog (and the note) open when it didn't go through.
+            if (!ok) throw new Error("It didn't go through. Your note is still here.");
           }}
         />
       )}
@@ -1481,7 +1530,7 @@ export default function TicketDetailView() {
       <div className="bg-[var(--color-surface)] border-b border-[var(--color-border)] sticky top-0 z-20 shadow-sm px-4 sm:px-6 lg:px-8 py-4">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 max-w-[1920px] mx-auto">
           <div className="flex items-center gap-4">
-            <button onClick={() => router.back()} className="p-2 hover:bg-[var(--color-surface-2)] rounded-full text-[var(--color-text-muted)] transition-colors"><ArrowLeft className="w-5 h-5" /></button>
+            <button onClick={() => router.back()} aria-label="Back" className="p-2 hover:bg-[var(--color-surface-2)] rounded-full text-[var(--color-text-muted)] transition-colors"><ArrowLeft className="w-5 h-5" /></button>
             <div>
               <div className="flex items-center gap-3">
                 <h1 className="text-xl font-bold text-[var(--color-text)] tracking-tight">{ticket.ticketId}</h1>
@@ -1544,40 +1593,44 @@ export default function TicketDetailView() {
                       // Everyone classifies their upload — silently force-filing
                       // a requester's redline as a "Source" asset misled both
                       // sides of the review.
-                      if (file) setFileToUpload(file);
+                      if (file) { setUploadError(null); setFileToUpload(file); }
+                      e.target.value = '';
                     }} 
                   />
                 </label>
 
-                {fileToUpload && !isUploading && (
-                  <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
-                    <div className="bg-[var(--color-surface)] p-6 rounded-2xl shadow-2xl max-w-sm w-full animate-in fade-in zoom-in-95 border border-[var(--color-border)]">
-                      <div className="flex items-center justify-between mb-4">
-                        <h3 className="font-bold text-lg text-[var(--color-text)]">Classify Upload</h3>
-                        <button onClick={() => setFileToUpload(null)} className="p-1 hover:bg-[var(--color-surface-2)] rounded-full transition-colors"><X className="w-5 h-5 text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]"/></button>
-                      </div>
-                      <div className="p-3 bg-[var(--color-surface-2)] rounded-lg mb-6 border border-[var(--color-border)] flex items-center">
-                        <FileIcon className="w-8 h-8 text-[var(--color-text-muted)] mr-3" />
+                {fileToUpload && !isUploading && (() => {
+                  // The likely kind goes first and is the main button: a
+                  // drafter's upload is a draft, anyone else's a source file.
+                  const draftFirst = activeRole === 'Drafter' || ticket.assignedDrafterId === uid;
+                  const kinds: Array<{ type: 'Source' | 'Draft' | 'Reference'; label: string; icon: React.ReactNode }> = [
+                    { type: 'Draft', label: 'Draft drawing', icon: <FileText className="w-4 h-4 mr-2"/> },
+                    { type: 'Source', label: 'Source file', icon: <FileIcon className="w-4 h-4 mr-2"/> },
+                    { type: 'Reference', label: 'Reference', icon: <Paperclip className="w-4 h-4 mr-2"/> },
+                  ];
+                  const ordered = draftFirst ? kinds : [kinds[1], kinds[0], kinds[2]];
+                  return (
+                  <Modal onClose={() => setFileToUpload(null)} size="sm">
+                    <ModalHeader title="What kind of file is it?" onClose={() => setFileToUpload(null)} />
+                    <ModalBody>
+                      <div className="p-3 bg-[var(--color-surface-2)] rounded-lg mb-4 border border-[var(--color-border)] flex items-center gap-3">
+                        <FileThumb file={fileToUpload} />
                         <div className="overflow-hidden">
                           <p className="font-bold text-sm truncate text-[var(--color-text)]">{fileToUpload.name}</p>
                           <p className="text-xs text-[var(--color-text-muted)]">{formatBytes(fileToUpload.size)}</p>
                         </div>
                       </div>
                       <div className="flex flex-col gap-2">
-                        <p className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase tracking-widest mb-1">Select File Category</p>
-                        <button onClick={() => handleFileUpload('Source')} className="w-full py-3 border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] rounded-lg font-bold hover:bg-[var(--color-surface-2)] transition-colors flex items-center justify-center">
-                          <FileIcon className="w-4 h-4 mr-2"/> Source Asset
-                        </button>
-                        <button onClick={() => handleFileUpload('Draft')} className="w-full py-3 bg-[var(--color-accent)] text-[var(--color-accent-fg)] rounded-lg font-bold hover:bg-[var(--color-accent-hover)] transition-colors flex items-center justify-center">
-                          <FileText className="w-4 h-4 mr-2"/> Draft Drawing
-                        </button>
-                        <button onClick={() => handleFileUpload('Reference')} className="w-full py-3 bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] rounded-lg font-bold hover:bg-[var(--color-surface-2)] transition-colors flex items-center justify-center">
-                          Supporting Doc / Reference
-                        </button>
+                        {ordered.map((k, i) => (
+                          <button key={k.type} onClick={() => handleFileUpload(k.type)} className={`w-full py-3 rounded-lg font-bold transition-colors flex items-center justify-center ${i === 0 ? 'bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]' : 'border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]'}`}>
+                            {k.icon} {k.label}
+                          </button>
+                        ))}
                       </div>
-                    </div>
-                  </div>
-                )}
+                    </ModalBody>
+                  </Modal>
+                  );
+                })()}
               </>
             )}
 
@@ -1633,19 +1686,24 @@ export default function TicketDetailView() {
         </div>
       </div>
 
+      {requestStepIndex(ticket.status) >= 0 && (
+        <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-5">
+          <StepPath steps={REQUEST_STEPS} current={requestStepIndex(ticket.status)} />
+        </div>
+      )}
+
       {ticket.status === 'REVISION_REQ' && latestRevision && (
         <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6">
-          <div className="rounded-xl border-2 border-amber-300 bg-amber-50 p-4 flex items-start gap-3">
-            <RotateCcw className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+          <div className="border-l-2 border-amber-500 pl-3">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <h3 className="text-sm font-black text-amber-900">Revision requested - here&apos;s what to fix</h3>
+                <h3 className="text-sm font-black text-amber-800 dark:text-amber-300 inline-flex items-center gap-1.5"><RotateCcw className="w-4 h-4" /> Sent back for a revision. What to fix:</h3>
                 {latestRevision.category && (
-                  <span className="px-2 py-0.5 rounded-full bg-amber-200 text-amber-900 text-[11px] font-bold uppercase tracking-wider">{latestRevision.category}</span>
+                  <span className="text-[12px] font-bold text-[var(--color-text-muted)]">{latestRevision.category}</span>
                 )}
               </div>
-              <p className="text-sm text-amber-900 mt-1 whitespace-pre-wrap leading-relaxed">{latestRevision.text}</p>
-              <p className="text-[11px] text-amber-700 mt-1.5">
+              <p className="text-sm text-[var(--color-text)] mt-1 whitespace-pre-wrap leading-relaxed">{latestRevision.text}</p>
+              <p className="text-[11px] text-[var(--color-text-muted)] mt-1.5">
                 {latestRevision.user ?? 'Reviewer'}{latestRevision.date ? ` · ${new Date(latestRevision.date).toLocaleString()}` : ''}
               </p>
               {(() => {
@@ -1657,9 +1715,9 @@ export default function TicketDetailView() {
                 return redlines[0] ? (
                   <button
                     onClick={() => setViewerFile(redlines[0])}
-                    className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-xs font-bold shadow-sm"
+                    className="mt-2 inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-xs font-bold"
                   >
-                    <Pen className="w-3.5 h-3.5" /> View redline markups
+                    <Pen className="w-3.5 h-3.5" /> Open the redlines
                   </button>
                 ) : null;
               })()}
@@ -1677,13 +1735,13 @@ export default function TicketDetailView() {
         const hasShape = !!(sum.commentCount || sum.attachmentCount || sum.historyCount);
         return (
           <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6">
-            <div className="rounded-xl border-2 border-[var(--color-border)] bg-[var(--color-surface-2)] p-4 flex items-start gap-3">
+            <div className="border-l-2 border-[var(--color-border-strong)] pl-3 flex items-start gap-3">
               <Archive className="w-5 h-5 text-[var(--color-text-muted)] shrink-0 mt-0.5" />
               <div className="min-w-0">
-                <h3 className="text-sm font-black text-[var(--color-text)]">It&apos;s not gone - just archived because it&apos;s old</h3>
+                <h3 className="text-sm font-black text-[var(--color-text)]">Archived</h3>
                 <p className="text-sm text-[var(--color-text)] mt-1 leading-relaxed">
-                  Because this ticket has been closed a while, its full content was moved to the offline archive{' '}
-                  {ticket.archiveId ? <span className="font-mono font-bold">{ticket.archiveId}</span> : 'a backup'} to save storage. What you see here is a lightweight stub.
+                  It closed a while ago, so its files and comments moved to the archive{' '}
+                  {ticket.archiveId ? <span className="font-mono font-bold">{ticket.archiveId}</span> : ''}. This page keeps the summary.
                 </p>
                 {hasShape && (
                   <p className="text-[13px] text-[var(--color-text)] mt-2">
@@ -1692,15 +1750,14 @@ export default function TicketDetailView() {
                     {names.length > 0 && <> (<span className="italic">{names.join(', ')}{(sum.attachmentCount ?? 0) > names.length ? `, +${(sum.attachmentCount ?? 0) - names.length} more` : ''}</span>)</>}, {plural(sum.historyCount, 'history event')}.
                   </p>
                 )}
-                <p className="text-[13px] text-[var(--color-text)] mt-2">
-                  <span className="font-bold">To view it all again:</span> have the saved archive{' '}
-                  {ticket.archiveId ? <span className="font-mono break-all">&lt;root&gt;/data/{ticket.archiveId}.zip</span> : 'zip'}? Open it right here - or an admin can fully restore it from the Storage &amp; Backup page.
+                <p className="text-[13px] text-[var(--color-text-muted)] mt-2">
+                  Have the archive file{ticket.archiveId ? <> (<span className="font-mono break-all">&lt;root&gt;/data/{ticket.archiveId}.zip</span>)</> : ''}? Open it here. An admin can restore it fully on the Storage &amp; Backup page.
                 </p>
                 <button
                   onClick={() => setShowArchiveViewer(true)}
-                  className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]"
+                  className="mt-2.5 inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-xs font-bold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                 >
-                  <Archive className="w-3.5 h-3.5" /> View from archive…
+                  <Archive className="w-3.5 h-3.5" /> Open from the archive
                 </button>
               </div>
             </div>
@@ -1715,7 +1772,7 @@ export default function TicketDetailView() {
             <div className="flex items-center justify-between mb-6 border-b border-[var(--color-border)] pb-4"><h2 className="text-sm font-bold text-[var(--color-text)] uppercase tracking-wide flex items-center"><FileText className="w-4 h-4 mr-2 text-[var(--color-text-muted)]" /> Project Specifications</h2></div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
               <div><label className="text-[11px] text-[var(--color-text-faint)] font-medium">Unit</label><div className="font-mono text-sm font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] px-2 py-1 rounded w-fit mt-1 border border-[var(--color-border)]">{ticket.unit}</div></div>
-              <div><label className="text-[11px] text-[var(--color-text-faint)] font-medium">Requester</label><div className="min-w-0 text-sm text-[var(--color-text)] mt-1 flex items-center group cursor-help" title={ticket.requesterId}><User className="w-4 h-4 mr-2 text-slate-300 group-hover:text-[var(--color-text-muted)] transition-colors shrink-0" /><span className="truncate">{ticket.requesterName}</span></div></div>
+              <div><label className="text-[11px] text-[var(--color-text-faint)] font-medium">Requester</label><div className="min-w-0 text-sm text-[var(--color-text)] mt-1 flex items-center group cursor-help" title={ticket.requesterId}><User className="w-4 h-4 mr-2 text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)] transition-colors shrink-0" /><span className="truncate">{ticket.requesterName}</span></div></div>
               <div><label className="text-[11px] text-[var(--color-text-faint)] font-medium">Assigned Lead</label><div className="min-w-0 text-sm text-[var(--color-text)] mt-1">{ticket.assignedDrafterName ? (<div className="flex items-center"><span className="truncate">{ticket.assignedDrafterName}</span></div>) : <span className="text-[var(--color-text-faint)] italic">Unassigned</span>}</div></div>
               <div>
                 <label className="text-[11px] text-[var(--color-text-faint)] font-medium">Engineer Reviewer</label>
@@ -1728,13 +1785,13 @@ export default function TicketDetailView() {
                   ) : <span className="text-[var(--color-text-faint)] italic">Not yet assigned</span>}
                 </div>
               </div>
-              <div><label className="text-[11px] text-[var(--color-text-faint)] font-medium">Initiated</label><div className="text-sm font-semibold text-[var(--color-text)] mt-1 flex items-center"><Calendar className="w-4 h-4 mr-2 text-slate-300 shrink-0" />{toDate(ticket.createdAt).toLocaleDateString()}</div></div>
+              <div><label className="text-[11px] text-[var(--color-text-faint)] font-medium">Initiated</label><div className="text-sm font-semibold text-[var(--color-text)] mt-1 flex items-center"><Calendar className="w-4 h-4 mr-2 text-[var(--color-text-faint)] shrink-0" />{toDate(ticket.createdAt).toLocaleDateString()}</div></div>
               <div>
                 <label className="text-[11px] text-[var(--color-text-faint)] font-medium">Target Completion</label>
                 <div className="text-sm font-semibold mt-1 flex items-center gap-1.5">
                   {ticket.targetCompletionAt ? (
                     <>
-                      <Calendar className={`w-4 h-4 shrink-0 ${isPastDue(ticket) ? "text-red-500" : isNearingDue(ticket) ? "text-amber-500" : "text-slate-300"}`} />
+                      <Calendar className={`w-4 h-4 shrink-0 ${isPastDue(ticket) ? "text-red-500" : isNearingDue(ticket) ? "text-amber-500" : "text-[var(--color-text-faint)]"}`} />
                       <span className={isPastDue(ticket) ? "text-red-700" : "text-[var(--color-text)]"}>{toDate(ticket.targetCompletionAt).toLocaleDateString()}</span>
                       {isPastDue(ticket) && <span className="text-[11px] font-black uppercase bg-red-100 text-red-700 px-1.5 py-0.5 rounded">Past Due</span>}
                       {!isPastDue(ticket) && isNearingDue(ticket) && <span className="text-[11px] font-black uppercase bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">Due Soon</span>}
@@ -1749,6 +1806,7 @@ export default function TicketDetailView() {
                 <div className="text-sm font-semibold mt-1 flex items-center gap-2">
                   <button
                     onClick={toggleWatch}
+                    aria-pressed={(ticket.watchers ?? []).includes(uid ?? "")}
                     className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold transition-colors ${
                       (ticket.watchers ?? []).includes(uid ?? "")
                         ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)]"
@@ -1757,25 +1815,33 @@ export default function TicketDetailView() {
                   >
                     {(ticket.watchers ?? []).includes(uid ?? "") ? "Watching" : "Watch"}
                   </button>
-                  <span className="text-[11px] text-[var(--color-text-faint)]">{(ticket.watchers ?? []).length} subscriber{(ticket.watchers ?? []).length === 1 ? "" : "s"}</span>
+                  <span className="text-[11px] text-[var(--color-text-faint)]">{(ticket.watchers ?? []).length} watching</span>
                 </div>
               </div>
             </div>
             <div className="mt-6 pt-6 border-t border-[var(--color-border)]"><label className="text-[11px] text-[var(--color-text-faint)] font-bold uppercase tracking-wider mb-2 block">Scope of Work</label><div className="bg-[var(--color-surface-2)] rounded-lg p-4 text-sm text-[var(--color-text)] leading-relaxed border border-[var(--color-border)] shadow-inner">{ticket.description}</div></div>
           </div>
 
-          <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm overflow-hidden flex flex-col">
-             <div className="px-6 py-4 border-b border-[var(--color-border)] bg-slate-50/50 flex flex-col sm:flex-row justify-between items-center gap-4">
-               <div><h2 className="text-sm font-bold text-[var(--color-text)] uppercase tracking-wide flex items-center"><Paperclip className="w-4 h-4 mr-2 text-[var(--color-text-muted)]" /> Project Assets</h2></div>
+          <div {...filesDrag.bind} className={`bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm overflow-hidden flex flex-col ${filesDrag.ring}`}>
+             <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex flex-col sm:flex-row justify-between sm:items-center gap-2">
+               <div><h2 className="text-sm font-bold text-[var(--color-text)] uppercase tracking-wide flex items-center"><Paperclip className="w-4 h-4 mr-2 text-[var(--color-text-muted)]" /> Files</h2></div>
+               {filesDrag.over
+                 ? <span className="text-xs font-bold text-[var(--color-text)]">{filesDrag.say}</span>
+                 : isUploading
+                   ? <span className="text-xs text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Uploading {uploadProgress.toFixed(0)}%</span>
+                   : !ticket.archivedAt && <span className="text-xs text-[var(--color-text-faint)]">Drop a file here to add it</span>}
              </div>
+             {uploadError && (
+               <p role="alert" className="mx-4 mt-3 border-l-2 border-red-500 pl-2 text-xs font-semibold text-red-700 dark:text-red-400">{uploadError}</p>
+             )}
 
-             <div className="p-4 bg-slate-50/50 border-b border-[var(--color-border)] order-1">
-               <h3 className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase tracking-widest mb-3">Incoming Assets (Source)</h3>
+             <div className="p-4 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] order-1">
+               <h3 className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase tracking-widest mb-3">Source and reference</h3>
                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                  {sourceFiles.length === 0 ? <p className="text-xs text-[var(--color-text-faint)] italic pl-2">No source files provided.</p> : sourceFiles.map((file, idx) => (
                    <div key={idx} className="flex items-center justify-between bg-[var(--color-surface)] p-2.5 rounded-lg border border-[var(--color-border)] shadow-sm hover:border-[var(--color-border-strong)]">
                      <div className="flex items-center space-x-3 overflow-hidden"><div className="p-1.5 bg-[var(--color-surface-2)] rounded text-[var(--color-text-muted)]"><FileIcon className="w-4 h-4" /></div><span className="text-xs font-bold text-[var(--color-text)] truncate">{file.name}</span></div>
-                     <button onClick={() => setViewerFile(file)} className="text-[var(--color-text-faint)] hover:text-[var(--color-accent-hover)]"><Eye className="w-4 h-4" /></button>
+                     <button onClick={() => setViewerFile(file)} aria-label={`Open ${file.name}`} className="p-1.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><Eye className="w-4 h-4" /></button>
                    </div>
                  ))}
                </div>
@@ -1798,9 +1864,9 @@ export default function TicketDetailView() {
                                   <p className="text-sm font-bold text-[var(--color-text)] truncate hover:underline cursor-pointer" onClick={() => setViewerFile(latestDraft)}>{latestDraft.name}</p>
                                   <div className="flex items-center text-xs text-[var(--color-text-muted)] mt-0.5 space-x-2">
                                      <span>{latestDraft.size}</span>
-                                     <span className="w-1 h-1 rounded-full bg-slate-300"/>
+                                     <span className="w-1 h-1 rounded-full bg-[var(--color-border-strong)]"/>
                                      <span>{toDate(latestDraft.uploadedAt).toLocaleString()}</span>
-                                     <span className="w-1 h-1 rounded-full bg-slate-300"/>
+                                     <span className="w-1 h-1 rounded-full bg-[var(--color-border-strong)]"/>
                                      <span className="font-bold text-[var(--color-text)]">Latest</span>
                                   </div>
                                 </div>
@@ -1814,7 +1880,7 @@ export default function TicketDetailView() {
                                      <Pen className="w-3 h-3 mr-1.5"/> Redline
                                    </button>
                                 )}
-                                <button onClick={() => setViewerFile(latestDraft)} className="p-2 text-[var(--color-text-faint)] hover:text-[var(--color-accent-hover)] hover:bg-[var(--color-surface-2)] rounded-lg transition-colors"><Eye className="w-5 h-5" /></button>
+                                <button onClick={() => setViewerFile(latestDraft)} aria-label={`Open ${latestDraft.name}`} className="p-2 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg transition-colors"><Eye className="w-5 h-5" /></button>
                               </div>
                            </div>
                          </div>
@@ -1824,9 +1890,9 @@ export default function TicketDetailView() {
                       {previousDrafts.length > 0 && (
                         <div className="space-y-3 pt-2">
                           <div className="flex items-center gap-3">
-                            <div className="h-px bg-slate-200 flex-1"/>
-                            <span className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase tracking-widest">Previous Versions</span>
-                            <div className="h-px bg-slate-200 flex-1"/>
+                            <div className="h-px bg-[var(--color-border)] flex-1"/>
+                            <span className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase tracking-widest">Earlier versions</span>
+                            <div className="h-px bg-[var(--color-border)] flex-1"/>
                           </div>
                           <div className="grid grid-cols-1 gap-2">
                             {previousDrafts.map((file, idx) => (
@@ -1834,11 +1900,11 @@ export default function TicketDetailView() {
                                  <div className="flex items-center space-x-3 min-w-0">
                                    <FileIcon className="w-4 h-4 shrink-0" />
                                    <div className="min-w-0">
-                                      <p className="text-xs font-medium truncate decoration-slate-300">{file.name}</p>
+                                      <p className="text-xs font-medium truncate">{file.name}</p>
                                       <p className="text-xs opacity-70">{toDate(file.uploadedAt).toLocaleString()}</p>
                                    </div>
                                  </div>
-                                 <button onClick={() => setViewerFile(file)} className="p-1.5 hover:bg-[var(--color-surface-2)] rounded"><Eye className="w-3.5 h-3.5" /></button>
+                                 <button onClick={() => setViewerFile(file)} aria-label={`Open ${file.name}`} className="p-1.5 hover:bg-[var(--color-surface-2)] rounded"><Eye className="w-3.5 h-3.5" /></button>
                               </div>
                             ))}
                           </div>
@@ -1851,7 +1917,7 @@ export default function TicketDetailView() {
 
              <div className={`p-4 ${['FINAL_DRAFT', 'PENDING_FINAL_APPROVAL', 'CLOSED'].includes(ticket.status) ? 'bg-[var(--color-surface-2)] order-2 border-b border-[var(--color-border)] shadow-sm relative overflow-hidden' : 'bg-[var(--color-surface-2)] order-3'}`}>
                <h3 className={`text-[11px] font-bold uppercase tracking-widest mb-3 flex items-center ${['FINAL_DRAFT', 'PENDING_FINAL_APPROVAL', 'CLOSED'].includes(ticket.status) ? 'text-[var(--color-text)]' : 'text-[var(--color-text)]'}`}>
-                 <CheckCircle2 className="w-3 h-3 mr-1" /> Final Issued Deliverables
+                 <CheckCircle2 className="w-3 h-3 mr-1" /> Issued for construction
                  {ticket.deliverableRev && /^\d+$/.test(ticket.deliverableRev) && (
                    <span className="ml-2 px-1.5 py-0.5 bg-[var(--color-surface-2)] text-[var(--color-text)] text-[11px] font-black rounded normal-case tracking-normal">Rev {ticket.deliverableRev}</span>
                  )}
@@ -1863,11 +1929,10 @@ export default function TicketDetailView() {
                        <div className="p-2 bg-[var(--color-surface-2)] text-[var(--color-text)] rounded"><CheckSquare className="w-5 h-5" /></div>
                        <div className="min-w-0">
                          <p className="text-sm font-bold text-[var(--color-text)] truncate">{file.name}</p>
-                         <p className="text-xs text-[var(--color-text)] font-semibold">ISSUED: {toDate(file.uploadedAt).toLocaleDateString()}</p>
-                         {['FINAL_DRAFT', 'PENDING_FINAL_APPROVAL', 'CLOSED'].includes(ticket.status) && <span className="inline-block mt-1 px-2 py-0.5 bg-[var(--color-surface-2)] text-[var(--color-text)] text-[11px] font-bold rounded uppercase tracking-wider shadow-sm">Issued For Construction</span>}
+                         <p className="text-xs text-[var(--color-text-muted)] font-semibold">Issued {toDate(file.uploadedAt).toLocaleDateString()}</p>
                        </div>
                      </div>
-                     <button onClick={() => setViewerFile(file)} className="p-2 text-[var(--color-text-faint)] hover:text-[var(--color-accent-hover)] hover:bg-[var(--color-surface-2)] rounded"><Maximize2 className="w-4 h-4" /></button>
+                     <button onClick={() => setViewerFile(file)} aria-label={`Open ${file.name}`} className="p-2 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded"><Maximize2 className="w-4 h-4" /></button>
                    </div>
                  ))}
                </div>
@@ -1887,16 +1952,16 @@ export default function TicketDetailView() {
 
         {/* RIGHT: ACTIVITY */}
         <div className="h-[calc(100dvh-140px)] flex flex-col bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm overflow-hidden sticky top-24">
-          <div className="flex items-center border-b border-[var(--color-border)] bg-[var(--color-surface-2)]"><button onClick={() => setActiveTab('discussion')} className={`flex-1 py-3 text-xs font-bold transition-all ${activeTab === 'discussion' ? 'text-[var(--color-text)] border-b-2 border-[var(--color-accent)] bg-[var(--color-surface)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-slate-100/50'}`}>Discussion</button><button onClick={() => setActiveTab('audit')} className={`flex-1 py-3 text-xs font-bold transition-all ${activeTab === 'audit' ? 'text-[var(--color-text)] border-b-2 border-[var(--color-accent)] bg-[var(--color-surface)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-slate-100/50'}`}>Audit Log</button></div>
-          <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-4 space-y-6 bg-slate-50/30 custom-scrollbar relative">
+          <div role="tablist" className="flex items-center border-b border-[var(--color-border)] bg-[var(--color-surface-2)]"><button role="tab" aria-selected={activeTab === 'discussion'} onClick={() => setActiveTab('discussion')} className={`flex-1 py-3 text-xs font-bold transition-all ${activeTab === 'discussion' ? 'text-[var(--color-text)] border-b-2 border-[var(--color-text)] bg-[var(--color-surface)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]'}`}>Discussion</button><button role="tab" aria-selected={activeTab === 'audit'} onClick={() => setActiveTab('audit')} className={`flex-1 py-3 text-xs font-bold transition-all ${activeTab === 'audit' ? 'text-[var(--color-text)] border-b-2 border-[var(--color-text)] bg-[var(--color-surface)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]'}`}>History</button></div>
+          <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-4 space-y-6 bg-[var(--color-canvas)] custom-scrollbar relative">
             {activeTab === 'discussion' && (
               <>
-                {(!ticket.comments || ticket.comments.length === 0) && <div className="absolute inset-0 flex flex-col items-center justify-center opacity-40 pointer-events-none"><MessageSquare className="w-12 h-12 text-slate-300 mb-2" /><p className="text-sm text-[var(--color-text-faint)] font-medium">No comments yet</p></div>}
+                {(!ticket.comments || ticket.comments.length === 0) && <div className="absolute inset-0 flex flex-col items-center justify-center opacity-40 pointer-events-none"><MessageSquare className="w-12 h-12 text-[var(--color-text-faint)] mb-2" /><p className="text-sm text-[var(--color-text-faint)] font-medium">No comments yet</p></div>}
                 {ticket.comments?.map((comment, idx) => (
                   <div key={`${comment.id}-${idx}`} id={`comment-${comment.id}`} className={`flex flex-col ${comment.user === userEmail ? 'items-end' : 'items-start'} animate-in slide-in-from-bottom-2 ${highlightCommentId === comment.id ? 'rounded-2xl ring-2 ring-[var(--color-border-strong)] ring-offset-2 transition-shadow' : ''}`}>
                     <div className="flex items-end gap-2 max-w-[90%]">
                        {comment.user !== userEmail && <UserAvatar email={comment.user} size={24} rounded="full" className="mb-1" />}
-                       <div className={`rounded-2xl p-3.5 shadow-sm text-sm relative group ${comment.type === 'Rejection' || comment.type === 'Revision' ? 'bg-amber-50 border border-amber-200 text-amber-900 rounded-bl-none' : comment.type === 'Approval' ? 'bg-green-50 border border-green-100 text-green-900 rounded-bl-none' : comment.user === userEmail ? 'bg-[var(--color-surface-2)] text-[var(--color-text)] rounded-br-none ' : `${AUTHOR_BUBBLE_PALETTE[authorColorIndex(comment.user)]} rounded-bl-none`}`}>
+                       <div className={`rounded-2xl p-3.5 shadow-sm text-sm relative group ${comment.type === 'Rejection' || comment.type === 'Revision' ? 'bg-amber-50 border border-amber-200 text-amber-900 dark:bg-amber-500/10 dark:border-amber-500/30 dark:text-amber-200 rounded-bl-none' : comment.type === 'Approval' ? 'bg-emerald-50 border border-emerald-100 text-emerald-900 dark:bg-emerald-500/10 dark:border-emerald-500/30 dark:text-emerald-200 rounded-bl-none' : comment.user === userEmail ? 'bg-[var(--color-surface-2)] text-[var(--color-text)] rounded-br-none ' : `${OTHER_BUBBLE} rounded-bl-none`}`}>
                           {comment.user !== userEmail && comment.type === 'General' && (
                             <div className="text-[11px] font-black uppercase tracking-wider mb-1 opacity-60">{authorLabel(comment.user)}</div>
                           )}
@@ -1926,19 +1991,20 @@ export default function TicketDetailView() {
                                        >
                                          {REVISION_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
                                        </select>
-                                       <button onClick={() => handleUpdateCategory(comment.id)} className="p-1 bg-[var(--color-accent)] text-[var(--color-accent-fg)] rounded hover:bg-[var(--color-accent-hover)]"><Check className="w-3 h-3" /></button>
-                                       <button onClick={() => setEditingCommentId(null)} className="p-1 bg-slate-300 text-[var(--color-text-muted)] rounded hover:bg-slate-400"><X className="w-3 h-3" /></button>
+                                       <button onClick={() => handleUpdateCategory(comment.id)} aria-label="Save reason" className="p-1 bg-[var(--color-text)] text-[var(--color-surface)] rounded hover:opacity-90"><Check className="w-3 h-3" /></button>
+                                       <button onClick={() => setEditingCommentId(null)} aria-label="Cancel" className="p-1 bg-[var(--color-surface-2)] text-[var(--color-text-muted)] rounded hover:text-[var(--color-text)]"><X className="w-3 h-3" /></button>
                                     </div>
                                   ) : (
                                     <div className="flex items-center">
-                                      <span className="bg-white/50 px-1.5 py-0.5 rounded text-[11px] border border-black/10 mr-1">
+                                      <span className="bg-[var(--color-surface)] px-1.5 py-0.5 rounded text-[11px] border border-[var(--color-border)] mr-1">
                                         {comment.category || 'Uncategorized'}
                                       </span>
                                       {isAdmin && (
                                         <button 
                                           onClick={() => { setEditingCommentId(comment.id); setEditCategoryVal(comment.category || REVISION_REASONS[0]); }} 
                                           className="p-1 hover:bg-black/10 rounded transition-colors"
-                                          title="Edit Root Cause"
+                                          title="Change the reason"
+                                          aria-label="Change the reason"
                                         >
                                           <Pen className="w-3 h-3" />
                                         </button>
@@ -1960,8 +2026,8 @@ export default function TicketDetailView() {
                                 className="w-full p-2 rounded text-xs border border-[var(--color-border-strong)] text-[var(--color-text)] bg-[var(--color-surface)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
                               />
                               <div className="flex items-center gap-1.5 justify-end">
-                                <button onClick={() => { setEditingTextId(null); setEditTextDraft(''); }} className="px-2 py-1 rounded text-[11px] bg-slate-200 hover:bg-slate-300 text-[var(--color-text)] font-bold">Cancel</button>
-                                <button onClick={() => void handleSaveCommentEdit(comment.id)} className="px-2 py-1 rounded text-[11px] bg-emerald-600 hover:bg-emerald-500 text-white font-bold">Save</button>
+                                <button onClick={() => { setEditingTextId(null); setEditTextDraft(''); }} className="px-2 py-1 rounded text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] font-bold">Cancel</button>
+                                <button onClick={() => void handleSaveCommentEdit(comment.id)} disabled={!editTextDraft.trim()} className="px-2 py-1 rounded text-[11px] bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 font-bold disabled:opacity-50">Save</button>
                               </div>
                             </div>
                           ) : (
@@ -1972,28 +2038,20 @@ export default function TicketDetailView() {
                               )}
                             </>
                           )}
-                          {/* Edit / delete affordances — author OR admin only */}
-                          {editingTextId !== comment.id && (comment.user === userEmail || isAdmin) && (
-                            <div className="absolute -top-2 -right-2 opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5">
-                              <button
-                                onClick={() => { setEditingTextId(comment.id); setEditTextDraft(comment.text); }}
-                                className="w-5 h-5 rounded bg-slate-700 hover:bg-slate-900 text-white inline-flex items-center justify-center"
-                                title="Edit"
-                              >
-                                <Pen className="w-2.5 h-2.5" />
-                              </button>
-                              <button
-                                onClick={async () => { if (await appConfirm({ message: 'Delete this comment? This cannot be undone.', tone: "danger" })) void handleDeleteComment(comment.id); }}
-                                className="w-5 h-5 rounded bg-red-600 hover:bg-red-500 text-white inline-flex items-center justify-center"
-                                title="Delete"
-                              >
-                                <Trash2 className="w-2.5 h-2.5" />
-                              </button>
-                            </div>
-                          )}
-                          <div className="absolute -bottom-5 right-0 opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity text-[11px] text-[var(--color-text-faint)] whitespace-nowrap">{toDate(comment.date).toLocaleString()}</div>
                        </div>
                     </div>
+                    {/* Time, and edit / delete for the author or an admin: a quiet line under the bubble. */}
+                    {editingTextId !== comment.id && (
+                      <div className={`mt-1 flex items-center gap-2 text-[11px] text-[var(--color-text-faint)] ${comment.user === userEmail ? 'pr-1' : 'pl-9'}`}>
+                        <span>{toDate(comment.date).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
+                        {(comment.user === userEmail || isAdmin) && (
+                          <>
+                            <button onClick={() => { setEditingTextId(comment.id); setEditTextDraft(comment.text); }} className="font-semibold hover:text-[var(--color-text)] hover:underline">Edit</button>
+                            <button onClick={async () => { if (await appConfirm({ message: 'Delete this comment? It cannot be brought back.', tone: "danger", confirmLabel: "Delete" })) void handleDeleteComment(comment.id); }} className="font-semibold hover:text-red-700 dark:hover:text-red-400 hover:underline">Delete</button>
+                          </>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))}
               </>
@@ -2002,8 +2060,8 @@ export default function TicketDetailView() {
               <div className="space-y-6 pl-2">
                  {ticket.history?.map((event, idx) => (
                    <div key={`history-${idx}`} className="flex gap-4 relative animate-in fade-in slide-in-from-left-2">
-                     {idx !== (ticket.history?.length || 0) - 1 && <div className="absolute left-[11px] top-8 bottom-[-24px] w-0.5 bg-slate-200" />}
-                     <div className="relative z-10"><div className="w-6 h-6 rounded-full bg-[var(--color-surface)] border-2 border-[var(--color-border)] flex items-center justify-center"><div className="w-2 h-2 rounded-full bg-slate-400" /></div></div>
+                     {idx !== (ticket.history?.length || 0) - 1 && <div className="absolute left-[11px] top-8 bottom-[-24px] w-0.5 bg-[var(--color-border)]" />}
+                     <div className="relative z-10"><div className="w-6 h-6 rounded-full bg-[var(--color-surface)] border-2 border-[var(--color-border)] flex items-center justify-center"><div className="w-2 h-2 rounded-full bg-[var(--color-text-muted)]" /></div></div>
                      <div className="flex-1 pb-1">
                        <div className="flex items-center justify-between"><span className="text-xs font-bold text-[var(--color-text)]">{event.action.replace(/_/g, ' ')}</span><span className="text-[11px] text-[var(--color-text-faint)] font-mono">{toDate(event.date).toLocaleDateString()}</span></div>
                        <p className="text-xs text-[var(--color-text-muted)] mt-0.5">by <span className="font-semibold text-[var(--color-text)]">{event.user?.split('@')[0]}</span></p>
@@ -2019,32 +2077,29 @@ export default function TicketDetailView() {
             ticket.archivedAt ? (
               <div className="p-4 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] text-[11px] text-[var(--color-text)] flex items-center gap-2 flex-wrap">
                 <Archive className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-                <span>This ticket is archived - its discussion lives in the offline archive.</span>
-                <button onClick={() => setShowArchiveViewer(true)} className="font-bold text-[var(--color-accent)] hover:underline">View from archive…</button>
-                <span className="text-[var(--color-text)]">Restore it to comment again.</span>
+                <span>Archived. The comments are in the archive; restore it to comment again.</span>
               </div>
             ) : (
             <div className="p-4 bg-[var(--color-surface)] border-t border-[var(--color-border)]">
-              <div className="relative group">
-                {activeOrgId && (
-                  <MentionableTextarea
-                    value={newComment}
-                    onChange={(next, mentions) => { setNewComment(next); setNewCommentMentions(mentions); }}
-                    orgId={activeOrgId}
-                    rows={3}
-                    placeholder="Type a comment... use @ to mention someone"
-                  />
-                )}
+              {activeOrgId && (
+                <MentionableTextarea
+                  value={newComment}
+                  onChange={(next, mentions) => { setNewComment(next); setNewCommentMentions(mentions); }}
+                  orgId={activeOrgId}
+                  rows={3}
+                  placeholder="Write a comment"
+                />
+              )}
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <p className="text-[11px] text-[var(--color-text-muted)] min-w-0">
+                  {newCommentMentions.length > 0 ? <span className="text-[var(--color-text)] font-bold">{newCommentMentions.length} {newCommentMentions.length === 1 ? 'person' : 'people'} will be notified</span> : null}
+                </p>
                 <button
                   onClick={() => handlePostComment(newComment)}
                   disabled={!newComment.trim()}
-                  className="absolute right-2 bottom-2 p-2 bg-[var(--color-accent)] text-[var(--color-accent-fg)] rounded-lg hover:bg-[var(--color-accent-hover)] disabled:opacity-50 disabled:hover:bg-[var(--color-accent-hover)] transition-all shadow-md "
-                ><Send className="w-4 h-4" /></button>
+                  className="inline-flex items-center gap-1.5 h-9 px-3 bg-[var(--color-accent)] text-[var(--color-accent-fg)] rounded-lg text-sm font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                ><Send className="w-4 h-4" /> Send</button>
               </div>
-              <p className="text-[11px] text-[var(--color-text-faint)] mt-2 text-center">
-                <span className="font-bold">Enter</span> to send • <span className="font-bold">Shift+Enter</span> for new line
-                {newCommentMentions.length > 0 && <> • <span className="text-[var(--color-text)] font-bold">{newCommentMentions.length} user(s) will be notified</span></>}
-              </p>
             </div>
             )
           )}

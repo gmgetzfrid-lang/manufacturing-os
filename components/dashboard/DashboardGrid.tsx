@@ -21,7 +21,8 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import SetupChecklist from "@/components/onboarding/SetupChecklist";
-import { Pencil, Check, Plus, Loader2, Move, Sparkles, LayoutGrid } from "lucide-react";
+import { Pencil, Check, Plus, Move, Sparkles, LayoutGrid } from "lucide-react";
+import LoadingBlock from "@/components/ui/LoadingBlock";
 import { useRole } from "@/components/providers/RoleContext";
 import type { DashboardConfig, DashboardWidget, WidgetType } from "@/lib/dashboard/types";
 import {
@@ -273,8 +274,8 @@ export default function DashboardGrid() {
 
   if (!loaded || !config) {
     return (
-      <div className="h-full w-full flex items-center justify-center">
-        <Loader2 className="w-8 h-8 text-[var(--color-text-muted)] animate-spin" />
+      <div className="p-4 sm:p-6 lg:px-10 max-w-[1720px] mx-auto">
+        <LoadingBlock what="your Home" rows={6} />
       </div>
     );
   }
@@ -301,22 +302,23 @@ export default function DashboardGrid() {
       <div className="flex items-center justify-between gap-4 mb-3 flex-wrap">
         <h1 className="sr-only">{greeting}{firstName ? `, ${firstName}` : ""}</h1>
         <div className="min-w-0 text-[12.5px] text-[var(--color-text-muted)]">
-          {editing ? (isMobile ? "＋ adds widgets · ✕ removes · arrange and resize on a larger screen" : "Drag widgets anywhere · pull a corner to resize · ＋ adds more") : <span className="font-semibold uppercase tracking-[0.12em] text-[11px] text-[var(--color-text-faint)]">{dateLine}</span>}
+          <span className="font-semibold uppercase tracking-[0.12em] text-[11px] text-[var(--color-text-faint)]">{dateLine}</span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <button
             type="button"
             onClick={() => setAddOpen(true)}
-            className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-sm font-bold bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] transition-colors shadow-sm"
+            className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-sm font-bold bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] transition-colors"
           >
             <Plus className="w-4 h-4" /> Add widget
           </button>
           <button
             type="button"
             onClick={() => { setEditing((v) => !v); setResizing(null); setDrag(null); }}
-            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-sm ${
+            aria-pressed={editing}
+            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all ${
               editing
-                ? "bg-[var(--color-accent)] text-white hover:opacity-90 shadow-lg "
+                ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"
                 : "bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
             }`}
           >
@@ -332,14 +334,14 @@ export default function DashboardGrid() {
           <span className="flex-1 min-w-0">
             {isMobile
               // Phones can't drag or resize — telling them to reads as broken.
-              ? "You’re customizing - ✕ removes a card, ⚙ opens its settings, Tidy compacts. Arrange and resize on a larger screen."
-              : "You’re customizing - grab any card to move it, drag the orange corner to resize, ✕ removes. Everything saves as you go."}
+              ? "Customizing. Arrange and resize on a larger screen. Changes save as you go."
+              : "Customizing. Drag a card to move it, its corner to resize. Changes save as you go."}
           </span>
           <button
             type="button"
             onClick={tidyLayout}
             title="Close every gap: slide widgets together and stretch rows to the edges"
-            className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] transition-colors"
+            className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-border-strong)] transition-colors"
           >
             <LayoutGrid className="w-3.5 h-3.5" /> Tidy layout
           </button>

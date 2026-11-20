@@ -19,7 +19,8 @@
 //     Admin starts closed.
 //
 //   * Rows are one line (icon + label). Hints are title tooltips.
-//     Badges: red = action required, blue = unread FYI, absent = clear.
+//     Badges: red = waiting on your decision, a quiet count = unread news,
+//     absent = clear.
 //     The header bell owns the org-wide total; rows badge only their own
 //     section's count.
 //
@@ -50,6 +51,7 @@ import { useNotificationCenter } from '@/components/notifications/NotificationCe
 import { useIsMobile } from '@/hooks/useIsMobile';
 import LogoUploadModal from '@/components/branding/LogoUploadModal';
 import UserAvatar from '@/components/ui/UserAvatar';
+import { badgeText } from '@/lib/badge';
 import {
   DOCUMENT_VIEWS, EQUIPMENT_VIEWS, HOME_VIEWS, ACTIVITY_VIEWS, INTELLIGENCE_VIEWS,
 } from '@/components/navigation/ViewTabs';
@@ -96,19 +98,19 @@ const TONE_ICON: Record<Tone, string> = {
   orange:  'text-[var(--color-text-muted)]',
   blue:    'text-[var(--color-text-muted)]',
   indigo:  'text-[var(--color-text-muted)]',
-  amber:   'text-amber-500',
-  emerald: 'text-emerald-500',
+  amber:   'text-[var(--color-text-muted)]',
+  emerald: 'text-[var(--color-text-muted)]',
   violet:  'text-[var(--color-text-muted)]',
-  rose:    'text-rose-500',
-  slate:   'text-slate-500',
+  rose:    'text-[var(--color-text-muted)]',
+  slate:   'text-[var(--color-text-muted)]',
   purple:  'text-[var(--color-text-muted)]',
   cyan:    'text-[var(--color-text-muted)]',
 };
-// Accent-driven active state, theme-aware: the accent token reads on both the
-// light and dark sidebar surfaces, and the bg tint is a soft accent wash.
-const ACCENT_ICON_STYLE: React.CSSProperties = { color: 'var(--color-accent)' };
-const ACTIVE_BG_STYLE: React.CSSProperties = { backgroundColor: 'color-mix(in srgb, var(--color-accent) 14%, transparent)' };
-const ACTIVE_BAR_STYLE: React.CSSProperties = { backgroundColor: 'var(--color-accent)' };
+// The page you're on: dark ink on a neutral wash. Orange is for things you
+// tap, never for where you are.
+const ACCENT_ICON_STYLE: React.CSSProperties = { color: 'var(--color-text)' };
+const ACTIVE_BG_STYLE: React.CSSProperties = { backgroundColor: 'var(--color-surface-2)' };
+const ACTIVE_BAR_STYLE: React.CSSProperties = { backgroundColor: 'var(--color-text)' };
 
 export default function Sidebar({
   mobileOpen = false,
@@ -122,12 +124,15 @@ export default function Sidebar({
   const router = useRouter();
   const { activeRole, userEmail, activeOrgId, setActiveOrgId, uid } = useRole();
   const { sectionCounts } = useTicketNotifications();
-  // A nav item badges ONLY its own section's items — red when something there
-  // needs action, blue for unread FYI, nothing when clear. (The header bell
-  // owns the org-wide total; the rail doesn't duplicate it.)
+  // A nav item badges ONLY its own section's items: a red count of what
+  // waits on a decision, else a quiet count of unread news, nothing when
+  // clear. (The header bell owns the org-wide total; the rail doesn't
+  // duplicate it.)
   const badgeOf = useCallback((s: { total: number; actionRequired: number }): { badge?: number; badgeTone?: 'red' | 'blue' } => {
     if (s.total <= 0) return {};
-    return { badge: s.total, badgeTone: s.actionRequired > 0 ? 'red' : 'blue' };
+    return s.actionRequired > 0
+      ? { badge: s.actionRequired, badgeTone: 'red' }
+      : { badge: s.total, badgeTone: 'blue' };
   }, []);
   const { logoUrl, branding, canEdit: canEditBranding } = useOrgBranding();
   const [logoModalOpen, setLogoModalOpen] = useState(false);
@@ -321,17 +326,17 @@ export default function Sidebar({
             aria-label="Expand sidebar"
             className="group relative w-10 h-10 rounded-xl flex items-center justify-center shadow-lg ring-1 ring-[var(--color-border-strong)] bg-[var(--color-text)]"
           >
-            <LayoutDashboard className="w-5 h-5 text-white transition-opacity group-hover:opacity-0" />
-            <ChevronRight className="w-5 h-5 text-white absolute opacity-0 transition-opacity group-hover:opacity-100" />
+            <LayoutDashboard className="w-5 h-5 text-[var(--color-surface)] transition-opacity group-hover:opacity-0" />
+            <ChevronRight className="w-5 h-5 text-[var(--color-surface)] absolute opacity-0 transition-opacity group-hover:opacity-100" />
             {/* always-visible expand affordance */}
             <span className="absolute -right-1 -bottom-1 w-4 h-4 rounded-full bg-[var(--color-text-muted)] ring-2 ring-[var(--color-surface)] flex items-center justify-center">
-              <ChevronRight className="w-2.5 h-2.5 text-white" />
+              <ChevronRight className="w-2.5 h-2.5 text-[var(--color-surface)]" />
             </span>
           </button>
         ) : (
           <>
             <div className="w-9 h-9 rounded-xl flex items-center justify-center shadow-lg ring-1 ring-[var(--color-border-strong)] shrink-0 bg-[var(--color-text)]">
-              <LayoutDashboard className="w-5 h-5 text-white" />
+              <LayoutDashboard className="w-5 h-5 text-[var(--color-surface)]" />
             </div>
             <div className="flex-1 min-w-0">
               <div className="font-black text-[var(--color-text)] tracking-tight text-base leading-none truncate">Manufacturing<span className="text-[var(--color-text-muted)]">OS</span></div>
@@ -504,9 +509,9 @@ function SidebarLeaf({
   const Icon = leaf.icon;
   const { open: openCenter } = useNotificationCenter();
   const badgeTone =
-    leaf.badgeTone === 'red'  ? 'bg-red-600 animate-pulse shadow-red-900/50' :
-    leaf.badgeTone === 'blue' ? 'bg-[var(--color-text-muted)] ' :
-                                'bg-[var(--color-text-muted)] ';
+    leaf.badgeTone === 'red'
+      ? 'bg-red-600 text-white'
+      : 'bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border-strong)]';
   return (
     <Link href={leaf.href}
       title={collapsed ? `${leaf.label}${leaf.hint ? ` - ${leaf.hint}` : ''}` : (leaf.hint ?? leaf.label)}
@@ -515,7 +520,7 @@ function SidebarLeaf({
         collapsed ? 'h-10 justify-center' : 'h-9 px-2.5'
       } ${
         active
-          ? 'text-[var(--color-accent)] font-semibold'
+          ? 'text-[var(--color-text)] font-semibold'
           : 'text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]'
       }`}
     >
@@ -534,10 +539,11 @@ function SidebarLeaf({
         <button
           type="button"
           onClick={(e) => { e.preventDefault(); e.stopPropagation(); openCenter(leaf.badgeTone === 'red' ? 'action' : 'all'); }}
-          title="See these notifications"
-          className={`${collapsed ? 'absolute top-1 right-1' : ''} inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-white text-[11px] font-black shadow cursor-pointer hover:scale-110 hover:ring-2 hover:ring-white/40 transition-transform ${badgeTone}`}
+          title={leaf.badgeTone === 'red' ? `${leaf.badge} waiting on you` : `${leaf.badge} new`}
+          aria-label={leaf.badgeTone === 'red' ? `${leaf.label}: ${leaf.badge} waiting on you` : `${leaf.label}: ${leaf.badge} new`}
+          className={`${collapsed ? 'absolute top-1 right-1' : ''} inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[11px] font-black cursor-pointer hover:ring-2 hover:ring-[var(--color-border-strong)] transition-shadow ${badgeTone}`}
         >
-          {leaf.badge > 99 ? '99+' : leaf.badge}
+          {badgeText(leaf.badge)}
         </button>
       )}
     </Link>

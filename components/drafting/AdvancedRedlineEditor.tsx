@@ -24,7 +24,7 @@ import { PDFDocument } from 'pdf-lib';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 
-import { appAlert } from "@/components/providers/DialogProvider";
+import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 
 // Configure PDF Worker
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
@@ -343,7 +343,7 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
     }
 
     if (Object.keys(pageStatesRef.current).length === 0 && !currentNormalizedState) {
-      await appAlert({ message: "No markups made." });
+      await appAlert({ message: "There are no marks to save yet." });
       return;
     }
 
@@ -399,13 +399,36 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
 
     } catch (e) {
       console.error("Save Failed:", e);
-      await appAlert({ message: "Failed to save redlines. See console.", tone: "danger" });
+      await appAlert({ message: `The redlines weren't saved: ${e instanceof Error ? e.message : String(e)}. Your marks are still here.`, tone: "danger" });
     }
   };
+
+  // Closing never drops marks without asking.
+  const hasMarks = () =>
+    (fabricRef.current?.getObjects().length ?? 0) > 0 ||
+    Object.values(pageStatesRef.current).some((st) => {
+      const objs = (st as { objects?: unknown[] }).objects;
+      return Array.isArray(objs) && objs.length > 0;
+    });
+  const requestClose = async () => {
+    if (isSaving) return;
+    if (hasMarks() && !(await appConfirm({ title: "Close without saving?", message: "Your marks on this file will be lost.", tone: "danger", confirmLabel: "Close" }))) return;
+    onClose();
+  };
+  const closeRef = useRef(requestClose);
+  useEffect(() => { closeRef.current = requestClose; });
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") void closeRef.current(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // --- HELPERS ---
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Mark up the drawing"
       className="fixed inset-0 z-[200] bg-slate-200 flex flex-col"
       onMouseUp={handleMouseUp} // Global mouse up for dragging safety
       onMouseLeave={handleMouseUp}
@@ -413,15 +436,15 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
       {/* TOOLBAR */}
       <div className="h-16 bg-slate-900 flex items-center justify-between px-4 shrink-0 shadow-xl z-50">
         <div className="flex items-center space-x-4">
-          <span className="text-slate-400 text-xs font-bold uppercase tracking-widest hidden md:block">Redline Pro</span>
+          <span className="text-slate-400 text-xs font-bold uppercase tracking-widest hidden md:block">Redline</span>
           <div className="flex bg-slate-800 rounded-lg p-1 border border-slate-700">
-             <button onClick={() => setTool('pan')} className={`p-2 rounded ${tool === 'pan' ? 'bg-[var(--color-text)] text-[var(--color-surface)]' : 'text-slate-400 hover:text-white'}`} title="Pan (Grab & Move)"><Move className="w-5 h-5"/></button>
+             <button onClick={() => setTool('pan')} className={`p-2 rounded ${tool === 'pan' ? 'bg-white text-slate-900' : 'text-slate-400 hover:text-white'}`} title="Move the sheet" aria-label="Move the sheet" aria-pressed={tool === 'pan'}><Move className="w-5 h-5"/></button>
              <div className="w-px h-6 bg-slate-700 mx-1 self-center"/>
-             <button onClick={() => setTool('pen')} className={`p-2 rounded ${tool === 'pen' ? 'bg-[var(--color-text)] text-[var(--color-surface)]' : 'text-slate-400 hover:text-white'}`} title="Pen"><Pen className="w-5 h-5"/></button>
-             <button onClick={() => setTool('line')} className={`p-2 rounded ${tool === 'line' ? 'bg-[var(--color-text)] text-[var(--color-surface)]' : 'text-slate-400 hover:text-white'}`} title="Straight Line"><Minus className="w-5 h-5"/></button>
-             <button onClick={() => setTool('highlight')} className={`p-2 rounded ${tool === 'highlight' ? 'bg-[var(--color-text)] text-[var(--color-surface)]' : 'text-slate-400 hover:text-white'}`} title="Highlighter"><Highlighter className="w-5 h-5"/></button>
-             <button onClick={addText} className={`p-2 rounded ${tool === 'text' ? 'bg-[var(--color-text)] text-[var(--color-surface)]' : 'text-slate-400 hover:text-white'}`} title="Add Text"><Type className="w-5 h-5"/></button>
-             <button onClick={deleteSelected} className="p-2 text-slate-400 hover:text-red-500" title="Delete Selected"><Trash2 className="w-5 h-5"/></button>
+             <button onClick={() => setTool('pen')} className={`p-2 rounded ${tool === 'pen' ? 'bg-white text-slate-900' : 'text-slate-400 hover:text-white'}`} title="Pen" aria-label="Pen" aria-pressed={tool === 'pen'}><Pen className="w-5 h-5"/></button>
+             <button onClick={() => setTool('line')} className={`p-2 rounded ${tool === 'line' ? 'bg-white text-slate-900' : 'text-slate-400 hover:text-white'}`} title="Straight line" aria-label="Straight line" aria-pressed={tool === 'line'}><Minus className="w-5 h-5"/></button>
+             <button onClick={() => setTool('highlight')} className={`p-2 rounded ${tool === 'highlight' ? 'bg-white text-slate-900' : 'text-slate-400 hover:text-white'}`} title="Highlighter" aria-label="Highlighter" aria-pressed={tool === 'highlight'}><Highlighter className="w-5 h-5"/></button>
+             <button onClick={addText} className={`p-2 rounded ${tool === 'text' ? 'bg-white text-slate-900' : 'text-slate-400 hover:text-white'}`} title="Add text" aria-label="Add text"><Type className="w-5 h-5"/></button>
+             <button onClick={deleteSelected} className="p-2 text-slate-400 hover:text-red-500" title="Delete what's selected" aria-label="Delete what's selected"><Trash2 className="w-5 h-5"/></button>
           </div>
           
           <div className="flex items-center space-x-3 bg-slate-800 rounded-lg p-1.5 border border-slate-700">
@@ -430,6 +453,8 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
                 <button 
                   key={c}
                   onClick={() => setColor(c)}
+                  aria-label={`${c} pen`}
+                  aria-pressed={color === c}
                   className={`w-5 h-5 rounded-full border-2 ${color === c ? 'border-white scale-110' : 'border-transparent hover:scale-105'}`}
                   style={{ backgroundColor: getColorHex(c) }}
                 />
@@ -444,7 +469,8 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
                value={strokeWidth} 
                onChange={(e) => setStrokeWidth(Number(e.target.value))}
                className="w-16 h-1 bg-slate-600 rounded-lg appearance-none cursor-pointer"
-               title={`Line Width: ${strokeWidth}px`}
+               title={`Line width: ${strokeWidth}px`}
+               aria-label="Line width"
              />
           </div>
         </div>
@@ -452,23 +478,23 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
         <div className="flex items-center space-x-4">
            {/* ZOOM */}
            <div className="flex items-center bg-slate-800 rounded px-2 py-1 text-xs font-mono text-slate-300">
-              <button onClick={() => handleZoom(Math.max(0.5, scale - 0.25))} className="p-1 hover:text-white"><ZoomOut className="w-4 h-4"/></button>
+              <button onClick={() => handleZoom(Math.max(0.5, scale - 0.25))} aria-label="Zoom out" className="p-1 hover:text-white"><ZoomOut className="w-4 h-4"/></button>
               <span className="mx-2">{(scale * 100).toFixed(0)}%</span>
-              <button onClick={() => handleZoom(Math.min(3, scale + 0.25))} className="p-1 hover:text-white"><ZoomIn className="w-4 h-4"/></button>
+              <button onClick={() => handleZoom(Math.min(3, scale + 0.25))} aria-label="Zoom in" className="p-1 hover:text-white"><ZoomIn className="w-4 h-4"/></button>
            </div>
 
            {/* PAGES */}
            <div className="flex items-center bg-slate-800 rounded px-2 py-1 text-xs font-mono text-slate-300">
-              <button onClick={() => handlePageChange(Math.max(1, currentPage - 1))} disabled={currentPage <= 1} className="p-1 hover:text-white disabled:opacity-30"><ChevronLeft className="w-4 h-4"/></button>
+              <button onClick={() => handlePageChange(Math.max(1, currentPage - 1))} disabled={currentPage <= 1} aria-label="Previous page" className="p-1 hover:text-white disabled:opacity-30"><ChevronLeft className="w-4 h-4"/></button>
               <span className="mx-2">{currentPage} / {numPages || '-'}</span>
-              <button onClick={() => handlePageChange(Math.min(numPages, currentPage + 1))} disabled={currentPage >= numPages} className="p-1 hover:text-white disabled:opacity-30"><ChevronRight className="w-4 h-4"/></button>
+              <button onClick={() => handlePageChange(Math.min(numPages, currentPage + 1))} disabled={currentPage >= numPages} aria-label="Next page" className="p-1 hover:text-white disabled:opacity-30"><ChevronRight className="w-4 h-4"/></button>
            </div>
 
-           <button onClick={handleSave} disabled={isSaving} className="flex items-center px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded shadow-lg transition-transform hover:scale-105 disabled:opacity-50">
-             {isSaving ? <Loader2 className="w-4 h-4 animate-spin mr-2"/> : <Save className="w-4 h-4 mr-2"/>} Save
+           <button onClick={handleSave} disabled={isSaving} className="flex items-center px-4 py-2 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] font-bold rounded-lg transition-colors disabled:opacity-50">
+             {isSaving ? <Loader2 className="w-4 h-4 animate-spin mr-2"/> : <Save className="w-4 h-4 mr-2"/>} {isSaving ? 'Saving…' : 'Save'}
            </button>
            
-           <button onClick={onClose} className="p-2 text-slate-400 hover:text-red-500 hover:bg-slate-800 rounded-full"><X className="w-6 h-6"/></button>
+           <button onClick={() => void requestClose()} aria-label="Close" className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-full"><X className="w-6 h-6"/></button>
         </div>
       </div>
 

@@ -7,16 +7,19 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
-  BookOpen, Plus, Loader2, X, Settings2, Sparkles, FileText, AlertTriangle,
+  BookOpen, Plus, Loader2, Settings2, Sparkles, FileText, AlertTriangle,
 } from "lucide-react";
+import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
+import LoadingBlock from "@/components/ui/LoadingBlock";
+import { useDraft } from "@/hooks/useDraft";
 import { useRole } from "@/components/providers/RoleContext";
 import { useToast } from "@/components/providers/ToastProvider";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Field";
-import { Spinner } from "@/components/ui/Spinner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import AiSettingsModal from "@/components/knowledge/AiSettingsModal";
 import {
@@ -27,6 +30,7 @@ import {
 export default function KnowledgePage() {
   const { activeOrgId, uid, userEmail, activeRole } = useRole();
   const { showToast } = useToast();
+  const router = useRouter();
   const isController = activeRole === "Admin" || activeRole === "DocCtrl";
 
   const [libraries, setLibraries] = useState<KnowledgeLibrary[] | null>(null);
@@ -37,6 +41,14 @@ export default function KnowledgePage() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  // What's typed for a new library waits on this device until it's made.
+  const newLib = React.useMemo(() => ({ name, description }), [name, description]);
+  const libDraft = useDraft<{ name: string; description: string }>(
+    activeOrgId ? `knowledge:new-library:${activeOrgId}` : null, newLib,
+    (d) => { setName(d.name ?? ""); setDescription(d.description ?? ""); },
+    (d) => !d.name.trim() && !d.description.trim(),
+  );
 
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
@@ -54,16 +66,18 @@ export default function KnowledgePage() {
   const create = async () => {
     if (!activeOrgId || !uid || !name.trim()) return;
     setCreating(true);
+    setCreateError(null);
     try {
-      await createKnowledgeLibrary({
+      const lib = await createKnowledgeLibrary({
         orgId: activeOrgId, name, description,
         userId: uid, userName: userEmail ?? "Member",
       });
-      setShowCreate(false); setName(""); setDescription("");
-      showToast({ type: "success", title: "Library created - add PDFs to start indexing." });
-      await refresh();
+      setShowCreate(false); setName(""); setDescription(""); libDraft.clear();
+      showToast({ type: "success", title: "Library made. Add PDFs to start indexing." });
+      // Straight into the new library, where the PDFs go.
+      router.push(`/knowledge/${lib.id}`);
     } catch (e) {
-      showToast({ type: "error", title: (e as Error).message });
+      setCreateError((e as Error).message);
     } finally { setCreating(false); }
   };
 
@@ -72,7 +86,7 @@ export default function KnowledgePage() {
       <ViewTabs title="Intelligence" tabs={INTELLIGENCE_VIEWS} />
       <PageHeaderBar
         title="Knowledge"
-        subtitle="AI-searchable reference libraries - ask questions, get answers cited to the page"
+        subtitle="Reference libraries you can ask. Answers cite the page."
         icon={BookOpen}
         actions={
           <div className="flex items-center gap-2">
@@ -89,24 +103,23 @@ export default function KnowledgePage() {
       />
 
       {aiConfigured === false && (
-        <div className="mb-4 rounded-xl border-2 border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-4 py-3 flex items-start gap-2.5">
-          <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
-          <div className="text-xs text-amber-800 dark:text-amber-300">
-            <b>No AI provider connected yet.</b> Libraries can be built and indexed, but questions need an API key -
-            open <button className="underline font-bold" onClick={() => setShowSettings(true)}>AI settings</button> and
-            add one (Anthropic or OpenAI - providers that never train on your data). The key owner pays the provider directly; this app adds no cost.
-          </div>
-        </div>
+        <p className="mb-4 border-l-2 border-amber-500 pl-3 text-xs text-amber-800 dark:text-amber-300 flex items-start gap-1.5">
+          <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <span>
+            <b>No AI key yet.</b> Libraries can be built and indexed, but questions need a key. Add one in{" "}
+            <button className="underline font-bold" onClick={() => setShowSettings(true)}>AI settings</button> (Anthropic or OpenAI). The key owner pays the provider directly.
+          </span>
+        </p>
       )}
 
       {error && (
-        <div className="mb-4 rounded-xl border border-rose-300 bg-rose-50 dark:bg-rose-950/40 px-4 py-3 text-xs font-bold text-rose-700 dark:text-rose-300">
-          {error} - if the knowledge tables haven&apos;t been migrated yet, run migration 20260911.
-        </div>
+        <p role="alert" className="mb-4 border-l-2 border-red-500 pl-3 text-xs font-bold text-red-700 dark:text-red-400">
+          Couldn&apos;t load the libraries: {error}. If the knowledge tables aren&apos;t migrated yet, run migration 20260911.
+        </p>
       )}
 
       {libraries === null ? (
-        <div className="py-16 text-center"><Spinner /></div>
+        error ? null : <LoadingBlock what="the libraries" rows={4} />
       ) : libraries.length === 0 ? (
         <EmptyState
           icon={BookOpen}
@@ -120,10 +133,10 @@ export default function KnowledgePage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {libraries.map((lib) => (
             <Link key={lib.id} href={`/knowledge/${lib.id}`}
-              className="group rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 hover:border-[var(--color-accent)] hover:shadow-lg transition-all">
+              className="group rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 hover:border-[var(--color-border-strong)] hover:shadow-md transition-all">
               <div className="flex items-start justify-between gap-3">
                 <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-[var(--color-text)]">
-                  <Sparkles className="w-5 h-5 text-white" />
+                  <Sparkles className="w-5 h-5 text-[var(--color-surface)]" />
                 </div>
                 <span className="inline-flex items-center gap-1 text-[11px] font-black text-[var(--color-text-muted)]">
                   <FileText className="w-3 h-3" /> {lib.documentCount ?? 0} document{(lib.documentCount ?? 0) === 1 ? "" : "s"}
@@ -142,14 +155,9 @@ export default function KnowledgePage() {
       )}
 
       {showCreate && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4" onClick={() => setShowCreate(false)}>
-          <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-xl mt-16"
-            onClick={(e) => e.stopPropagation()}>
-            <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
-              <h2 className="text-base font-black text-[var(--color-text)]">New knowledge library</h2>
-              <button onClick={() => setShowCreate(false)} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
-            </div>
-            <div className="p-5 space-y-3">
+        <Modal onClose={() => setShowCreate(false)} dismissable={!creating}>
+            <ModalHeader icon={BookOpen} title="New knowledge library" onClose={creating ? undefined : () => setShowCreate(false)} />
+            <ModalBody className="space-y-3">
               <label className="block">
                 <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Name</span>
                 <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Engineering Standards & Practices" autoFocus />
@@ -159,15 +167,15 @@ export default function KnowledgePage() {
                 <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2}
                   placeholder="What lives in this library and who should ask it questions" />
               </label>
-              <div className="flex justify-end gap-2 pt-1">
-                <Button variant="secondary" onClick={() => setShowCreate(false)}>Cancel</Button>
+              {createError && <p role="alert" className="text-xs font-semibold text-red-700 dark:text-red-400">Not made: {createError}</p>}
+            </ModalBody>
+            <ModalFooter>
+                <Button variant="secondary" onClick={() => setShowCreate(false)} disabled={creating}>Cancel</Button>
                 <Button onClick={() => void create()} disabled={creating || !name.trim()}>
                   {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Create
                 </Button>
-              </div>
-            </div>
-          </div>
-        </div>
+            </ModalFooter>
+        </Modal>
       )}
 
       {activeOrgId && (

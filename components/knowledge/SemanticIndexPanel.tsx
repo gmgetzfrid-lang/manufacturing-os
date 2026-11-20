@@ -172,10 +172,10 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
   // total is 0, so the panel vanished — exactly when the person needed it to
   // explain itself. Say the state out loud instead, and name the fix.
   const strip = (tone: "warn" | "muted", body: React.ReactNode) => (
-    <div className={`mt-4 rounded-2xl border px-4 py-3 text-[11px] flex items-start gap-2 ${
+    <div className={`mt-4 text-[11px] flex items-start gap-2 ${
       tone === "warn"
-        ? "border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 text-amber-900 dark:text-amber-200"
-        : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>
+        ? "border-l-2 border-amber-500 pl-3 py-1 text-amber-900 dark:text-amber-200"
+        : "rounded-2xl border px-4 py-3 border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>
       {tone === "warn"
         ? <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
         : <Brain className="w-4 h-4 shrink-0 mt-0.5 opacity-60" />}
@@ -188,7 +188,7 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
       ? strip("warn", <><b>Meaning-based search is waiting on a database migration:</b> {unavailable}</>)
       : strip("warn", <><b>Meaning-based search couldn&apos;t report its status:</b> {unavailable}</>);
   }
-  if (!status) return strip("muted", "Counting the meaning index… (slow while it's being built - no action needed)");
+  if (!status) return strip("muted", "Counting the meaning index… (slow while it's being built, nothing to do)");
   if (status.total === 0) {
     return strip("muted", (
       <>
@@ -213,7 +213,7 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
       <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-lg flex items-center justify-center bg-[var(--color-text)]">
-            <Brain className="w-4 h-4 text-white" />
+            <Brain className="w-4 h-4 text-[var(--color-surface)]" />
           </div>
           <div>
             <div className="text-xs font-black text-[var(--color-text)]">Meaning-based search</div>
@@ -265,8 +265,8 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
       </div>
 
       {building && status.rateLimited && (
-        <div className="mt-2 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200">
-          <b>Provider rate limit - pacing, not stopped.</b> Your embeddings account is on a free
+        <div className="mt-2 border-l-2 border-amber-500 pl-3 text-[11px] text-amber-900 dark:text-amber-200">
+          <b>Provider rate limit: pacing, not stopped.</b> Your embeddings account is on a free
           tier (Voyage without a payment method: 3 calls and 10K tokens per minute), so the build
           continues in small batches about once a minute. Leave this page open and it will finish.
           Adding a payment method at your provider unlocks full speed - your free trial tokens
@@ -275,18 +275,18 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
       )}
 
       {buildNote && (
-        <div className={`mt-2 rounded-xl border px-3 py-2 text-[11px] ${
+        <div className={`mt-2 border-l-2 pl-3 text-[11px] ${
           buildNote.tone === "ok"
-            ? "border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20 text-emerald-800 dark:text-emerald-200"
+            ? "border-emerald-500 text-emerald-800 dark:text-emerald-200"
             : buildNote.tone === "info"
-              ? "border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]"
-              : "border-rose-300 dark:border-rose-800 bg-rose-50/60 dark:bg-rose-950/20 text-rose-800 dark:text-rose-200"}`}>
+              ? "border-[var(--color-border-strong)] text-[var(--color-text)]"
+              : "border-rose-500 text-rose-800 dark:text-rose-200"}`}>
           {buildNote.text}
         </div>
       )}
 
       {needsKey && (
-        <div className="mt-2 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200">
+        <div className="mt-2 border-l-2 border-amber-500 pl-3 text-[11px] text-amber-900 dark:text-amber-200">
           {needsKey}
         </div>
       )}
@@ -294,8 +294,8 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
       {!complete && !needsKey && (
         <p className="mt-1 text-[11px] text-[var(--color-text-faint)]">
           {covered === 0
-            ? "Not built yet - questions use keyword search alone, which is exactly what this library did before."
-            : "Partly built - questions already use both, and the remaining passages are keyword-only until this finishes."}
+            ? "Not built yet. Questions use keyword search alone, as this library did before."
+            : "Partly built. Questions already use both; the remaining passages are keyword-only until this finishes."}
           {" "}Needs an embeddings key, which is separate from your chat key - add one under
           AI settings. Claude keeps answering the questions either way.
         </p>

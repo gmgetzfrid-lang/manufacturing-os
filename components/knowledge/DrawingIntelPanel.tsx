@@ -53,15 +53,16 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
   // A missing migration must be VISIBLE, not a silently absent panel —
   // otherwise "why is there no census" is undiagnosable from the UI.
   if (loadError) {
-    if (!/migration/i.test(loadError)) return null;
+    // A failed read says so in one quiet line instead of a missing panel.
+    if (!/migration/i.test(loadError)) return <p className="mt-4 text-[11px] text-[var(--color-text-muted)]">Couldn&apos;t load drawing intelligence: {loadError}</p>;
     return (
-      <div className="mt-4 rounded-2xl border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 px-4 py-3 text-[11px] text-amber-900 dark:text-amber-200 flex items-start gap-2">
+      <div className="mt-4 border-l-2 border-amber-500 pl-3 py-1 text-[11px] text-amber-900 dark:text-amber-200 flex items-start gap-2">
         <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
         <span><b>Drawing intelligence is waiting on a database migration:</b> {loadError}</span>
       </div>
     );
   }
-  if (!intel) return null;
+  if (!intel) return <p className="mt-4 flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading drawing intelligence…</p>;
   const { census, audit, suggestions } = intel;
   // Nothing extracted and nothing to suggest = not a drawing library; stay out
   // of the way.
@@ -121,7 +122,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
       <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-lg flex items-center justify-center bg-[var(--color-text)]">
-            <DraftingCompass className="w-4 h-4 text-white" />
+            <DraftingCompass className="w-4 h-4 text-[var(--color-surface)]" />
           </div>
           <div>
             <div className="text-xs font-black text-[var(--color-text)]">

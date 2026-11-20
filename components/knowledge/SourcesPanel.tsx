@@ -10,8 +10,9 @@
 // enforcement.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import {
-  X, Loader2, Plus, Link2, FolderOpen, Library, RefreshCw, Trash2, Search,
+  Loader2, Plus, Link2, FolderOpen, Library, RefreshCw, Trash2, Search,
   ChevronRight, ChevronDown,
 } from "lucide-react";
 import { useToast } from "@/components/providers/ToastProvider";
@@ -110,7 +111,7 @@ function AddSourcesModal({ orgId, libraryId, existing, onClose, onAdded }: {
       const res = await addKnowledgeSources(orgId, libraryId, picks);
       showToast({
         type: "success",
-        title: `Linked ${res.linked} source${res.linked === 1 ? "" : "s"} - ${res.added} document${res.added === 1 ? "" : "s"} queued for indexing.`,
+        title: `Linked ${res.linked} source${res.linked === 1 ? "" : "s"}. ${res.added} document${res.added === 1 ? "" : "s"} queued for indexing.`,
       });
       onAdded();
       onClose();
@@ -145,6 +146,7 @@ function AddSourcesModal({ orgId, libraryId, existing, onClose, onAdded }: {
           style={{ paddingLeft: `${12 + depth * 18}px` }}>
           {kids.length > 0 ? (
             <button type="button" onClick={() => toggleExpand(folderId)}
+              aria-label={open ? `Fold ${f.name}` : `Open ${f.name}`} aria-expanded={open}
               className="p-0.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
               {open ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
             </button>
@@ -171,28 +173,17 @@ function AddSourcesModal({ orgId, libraryId, existing, onClose, onAdded }: {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
-      <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-xl mt-10"
-        onClick={(e) => e.stopPropagation()}>
-        <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
-          <div>
-            <h2 className="text-base font-black text-[var(--color-text)] flex items-center gap-2">
-              <Link2 className="w-4 h-4 text-[var(--color-text-muted)]" /> Add sources from Document Control
-            </h2>
-            <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
-              Linked containers feed this library LIVE - new documents index automatically, rev-ups
-              re-index, archived ones drop out. No files are copied.
-            </p>
-          </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
-        </div>
+    <Modal onClose={onClose} size="md" dismissable={!saving}>
+        <ModalHeader icon={Link2} title="Add sources from Document Control"
+          subtitle="Linked libraries and folders stay live: new documents index, rev-ups re-index, archived ones drop out. No files are copied."
+          onClose={saving ? undefined : onClose} />
 
-        <div className="p-5 space-y-3">
+        <ModalBody className="space-y-3">
           {browseError && (
-            <div className="rounded-xl border border-rose-300 bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-xs font-bold text-rose-700 dark:text-rose-300">{browseError}</div>
+            <p role="alert" className="border-l-2 border-rose-500 pl-2 text-xs font-bold text-rose-700 dark:text-rose-300">Couldn&apos;t list what you can link: {browseError}</p>
           )}
           {!browse && !browseError && (
-            <div className="py-8 text-center"><Loader2 className="w-5 h-5 animate-spin inline text-[var(--color-text-muted)]" /></div>
+            <div className="py-8 text-center text-sm text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin inline mr-2" /> Loading Document Control…</div>
           )}
           {browse && (
             <>
@@ -294,18 +285,17 @@ function AddSourcesModal({ orgId, libraryId, existing, onClose, onAdded }: {
                   </>
                 )}
               </div>
-              <div className="flex justify-end gap-2">
-                <Button variant="secondary" onClick={onClose}>Cancel</Button>
+            </>
+          )}
+        </ModalBody>
+        <ModalFooter>
+                <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
                 <Button onClick={() => void save()} disabled={saving || selected.size === 0}>
                   {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
                   Link {selected.size > 0 ? selected.size : ""} source{selected.size === 1 ? "" : "s"}
                 </Button>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
+        </ModalFooter>
+    </Modal>
   );
 }
 
@@ -317,7 +307,7 @@ export default function SourcesPanel({ orgId, libraryId, isController, onChanged
 }) {
   const { showToast } = useToast();
   const [sources, setSources] = useState<KnowledgeSource[] | null>(null);
-  const [unavailable, setUnavailable] = useState(false);
+  const [unavailable, setUnavailable] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [busy, setBusy] = useState<string | null>(null); // sourceId or "sync"
   const [tick, setTick] = useState(0);
@@ -326,12 +316,13 @@ export default function SourcesPanel({ orgId, libraryId, isController, onChanged
   useEffect(() => {
     let cancelled = false;
     listKnowledgeSources(orgId, libraryId)
-      .then((r) => { if (!cancelled) { setSources(r.sources); setUnavailable(false); } })
-      .catch(() => { if (!cancelled) setUnavailable(true); }); // pre-migration DB
+      .then((r) => { if (!cancelled) { setSources(r.sources); setUnavailable(null); } })
+      .catch((e: unknown) => { if (!cancelled) setUnavailable(e instanceof Error ? e.message : String(e)); }); // pre-migration DB, or a failed read
     return () => { cancelled = true; };
   }, [orgId, libraryId, tick]);
 
-  if (unavailable) return null;
+  // A failed read says so in one quiet line, instead of the strip vanishing.
+  if (unavailable) return <p className="mb-3 text-[11px] text-[var(--color-text-muted)]">Couldn&apos;t load the linked sources: {unavailable}</p>;
 
   const sync = async () => {
     setBusy("sync");
@@ -339,7 +330,7 @@ export default function SourcesPanel({ orgId, libraryId, isController, onChanged
       const res = await syncKnowledgeSources(orgId, libraryId);
       showToast({
         type: "success",
-        title: `Synced - ${res.added} added, ${res.refreshed} re-indexing after rev-up, ${res.removed} removed.`,
+        title: `Synced: ${res.added} added, ${res.refreshed} re-indexing after rev-up, ${res.removed} removed.`,
       });
       bump();
       onChanged();
@@ -372,10 +363,10 @@ export default function SourcesPanel({ orgId, libraryId, isController, onChanged
           <Link2 className="w-3.5 h-3.5" /> Sources
         </span>
         {sources === null ? (
-          <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-muted)]" />
+          <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading sources…</span>
         ) : sources.length === 0 ? (
           <span className="text-[11px] text-[var(--color-text-muted)] italic">
-            None linked - this library only has direct uploads.
+            None linked. This library only has direct uploads.
           </span>
         ) : (
           sources.map((s) => (
@@ -387,7 +378,7 @@ export default function SourcesPanel({ orgId, libraryId, isController, onChanged
               <span className="max-w-56 truncate" title={s.sourceName}>{s.sourceName}</span>
               <span className="text-[var(--color-text-muted)]">· {s.documentCount}</span>
               {isController && (
-                <button onClick={() => void remove(s)} disabled={busy !== null} title="Unlink source"
+                <button onClick={() => void remove(s)} disabled={busy !== null} title="Unlink source" aria-label={`Unlink ${s.sourceName}`}
                   className="ml-0.5 text-[var(--color-text-muted)] hover:text-rose-600">
                   {busy === s.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
                 </button>
@@ -402,7 +393,7 @@ export default function SourcesPanel({ orgId, libraryId, isController, onChanged
                 {busy === "sync" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Sync now
               </Button>
             )}
-            <Button size="sm" onClick={() => setShowAdd(true)} disabled={busy !== null}>
+            <Button size="sm" variant="secondary" onClick={() => setShowAdd(true)} disabled={busy !== null}>
               <Plus className="w-3.5 h-3.5" /> Add sources
             </Button>
           </span>

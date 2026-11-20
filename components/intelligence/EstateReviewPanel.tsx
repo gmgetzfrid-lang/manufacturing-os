@@ -130,7 +130,7 @@ export default function EstateReviewPanel() {
                 </div>
                 {canDecide && (
                   <div className="flex items-center gap-1 shrink-0 flex-wrap">
-                    <button onClick={() => decide(e, true)} disabled={busy === e.id} className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-800 px-2 py-1 text-xs font-bold hover:bg-emerald-100 disabled:opacity-50"><Check className="w-3.5 h-3.5" /> {e.type === "alias_of" ? "Teach" : e.type === "belongs_to_unit" ? "Belongs to" : "Link"}</button>
+                    <button onClick={() => decide(e, true)} disabled={busy === e.id} className="inline-flex items-center gap-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] px-2 py-1 text-xs font-bold hover:bg-[var(--color-surface-2)] disabled:opacity-50"><Check className="w-3.5 h-3.5" /> {e.type === "alias_of" ? "Teach" : e.type === "belongs_to_unit" ? "Belongs to" : "Link"}</button>
                     {e.type === "belongs_to_unit" && <button onClick={() => applies(e)} disabled={busy === e.id} className="inline-flex items-center gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-1 text-xs font-bold hover:bg-[var(--color-surface-2)] disabled:opacity-50"><Link2 className="w-3.5 h-3.5" /> Applies to</button>}
                     <button onClick={() => decide(e, false)} disabled={busy === e.id} className="inline-flex items-center gap-1 rounded-lg border border-[var(--color-border)] px-2 py-1 text-xs font-bold hover:bg-[var(--color-canvas)] disabled:opacity-50"><X className="w-3.5 h-3.5" /> No</button>
                   </div>

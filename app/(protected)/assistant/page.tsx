@@ -10,13 +10,13 @@
 
 import React, { Suspense } from "react";
 import ChatShell from "@/components/chat/ChatShell";
-import { Spinner } from "@/components/ui/Spinner";
+import LoadingBlock from "@/components/ui/LoadingBlock";
 
 export default function AssistantPage() {
   return (
     <div className="flex h-full flex-col">
       <div className="flex-1 min-h-0">
-        <Suspense fallback={<div className="py-16 text-center"><Spinner /></div>}>
+        <Suspense fallback={<div className="p-6 max-w-3xl mx-auto"><LoadingBlock what="the chat" /></div>}>
           <ChatShell />
         </Suspense>
       </div>

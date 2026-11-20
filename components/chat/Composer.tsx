@@ -6,10 +6,12 @@
 // ride as pills above the text; drop or paste an image and it lands there.
 // Grows to about eight lines, then scrolls inside, so the page never jumps.
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef } from "react";
 import {
   Paperclip, Send, Square, SlidersHorizontal, X, Image as ImageIcon, FileText, Loader2, Check,
 } from "lucide-react";
+import FileThumb from "@/components/ui/FileThumb";
+import { useFileDrag } from "@/hooks/useFileDrag";
 import { SourcesMenu, AnswerMenu, SkillHint } from "./AskControls";
 import type { AnswerSkill } from "@/lib/answerSkills";
 import type { ChatScope, ChatAttachment } from "@/lib/chatClient";
@@ -26,12 +28,16 @@ export interface PendingAttachment {
   percent: number;
   error?: string;
   previewUrl?: string;             // object URL for images
+  /** The picked file, kept so a failed upload can try again with it. */
+  file?: File;
+  /** The upload failed (not a file the chat can't take): Try again helps. */
+  retryable?: boolean;
 }
 
 export default function Composer({
   value, onChange, onSend, onStop, busy,
   scope, libraryId, libraries, onScopeChange, scopeLocked,
-  attachments, onAddFiles, onRemoveAttachment,
+  attachments, onAddFiles, onRemoveAttachment, onRetryAttachment,
   instructionsActive, instructionCount, onToggleInstructions,
   disabledReason, autoFocus, webOn = false, onToggleWeb, answerMode = null, onAnswerMode,
   skills, pickedSkills, onPickSkills,
@@ -50,6 +56,7 @@ export default function Composer({
   attachments: PendingAttachment[];
   onAddFiles: (files: File[]) => void;
   onRemoveAttachment: (localId: string) => void;
+  onRetryAttachment?: (localId: string) => void;
   instructionsActive: boolean;
   instructionCount: number;
   onToggleInstructions: () => void;
@@ -69,7 +76,7 @@ export default function Composer({
 }) {
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const [dragging, setDragging] = useState(false);
+  const drag = useFileDrag(onAddFiles, busy);
 
   // Auto-grow: measure, cap at ~8 lines, then scroll inside.
   useEffect(() => {
@@ -96,26 +103,17 @@ export default function Composer({
     if (files.length > 0) { e.preventDefault(); onAddFiles(files); }
   };
 
-  const onDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault(); setDragging(false);
-    const files = Array.from(e.dataTransfer?.files ?? []);
-    if (files.length > 0) onAddFiles(files);
-  }, [onAddFiles]);
-
   const meta = SCOPE_META[scope];
 
   return (
     <div
-      onDragOver={(e) => { e.preventDefault(); if (!dragging) setDragging(true); }}
-      onDragLeave={() => setDragging(false)}
-      onDrop={onDrop}
-      className={`relative rounded-2xl border bg-[var(--color-surface)] shadow-[0_12px_40px_-18px_rgba(2,6,23,0.45)] transition-colors ${dragging
-        ? "border-[var(--color-accent-ring)] ring-2 ring-[var(--color-accent-ring)]/40"
-        : "border-[var(--color-border-strong)] focus-within:border-[var(--color-accent-ring)]"}`}
+      {...drag.bind}
+      className={`relative rounded-2xl border bg-[var(--color-surface)] shadow-[0_12px_40px_-18px_rgba(2,6,23,0.45)] transition-colors border-[var(--color-border-strong)] focus-within:border-[var(--color-accent-ring)] ${drag.ring}`}
     >
-      {dragging && (
-        <div className="absolute inset-0 z-10 rounded-2xl bg-[var(--color-surface-2)] flex items-center justify-center text-sm font-black text-[var(--color-text)] pointer-events-none">
-          Drop an image or PDF - context for this question only
+      {drag.over && (
+        <div className="absolute inset-0 z-10 rounded-2xl bg-[var(--color-surface-2)] flex flex-col items-center justify-center text-sm font-black text-[var(--color-text)] pointer-events-none">
+          {drag.say}
+          <span className="text-[11px] font-semibold text-[var(--color-text-muted)]">Images and PDFs, for this question only</span>
         </div>
       )}
 
@@ -123,20 +121,32 @@ export default function Composer({
         <div className="px-3 pt-3 flex flex-wrap gap-1.5">
           {attachments.map((a) => (
             <div key={a.localId} title={a.error ?? `${a.name} · ${fmtBytes(a.size)}`}
-              className={`inline-flex items-center gap-1.5 pl-1 pr-1.5 py-1 rounded-lg border text-[11px] font-bold max-w-[240px] ${a.error
+              className={`inline-flex items-center gap-1.5 pl-1 pr-1.5 py-1 rounded-lg border text-[11px] font-bold max-w-[300px] ${a.error
                 ? "border-rose-300 bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300"
                 : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]"}`}>
-              {a.kind === "image" && a.previewUrl
-                // eslint-disable-next-line @next/next/no-img-element
-                ? <img src={a.previewUrl} alt="" className="w-6 h-6 rounded object-cover shrink-0" />
-                : a.kind === "image"
-                  ? <ImageIcon className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" />
-                  : <FileText className="w-4 h-4 shrink-0 text-rose-600" />}
-              <span className="truncate">{a.name}</span>
+              {a.file
+                ? <FileThumb file={a.file} size={32} />
+                : a.kind === "image" && a.previewUrl
+                  // eslint-disable-next-line @next/next/no-img-element
+                  ? <img src={a.previewUrl} alt="" className="w-8 h-8 rounded object-cover shrink-0" />
+                  : a.kind === "image"
+                    ? <ImageIcon className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" />
+                    : <FileText className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" />}
+              <span className="min-w-0 flex flex-col leading-tight">
+                <span className="truncate">{a.name}</span>
+                <span className={`truncate font-semibold ${a.error ? "" : "text-[var(--color-text-muted)]"}`}>
+                  {a.error ? (a.retryable ? "Didn't upload" : a.error) : fmtBytes(a.size)}
+                </span>
+              </span>
               {a.att === null && !a.error
-                ? <span className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-muted)]"><Loader2 className="w-3 h-3 animate-spin" />{Math.round(a.percent)}%</span>
+                ? <span className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-muted)] shrink-0"><Loader2 className="w-3 h-3 animate-spin" />{Math.round(a.percent)}%</span>
                 : a.att && <Check className="w-3 h-3 text-emerald-600 shrink-0" />}
-              <button onClick={() => onRemoveAttachment(a.localId)} className="p-0.5 rounded hover:bg-[var(--color-surface)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]" title="Remove">
+              {a.error && a.retryable && a.file && onRetryAttachment && (
+                <button type="button" onClick={() => onRetryAttachment(a.localId)} className="shrink-0 px-1.5 py-0.5 rounded border border-current/30 hover:bg-[var(--color-surface)] font-black">
+                  Try again
+                </button>
+              )}
+              <button type="button" onClick={() => onRemoveAttachment(a.localId)} className="p-0.5 rounded hover:bg-[var(--color-surface)] text-[var(--color-text-faint)] hover:text-[var(--color-text)] shrink-0" title="Remove" aria-label={`Remove ${a.name}`}>
                 <X className="w-3 h-3" />
               </button>
             </div>
@@ -164,7 +174,7 @@ export default function Composer({
       <div className="flex items-center gap-1 px-2 pb-2">
         <input ref={fileRef} type="file" multiple hidden accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
           onChange={(e) => { onAddFiles(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
-        <button onClick={() => fileRef.current?.click()} title="Attach an image or PDF (context for this question only)"
+        <button onClick={() => fileRef.current?.click()} title="Attach an image or PDF (for this question only)" aria-label="Attach a file"
           className="h-8 w-8 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
           <Paperclip className="w-4 h-4" />
         </button>
@@ -188,12 +198,12 @@ export default function Composer({
         )}
 
         {busy ? (
-          <button onClick={onStop} title="Stop"
+          <button onClick={onStop} title="Stop" aria-label="Stop"
             className="h-8 w-8 inline-flex items-center justify-center rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 transition-opacity">
             <Square className="w-3.5 h-3.5" />
           </button>
         ) : (
-          <button onClick={onSend} disabled={!canSend} title="Send (Enter)"
+          <button onClick={onSend} disabled={!canSend} title="Send (Enter)" aria-label="Send"
             className="h-8 w-8 inline-flex items-center justify-center rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-35 disabled:cursor-not-allowed transition-colors">
             <Send className="w-4 h-4" />
           </button>

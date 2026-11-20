@@ -39,13 +39,11 @@ import {
 } from "@/lib/answerSkills";
 import { appConfirm } from "@/components/providers/DialogProvider";
 
-const KIND_META: Record<string, { label: string; icon: typeof FileSearch; hue: string }> = {
-  reference: { label: "Cross-reference", icon: FileSearch, hue: "from-sky-500 to-blue-600" },
-  shared_entity: { label: "Shared equipment", icon: Boxes, hue: "from-emerald-500 to-teal-600" },
-  co_citation: { label: "Usage", icon: MessageSquareQuote, hue: "from-violet-500 to-fuchsia-600" },
+const KIND_META: Record<string, { label: string; icon: typeof FileSearch }> = {
+  reference: { label: "Cross-reference", icon: FileSearch },
+  shared_entity: { label: "Shared equipment", icon: Boxes },
+  co_citation: { label: "Usage", icon: MessageSquareQuote },
 };
-
-const REASONING_HUE = "from-amber-500 to-orange-600";
 
 export default function SkillLibraryPage() {
   const { activeOrgId, activeRole, uid, userEmail } = useRole();
@@ -69,10 +67,16 @@ export default function SkillLibraryPage() {
     if (!activeOrgId || !uid) return;
     let alive = true;
     (async () => {
-      await Promise.all([
-        seedBuiltinRules(activeOrgId, uid),
-        seedBuiltinAnswerSkills(activeOrgId, uid),
-      ]);
+      // Seeding the built-ins is background work; the list loads either way,
+      // and a failed seed is said, not swallowed.
+      try {
+        await Promise.all([
+          seedBuiltinRules(activeOrgId, uid),
+          seedBuiltinAnswerSkills(activeOrgId, uid),
+        ]);
+      } catch (e) {
+        if (alive) setError(`The built-in skills couldn't be added: ${(e as Error).message}`);
+      }
       if (alive) await refresh();
     })();
     return () => { alive = false; };
@@ -162,9 +166,10 @@ export default function SkillLibraryPage() {
   const toggleButton = (opts: { id: string; enabled: boolean; mayManage: boolean; onToggle: () => Promise<void> }) =>
     opts.mayManage ? (
       <button type="button" onClick={() => void guard(opts.id, opts.onToggle)} disabled={busyId === opts.id}
-        title={opts.enabled ? "Disable - it stops running" : "Enable"}
+        title={opts.enabled ? "Turn off: it stops running" : "Turn on"}
+        aria-pressed={opts.enabled}
         className={`shrink-0 inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-[11px] font-black border transition-colors ${opts.enabled
-          ? "border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40"
+          ? "border-[var(--color-text)] text-[var(--color-surface)] bg-[var(--color-text)]"
           : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`}>
         {busyId === opts.id ? <Loader2 className="w-3 h-3 animate-spin" />
           : opts.enabled ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
@@ -195,21 +200,21 @@ export default function SkillLibraryPage() {
       />
 
       {error && (
-        <div className="mb-4 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 dark:bg-rose-950/40 p-3">
+        <div role="alert" className="mb-4 flex items-start gap-2 border-l-2 border-rose-500 pl-3">
           <AlertTriangle className="w-4 h-4 text-rose-600 mt-0.5 shrink-0" />
           <div className="text-xs text-rose-700 dark:text-rose-300">{error}</div>
         </div>
       )}
 
       {loading ? (
-        <div className="flex items-center justify-center py-20"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-faint)]" /></div>
+        <div className="flex items-center justify-center gap-2 py-20 text-sm text-[var(--color-text-muted)]"><Loader2 className="w-6 h-6 animate-spin" /> Loading the skill library…</div>
       ) : notInstalled ? (
         <div className="text-center py-16 space-y-2 max-w-md mx-auto">
           <Puzzle className="w-8 h-8 mx-auto text-[var(--color-text-faint)]" />
           <div className="text-sm font-bold text-[var(--color-text)]">The skill library isn&apos;t installed yet</div>
           <p className="text-xs text-[var(--color-text-muted)]">
-            Run the connection-skills and reasoning-skills migrations on your database, then reload -
-            the built-ins will seed themselves and this page becomes your library.
+            Run the connection-skills and reasoning-skills migrations on your database, then reload.
+            The built-ins add themselves.
           </p>
         </div>
       ) : (
@@ -233,7 +238,7 @@ export default function SkillLibraryPage() {
 
           {/* ── Reasoning skills ─────────────────────────────────────────── */}
           {shelfHeading(
-            <BrainCircuit className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />,
+            <BrainCircuit className="w-5 h-5 text-[var(--color-text-muted)] mt-0.5 shrink-0" />,
             "Reasoning skills",
             "Disciplines the AI carries when it answers. Each names when it applies - enabling several is safe.",
           )}

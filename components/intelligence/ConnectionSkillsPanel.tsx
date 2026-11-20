@@ -80,7 +80,9 @@ export default function ConnectionSkillsPanel() {
 
   const enabledCount = useMemo(() => (rules ?? []).filter((r) => r?.enabled).length, [rules]);
 
-  if (rules === undefined) return null;
+  if (rules === undefined) {
+    return <p className="mb-4 flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading connection skills…</p>;
+  }
 
   return (
     <div className="mb-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
@@ -101,7 +103,7 @@ export default function ConnectionSkillsPanel() {
       {open && rules !== null && (
         <div className="px-3.5 pb-3.5 space-y-1.5 border-t border-[var(--color-border)] pt-3">
           {error && (
-            <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 dark:bg-rose-950/40 px-2.5 py-2 text-[11px] text-rose-700 dark:text-rose-300">
+            <div role="alert" className="flex items-start gap-2 border-l-2 border-rose-500 pl-2.5 text-[11px] text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
             </div>
           )}
@@ -157,9 +159,10 @@ export default function ConnectionSkillsPanel() {
                     )}
                     {mayManage && (
                       <button type="button" onClick={() => void toggle(r)} disabled={busyId === r.id}
-                        title={r.enabled ? "Disable - the engine skips this skill" : "Enable"}
+                        title={r.enabled ? "Turn off: the engine skips this skill" : "Turn on"}
+                        aria-pressed={r.enabled}
                         className={`inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-[11px] font-black border transition-colors ${r.enabled
-                          ? "border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40"
+                          ? "border-[var(--color-text)] text-[var(--color-surface)] bg-[var(--color-text)]"
                           : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`}>
                         {busyId === r.id ? <Loader2 className="w-3 h-3 animate-spin" />
                           : r.enabled ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}

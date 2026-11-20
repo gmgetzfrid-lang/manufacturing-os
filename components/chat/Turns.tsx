@@ -102,14 +102,14 @@ export function AttachmentCard({ a, onOpen, large }: { a: ChatAttachment; onOpen
     return () => { cancelled = true; };
   }, [a.kind, a.path]);
   return (
-    <button onClick={onOpen} title={`${a.name} · ${fmtBytes(a.size)} - context for this question only`}
+    <button onClick={onOpen} title={`${a.name} · ${fmtBytes(a.size)}, for this question only`}
       className={`group relative overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-accent-ring)] transition-colors ${large ? "w-full" : ""}`}>
       {a.kind === "image" && url ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={url} alt={a.name} className={large ? "w-full h-auto" : "h-20 w-28 object-cover"} />
       ) : (
         <div className={`flex items-center gap-2 px-2.5 py-2 ${large ? "" : "max-w-[200px]"}`}>
-          {a.kind === "image" ? <ImageIcon className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" /> : <FileText className="w-4 h-4 text-rose-600 shrink-0" />}
+          {a.kind === "image" ? <ImageIcon className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" /> : <FileText className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />}
           <span className="text-[11px] font-bold text-[var(--color-text)] truncate">{a.name}</span>
         </div>
       )}
@@ -149,12 +149,12 @@ export function AssistantTurn({
 
   if (m.status === "error") {
     return (
-      <div className="flex items-start gap-2 rounded-xl border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/30 px-3.5 py-3 text-sm text-rose-800 dark:text-rose-300">
+      <div role="alert" className="flex items-start gap-2 border-l-2 border-rose-500 pl-3 py-1 text-sm font-semibold text-rose-800 dark:text-rose-300">
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-        <span className="flex-1">{m.error ?? "The question failed."}</span>
+        <span className="flex-1">{m.error ?? "The question didn't get an answer."}</span>
         {isLast && question && (
-          <button onClick={() => onRetry(question)} className="shrink-0 inline-flex items-center gap-1 text-xs font-black hover:underline">
-            <RotateCcw className="w-3.5 h-3.5" /> Retry
+          <button onClick={() => onRetry(question)} className="shrink-0 inline-flex items-center gap-1 h-8 px-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-black text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+            <RotateCcw className="w-3.5 h-3.5" /> Try again
           </button>
         )}
       </div>
@@ -196,12 +196,12 @@ export function AssistantTurn({
       <div className="rounded-2xl border border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] p-4">
         <div className="mb-3 flex items-center gap-2 text-[11px] font-bold text-[var(--color-text)] dark:text-[var(--color-text)]">
           <Globe className="w-3.5 h-3.5 shrink-0" />
-          Internet answer - {answer.liveWeb ? "from a live web search" : "from the model's general knowledge"}, not your controlled documents.
+          Internet answer, {answer.liveWeb ? "from a live web search" : "from the model's general knowledge"}, not your controlled documents.
         </div>
         <AnswerView answer={answer.answer} citations={answer.citations} onCite={onCite} />
         <CitationChips citations={answer.citations} onOpen={onCite} />
         <p className="mt-3 pt-2 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)]">
-          {answer.provider} · {answer.model} · carries no doc-control weight - cross-check before relying on it.
+          {answer.provider} · {answer.model} · not a controlled source. Check it before you rely on it.
         </p>
       </div>
     );
@@ -212,7 +212,7 @@ export function AssistantTurn({
       {replayed && (
         <div className="mb-2 flex items-center gap-2 rounded-xl border border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] px-3 py-2 text-[11px] font-bold text-[var(--color-text)] dark:text-[var(--color-text)]">
           <History className="w-3.5 h-3.5 shrink-0" />
-          Reused from the team&apos;s record - answered {relativeTime(replayed.createdAt)} ago for {(replayed.userName ?? "someone").split("@")[0]}. No new AI run.
+          Reused from the team&apos;s record: answered for {(replayed.userName ?? "someone").split("@")[0]} on {new Date(replayed.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}. No new AI run.
         </div>
       )}
       <AnswerExperience question={question} answer={answer} showQuestion={false}
@@ -271,9 +271,9 @@ function ToolsTurn({ m, payload, actions, onConfirm }: {
           >
             {showTrace ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
             <Wrench className="h-3.5 w-3.5" />
-            {steps.length} {steps.length === 1 ? "step" : "steps"} - what it actually did
+            {steps.length} {steps.length === 1 ? "step" : "steps"}: what it actually did
             {payload.stoppedBecause && (
-              <span className="ml-auto text-amber-700 dark:text-amber-400">stopped early - {payload.stoppedBecause}</span>
+              <span className="ml-auto text-amber-700 dark:text-amber-400">stopped early: {payload.stoppedBecause}</span>
             )}
             <span className={`text-[var(--color-text-faint)] ${payload.stoppedBecause ? "" : "ml-auto"}`}>{payload.model}</span>
           </button>
@@ -296,7 +296,7 @@ function StepView({ step }: { step: RunStep }) {
     <div className="text-xs">
       <button onClick={() => setOpen((o) => !o)} className="text-left font-bold text-[var(--color-text)] hover:underline">
         {describeTool(step.tool)}
-        {params && <span className="font-normal text-[var(--color-text-muted)]"> - {params}</span>}
+        {params && <span className="font-normal text-[var(--color-text-muted)]">: {params}</span>}
       </button>
       {step.error
         ? <p className="mt-0.5 text-rose-600">{step.error}</p>
@@ -315,30 +315,30 @@ function PendingCard({ action, done, outcome, busy, onConfirm }: {
   busy: boolean; onConfirm: () => void;
 }) {
   return (
-    <div className="rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-3">
+    <div className="border-l-2 border-amber-500 pl-3 py-1">
       <div className="flex items-start gap-2">
         <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
         <div className="flex-1">
-          <p className="text-sm font-bold text-amber-900 dark:text-amber-200">Needs your confirmation</p>
-          <p className="mt-0.5 text-sm text-amber-800 dark:text-amber-300">{action.summary}</p>
+          <p className="text-sm font-bold text-amber-800 dark:text-amber-300">Needs your OK before it runs</p>
+          <p className="mt-0.5 text-sm text-[var(--color-text)]">{action.summary}</p>
           {outcome && !outcome.ok && (
             <p className="mt-1 text-xs font-bold text-rose-700 dark:text-rose-400">{outcome.note}</p>
           )}
           <div className="mt-2 flex items-center gap-2">
             {done ? (
               <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 dark:text-emerald-400">
-                <Check className="h-3.5 w-3.5" /> Done{outcome?.note && outcome.note !== "done" ? ` - ${outcome.note}` : ""}
+                <Check className="h-3.5 w-3.5" /> Done{outcome?.note && outcome.note !== "done" ? `: ${outcome.note}` : ""}
               </span>
             ) : action.href ? (
               // Handed off rather than executed: the real flow enforces guards
               // this assistant must not shortcut.
               <Link href={action.href}
-                className="inline-flex items-center gap-1.5 rounded-md bg-amber-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-700">
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 h-8 text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                 Open and continue there <ArrowUpRight className="h-3.5 w-3.5" />
               </Link>
             ) : (
               <button onClick={onConfirm} disabled={busy}
-                className="inline-flex items-center gap-1.5 rounded-md bg-amber-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-700 disabled:opacity-50">
+                className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-text)] px-3 h-8 text-xs font-bold text-[var(--color-surface)] hover:opacity-90 disabled:opacity-50">
                 {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
                 Confirm and run
               </button>

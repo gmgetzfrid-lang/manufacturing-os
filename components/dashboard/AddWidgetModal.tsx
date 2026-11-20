@@ -32,18 +32,18 @@ export default function AddWidgetModal({ open, onClose, existingTypes, isAdmin, 
   const count = (t: WidgetType) => existingTypes.filter((x) => x === t).length;
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+    <div role="dialog" aria-modal="true" aria-label="Add a widget" className="fixed inset-0 z-[60] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
       <div className="relative w-full max-w-3xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden max-h-[85vh] flex flex-col">
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="min-w-0 flex-1">
             <h2 className="text-base font-black text-[var(--color-text)]">Add a widget</h2>
-            <p className="text-xs text-[var(--color-text-muted)]">Every widget can be renamed, refreshed, expanded full-size and configured from its ⚙.</p>
+            <p className="text-xs text-[var(--color-text-muted)]">Tap one to add it to your Home.</p>
           </div>
-          <button onClick={onClose} className="p-2 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-5 h-5" /></button>
+          <button onClick={onClose} aria-label="Close" className="p-2 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-5 h-5" /></button>
         </div>
         <div className="px-6 pt-3">
-          <label className="flex items-center gap-2 rounded-xl border border-[var(--color-border)] px-3 h-10 focus-within:border-[var(--color-accent)]">
+          <label className="flex items-center gap-2 rounded-xl border border-[var(--color-border)] px-3 h-10 focus-within:border-[var(--color-border-strong)]">
             <Search className="w-4 h-4 text-[var(--color-text-faint)]" />
             <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a widget…"
               className="flex-1 bg-transparent text-sm text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)]" />
@@ -67,12 +67,11 @@ export default function AddWidgetModal({ open, onClose, existingTypes, isAdmin, 
                         onClick={() => { onAdd(m.type); setJustAdded(m.type); }}
                         className={`relative flex items-center gap-3 p-3 rounded-xl border text-left transition-colors ${
                           blocked ? "border-[var(--color-border)] opacity-60 cursor-default" : "border-[var(--color-border)] hover:border-[var(--color-accent)] hover:bg-[var(--color-surface-2)]"}`}>
-                        {m.isNew && <span className="absolute -top-1.5 right-3 px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text)] text-[11px] font-black uppercase tracking-wider">New</span>}
                         <span className={`inline-flex items-center justify-center w-10 h-10 rounded-xl ${toneChip(m.tone)} shrink-0`}><Icon className="w-5 h-5" /></span>
                         <div className="min-w-0 flex-1">
-                          <div className="text-sm font-bold text-[var(--color-text)]">{m.title}</div>
+                          <div className="text-sm font-bold text-[var(--color-text)]">{m.title}{m.isNew && <span className="ml-1.5 align-middle text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">New</span>}</div>
                           <div className="text-xs text-[var(--color-text-muted)] line-clamp-2">{m.description}</div>
-                          {n > 0 && m.multi && <div className="text-[11px] font-bold text-emerald-600 mt-0.5">{n} on your dashboard - add another</div>}
+                          {n > 0 && m.multi && <div className="text-[11px] font-bold text-emerald-600 mt-0.5">{n} on your Home. Tap to add another</div>}
                         </div>
                         {blocked ? (
                           <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600 shrink-0"><Check className="w-4 h-4" /> Added</span>

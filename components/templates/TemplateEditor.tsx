@@ -13,6 +13,10 @@ import {
   X, Loader2, Upload, FileText, Save, Sparkles, Database, Type, AlertTriangle, Trash2,
 } from "lucide-react";
 import { useToast } from "@/components/providers/ToastProvider";
+import FileThumb from "@/components/ui/FileThumb";
+import { useFileDrag } from "@/hooks/useFileDrag";
+import { useDraft } from "@/hooks/useDraft";
+import { tryUpload } from "@/lib/uploadRetry";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea, Select } from "@/components/ui/Field";
 import {
@@ -43,14 +47,25 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
   const [placeholders, setPlaceholders] = useState<Placeholder[]>(template?.placeholders ?? []);
   const [loops, setLoops] = useState<string[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+  // Files picked in this sitting, by stored key, so each shows its thumb and size.
+  const [pickedFiles, setPickedFiles] = useState<Record<string, File>>({});
+  const [uploadError, setUploadError] = useState<{ which: "template" | "example"; file: File; msg: string } | null>(null);
+  // A new template's typed fields wait on this device until it's saved.
+  const typed = React.useMemo(() => ({ name, description, instructions, filenamePattern }), [name, description, instructions, filenamePattern]);
+  const typedDraft = useDraft<typeof typed>(template ? null : `output-template:new:${orgId}`, typed,
+    (d) => { setName(d.name ?? ""); setDescription(d.description ?? ""); setInstructions(d.instructions ?? ""); setFilenamePattern(d.filenamePattern ?? ""); },
+    (d) => !Object.values(d).some((v) => (v ?? "").trim()));
   const [analysisNote, setAnalysisNote] = useState<string | null>(null);
 
   const onTemplatePicked = async (file: File | null) => {
     if (!file) return;
     const isXlsx = /\.xlsx?$/i.test(file.name);
     setBusy("template");
-    try {
-      const up = await uploadTemplateFile(orgId, file, "templates");
+    setUploadError(null);
+    // The transfer alone is retried from the corner card; reading the file
+    // runs once it's up.
+    const afterUp = async (up: { key: string; name: string }) => {
+      setPickedFiles((m) => ({ ...m, [up.key]: file }));
       setTemplateFile(up);
       const nextKind = isXlsx ? "xlsx" : "docx";
       setKind(nextKind);
@@ -73,28 +88,63 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
         );
       }
       if (!name.trim()) setName(file.name.replace(/\.[^.]+$/, ""));
+    };
+    let up: { key: string; name: string };
+    try {
+      up = await tryUpload(file.name, () => uploadTemplateFile(orgId, file, "templates"), {
+        onRetried: (u) => { setUploadError(null); void afterUp(u).catch((e: unknown) => showToast({ type: "error", title: "Couldn't read the template", message: e instanceof Error ? e.message : String(e) })); },
+      });
     } catch (e) {
-      showToast({ type: "error", title: (e as Error).message });
-    } finally { setBusy(null); }
+      setUploadError({ which: "template", file, msg: (e as Error).message });
+      setBusy(null);
+      return;
+    }
+    try { await afterUp(up); }
+    catch (e) { showToast({ type: "error", title: "Couldn't read the template", message: (e as Error).message }); }
+    finally { setBusy(null); }
   };
 
   const onExamplePicked = async (file: File | null) => {
     if (!file) return;
     setBusy("example");
-    try {
-      const up = await uploadTemplateFile(orgId, file, "examples");
+    setUploadError(null);
+    const afterUp = async (up: { key: string; name: string }) => {
+      setPickedFiles((m) => ({ ...m, [up.key]: file }));
       setExamples((prev) => [...prev, up]);
       // Read the example's text so the model can copy its voice. Word only:
       // an .xlsx example is stored but not distilled.
       if (/\.docx$/i.test(file.name)) {
         const analysis = await analyzeTemplateFile(orgId, up.key, "docx");
         setExampleText((prev) => (prev ? `${prev}\n\n---\n\n` : "") + analysis.preview);
+        const words = analysis.preview.trim() ? analysis.preview.trim().split(/\s+/).length : 0;
+        showToast({ type: "success", title: `${file.name} attached as a style example. Read ${words.toLocaleString()} words.` });
+      } else {
+        showToast({ type: "success", title: `${file.name} attached as a style example.` });
       }
-      showToast({ type: "success", title: `${file.name} attached as a style example.` });
+    };
+    let up: { key: string; name: string };
+    try {
+      up = await tryUpload(file.name, () => uploadTemplateFile(orgId, file, "examples"), {
+        onRetried: (u) => { setUploadError(null); void afterUp(u).catch((e: unknown) => showToast({ type: "error", title: "Couldn't read the example", message: e instanceof Error ? e.message : String(e) })); },
+      });
     } catch (e) {
-      showToast({ type: "error", title: (e as Error).message });
-    } finally { setBusy(null); }
+      setUploadError({ which: "example", file, msg: (e as Error).message });
+      setBusy(null);
+      return;
+    }
+    try { await afterUp(up); }
+    catch (e) { showToast({ type: "error", title: "Couldn't read the example", message: (e as Error).message }); }
+    finally { setBusy(null); }
   };
+  const templateDrag = useFileDrag((fs) => { if (fs[0]) void onTemplatePicked(fs[0]); }, busy !== null);
+  const exampleDrag = useFileDrag((fs) => { if (fs[0]) void onExamplePicked(fs[0]); }, busy !== null);
+
+  // Escape closes, as the X does (not while a file is going up).
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && busy === null) onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy, onClose]);
 
   const updatePlaceholder = (tag: string, patch: Partial<Placeholder>) => {
     setPlaceholders((prev) => prev.map((p) => (p.tag === tag ? { ...p, ...patch } : p)));
@@ -113,6 +163,7 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
         filenamePattern: filenamePattern.trim(),
         columnMap: template?.columnMap ?? {},
       });
+      typedDraft.clear();
       showToast({ type: "success", title: "Template saved." });
       onSaved();
       onClose();
@@ -122,7 +173,7 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
+    <div role="dialog" aria-modal="true" aria-label={template ? "Edit template" : "New output template"} className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
       <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-xl mt-8 mb-8"
         onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between sticky top-0 bg-[var(--color-surface)] rounded-t-2xl z-10">
@@ -131,11 +182,10 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
               {template ? "Edit template" : "New output template"}
             </h2>
             <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
-              Your file supplies every pixel of formatting - the AI only writes the words that go in
-              the blanks.
+              Your file sets all the formatting. The AI only writes the words that go in the blanks.
             </p>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+          <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
 
         <div className="p-5 space-y-5">
@@ -160,9 +210,10 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
           </label>
 
           {/* ── Blank template ─────────────────────────────────────────── */}
-          <div className="rounded-xl border border-[var(--color-border)] p-3.5">
+          <div {...templateDrag.bind} className={`rounded-xl border border-[var(--color-border)] p-3.5 ${templateDrag.ring}`}>
             <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5">
-              Blank template - owns all formatting
+              Blank template: it sets all the formatting
+              {templateDrag.over && <span className="normal-case tracking-normal font-bold text-[var(--color-text)]"> · {templateDrag.say}</span>}
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               <label className="inline-flex">
@@ -170,12 +221,14 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
                   onChange={(e) => { void onTemplatePicked(e.target.files?.[0] ?? null); e.target.value = ""; }} />
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] cursor-pointer">
                   {busy === "template" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
-                  {templateFile ? "Replace file" : "Upload .docx / .xlsx"}
+                  {templateFile ? "Replace file" : "Upload or drop .docx / .xlsx"}
                 </span>
               </label>
               {templateFile && (
                 <span className="inline-flex items-center gap-1.5 text-xs font-bold text-[var(--color-text)]">
-                  <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {templateFile.name}
+                  {pickedFiles[templateFile.key]
+                    ? <><FileThumb file={pickedFiles[templateFile.key]} size={32} /> {templateFile.name} <span className="font-normal text-[var(--color-text-muted)]">{(pickedFiles[templateFile.key].size / 1024).toFixed(0)} KB</span></>
+                    : <><FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {templateFile.name}</>}
                   <span className="text-[11px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]">
                     {KIND_LABEL[kind]}
                   </span>
@@ -247,13 +300,13 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
           )}
 
           {/* ── Examples ───────────────────────────────────────────────── */}
-          <div className="rounded-xl border border-[var(--color-border)] p-3.5">
+          <div {...exampleDrag.bind} className={`rounded-xl border border-[var(--color-border)] p-3.5 ${exampleDrag.ring}`}>
             <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5">
-              Example documents - the voice to copy
+              Example documents: the voice to copy
+              {exampleDrag.over && <span className="normal-case tracking-normal font-bold text-[var(--color-text)]"> · {exampleDrag.say}</span>}
             </div>
             <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
-              Attach one or two finished documents. The AI reads them as a style guide - your phrasing,
-              nomenclature, and level of detail - never as formatting (the template owns that).
+              One or two finished documents. The AI copies their phrasing and level of detail, never their formatting.
             </p>
             <div className="flex items-center gap-2 flex-wrap">
               <label className="inline-flex">
@@ -266,13 +319,20 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
               </label>
               {examples.map((ex) => (
                 <span key={ex.key} className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2 py-1 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)]">
-                  <FileText className="w-3 h-3" /> {ex.name}
-                  <button onClick={() => setExamples((prev) => prev.filter((p) => p.key !== ex.key))}
+                  {pickedFiles[ex.key] ? <FileThumb file={pickedFiles[ex.key]} size={28} /> : <FileText className="w-3 h-3" />} {ex.name}
+                  {pickedFiles[ex.key] && <span className="font-normal text-[var(--color-text-muted)]">{(pickedFiles[ex.key].size / 1024).toFixed(0)} KB</span>}
+                  <button onClick={() => setExamples((prev) => prev.filter((p) => p.key !== ex.key))} aria-label={`Remove ${ex.name}`}
                     className="text-[var(--color-text-muted)] hover:text-rose-600"><Trash2 className="w-3 h-3" /></button>
                 </span>
               ))}
             </div>
           </div>
+          {uploadError && (
+            <p role="alert" className="-mt-2 flex items-center gap-2 text-[11px] font-semibold text-red-700 dark:text-red-400">
+              {uploadError.file.name} didn&apos;t upload: {uploadError.msg}
+              <button type="button" disabled={busy !== null} onClick={() => void (uploadError.which === "template" ? onTemplatePicked(uploadError.file) : onExamplePicked(uploadError.file))} className="underline font-bold">Try again</button>
+            </p>
+          )}
 
           <label className="block">
             <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Standing instructions</span>

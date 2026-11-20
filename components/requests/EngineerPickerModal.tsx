@@ -17,10 +17,12 @@
 import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import {
-  X, User, AlertTriangle, Loader2, ChevronRight, Briefcase, Inbox,
+  User, Loader2, ChevronRight, Briefcase, Inbox,
 } from "lucide-react";
 import { Textarea } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
+import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
+import { useDraft } from "@/hooks/useDraft";
 
 interface EngineerOption {
   uid: string;
@@ -46,6 +48,8 @@ interface EngineerPickerModalProps {
   commentPlaceholder?: string;
   /** Pre-selected engineer (e.g. for reassignment — exclude this one). */
   currentEngineerId?: string;
+  /** Where the typed comment is kept until it's sent. */
+  draftKey?: string | null;
   onSubmit: (params: {
     engineerId: string;
     engineerName: string;
@@ -59,6 +63,7 @@ export default function EngineerPickerModal({
   requireComment = true, commentLabel = "Comment *",
   commentPlaceholder = "What do you need them to review?",
   currentEngineerId,
+  draftKey = null,
   onSubmit,
 }: EngineerPickerModalProps) {
   const [engineers, setEngineers] = useState<EngineerOption[]>([]);
@@ -67,21 +72,25 @@ export default function EngineerPickerModal({
   const [comment, setComment] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const draft = useDraft<string>(isOpen ? draftKey : null, comment, setComment, (v) => !v.trim());
 
   useEffect(() => {
     if (!isOpen || !orgId) return;
     let alive = true;
     (async () => {
       setLoading(true);
+      setLoadError(null);
       try {
         // Pull every active engineer in the org — headline role OR the
         // additive roles array (the server validates against both, so an
         // Admin who also holds Engineer-2 must appear here too).
-        const { data: allMembers } = await supabase
+        const { data: allMembers, error: memErr } = await supabase
           .from("org_members")
           .select("uid, email, role, roles")
           .eq("org_id", orgId)
           .eq("status", "active");
+        if (memErr) throw memErr;
         const members = ((allMembers as Array<Record<string, unknown>>) ?? []).filter((m) => {
           const held: string[] = Array.isArray(m.roles) && (m.roles as string[]).length > 0
             ? (m.roles as string[])
@@ -121,7 +130,7 @@ export default function EngineerPickerModal({
 
         if (alive) setEngineers(list);
       } catch (e) {
-        if (alive) setError((e as Error).message);
+        if (alive) setLoadError((e as Error).message);
       } finally {
         if (alive) setLoading(false);
       }
@@ -136,7 +145,7 @@ export default function EngineerPickerModal({
   const submit = async () => {
     setError(null);
     if (!selectedId) return setError("Pick an engineer to route this to");
-    if (requireComment && !comment.trim()) return setError("Please add a short comment so they know what to look at");
+    if (requireComment && !comment.trim()) return setError("Add a short note so they know what to look at");
     const engineer = engineers.find((e) => e.uid === selectedId);
     if (!engineer) return;
     setBusy(true);
@@ -149,6 +158,7 @@ export default function EngineerPickerModal({
       });
       setSelectedId("");
       setComment("");
+      draft.clear();
       onClose();
     } catch (e) {
       setError((e as Error).message);
@@ -156,20 +166,10 @@ export default function EngineerPickerModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[210] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
-      <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 animate-in fade-in zoom-in-95 duration-200">
-        <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
-          <div className="p-2 bg-[var(--color-surface-2)] rounded-lg"><Briefcase className="w-5 h-5 text-[var(--color-text-muted)]" /></div>
-          <div className="flex-1 min-w-0">
-            <div className="text-sm font-black text-[var(--color-text)] truncate">{title}</div>
-            <div className="text-xs text-[var(--color-text-muted)]">{description}</div>
-          </div>
-          <button onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
+    <Modal onClose={onClose} dismissable={!busy} zIndex={410}>
+        <ModalHeader icon={Briefcase} title={title} subtitle={description} onClose={busy ? undefined : onClose} />
 
-        <div className="px-6 py-5 space-y-4 max-h-[70vh] overflow-y-auto">
+        <ModalBody className="space-y-4">
           <div>
             <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Engineer *</label>
             <div className="mt-1.5 max-h-64 overflow-y-auto rounded-lg border border-[var(--color-border)]">
@@ -177,6 +177,8 @@ export default function EngineerPickerModal({
                 <div className="flex items-center gap-2 p-4 text-sm text-[var(--color-text-muted)]">
                   <Spinner size="sm" /> Loading engineers…
                 </div>
+              ) : loadError ? (
+                <p role="alert" className="p-4 text-sm font-semibold text-red-700 dark:text-red-400">Couldn&apos;t load the engineers: {loadError}</p>
               ) : filtered.length === 0 ? (
                 <div className="p-4 text-sm text-[var(--color-text-muted)] text-center">
                   <p className="font-bold text-[var(--color-text)]">No active engineers in this workspace.</p>
@@ -196,7 +198,7 @@ export default function EngineerPickerModal({
                         value={eng.uid}
                         checked={selectedId === eng.uid}
                         onChange={(e) => setSelectedId(e.target.value)}
-                        className="accent-[var(--color-accent)]"
+                        className="accent-[var(--color-text)]"
                       />
                       <div className="p-1.5 bg-[var(--color-surface-2)] rounded-full"><User className="w-4 h-4 text-[var(--color-text-muted)]" /></div>
                       <div className="flex-1 min-w-0">
@@ -208,9 +210,8 @@ export default function EngineerPickerModal({
                         <span
                           title={`${eng.workload} open ticket${eng.workload === 1 ? "" : "s"}`}
                           className={`inline-flex items-center gap-1 text-[11px] font-bold px-1.5 py-0.5 rounded border ${
-                            eng.workload === 0 ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                            : eng.workload < 3 ? "bg-amber-50 text-amber-700 border-amber-200"
-                            : "bg-red-50 text-red-700 border-red-200"
+                            eng.workload < 3 ? "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]"
+                            : "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-500/30"
                           }`}
                         >
                           <Inbox className="w-3 h-3" /> {eng.workload}
@@ -221,7 +222,7 @@ export default function EngineerPickerModal({
                 </div>
               )}
             </div>
-            <div className="text-[11px] text-[var(--color-text-muted)] mt-1.5">Sorted by lightest workload first.</div>
+            <div className="text-[11px] text-[var(--color-text-muted)] mt-1.5">Fewest open requests first.</div>
           </div>
 
           {requireComment && (
@@ -238,20 +239,17 @@ export default function EngineerPickerModal({
           )}
 
           {error && (
-            <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
-              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
-            </div>
+            <p role="alert" className="border-l-2 border-red-500 pl-2 text-xs font-semibold text-red-700 dark:text-red-400">{error}</p>
           )}
-        </div>
+        </ModalBody>
 
-        <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
+        <ModalFooter>
           <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] transition-colors disabled:opacity-50">Cancel</button>
           <button onClick={submit} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] transition-colors disabled:opacity-60">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ChevronRight className="w-3.5 h-3.5" />}
-            {busy ? "Sending…" : "Send to Engineer"}
+            {busy ? "Sending…" : "Send to engineer"}
           </button>
-        </div>
-      </div>
-    </div>
+        </ModalFooter>
+    </Modal>
   );
 }

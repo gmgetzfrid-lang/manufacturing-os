@@ -28,13 +28,13 @@ const TICKET_STATUS: Record<string, { label: string; cls: string }> = {
   PENDING_ENG_TEAM: { label: "Eng team", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
   PENDING_ASSIGNMENT: { label: "Unassigned", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
   DRAFTING: { label: "Drafting", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  PENDING_REVIEW: { label: "In review", cls: "bg-yellow-50 text-yellow-700 border-yellow-200" },
+  PENDING_REVIEW: { label: "In review", cls: "bg-amber-50 text-amber-700 border-amber-200" },
   REVISION_REQ: { label: "Revisions", cls: "bg-amber-50 text-amber-700 border-amber-200" },
   PENDING_IFC: { label: "Pending IFC", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
   FINAL_DRAFT: { label: "Final draft", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  PENDING_FINAL_APPROVAL: { label: "Final appr.", cls: "bg-lime-50 text-lime-700 border-lime-200" },
-  CLOSED: { label: "Closed", cls: "bg-gray-100 text-gray-500 border-gray-200" },
-  CANCELED: { label: "Canceled", cls: "bg-gray-100 text-gray-500 border-gray-200" },
+  PENDING_FINAL_APPROVAL: { label: "Final appr.", cls: "bg-amber-50 text-amber-700 border-amber-200" },
+  CLOSED: { label: "Closed", cls: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" },
+  CANCELED: { label: "Canceled", cls: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" },
 };
 const ticketStatus = (s: string | null | undefined) =>
   (s && TICKET_STATUS[s]) || { label: s ?? "-", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" };
@@ -147,7 +147,7 @@ export function DraftingRequestsBody() {
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)] shrink-0">{t.ticket_id ?? "-"}</span>
                   <span className="flex-1 min-w-0 text-[13px] font-semibold text-[var(--color-text)] truncate group-hover:text-[var(--color-text)]">{t.title ?? "Untitled request"}</span>
-                  {(t.priority ?? 0) >= 3 && <span className="shrink-0 text-[11px] font-black px-1 rounded bg-rose-600 text-white">P{t.priority}</span>}
+                  {t.priority === 1 && <span className="shrink-0 text-[11px] font-black px-1 rounded bg-rose-600 text-white" title="Urgent">P1</span>}
                   <span className={`shrink-0 text-[11px] font-bold px-1.5 py-0.5 rounded border ${st.cls}`}>{st.label}</span>
                 </div>
                 <div className="mt-0.5 pl-0.5 flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)] min-w-0">
@@ -240,7 +240,8 @@ export function ProjectsBody() {
         <div className={`mt-2 space-y-0.5 ${SCROLL}`}>
           {shown.map((p) => (
             <Link key={p.id} href={`/projects/${p.id}`} className="group flex items-center gap-2 p-2 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
-              <span aria-hidden className={`w-2 h-2 rounded-full shrink-0 ${p.quietDays == null ? "bg-slate-300" : p.quietDays <= 7 ? "bg-emerald-500" : p.quietDays <= 14 ? "bg-amber-500" : "bg-slate-300"}`} />
+              {/* Only a project going quiet gets a mark; activity itself isn't news. */}
+              <span aria-hidden className={`w-2 h-2 rounded-full shrink-0 ${p.quietDays != null && p.quietDays > 7 && p.quietDays <= 14 ? "bg-amber-500" : "bg-[var(--color-border-strong)]"}`} />
               <span className="min-w-0 flex-1">
                 <span className="block text-[13px] font-semibold text-[var(--color-text)] truncate group-hover:text-[var(--color-text)]">{p.name ?? "Untitled project"}</span>
                 <span className="block text-[11px] text-[var(--color-text-muted)] truncate">
@@ -344,7 +345,7 @@ function ActivityFeed({ adminView }: { adminView: boolean }) {
           { value: "admin", label: "Admin", count: count("admin") },
         ]} />
         <label className="shrink-0 inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-muted)] cursor-pointer select-none">
-          <input type="checkbox" checked={onlyMine} onChange={(e) => setOnlyMine(e.target.checked)} className="accent-[var(--color-accent)]" />
+          <input type="checkbox" checked={onlyMine} onChange={(e) => setOnlyMine(e.target.checked)} className="accent-[var(--color-text)]" />
           Only mine
         </label>
       </div>

@@ -12,11 +12,12 @@
 
 import React, { useEffect, useState } from "react";
 import {
-  X, Loader2, Plug, CheckCircle2, AlertTriangle, Trash2, KeyRound, Gauge, Users, Sparkles,
+  Loader2, Plug, CheckCircle2, AlertTriangle, Trash2, KeyRound, Gauge, Users, Sparkles,
 } from "lucide-react";
 import { useToast } from "@/components/providers/ToastProvider";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { Button } from "@/components/ui/Button";
+import { Modal, ModalHeader, ModalBody } from "@/components/ui/Modal";
 import { Input, Select } from "@/components/ui/Field";
 import {
   getAiConnections, saveAiConnection, testAiConnection, removeAiConnection,
@@ -209,8 +210,8 @@ export function KeyEditor({ orgId, current, onChanged }: {
       </div>
 
       {grandfatheredBlocked && (
-        <div className="rounded-lg border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-[11px] font-bold text-rose-700 dark:text-rose-300">
-          Your saved {current?.provider} key is BLOCKED - that provider can train on submitted data.
+        <div role="alert" className="border-l-2 border-rose-500 pl-2 text-[11px] font-bold text-rose-700 dark:text-rose-300">
+          Your saved {current?.provider} key is blocked: that provider can train on submitted data.
           Save a Claude or OpenAI key to ask questions again.
         </div>
       )}
@@ -306,7 +307,7 @@ export function JobModelsEditor({ orgId, current, jobModels, ready, jobUse, onCh
         <Sparkles className="w-3.5 h-3.5" /> Model for each job
       </div>
       {!ready && (
-        <p className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-[11px] font-bold text-amber-800 dark:text-amber-300">
+        <p className="border-l-2 border-amber-500 pl-2 text-[11px] font-bold text-amber-800 dark:text-amber-300">
           Picking a model per job needs a one-time database update (20261108_job_models.sql). Until it&apos;s run,
           every job uses its default below.
         </p>
@@ -525,7 +526,7 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
       </label>
 
       <div className="flex items-center gap-2 flex-wrap">
-        <Button onClick={() => void save()} disabled={busy !== null}>
+        <Button variant="secondary" onClick={() => void save()} disabled={busy !== null}>
           {busy === "save" ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Verify &amp; save
         </Button>
         <Button variant="secondary" onClick={() => void test()} disabled={busy !== null || (!saved && !apiKey.trim())}>
@@ -570,11 +571,12 @@ export function UsagePanel({ orgId }: { orgId: string }) {
     return () => { cancelled = true; };
   }, [orgId, tick]);
 
-  if (failed) return null; // pre-migration DB — the meter simply isn't there yet
+  // Pre-migration DB, or the read failed: say so in one quiet line.
+  if (failed) return <p className="text-[11px] text-[var(--color-text-muted)]">Couldn&apos;t load this month&apos;s AI spend.</p>;
   if (!usage) {
     return (
-      <div className="rounded-xl border border-[var(--color-border)] px-3.5 py-3 text-center">
-        <Loader2 className="w-4 h-4 animate-spin inline text-[var(--color-text-muted)]" />
+      <div className="rounded-xl border border-[var(--color-border)] px-3.5 py-3 text-center text-[11px] text-[var(--color-text-muted)]">
+        <Loader2 className="w-4 h-4 animate-spin inline mr-1.5" /> Loading this month&apos;s AI spend…
       </div>
     );
   }
@@ -707,7 +709,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
                     title={`${m.name}'s monthly cap`}
                     className={`shrink-0 w-[74px] text-[11px] font-black rounded-lg border px-1 py-0.5 bg-[var(--color-surface)] cursor-pointer disabled:opacity-50 ${
                       m.hasOverride
-                        ? "border-[var(--color-accent)] text-[var(--color-accent)]"
+                        ? "border-[var(--color-text)] text-[var(--color-text)]"
                         : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
                     <option value="default">${usage.orgCapUsd ?? usage.capUsd} def</option>
                     {presets.sort((a, b) => a - b).map((p) => (
@@ -719,9 +721,9 @@ export function UsagePanel({ orgId }: { orgId: string }) {
             })}
           </ul>
           <p className="text-[11px] text-[var(--color-text-muted)]">
-            Each person meters against their own cap - the dropdown sets it (highlighted = personal
-            override, &ldquo;def&rdquo; = the workspace default). Estimated from exact provider token counts ×
-            published rates; questions lock server-side at 100% and reset on the 1st (UTC).
+            Each person has their own cap; the dropdown sets it (dark outline = a personal cap,
+            &ldquo;def&rdquo; = the workspace default). Estimated from provider token counts ×
+            published rates. Questions stop at 100% and reset on the 1st (UTC).
           </p>
         </div>
       )}
@@ -747,25 +749,16 @@ export default function AiSettingsModal({ orgId, open, onClose }: {
 
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
-      <div className="w-full max-w-xl bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-xl mt-10"
-        onClick={(e) => e.stopPropagation()}>
-        <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
-          <div>
-            <h2 className="text-base font-black text-[var(--color-text)]">AI settings</h2>
-            <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
-              Everyone brings their own API key - your questions run on YOUR key, your money, your
-              monthly cap. Keys are stored server-side and never shown again.
-            </p>
-          </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
-        </div>
-        <div className="p-5 space-y-4">
+    <Modal onClose={onClose} size="lg">
+        <ModalHeader icon={KeyRound} title="AI settings"
+          subtitle="Your questions run on your own API key and monthly cap. Keys are stored on the server and never shown again."
+          onClose={onClose} />
+        <ModalBody className="space-y-4">
           {loadError && (
-            <div className="rounded-xl border border-rose-300 bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-xs font-bold text-rose-700 dark:text-rose-300">{loadError}</div>
+            <p role="alert" className="border-l-2 border-rose-500 pl-2 text-xs font-bold text-rose-700 dark:text-rose-300">Couldn&apos;t load the AI settings: {loadError}</p>
           )}
           {!data && !loadError && (
-            <div className="py-8 text-center text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin inline" /></div>
+            <div className="py-8 text-center text-sm text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin inline mr-2" /> Loading the AI settings…</div>
           )}
           {data && (
             <>
@@ -777,8 +770,7 @@ export default function AiSettingsModal({ orgId, open, onClose }: {
                 onChanged={() => setReloadTick((t) => t + 1)} />
             </>
           )}
-        </div>
-      </div>
-    </div>
+        </ModalBody>
+    </Modal>
   );
 }

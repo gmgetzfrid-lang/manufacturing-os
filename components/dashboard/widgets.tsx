@@ -46,6 +46,8 @@ import {
   DraftingRequestsBody, ProjectsBody, ActivityBody, EquipmentBody, RecentDocsBody, AdminUsersBody, AdminAuditBody,
 } from "./bodies/WorkBodies";
 import type { DashboardWidget, WidgetType, WidgetSettingField } from "@/lib/dashboard/types";
+import { badgeText } from "@/lib/badge";
+import { appAlert } from "@/components/providers/DialogProvider";
 import {
   FILL, SCROLL, BodyShell, Skeleton, Quiet, sum, useWidgetData, headCount,
   fetchRecentDates, weekSplit, useWidget,
@@ -55,75 +57,10 @@ export type Tone =
   | "blue" | "orange" | "indigo" | "violet" | "emerald"
   | "purple" | "amber" | "cyan" | "rose" | "slate";
 
-const CHIP: Record<Tone, string> = {
-  blue: "bg-[var(--color-surface-2)] text-[var(--color-text)]",
-  orange: "bg-[var(--color-surface-2)] text-[var(--color-text)]",
-  indigo: "bg-[var(--color-surface-2)] text-[var(--color-text)]",
-  violet: "bg-[var(--color-surface-2)] text-[var(--color-text)]",
-  emerald: "bg-emerald-50 text-emerald-600",
-  purple: "bg-[var(--color-surface-2)] text-[var(--color-text)]",
-  amber: "bg-amber-50 text-amber-600",
-  cyan: "bg-[var(--color-surface-2)] text-[var(--color-text)]",
-  rose: "bg-rose-50 text-rose-600",
-  slate: "bg-slate-100 text-slate-600",
-};
-
-export function toneChip(tone: Tone) {
-  return CHIP[tone];
-}
-
-// Vivid gradient for the widget header icon badge — the "alive" look the app
-// uses across the cockpit, login and library covers.
-const TONE_GRADIENT: Record<Tone, string> = {
-  blue: "from-blue-500 to-blue-700",
-  orange: "from-orange-500 to-orange-700",
-  indigo: "from-indigo-500 to-indigo-700",
-  violet: "from-violet-500 to-violet-700",
-  emerald: "from-emerald-500 to-emerald-700",
-  purple: "from-purple-500 to-purple-700",
-  amber: "from-amber-400 to-amber-600",
-  cyan: "from-cyan-500 to-cyan-700",
-  rose: "from-rose-500 to-rose-700",
-  slate: "from-slate-600 to-slate-800",
-};
-export function toneGradient(tone: Tone) {
-  return TONE_GRADIENT[tone];
-}
-
-// Subtle top-of-card wash so a flat widget reads with a hint of its tone.
-const TONE_WASH: Record<Tone, string> = {
-  blue: "from-blue-500/10",
-  orange: "from-orange-500/10",
-  indigo: "from-indigo-500/10",
-  violet: "from-violet-500/10",
-  emerald: "from-emerald-500/10",
-  purple: "from-purple-500/10",
-  amber: "from-amber-500/10",
-  cyan: "from-cyan-500/10",
-  rose: "from-rose-500/10",
-  slate: "from-slate-500/10",
-};
-export function toneWash(tone: Tone) {
-  return TONE_WASH[tone];
-}
-
-// Ambient corner-glow pair per tone — the Command Deck's "console aura", tinted
-// to each widget. Two blurred radial blooms (a dominant + a complementary) that
-// the frame brightens on hover, so every card reads as alive as the deck.
-const TONE_GLOW: Record<Tone, [string, string]> = {
-  blue:    ["bg-[var(--color-surface-2)]",    "bg-[var(--color-surface-2)]"],
-  orange:  ["bg-[var(--color-surface-2)]",  "bg-amber-500/20"],
-  indigo:  ["bg-[var(--color-surface-2)]",  "bg-[var(--color-surface-2)]"],
-  violet:  ["bg-[var(--color-surface-2)]",  "bg-[var(--color-surface-2)]"],
-  emerald: ["bg-emerald-500/25", "bg-[var(--color-surface-2)]"],
-  purple:  ["bg-[var(--color-surface-2)]",  "bg-[var(--color-surface-2)]"],
-  amber:   ["bg-amber-400/25",   "bg-[var(--color-surface-2)]"],
-  cyan:    ["bg-[var(--color-surface-2)]",    "bg-[var(--color-surface-2)]"],
-  rose:    ["bg-rose-500/25",    "bg-[var(--color-surface-2)]"],
-  slate:   ["bg-slate-500/20",   "bg-slate-400/15"],
-};
-export function toneGlow(tone: Tone): [string, string] {
-  return TONE_GLOW[tone];
+// A widget's tone is only a tag now: every chip is the same quiet ink, since
+// color means status (red, amber, green) and tap (orange), nothing else.
+export function toneChip(_tone: Tone) {
+  return "bg-[var(--color-surface-2)] text-[var(--color-text)]";
 }
 
 export interface WidgetMeta {
@@ -250,9 +187,9 @@ function DailyBriefBody() {
     <div className={`${FILL} ${SCROLL} gap-3`}>
       <DailyBrief data={snap} />
       {nudges.length > 0 && (
-        <div className="rounded-2xl border border-amber-200 p-4 bg-[var(--color-surface-2)]">
+        <div className="rounded-2xl border border-[var(--color-border)] p-4 bg-[var(--color-surface)]">
           <div className="flex items-center gap-1.5 mb-2">
-            <Zap className="w-4 h-4 text-amber-600" />
+            <Zap className="w-4 h-4 text-[var(--color-text-muted)]" />
             <span className="text-sm font-black text-[var(--color-text)]">Suggested actions</span>
           </div>
           <ul className="space-y-1.5">
@@ -329,7 +266,9 @@ function AttentionBody() {
 
   const handleMarkAll = useCallback(async () => {
     setMarkingAll(true);
-    try { await markAllRead(); } catch { /* best-effort */ } finally { setMarkingAll(false); }
+    try { await markAllRead(); }
+    catch (e) { void appAlert({ title: "Couldn't mark them read", message: (e as Error).message, tone: "danger" }); }
+    finally { setMarkingAll(false); }
   }, [markAllRead]);
 
   if (loading && items.length === 0) return <Skeleton />;
@@ -341,7 +280,7 @@ function AttentionBody() {
         counts={counts}
         filter={filter}
         onFilter={setFilter}
-        onMarkRead={(id) => { void markRead(id); }}
+        onMarkRead={(id) => { void markRead(id).catch((e: unknown) => appAlert({ title: "Couldn't mark it read", message: e instanceof Error ? e.message : String(e), tone: "danger" })); }}
         onMarkAll={handleMarkAll}
         markingAll={markingAll}
       />
@@ -361,9 +300,9 @@ function SuggestedActionsBody() {
   }
   return (
     <div className={`${FILL}`}>
-      <div className={`rounded-2xl border border-amber-200 p-4 bg-[var(--color-surface-2)] ${SCROLL}`}>
+      <div className={`rounded-2xl border border-[var(--color-border)] p-4 bg-[var(--color-surface)] ${SCROLL}`}>
         <div className="flex items-center gap-1.5 mb-2">
-          <Zap className="w-4 h-4 text-amber-600" />
+          <Zap className="w-4 h-4 text-[var(--color-text-muted)]" />
           <span className="text-sm font-black text-[var(--color-text)]">Suggested actions</span>
         </div>
         <ul className="space-y-1.5">
@@ -397,29 +336,22 @@ function WidgetCard({
   tone: "indigo" | "orange" | "amber" | "rose" | "blue" | "emerald" | "violet" | "slate";
   children: React.ReactNode;
 }) {
-  const tones: Record<string, string> = {
-    indigo: "border-[var(--color-border)] bg-[var(--color-surface-2)]",
-    orange: "border-[var(--color-border)] bg-[var(--color-surface-2)]",
-    amber:  "border-amber-200 bg-amber-50/40",
-    rose:   "border-rose-200 bg-rose-50/40",
-    blue:   "border-[var(--color-border)] bg-[var(--color-surface-2)]",
-    emerald:"border-emerald-200 bg-emerald-50/40",
-    violet: "border-[var(--color-border)] bg-[var(--color-surface-2)]",
-    slate:  "border-[var(--color-border)] bg-[var(--color-canvas)]",
-  };
+  // Neutral cards; only a problem (rose) or a warning (amber) gets a thin
+  // left edge, so status keeps its one meaning.
+  const edge = tone === "rose" ? "border-l-2 border-l-rose-500" : tone === "amber" ? "border-l-2 border-l-amber-500" : "";
   const iconTones: Record<string, string> = {
-    indigo: "text-[var(--color-text-muted)]", orange: "text-[var(--color-text-muted)]", amber: "text-amber-700",
-    rose: "text-rose-700", blue: "text-[var(--color-text-muted)]", emerald: "text-emerald-700",
+    indigo: "text-[var(--color-text-muted)]", orange: "text-[var(--color-text-muted)]", amber: "text-amber-700 dark:text-amber-400",
+    rose: "text-rose-700 dark:text-rose-400", blue: "text-[var(--color-text-muted)]", emerald: "text-[var(--color-text-muted)]",
     violet: "text-[var(--color-text-muted)]", slate: "text-[var(--color-text-faint)]",
   };
   return (
-    <div className={`rounded-2xl border ${tones[tone]} shadow-sm p-4`}>
+    <div className={`rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] ${edge} p-4`}>
       <div className="flex items-center justify-between mb-2">
         <h2 className="text-sm font-black text-[var(--color-text)] inline-flex items-center gap-1.5">
           <Icon className={`w-4 h-4 ${iconTones[tone]}`} />
           {title}
         </h2>
-        <span className={`inline-flex items-center px-2 py-0.5 rounded-full bg-[var(--color-surface)] border border-[var(--color-border)] text-[11px] font-black ${iconTones[tone]}`}>{count}</span>
+        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[11px] font-black text-[var(--color-text)]">{badgeText(count)}</span>
       </div>
       {children}
     </div>
@@ -430,6 +362,7 @@ function OutstandingBody() {
   const { uid, userEmail, activeRole, activeOrgId } = useRole();
   const { snap, loading, refresh } = useInboxSnapshot();
   const [resolvingId, setResolvingId] = useState<string | null>(null);
+  const [resolveError, setResolveError] = useState<string | null>(null);
 
   const respondToMarkup = useCallback(async (
     mr: InboxSnapshot["markupRequestsToMe"][number],
@@ -437,6 +370,7 @@ function OutstandingBody() {
   ) => {
     if (!uid || !activeOrgId || resolvingId) return;
     setResolvingId(mr.id);
+    setResolveError(null);
     try {
       await resolveMarkupRequest({
         markupRequestId: mr.id,
@@ -448,7 +382,9 @@ function OutstandingBody() {
         actorRole: activeRole ?? undefined,
       });
       refresh();
-    } catch { /* surfaced as no-op; the list stays as-is */ } finally {
+    } catch (e) {
+      setResolveError(`${status === "shared" ? "Not marked shared" : "Not declined"}: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
       setResolvingId(null);
     }
   }, [uid, activeOrgId, userEmail, activeRole, resolvingId, refresh]);
@@ -468,6 +404,7 @@ function OutstandingBody() {
       <div className={`space-y-3 ${SCROLL}`}>
         {snap.markupRequestsToMe.length > 0 && (
           <WidgetCard icon={FileSignature} tone="violet" title="Markup requests for you" count={snap.markupRequestsToMe.length}>
+            {resolveError && <p role="alert" className="mb-1.5 text-[11px] font-semibold text-red-700 dark:text-red-400">{resolveError}</p>}
             <ul className="space-y-1.5">
               {snap.markupRequestsToMe.slice(0, 6).map((mr) => (
                 <li key={mr.id} className="text-xs">
@@ -480,7 +417,7 @@ function OutstandingBody() {
                     <button
                       onClick={() => respondToMarkup(mr, "shared")}
                       disabled={resolvingId === mr.id}
-                      className="inline-flex items-center gap-1 px-2.5 py-2 sm:py-1 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-text)] text-[11px] font-bold disabled:opacity-50"
+                      className="inline-flex items-center gap-1 px-2.5 py-2 sm:py-1 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[11px] font-bold disabled:opacity-50"
                     >
                       <Send className="w-3 h-3" /> Mark shared
                     </button>
@@ -501,9 +438,9 @@ function OutstandingBody() {
         {snap.myCheckouts.length > 0 && (
           <WidgetCard icon={Lock} tone={snap.myStaleCheckouts.length > 0 ? "rose" : "blue"} title="Your active checkouts" count={snap.myCheckouts.length}>
             {snap.myStaleCheckouts.length > 0 && (
-              <div className="mb-2 text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded px-2 py-1">
+              <div className="mb-2 text-[11px] font-semibold text-rose-700 dark:text-rose-400 border-l-2 border-rose-500 pl-2">
                 <AlertTriangle className="inline w-3 h-3 mr-1" />
-                {snap.myStaleCheckouts.length} past expected release - please check in or extend
+                {snap.myStaleCheckouts.length} past the expected release. Check in or extend.
               </div>
             )}
             <ul className="space-y-1.5">
@@ -567,7 +504,7 @@ function OutstandingBody() {
             <ul className="space-y-1.5">
               {snap.milestonesUpcoming.slice(0, 8).map((m) => (
                 <li key={m.id} className="text-xs flex items-center gap-2">
-                  <Calendar className="w-3 h-3 text-emerald-600 dark:text-emerald-500 shrink-0" />
+                  <Calendar className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
                   <span className="font-bold text-[var(--color-text)] truncate flex-1">{m.name}</span>
                   <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded ${
                     (m.__dueInDays ?? 0) === 0 ? "bg-rose-100 text-rose-800"
@@ -726,9 +663,9 @@ function CommandDeckBody() {
   // First paint, before any data: a tasteful skeleton in the deck's silhouette.
   if (loading && !data) {
     return (
-      <div className="relative h-full overflow-hidden rounded-3xl border border-[var(--color-border)] bg-[var(--color-canvas)] shadow-2xl shadow-slate-900/30 p-5 sm:p-6">
-        <div className="flex items-center gap-2 mb-4">
-          <div className="h-3 w-40 rounded bg-[var(--color-surface-2)] animate-pulse" />
+      <div className="relative h-full overflow-hidden rounded-3xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-5 sm:p-6" aria-busy="true">
+        <div className="flex items-center gap-2 mb-4 text-[12px] text-[var(--color-text-muted)]">
+          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading what needs you…
         </div>
         <div className="h-7 w-64 rounded bg-[var(--color-surface-2)] animate-pulse mb-2" />
         <div className="h-4 w-80 rounded bg-[var(--color-surface-2)] animate-pulse mb-5" />

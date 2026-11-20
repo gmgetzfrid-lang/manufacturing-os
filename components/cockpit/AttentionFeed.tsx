@@ -208,13 +208,14 @@ function AttentionRow({ item, onMarkRead }: { item: AttentionItem; onMarkRead: (
           </div>
         </div>
         {item.actionRequired && (
-          <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded px-1.5 py-0.5 shrink-0">Action</span>
+          <span className="text-[11px] font-black uppercase tracking-wider text-red-700 dark:text-red-400 shrink-0">Waiting on you</span>
         )}
         <span className="text-[11px] text-[var(--color-text-muted)] shrink-0 tabular-nums">{formatAgo(item.when || undefined)}</span>
         {item.notificationId ? (
           <button
             onClick={(e) => { e.preventDefault(); e.stopPropagation(); onMarkRead(item.notificationId!); }}
             title="Mark read"
+            aria-label="Mark read"
             // p-2 -m-1: ~32px touch target without growing the visual — a
             // near-miss used to hit the surrounding Link and navigate away.
             className="p-2 -m-1 rounded-md text-[var(--color-text)] hover:text-emerald-600 hover:bg-emerald-50 shrink-0"

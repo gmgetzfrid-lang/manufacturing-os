@@ -9,6 +9,7 @@
 // tests panel.
 
 import React, { useMemo, useState } from "react";
+import { useDraft } from "@/hooks/useDraft";
 import { Plus, X, Loader2, FlaskConical } from "lucide-react";
 import { pressureClassOf } from "@/lib/pressureClass";
 import type { AnswerTestExpect } from "@/lib/knowledge";
@@ -48,6 +49,12 @@ export default function AnswerTestEditor({ initial, citations = [], onSave, onCa
   const [notes, setNotes] = useState(initial.notes ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A new test case's typed words wait on this device until it's saved
+  // (an existing test is edited from its record).
+  const typed = useMemo(() => ({ contain, mustNot, notes }), [contain, mustNot, notes]);
+  const typedDraft = useDraft<typeof typed>(initial.id ? null : `answer-test:new:${initial.sourceQuestionId ?? "blank"}`, typed,
+    (d) => { setContain(d.contain ?? ""); setMustNot(d.mustNot ?? ""); setNotes(d.notes ?? ""); },
+    (d) => !(d.contain ?? "").trim() && !(d.mustNot ?? "").trim() && !(d.notes ?? "").trim());
 
   const offered = useMemo(() => {
     const seen = new Set<string>();
@@ -80,13 +87,14 @@ export default function AnswerTestEditor({ initial, citations = [], onSave, onCa
       } : {}),
     };
     if (!expect.mustCite && !expect.mustContain && !expect.mustNot && !expect.termRules) {
-      setError("Mark at least one thing a right answer must do - a page, a fact, or something it must not say.");
+      setError("Mark at least one thing a right answer must do: a page, a fact, or something it must not say.");
       return;
     }
     setSaving(true); setError(null);
     try {
       const tags = initial.tags.filter((t) => t !== "critical").concat(critical ? ["critical"] : []);
       await onSave({ id: initial.id, question: question.trim(), expect, tags, notes: notes.trim() || undefined, sourceQuestionId: initial.sourceQuestionId });
+      typedDraft.clear();
     } catch (e) { setError((e as Error).message); }
     finally { setSaving(false); }
   };

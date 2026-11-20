@@ -13,6 +13,7 @@ import { ArrowDown } from "lucide-react";
 import { StreamingAnswer } from "@/components/knowledge/answer/AnswerExperience";
 import type { ChatMessage, ChatScope } from "@/lib/chatClient";
 import { EXAMPLES, SCOPE_META } from "./shared";
+import LoadingBlock from "@/components/ui/LoadingBlock";
 
 export interface StreamingState {
   status: string;
@@ -23,7 +24,7 @@ export interface StreamingState {
 }
 
 export default function MessageStream({
-  messages, streaming, scope, renderUser, renderAssistant, onExample, emptyNote,
+  messages, streaming, scope, renderUser, renderAssistant, onExample, emptyNote, loading = false,
 }: {
   messages: ChatMessage[];
   streaming: StreamingState | null;
@@ -32,6 +33,8 @@ export default function MessageStream({
   renderAssistant: (m: ChatMessage, isLast: boolean) => React.ReactNode;
   onExample: (q: string) => void;
   emptyNote?: string | null;
+  /** A conversation is being opened: show that, not the empty state. */
+  loading?: boolean;
 }) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const [atBottom, setAtBottom] = useState(true);
@@ -103,10 +106,12 @@ export default function MessageStream({
         {/* Wide enough for the answer + proof columns side by side; the
             question bubble and prose still cap themselves narrower. */}
         <div className="mx-auto max-w-5xl pt-4 pb-6">
-          {empty ? (
+          {empty && loading ? (
+            <div className="pt-6 max-w-3xl mx-auto"><LoadingBlock what="the conversation" rows={5} /></div>
+          ) : empty ? (
             <div className="pt-[12vh] text-center animate-rise">
-              <div className="mx-auto w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg bg-[var(--color-text)]">
-                <Icon className="w-6 h-6 text-white" />
+              <div className="mx-auto w-12 h-12 rounded-2xl flex items-center justify-center bg-[var(--color-text)]">
+                <Icon className="w-6 h-6 text-[var(--color-surface)]" />
               </div>
               <h2 className="mt-4 text-lg font-black text-[var(--color-text)]">{meta.label}</h2>
               <p className="mt-1 text-xs text-[var(--color-text-muted)] max-w-md mx-auto">{meta.hint}</p>
@@ -121,7 +126,7 @@ export default function MessageStream({
               </div>
               {scope !== "internet" && (
                 <p className="mt-6 text-[11px] text-[var(--color-text-faint)]">
-                  It only reads documents approved for indexing. Anything excluded from AI stays invisible to it.
+                  It reads only documents cleared for AI.
                 </p>
               )}
             </div>

@@ -13,7 +13,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import { useToast } from "@/components/providers/ToastProvider";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
-import { Spinner } from "@/components/ui/Spinner";
+import LoadingBlock from "@/components/ui/LoadingBlock";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import TemplateEditor from "@/components/templates/TemplateEditor";
@@ -67,23 +67,23 @@ export default function OutputTemplatesPage() {
     } catch (e) { showToast({ type: "error", title: (e as Error).message }); }
   };
 
-  if (loading) return <PageShell><div className="py-16 text-center"><Spinner /></div></PageShell>;
+  if (loading) return <PageShell><LoadingBlock what="output templates" rows={5} /></PageShell>;
 
   return (
     <PageShell>
       <PageHeaderBar
         icon={FileOutput}
         title="Output templates"
-        subtitle="Your template owns the formatting, your example owns the voice, your data fills the blanks - batch documents in one pass."
+        subtitle="Your template sets the format, your example sets the voice, your data fills the blanks."
         actions={isController ? (
           <Button onClick={() => setEditing(null)}><Plus className="w-4 h-4" /> New template</Button>
         ) : undefined}
       />
 
       {loadError && (
-        <div className="mb-4 rounded-xl border border-rose-300 bg-rose-50 dark:bg-rose-950/40 px-3.5 py-3 text-xs font-bold text-rose-700 dark:text-rose-300">
-          {loadError}
-        </div>
+        <p role="alert" className="mb-4 border-l-2 border-rose-500 pl-3 text-xs font-bold text-rose-700 dark:text-rose-300">
+          Couldn&apos;t load the templates: {loadError}
+        </p>
       )}
 
       {templates.length === 0 && !loadError ? (
@@ -100,7 +100,7 @@ export default function OutputTemplatesPage() {
             <li key={t.id} className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
               <div className="flex items-start gap-2">
                 <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-[var(--color-text)]">
-                  {t.kind === "xlsx" ? <Table2 className="w-4 h-4 text-white" /> : <FileText className="w-4 h-4 text-white" />}
+                  {t.kind === "xlsx" ? <Table2 className="w-4 h-4 text-[var(--color-surface)]" /> : <FileText className="w-4 h-4 text-[var(--color-surface)]" />}
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-black text-[var(--color-text)] truncate">{t.name}</div>
@@ -110,11 +110,11 @@ export default function OutputTemplatesPage() {
                 </div>
                 {isController && (
                   <div className="flex items-center gap-1 shrink-0">
-                    <button onClick={() => setEditing(t)} title="Edit"
+                    <button onClick={() => setEditing(t)} title="Edit" aria-label={`Edit ${t.name}`}
                       className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
                       <Pencil className="w-3.5 h-3.5" />
                     </button>
-                    <button onClick={() => void remove(t)} title="Delete"
+                    <button onClick={() => void remove(t)} title="Delete" aria-label={`Delete ${t.name}`}
                       className="p-1.5 rounded-lg hover:bg-rose-500/10 text-[var(--color-text-muted)] hover:text-rose-600">
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -134,13 +134,13 @@ export default function OutputTemplatesPage() {
                   </span>
                 )}
                 {t.exampleFiles.length > 0 && (
-                  <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400">
+                  <span className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]">
                     {t.exampleFiles.length} example{t.exampleFiles.length === 1 ? "" : "s"}
                   </span>
                 )}
               </div>
               <div className="mt-3">
-                <Button size="sm" onClick={() => setGenerating(t)} disabled={!t.templateFileKey}>
+                <Button size="sm" variant="secondary" onClick={() => setGenerating(t)} disabled={!t.templateFileKey}>
                   <Sparkles className="w-3.5 h-3.5" /> Generate documents
                 </Button>
                 {!t.templateFileKey && (

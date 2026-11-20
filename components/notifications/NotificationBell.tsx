@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { useTicketNotifications, type AttentionItem } from "@/hooks/useTicketNotifications";
 import { useNotificationCenter } from "@/components/notifications/NotificationCenter";
+import { badgeText } from "@/lib/badge";
 
 const KIND_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
   ticket: ClipboardList,
@@ -56,6 +57,13 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
   const { open: openCenter } = useNotificationCenter();
   const isHeader = variant === "header";
   const unread = count;
+  // Red only for what waits on a decision; news gets a quiet count.
+  const decisions = useMemo(() => items.filter((i) => i.actionRequired).length, [items]);
+  const badgeN = decisions > 0 ? decisions : unread;
+  const badgeTone = decisions > 0
+    ? "bg-red-600 text-white"
+    : "bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border-strong)]";
+  const [markError, setMarkError] = useState<string | null>(null);
 
   // Let other surfaces (e.g. the Inbox) pop the drawer open via a global event.
   useEffect(() => {
@@ -88,10 +96,12 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
   const hasNotifRows = useMemo(() => items.some((i) => i.source === "notification"), [items]);
 
   const onItemClick = async (item: AttentionItem) => {
-    if (item.notificationId) {
-      try { await markRead(item.notificationId); } catch { /* swallow */ }
-    }
     setOpen(false);
+    if (item.notificationId) {
+      // Opening it is the point; if marking it read fails, it simply stays
+      // in the list (noted for support, not put in the way).
+      try { await markRead(item.notificationId); } catch (e) { console.warn("[bell] mark read failed", e); }
+    }
   };
 
   return (
@@ -99,29 +109,32 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
       {isHeader ? (
         <button
           onClick={() => setOpen((v) => !v)}
-          title={unread > 0 ? `${unread} need${unread === 1 ? "s" : ""} attention` : "Notifications"}
+          title={decisions > 0 ? `${decisions} waiting on you` : unread > 0 ? `${unread} new` : "Notifications"}
+          aria-label={decisions > 0 ? `Notifications: ${decisions} waiting on you` : unread > 0 ? `Notifications: ${unread} new` : "Notifications"}
+          aria-expanded={open}
           className={`relative w-9 h-9 inline-flex items-center justify-center rounded-full transition-all ${
-            open ? "bg-slate-900 text-white" : "bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)]"
+            open ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)]"
           }`}
         >
           <Bell className="w-4 h-4" />
-          {unread > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)] text-[11px] font-black ring-2 ring-white">
-              {unread > 99 ? "99+" : unread}
+          {badgeN > 0 && (
+            <span className={`absolute -top-0.5 -right-0.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[11px] font-black ring-2 ring-[var(--color-surface)] ${badgeTone}`}>
+              {badgeText(badgeN)}
             </span>
           )}
         </button>
       ) : (
         <button
           onClick={() => setOpen((v) => !v)}
-          title={unread > 0 ? `${unread} need attention` : "Notifications"}
-          className={`relative w-full flex items-center px-3 py-2.5 rounded-lg transition-all group ${open ? "bg-slate-800 text-white" : "hover:bg-slate-800 hover:text-white"}`}
+          title={decisions > 0 ? `${decisions} waiting on you` : unread > 0 ? `${unread} new` : "Notifications"}
+          aria-expanded={open}
+          className={`relative w-full flex items-center px-3 py-2.5 rounded-lg transition-all group ${open ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]"}`}
         >
-          <Bell className={`w-5 h-5 ${collapsed ? "" : "mr-3"} text-slate-300 group-hover:text-white`} />
+          <Bell className={`w-5 h-5 ${collapsed ? "" : "mr-3"} text-[var(--color-text-muted)] group-hover:text-[var(--color-text)]`} />
           {!collapsed && <span className="text-sm font-medium">Notifications</span>}
-          {unread > 0 && (
-            <span className={`${collapsed ? "absolute top-1 right-1" : "ml-auto"} inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)] text-[11px] font-black`}>
-              {unread > 99 ? "99+" : unread}
+          {badgeN > 0 && (
+            <span className={`${collapsed ? "absolute top-1 right-1" : "ml-auto"} inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[11px] font-black ${badgeTone}`}>
+              {badgeText(badgeN)}
             </span>
           )}
         </button>
@@ -132,13 +145,16 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
             <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface-2)]">
               <div>
                 <div className="text-sm font-black text-[var(--color-text)]">Notifications</div>
-                <div className="text-[11px] text-[var(--color-text-muted)]">{unread > 0 ? `${unread} need${unread === 1 ? "s" : ""} attention` : "All caught up"}</div>
+                <div className="text-[11px] text-[var(--color-text-muted)]">
+                  {decisions > 0 ? `${decisions} waiting on you` : ""}{decisions > 0 && unread > decisions ? ` · ${unread - decisions} new` : decisions === 0 && unread > 0 ? `${unread} new` : ""}{unread === 0 ? "All caught up" : ""}
+                </div>
+                {markError && <div role="alert" className="text-[11px] font-semibold text-red-700 dark:text-red-400">{markError}</div>}
               </div>
               <div className="flex items-center gap-3">
                 {hasNotifRows && (
                   <button
                     title="Items waiting on your decision stay until you open them"
-                    onClick={async () => { try { await markAllRead(); } catch { /* the list stays as it is; nothing claimed */ } }}
+                    onClick={async () => { setMarkError(null); try { await markAllRead(); } catch (e) { setMarkError(`Not marked read: ${e instanceof Error ? e.message : String(e)}`); } }}
                     className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                   >
                     <CheckCheck className="w-3.5 h-3.5" /> Mark all read
@@ -148,7 +164,7 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
                   type="button"
                   onClick={() => { setOpen(false); openCenter("all"); }}
                   className="text-[11px] font-bold text-[var(--color-accent)] hover:underline"
-                  title="Open the full notification center - filters, mark read, everything in one panel"
+                  title="Open the full notification center"
                 >
                   See all
                 </button>
@@ -159,7 +175,7 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
             </div>
             <div className="flex-1 overflow-y-auto">
               {loading ? (
-                <div className="py-8 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-text-faint)]" /></div>
+                <div className="py-8 flex justify-center items-center gap-2 text-xs text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin" /> Loading notifications…</div>
               ) : items.length === 0 ? (
                 <div className="py-10 text-center text-xs italic text-[var(--color-text-faint)]">You&rsquo;re all caught up.</div>
               ) : (
@@ -178,7 +194,7 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
                               <div className="text-xs font-bold text-[var(--color-text)] truncate">{item.title}</div>
                               {item.subtitle && <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 line-clamp-2">{item.subtitle}</div>}
                               <div className="text-[11px] text-[var(--color-text-faint)] mt-1 flex items-center gap-2">
-                                {item.actionRequired && <span className="font-black uppercase tracking-wider text-[var(--color-text)]">Action needed</span>}
+                                {item.actionRequired && <span className="font-black uppercase tracking-wider text-red-700 dark:text-red-400">Waiting on you</span>}
                                 <time dateTime={item.when}>{formatTime(item.when)}</time>
                               </div>
                             </div>

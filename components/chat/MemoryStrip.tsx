@@ -24,7 +24,7 @@ export default function MemoryStrip({ past, changed, onReview, onReuse, onDismis
       <History className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
       <span className="min-w-0 flex-1 truncate text-[var(--color-text)]">
         <b className="font-black">Asked before</b>
-        <span className="text-[var(--color-text-muted)]"> by {(past.userName ?? "someone").split("@")[0]} · {relativeTime(past.createdAt)} - </span>
+        <span className="text-[var(--color-text-muted)]"> by {(past.userName ?? "someone").split("@")[0]} · {relativeTime(past.createdAt)}: </span>
         <i>&ldquo;{past.question}&rdquo;</i>
       </span>
       {stale && (
@@ -39,7 +39,7 @@ export default function MemoryStrip({ past, changed, onReview, onReuse, onDismis
       <button onClick={onReuse} className="shrink-0 inline-flex items-center gap-1 font-black text-[var(--color-accent)] dark:text-[var(--color-text)] hover:underline">
         <Redo2 className="w-3 h-3" /> Use it
       </button>
-      <button onClick={onDismiss} title="Ask fresh" className="shrink-0 p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
+      <button onClick={onDismiss} title="Ask fresh" aria-label="Dismiss, ask fresh" className="shrink-0 p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
         <X className="w-3.5 h-3.5" />
       </button>
     </div>

@@ -12,10 +12,11 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import {
-  Bot, BookOpen, Waypoints, GitPullRequest, Settings2, Gauge,
+  GitPullRequest, Gauge, Loader2,
   CheckCircle2, XCircle, ArrowRight, Sparkles, MessageSquare,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
+import { badgeText } from "@/lib/badge";
 import { supabase } from "@/lib/supabase";
 import { getAiConnections } from "@/lib/knowledge";
 import { countPendingProposals } from "@/lib/linkProposals";
@@ -170,22 +171,34 @@ export default function IntelligencePage() {
     return () => { cancelled = true; };
   }, [activeOrgId, isAdmin]);
 
-  if (!activeOrgId) return <div className="p-8 text-sm text-slate-500">Select a workspace to continue.</div>;
+  if (!activeOrgId) return <div className="p-8 text-sm text-[var(--color-text-muted)]">Pick a workspace to continue.</div>;
 
   const s = status ?? EMPTY_STATUS;
   const coveragePct = s.chunksTotal > 0 ? Math.round((s.chunksEmbedded / s.chunksTotal) * 100) : 0;
+  // The one thing that matters most right now, and its one button.
+  const lead: { text: string; href: string; cta: string } | null =
+    !s.keysKnown || !s.countsKnown ? null
+      : !s.chatKey ? { text: "Questions can't run yet: no AI key saved.", href: "/intelligence/setup", cta: "Add a key" }
+      : s.docs === 0 ? { text: "The AI has nothing to read yet.", href: "/knowledge", cta: "Add documents" }
+      : s.pendingProposals > 0 ? { text: `${s.pendingProposals} proposed connection${s.pendingProposals === 1 ? "" : "s"} wait for you.`, href: "/admin/proposed-links", cta: "Review them" }
+      : { text: "AI is set up and reading your documents.", href: "/assistant", cta: "Ask a question" };
 
   return (
     <PageShell>
       <ViewTabs title="Intelligence" tabs={INTELLIGENCE_VIEWS} />
       <PageHeaderBar
         title="Intelligence"
-        subtitle="Everything AI in one place - status at a glance, every gap linked to its fix"
+        subtitle={lead ? lead.text : "Checking the AI status…"}
         icon={Sparkles}
+        actions={lead ? (
+          <Link href={lead.href} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-bold hover:bg-[var(--color-accent-hover)]">
+            {lead.cta} <ArrowRight className="w-4 h-4" />
+          </Link>
+        ) : undefined}
       />
 
       {error && (
-        <div className="mb-4 rounded-xl border border-rose-300 bg-rose-50 dark:bg-rose-950/40 px-4 py-3 text-xs font-bold text-rose-700 dark:text-rose-300">{error}</div>
+        <p role="alert" className="mb-4 border-l-2 border-rose-500 pl-3 text-xs font-bold text-rose-700 dark:text-rose-300">Couldn&apos;t load the AI status: {error}</p>
       )}
 
       <div className="space-y-4">
@@ -196,7 +209,7 @@ export default function IntelligencePage() {
               ok={!!s.chatKey}
               title="Chat key"
               okText={`Claude/OpenAI key active · ····${s.chatKey}`}
-              fixText="No key saved - questions can't run"
+              fixText="No key saved, so questions can't run"
               href="/intelligence/setup" cta="Add key"
             />
             <StatusCard
@@ -212,7 +225,7 @@ export default function IntelligencePage() {
               ok={s.docs > 0}
               title="Knowledge"
               okText={`${s.docs} document${s.docs === 1 ? "" : "s"} across ${s.libraries} librar${s.libraries === 1 ? "y" : "ies"}`}
-              fixText="Nothing indexed - the AI has nothing to read yet"
+              fixText="Nothing indexed, so the AI has nothing to read yet"
               href="/knowledge" cta="Upload documents"
             />
             {s.schemaGaps !== null ? (
@@ -220,7 +233,7 @@ export default function IntelligencePage() {
                 ok={s.schemaGaps === 0}
                 title="Database"
                 okText="All expected tables present"
-                fixText={`${s.schemaGaps} schema gap${s.schemaGaps === 1 ? "" : "s"} - features render empty until migrated`}
+                fixText={`${s.schemaGaps} schema gap${s.schemaGaps === 1 ? "" : "s"}: some features stay empty until migrated`}
                 href="/admin/settings" cta="Open Database health"
               />
             ) : (
@@ -229,7 +242,7 @@ export default function IntelligencePage() {
                 ok={s.chunksTotal > 0 ? s.chunksEmbedded > 0 : true}
                 title="Meaning index"
                 okText={s.chunksTotal > 0 ? `${coveragePct}% of passages embedded` : "Builds after your first uploads"}
-                fixText="Index not built yet - semantic linking is off"
+                fixText="Index not built yet, so meaning-based linking is off"
                 href="/knowledge" cta="Build index"
               />
             )}
@@ -244,17 +257,15 @@ export default function IntelligencePage() {
                 </div>
               </div>
               {!s.countsKnown ? (
-                <div className="space-y-2 animate-pulse">
-                  <div className="h-10 rounded-xl bg-[var(--color-surface-2)]" />
-                </div>
+                <p className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking what waits on you…</p>
               ) : s.pendingProposals > 0 ? (
-                <Link href="/admin/proposed-links" className="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-900 p-3 hover:border-amber-300 transition-colors">
-                  <span className="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 font-black">{s.pendingProposals > 99 ? "99+" : s.pendingProposals}</span>
+                <Link href="/admin/proposed-links" className="flex items-center gap-3 rounded-xl border border-[var(--color-border)] p-3 hover:border-[var(--color-border-strong)] transition-colors">
+                  <span className="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)] font-black">{badgeText(s.pendingProposals)}</span>
                   <div className="flex-1">
                     <div className="text-sm font-bold text-[var(--color-text)]">Proposed connections to review</div>
-                    <div className="text-[11px] text-[var(--color-text-muted)]">Links the system found in your own data - approve or dismiss, each with its evidence.</div>
+                    <div className="text-[11px] text-[var(--color-text-muted)]">Links found in your own data. Approve or dismiss each, with its evidence.</div>
                   </div>
-                  <ArrowRight className="w-4 h-4 text-amber-600" />
+                  <ArrowRight className="w-4 h-4 text-[var(--color-text-faint)]" />
                 </Link>
               ) : (
                 <p className="text-xs text-[var(--color-text-muted)]">Nothing pending. New link proposals appear here as documents get indexed.</p>
@@ -264,7 +275,7 @@ export default function IntelligencePage() {
                   <Gauge className="w-5 h-5 text-[var(--color-text-muted)]" />
                   <div className="flex-1">
                     <div className="text-sm font-bold text-[var(--color-text)]">Meaning index {coveragePct}% built</div>
-                    <div className="text-[11px] text-[var(--color-text-muted)]">{s.chunksEmbedded} of {s.chunksTotal} passages embedded - finish it from the library page.</div>
+                    <div className="text-[11px] text-[var(--color-text-muted)]">{s.chunksEmbedded} of {s.chunksTotal} passages embedded. Finish it from the library page.</div>
                   </div>
                   <ArrowRight className="w-4 h-4 text-[var(--color-text-faint)]" />
                 </Link>
@@ -276,14 +287,10 @@ export default function IntelligencePage() {
                 <MessageSquare className="w-3.5 h-3.5" /> Recent questions
               </div>
               {!s.countsKnown ? (
-                <div className="space-y-2 animate-pulse">
-                  <div className="h-8 rounded-lg bg-[var(--color-surface-2)]" />
-                  <div className="h-8 rounded-lg bg-[var(--color-surface-2)]" />
-                  <div className="h-8 rounded-lg bg-[var(--color-surface-2)] w-3/4" />
-                </div>
+                <p className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading recent questions…</p>
               ) : s.recentAsks.length === 0 ? (
                 <p className="text-xs text-[var(--color-text-muted)]">
-                  Nobody has asked anything yet. <Link className="font-bold text-[var(--color-accent)] hover:underline" href="/assistant">Ask the first question</Link> - try &ldquo;what do we have on E-101?&rdquo;
+                  Nobody has asked anything yet. Try &ldquo;what do we have on E-101?&rdquo;
                 </p>
               ) : (
                 <ul className="space-y-2">
@@ -302,13 +309,7 @@ export default function IntelligencePage() {
             </div>
           </div>
 
-          {/* ── Jump in ── */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <JumpCard href="/assistant" icon={Bot} title="Ask" body="Plain-English questions; it calls the system's tools and shows its work." />
-            <JumpCard href="/knowledge" icon={BookOpen} title="Knowledge" body="Upload P&IDs and standards; extraction runs at ingest." />
-            <JumpCard href="/graph" icon={Waypoints} title="Graph" body="The whole org as one zoomable relationship map." />
-            <JumpCard href="/intelligence/setup" icon={Settings2} title="Setup" body="Keys, usage caps, playbooks, codebook - all configuration." />
-          </div>
+          {/* Ask, Knowledge, Graph and Setup live in the tabs above: one home each. */}
         </div>
     </PageShell>
   );
@@ -324,17 +325,15 @@ function StatusCard({ ok, title, okText, fixText, href, cta, pending }: {
     return (
       <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
         <div className="flex items-center gap-1.5 mb-1.5">
-          <span className="w-4 h-4 rounded-full bg-[var(--color-surface-2)] animate-pulse" />
+          <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)]" />
           <span className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">{title}</span>
         </div>
-        <div className="h-3 w-3/4 rounded bg-[var(--color-surface-2)] animate-pulse" />
+        <p className="text-xs text-[var(--color-text-muted)]">Checking…</p>
       </div>
     );
   }
   return (
-    <div className={`rounded-2xl border p-4 ${ok
-      ? "border-[var(--color-border)] bg-[var(--color-surface)]"
-      : "border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30"}`}>
+    <div className={`rounded-2xl border p-4 border-[var(--color-border)] bg-[var(--color-surface)] ${ok ? "" : "border-l-2 border-l-amber-500"}`}>
       <div className="flex items-center gap-1.5 mb-1.5">
         {ok
           ? <CheckCircle2 className="w-4 h-4 text-emerald-600" />
@@ -345,7 +344,7 @@ function StatusCard({ ok, title, okText, fixText, href, cta, pending }: {
         {ok ? okText : fixText}
       </p>
       {!ok && (
-        <Link href={href} className="mt-2 inline-flex items-center gap-1 text-[11px] font-black text-amber-700 dark:text-amber-300 hover:underline">
+        <Link href={href} className="mt-2 inline-flex items-center gap-1 text-[11px] font-black text-[var(--color-accent)] hover:underline">
           {cta} <ArrowRight className="w-3 h-3" />
         </Link>
       )}
@@ -353,14 +352,4 @@ function StatusCard({ ok, title, okText, fixText, href, cta, pending }: {
   );
 }
 
-function JumpCard({ href, icon: Icon, title, body }: {
-  href: string; icon: React.ComponentType<{ className?: string }>; title: string; body: string;
-}) {
-  return (
-    <Link href={href} className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 hover:border-[var(--color-border-strong)] hover:shadow-sm transition-all">
-      <Icon className="w-5 h-5 text-[var(--color-text-muted)] mb-2" />
-      <div className="text-sm font-black text-[var(--color-text)]">{title}</div>
-      <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">{body}</p>
-    </Link>
-  );
-}
+

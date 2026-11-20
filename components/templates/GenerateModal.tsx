@@ -19,6 +19,10 @@ import { useRole } from "@/components/providers/RoleContext";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea, Select } from "@/components/ui/Field";
 import { supabase } from "@/lib/supabase";
+import StepPath from "@/components/ui/StepPath";
+import FileThumb from "@/components/ui/FileThumb";
+import { useFileDrag } from "@/hooks/useFileDrag";
+import { tryUpload } from "@/lib/uploadRetry";
 import {
   uploadTemplateFile, draftDocuments, renderDocuments, fileDocumentsToLibrary,
   type OutputTemplate, type DraftedDocument, type Placeholder,
@@ -33,6 +37,10 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
   const { showToast } = useToast();
   const { uid, userEmail } = useRole();
   const [source, setSource] = useState<{ key: string; name: string } | null>(null);
+  // The spreadsheet as picked, so it shows (name, size, type) and a failed
+  // upload can be tried again with the same file.
+  const [picked, setPicked] = useState<File | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   // Optional: land the finished documents in document control as Draft rev 0
   // instead of (or as well as) downloading them.
   const [libraries, setLibraries] = useState<Array<{ id: string; name: string }>>([]);
@@ -97,15 +105,28 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
 
   const onFilePicked = async (file: File | null) => {
     if (!file) return;
+    setPicked(file);
+    setUploadError(null);
     setBusy("upload");
-    try {
-      const up = await uploadTemplateFile(orgId, file, "data");
-      setSource(up);
+    const landed = (up: { key: string; name: string }) => {
+      setSource(up); setUploadError(null);
       setDocs([]); setMapping(null); setNextOffset(null); setCost(0);
+    };
+    try {
+      // Safe to repeat: it only stores the file; nothing is drafted yet.
+      landed(await tryUpload(file.name, () => uploadTemplateFile(orgId, file, "data"), { onRetried: landed }));
     } catch (e) {
-      showToast({ type: "error", title: (e as Error).message });
+      setUploadError((e as Error).message);
     } finally { setBusy(null); }
   };
+  const dataDrag = useFileDrag((fs) => { if (fs[0]) void onFilePicked(fs[0]); }, busy !== null);
+
+  // Escape closes, as the X does (not while something is running).
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && busy === null) onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy, onClose]);
 
   const runDraft = async (offset = 0, columnMapOverride?: Record<string, string>) => {
     if (!source) return;
@@ -163,26 +184,24 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
   const aiTags = new Set(template.placeholders.filter((p) => p.kind === "ai").map((p) => p.tag));
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
+    <div role="dialog" aria-modal="true" aria-label={`Generate: ${template.name}`} className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
       <div className="w-full max-w-3xl bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-xl mt-8 mb-8"
         onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between sticky top-0 bg-[var(--color-surface)] rounded-t-2xl z-10">
           <div>
             <h2 className="text-base font-black text-[var(--color-text)] flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-[var(--color-text-muted)]" /> Generate - {template.name}
+              <Sparkles className="w-4 h-4 text-[var(--color-text-muted)]" /> Generate: {template.name}
             </h2>
-            <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
-              Drop your data, review the drafted wording, download finished files.
-            </p>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+          <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
 
         <div className="p-5 space-y-4">
+          <StepPath steps={["Add your data", "Check the wording", "Make the files"]} current={docs.length === 0 ? 0 : 1} />
           {/* ── 1. Data ─────────────────────────────────────────────────── */}
-          <div className="rounded-xl border border-[var(--color-border)] p-3.5">
+          <div {...dataDrag.bind} className={`rounded-xl border border-[var(--color-border)] p-3.5 ${dataDrag.ring}`}>
             <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-2">
-              1 · Data
+              1 · Data {dataDrag.over && <span className="normal-case tracking-normal font-bold text-[var(--color-text)]"> · {dataDrag.say}</span>}
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               <label className="inline-flex">
@@ -190,18 +209,35 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
                   onChange={(e) => { void onFilePicked(e.target.files?.[0] ?? null); e.target.value = ""; }} />
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] cursor-pointer">
                   {busy === "upload" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
-                  {source ? "Replace spreadsheet" : "Upload spreadsheet (.xlsx / .csv)"}
+                  {source ? "Replace spreadsheet" : "Upload or drop a spreadsheet (.xlsx / .csv)"}
                 </span>
               </label>
-              {source && (
+              {picked ? (
+                <span className="inline-flex items-center gap-2 text-xs font-bold text-[var(--color-text)] min-w-0">
+                  <FileThumb file={picked} size={32} />
+                  <span className="min-w-0 flex flex-col leading-tight">
+                    <span className="truncate">{picked.name}</span>
+                    <span className="font-normal text-[var(--color-text-muted)]">
+                      {(picked.size / 1024).toFixed(0)} KB
+                      {busy === "upload" ? " · uploading…" : source && rowCount !== null ? ` · ${rowCount} rows` : ""}
+                    </span>
+                  </span>
+                </span>
+              ) : source && (
                 <span className="inline-flex items-center gap-1.5 text-xs font-bold text-[var(--color-text)]">
-                  <Table2 className="w-3.5 h-3.5 text-emerald-600" /> {source.name}
+                  <Table2 className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {source.name}
                   {rowCount !== null && (
                     <span className="text-[var(--color-text-muted)] font-normal">· {rowCount} rows</span>
                   )}
                 </span>
               )}
             </div>
+            {uploadError && picked && (
+              <p role="alert" className="mt-2 flex items-center gap-2 text-[11px] font-semibold text-red-700 dark:text-red-400">
+                The spreadsheet didn&apos;t upload: {uploadError}
+                <button type="button" onClick={() => void onFilePicked(picked)} disabled={busy !== null} className="underline font-bold">Try again</button>
+              </p>
+            )}
             {sheetNames.length > 1 && (
               <label className="block mt-2">
                 <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Sheet</span>
@@ -223,7 +259,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
               </div>
             )}
             <div className="mt-2.5">
-              <Button size="sm" onClick={() => void runDraft(0)} disabled={!source || busy !== null}>
+              <Button size="sm" variant={docs.length === 0 && !mapping ? "primary" : "secondary"} onClick={() => void runDraft(0)} disabled={!source || busy !== null}>
                 {busy === "draft" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
                 Draft documents
               </Button>
@@ -232,12 +268,12 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
 
           {/* ── Column mapping (only when something's missing) ──────────── */}
           {mapping && (
-            <div className="rounded-xl border-2 border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 p-3.5">
+            <div className="border-l-2 border-amber-500 pl-3.5 py-1">
               <div className="flex items-start gap-2 mb-2">
                 <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                 <div className="text-xs text-amber-900 dark:text-amber-200">
                   <b>This template needs a few values your sheet doesn&apos;t obviously have.</b> Point each
-                  one at the right column - the choice is remembered for next time.
+                  one at the right column. The choice is remembered for next time.
                 </div>
               </div>
               <ul className="space-y-1.5">
@@ -269,7 +305,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
             <div className="rounded-xl border border-[var(--color-border)] p-3.5">
               <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
                 <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
-                  2 · Review - {docs.length} document{docs.length === 1 ? "" : "s"} drafted
+                  2 · Check: {docs.length} document{docs.length === 1 ? "" : "s"} drafted
                 </div>
                 {cost > 0 && (
                   <span className="text-[11px] text-[var(--color-text-muted)]">
@@ -335,8 +371,8 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
                 3 · Generate
               </div>
               <p className="text-[11px] text-[var(--color-text-muted)]">
-                Renders into <b>{template.templateFileName ?? "your template"}</b> - fonts, colours,
-                tables and headers untouched.
+                Renders into <b>{template.templateFileName ?? "your template"}</b>. Fonts, colours,
+                tables and headers stay as they are.
               </p>
               {libraries.length > 0 && (
                 <div className="flex items-center gap-2 flex-wrap text-[11px]">

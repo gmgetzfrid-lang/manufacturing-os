@@ -32,8 +32,10 @@ export function useAnswerSkills(orgId: string | null): AnswerSkill[] | null {
       const m = await import("@/lib/answerSkills");
       const { supabase } = await import("@/lib/supabase");
       const { data } = await supabase.auth.getUser();
-      if (data.user) await m.seedBuiltinAnswerSkills(orgId, data.user.id).catch(() => undefined);
-      const list = await m.listAnswerSkills(orgId).catch(() => null);
+      // Seeding the built-ins is background work: a failure only means the
+      // list below shows what's already there.
+      if (data.user) await m.seedBuiltinAnswerSkills(orgId, data.user.id).catch((e: unknown) => console.warn("[skills] seed failed", e));
+      const list = await m.listAnswerSkills(orgId).catch((e: unknown) => { console.warn("[skills] list failed", e); return null; });
       if (!cancelled) setSkills(list ?? []);
     })();
     return () => { cancelled = true; };
@@ -80,9 +82,7 @@ export function SourcesMenu({ scope, libraryId, libraries, onScopeChange, scopeL
   const libName = fixedLibrary ?? (scope !== "tools" ? libraries.find((l) => l.id === libraryId)?.name ?? "Pick a library" : null);
   const label = scope === "tools" ? "System tools" : scope === "internet" ? "Internet only" : `${libName}${webOn ? " + web" : ""}`;
   const Icon = scope === "tools" ? Bot : scope === "internet" ? Globe : BookOpen;
-  const tone = scope === "internet" ? "border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]"
-    : scope === "tools" ? "border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]"
-      : "border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]";
+  const tone = "border-[var(--color-border)] text-[var(--color-text)] bg-[var(--color-surface-2)]";
   return (
     <div ref={ref} className="relative">
       <button type="button" onClick={() => setOpen((v) => !v)} aria-haspopup="menu" aria-expanded={open}
@@ -112,7 +112,7 @@ export function SourcesMenu({ scope, libraryId, libraries, onScopeChange, scopeL
               <Toggle on={webOn} />
               <span className="min-w-0">
                 <span className="block text-xs font-bold text-[var(--color-text)]">Also search the web</span>
-                <span className="block text-[11px] text-[var(--color-text-muted)]">Your documents first - they govern. Every web statement links to its page.</span>
+                <span className="block text-[11px] text-[var(--color-text-muted)]">Your documents first, they govern. Every web statement links to its page.</span>
               </span>
             </button>
           )}
@@ -121,7 +121,7 @@ export function SourcesMenu({ scope, libraryId, libraries, onScopeChange, scopeL
               <div className="my-1 h-px bg-[var(--color-border)]" />
               <Item active={scope === "tools"} icon={Bot} label="System tools" sub="Documents, equipment, audit history, P&ID traces"
                 onClick={() => { setOpen(false); onScopeChange("tools", null); }} />
-              <Item active={scope === "internet"} icon={Globe} label="Internet only" sub="Web / general knowledge - not your documents"
+              <Item active={scope === "internet"} icon={Globe} label="Internet only" sub="Web and general knowledge, not your documents"
                 onClick={() => { setOpen(false); onScopeChange("internet", libraryId ?? libraries[0]?.id ?? null); }} />
             </>
           )}
@@ -174,7 +174,7 @@ export function AnswerMenu({ answerMode, onAnswerMode, skills, picked, onPick, q
             <Head>Skills for this question</Head>
             {picked && <button type="button" onClick={() => onPick(null)} className="text-[11px] font-bold text-[var(--color-accent)] hover:underline">Back to workspace defaults</button>}
           </div>
-          <div className="px-2 pb-1 text-[11px] text-[var(--color-text-muted)]">Each skill applies itself when the question fits - the ones marked <b>fits</b> match what you typed.</div>
+          <div className="px-2 pb-1 text-[11px] text-[var(--color-text-muted)]">A skill applies itself when the question fits. <b>fits</b> marks the ones that match what you typed.</div>
           {skills === null && <div className="px-2 py-1.5 text-[11px] text-[var(--color-text-muted)]">Loading skills…</div>}
           {[...(skills ?? [])].sort((a, b) => Number(skillFits(b, question)) - Number(skillFits(a, question))).map((s) => {
             const fits = skillFits(s, question);
@@ -195,7 +195,7 @@ export function AnswerMenu({ answerMode, onAnswerMode, skills, picked, onPick, q
           })}
           <div className="my-1.5 h-px bg-[var(--color-border)]" />
           <div className="flex items-center justify-between gap-2 px-2 py-1 text-[11px]">
-            <Link href="/intelligence/skills" className="inline-flex items-center gap-1 font-bold text-[var(--color-accent)] hover:underline"><Wand2 className="w-3 h-3" /> Skill Library - write your own</Link>
+            <Link href="/intelligence/skills" className="inline-flex items-center gap-1 font-bold text-[var(--color-accent)] hover:underline"><Wand2 className="w-3 h-3" /> Skill Library: write your own</Link>
             {onOpenInstructions && (
               <button type="button" onClick={() => { setOpen(false); onOpenInstructions(); }} className="inline-flex items-center gap-1 font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
                 <SlidersHorizontal className="w-3 h-3" /> Instructions{instructionCount ? ` (${instructionCount})` : ""}
@@ -229,8 +229,8 @@ function Head({ children }: { children: React.ReactNode }) {
 
 function Toggle({ on }: { on: boolean }) {
   return (
-    <span className={`mt-0.5 shrink-0 inline-flex w-7 h-4 rounded-full transition-colors ${on ? "bg-[var(--color-text)]" : "bg-slate-300 dark:bg-slate-600"}`}>
-      <span className={`m-0.5 w-3 h-3 rounded-full bg-white transition-transform ${on ? "translate-x-3" : ""}`} />
+    <span className={`mt-0.5 shrink-0 inline-flex w-7 h-4 rounded-full transition-colors ${on ? "bg-[var(--color-text)]" : "bg-[var(--color-border-strong)]"}`}>
+      <span className={`m-0.5 w-3 h-3 rounded-full bg-[var(--color-surface)] transition-transform ${on ? "translate-x-3" : ""}`} />
     </span>
   );
 }
@@ -241,7 +241,7 @@ function Item({ active, icon: Icon, label, sub, onClick }: {
   return (
     <button type="button" onClick={onClick} disabled={!onClick}
       className={`w-full flex items-start gap-2 px-2 py-1.5 rounded-lg text-left ${active ? "bg-[var(--color-surface-2)]" : "hover:bg-[var(--color-surface-2)]"}`}>
-      <Icon className={`w-3.5 h-3.5 mt-0.5 shrink-0 ${active ? "text-[var(--color-text-muted)]" : "text-[var(--color-text-muted)]"}`} />
+      <Icon className="w-3.5 h-3.5 mt-0.5 shrink-0 text-[var(--color-text-muted)]" />
       <span className="min-w-0">
         <span className="block text-xs font-bold text-[var(--color-text)] truncate">{label}</span>
         {sub && <span className="block text-[11px] text-[var(--color-text-muted)] truncate">{sub}</span>}

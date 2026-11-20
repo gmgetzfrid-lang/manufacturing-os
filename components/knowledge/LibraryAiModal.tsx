@@ -6,7 +6,8 @@
 // standards precedence).
 
 import React, { useEffect, useState } from "react";
-import { X, Loader2, Save, Link2, Wand2 } from "lucide-react";
+import { Loader2, Save, Link2, Wand2 } from "lucide-react";
+import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { useToast } from "@/components/providers/ToastProvider";
 import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Field";
@@ -43,6 +44,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
   const [allLibraries, setAllLibraries] = useState<KnowledgeLibrary[]>([]);
   const [linked, setLinked] = useState<Set<string>>(new Set());
   const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -66,7 +68,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
         setDocs(documents);
         setLoaded(true);
       })
-      .catch(() => { if (!cancelled) setLoaded(true); });
+      .catch((e: unknown) => { if (!cancelled) { setLoadError(e instanceof Error ? e.message : String(e)); setLoaded(true); } });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reseed only when the modal (re)opens
   }, [open, orgId, library.id]);
@@ -91,31 +93,21 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
         legendDocIds: legendDocIds.size > 0 ? [...legendDocIds].slice(0, 3) : undefined,
       });
       await setLibraryLinks({ orgId, libraryId: library.id, linkedLibraryIds: [...linked] });
-      showToast({ type: "success", title: "Library AI setup saved - applies to the next question." });
+      showToast({ type: "success", title: "Library AI setup saved. It applies from the next question." });
       onSaved();
       onClose();
     } catch (e) {
-      showToast({ type: "error", title: (e as Error).message });
+      showToast({ type: "error", title: "Not saved", message: (e as Error).message });
     } finally { setSaving(false); }
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
-      <div className="w-full max-w-xl bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-xl mt-10"
-        onClick={(e) => e.stopPropagation()}>
-        <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
-          <div>
-            <h2 className="text-base font-black text-[var(--color-text)] flex items-center gap-2">
-              <Wand2 className="w-4 h-4 text-[var(--color-text-muted)]" /> Library AI setup
-            </h2>
-            <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
-              Mold how the AI answers questions asked of <b>{library.name}</b>.
-            </p>
-          </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
-        </div>
+    <Modal onClose={onClose} size="lg" dismissable={!saving}>
+        <ModalHeader icon={Wand2} title="Library AI setup"
+          subtitle={<>How the AI answers questions asked of <b>{library.name}</b>.</>}
+          onClose={saving ? undefined : onClose} />
 
-        <div className="p-5 space-y-5">
+        <ModalBody className="space-y-5">
           <div>
             <label htmlFor="library-kind" className="block text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
               What&apos;s in this library
@@ -279,9 +271,11 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
               and every answer says which document won.
             </p>
             {!loaded ? (
-              <div className="py-4 text-center"><Loader2 className="w-4 h-4 animate-spin inline text-[var(--color-text-muted)]" /></div>
+              <div className="py-4 text-center text-xs text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline mr-1.5" /> Loading the other libraries…</div>
+            ) : loadError ? (
+              <p role="alert" className="text-xs font-semibold text-red-700 dark:text-red-400">Couldn&apos;t load the other libraries: {loadError}</p>
             ) : allLibraries.length === 0 ? (
-              <p className="text-xs text-[var(--color-text-muted)] italic">No other libraries yet - create a second library (e.g. Code Books) to link it.</p>
+              <p className="text-xs text-[var(--color-text-muted)] italic">No other libraries yet. Make a second library (e.g. Code Books) to link it.</p>
             ) : (
               <ul className="space-y-1.5">
                 {allLibraries.map((l) => (
@@ -300,14 +294,13 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
             )}
           </div>
 
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={onClose}>Cancel</Button>
-            <Button onClick={() => void save()} disabled={saving}>
+        </ModalBody>
+        <ModalFooter>
+            <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
+            <Button onClick={() => void save()} disabled={saving || !!loadError}>
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save setup
             </Button>
-          </div>
-        </div>
-      </div>
-    </div>
+        </ModalFooter>
+    </Modal>
   );
 }

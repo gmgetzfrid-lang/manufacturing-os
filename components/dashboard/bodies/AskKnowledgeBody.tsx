@@ -25,6 +25,7 @@ import {
   type Verdict,
 } from "@/lib/knowledgeText";
 import { useWidget, useSetting, useSessionState, useWidgetData, Empty, timeAgo, SCROLL } from "../kit";
+import { useDraft } from "@/hooks/useDraft";
 
 const CitedPageViewer = dynamic(() => import("@/components/knowledge/CitedPageViewer"), { ssr: false });
 
@@ -65,7 +66,7 @@ function Inline({ text, onCite }: { text: string; onCite: (n: number) => void })
         if (cite) {
           return cite[1].split(/\s*,\s*/).map((n) => (
             <button key={`${i}-${n}`} type="button" onClick={() => onCite(Number(n))}
-              className="align-super mx-px px-1 rounded bg-[var(--color-surface-2)] text-[var(--color-accent)] text-[11px] font-black hover:bg-[var(--color-accent)] hover:text-white transition-colors">
+              className="align-super mx-px px-1 rounded bg-[var(--color-surface-2)] text-[var(--color-accent)] text-[11px] font-black hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)] transition-colors">
               {n}
             </button>
           ));
@@ -79,7 +80,7 @@ function Inline({ text, onCite }: { text: string; onCite: (n: number) => void })
 
 export default function AskKnowledgeBody() {
   const { activeOrgId, uid } = useRole();
-  const { expanded } = useWidget();
+  const { expanded, widget: thisWidget } = useWidget();
   const [libraryId, setLibraryId] = useSetting<string>("libraryId", "");
   const [mode, setMode] = useSetting<Mode>("mode", "auto");
   // The same choices as the chat's prompt bar: skills and web.
@@ -87,10 +88,9 @@ export default function AskKnowledgeBody() {
   const [picked, setPicked] = useSetting<string[] | null>("skills", null);
   const [web, setWeb] = useSetting<boolean>("web", false);
 
-  const { data: libs } = useWidgetData(async (orgId) => {
-    try { return (await listKnowledgeLibraries(orgId)).map((l) => ({ id: l.id, name: l.name })); }
-    catch { return []; }
-  });
+  // A failed read throws: the frame says it failed instead of "no libraries".
+  const { data: libs } = useWidgetData(async (orgId) =>
+    (await listKnowledgeLibraries(orgId)).map((l) => ({ id: l.id, name: l.name })));
   // Unset (or deleted) library → the first one, until the person picks.
   const lib = useMemo(() => {
     if (!libs || libs.length === 0) return null;
@@ -104,6 +104,8 @@ export default function AskKnowledgeBody() {
   }, [lib?.id]);
 
   const [q, setQ] = useState("");
+  // A half-typed question waits on this device, per widget.
+  const qDraft = useDraft<string>(`home-ask:${thisWidget.id}`, q, setQ, (v) => !v.trim());
   const [threadId, setThreadId] = useSessionState<string | null>("threadId", null);
   const [turns, setTurns] = useSessionState<Turn[]>("turns", []);
   const [status, setStatus] = useState<string | null>(null);
@@ -122,6 +124,7 @@ export default function AskKnowledgeBody() {
     setStatus("Reading the library…");
     setTurns((t) => [...t, { question: text, answer: null, error: null }]);
     setQ("");
+    qDraft.clear();
     const ctl = new AbortController();
     abortRef.current = ctl;
     let gotResult = false;
@@ -145,7 +148,7 @@ export default function AskKnowledgeBody() {
         }
       }, ctl.signal);
       if (!gotResult) {
-        setTurns((t) => t.map((x, i) => (i === t.length - 1 && !x.answer ? { ...x, error: "The answer didn't come back - try again." } : x)));
+        setTurns((t) => t.map((x, i) => (i === t.length - 1 && !x.answer ? { ...x, error: "The answer didn't come back. Try again." } : x)));
       }
     } catch (e) {
       if (!ctl.signal.aborted) {
@@ -155,7 +158,7 @@ export default function AskKnowledgeBody() {
       setBusy(false);
       setStatus(null);
     }
-  }, [activeOrgId, lib, busy, threadId, mode, web, picked, setThreadId, setTurns]);
+  }, [activeOrgId, lib, busy, threadId, mode, web, picked, setThreadId, setTurns, qDraft]);
 
   // Resolve the cited documents' files once per answer, so a tap opens the
   // page straight away.
@@ -237,7 +240,7 @@ export default function AskKnowledgeBody() {
           placeholder={threadId ? "Ask a follow-up…" : lib ? `Ask ${lib.name}…` : "Loading libraries…"}
           className="flex-1 min-w-0 bg-transparent text-[13px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none py-1" />
         <button type="submit" disabled={busy || !q.trim() || !lib}
-          className="shrink-0 inline-flex items-center gap-1 h-8 px-3 rounded-lg bg-[var(--color-accent)] text-white text-[12px] font-black disabled:opacity-40 hover:opacity-90">
+          className="shrink-0 inline-flex items-center gap-1 h-8 px-3 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[12px] font-black disabled:opacity-40 hover:opacity-90">
           {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowRight className="w-3.5 h-3.5" />}
           Ask
         </button>
@@ -249,7 +252,7 @@ export default function AskKnowledgeBody() {
           <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 p-3">
             <div className="text-[12px] font-bold text-[var(--color-text)] truncate">{last?.question}</div>
             <div className="mt-2 flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
-              <span className="relative flex w-2 h-2"><span className="absolute inset-0 rounded-full bg-[var(--color-surface-2)] animate-ping opacity-60" /><span className="relative w-2 h-2 rounded-full bg-[var(--color-surface-2)]" /></span>
+              <Loader2 className="w-3 h-3 animate-spin shrink-0" />
               {status ?? "Working…"}
             </div>
             <div className="mt-2 space-y-1.5">
@@ -267,7 +270,7 @@ export default function AskKnowledgeBody() {
               <span className="font-semibold line-clamp-2">{last.question}</span>
             </div>
             {last.error ? (
-              <div className="mt-2 flex items-start gap-2 text-[12px] text-rose-700 dark:text-rose-300">
+              <div role="alert" className="mt-2 flex items-start gap-2 border-l-2 border-rose-500 pl-2 text-[12px] text-rose-700 dark:text-rose-300">
                 <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
                 <span>{last.error}</span>
               </div>
@@ -282,7 +285,7 @@ export default function AskKnowledgeBody() {
                   <Inline text={capFirst(parts.v?.text ?? parts.p.hero ?? last.answer?.answer?.slice(0, 400) ?? "")} onCite={(n) => openCite(citeByN(n))} />
                 </p>
                 {parts.p.settle.length > 0 && (
-                  <div className="mt-2 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/20 px-2.5 py-1.5">
+                  <div className="mt-2 border-l-2 border-amber-500 pl-2.5">
                     <div className="text-[11px] font-black uppercase tracking-wider text-amber-800 dark:text-amber-300">To settle this</div>
                     <ul className="mt-0.5 space-y-0.5">
                       {parts.p.settle.slice(0, 2).map((b, i) => (
@@ -319,7 +322,7 @@ export default function AskKnowledgeBody() {
                           </div>
                           <div className="mt-0.5 text-[11px] leading-snug text-[var(--color-text-muted)] line-clamp-3">
                             {win ? (
-                              <>{win.clippedStart ? "… " : ""}{win.before}<mark className="rounded px-0.5 bg-yellow-200 dark:bg-yellow-700/60 text-[var(--color-text)] font-bold">{win.hit}</mark>{win.after}{win.clippedEnd ? " …" : ""}</>
+                              <>{win.clippedStart ? "… " : ""}{win.before}<mark className="rounded px-0.5 bg-amber-200 dark:bg-amber-700/60 text-[var(--color-text)] font-bold">{win.hit}</mark>{win.after}{win.clippedEnd ? " …" : ""}</>
                             ) : (c.quote ?? c.claim ?? "Open the page")}
                           </div>
                         </button>
@@ -335,7 +338,7 @@ export default function AskKnowledgeBody() {
                       <span className="mt-1 flex flex-wrap gap-1">
                         {parts.followup.options.slice(0, 4).map((o) => (
                           <button key={o} type="button" onClick={() => void ask(o)}
-                            className="px-2 py-0.5 rounded-md border border-[var(--color-accent)]/50 text-[11px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-white">
+                            className="px-2 py-0.5 rounded-md border border-[var(--color-accent)]/50 text-[11px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)]">
                             {o}
                           </button>
                         ))}

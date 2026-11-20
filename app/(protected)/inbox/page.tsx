@@ -11,7 +11,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Briefcase, AlertOctagon, FileSignature, Lock, Bell, Loader2, AlertTriangle, MessageSquare, Clock, Flag, ChevronRight, Calendar, Send, XCircle, Zap, ShieldCheck } from "lucide-react";
+import { Briefcase, AlertOctagon, FileSignature, Lock, Bell, AlertTriangle, MessageSquare, Clock, Flag, ChevronRight, Calendar, Send, XCircle, Zap, ShieldCheck } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
 import { useTicketNotifications } from "@/hooks/useTicketNotifications";
@@ -19,6 +19,8 @@ import { resolveMarkupRequest } from "@/lib/markupRequests";
 import { computeNudges } from "@/lib/nudges";
 import { useToast } from "@/components/providers/ToastProvider";
 import ViewTabs, { HOME_VIEWS } from "@/components/navigation/ViewTabs";
+import LoadingBlock from "@/components/ui/LoadingBlock";
+import { badgeText } from "@/lib/badge";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
 import MyDeskPanel from "@/components/cockpit/MyDeskPanel";
@@ -135,8 +137,8 @@ export default function InboxPage() {
 
   if (loading && !data) {
     return (
-      <div className="min-h-full bg-[var(--color-canvas)] flex items-center justify-center">
-        <Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-muted)]" />
+      <div className="min-h-full bg-[var(--color-canvas)]">
+        <div className="max-w-6xl mx-auto p-6"><LoadingBlock what="what needs you" rows={6} /></div>
       </div>
     );
   }
@@ -163,7 +165,7 @@ export default function InboxPage() {
         </div>
 
         {error && (
-          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800 flex items-start gap-2">
+          <div role="alert" className="mb-4 border-l-2 border-red-500 pl-3 text-xs font-semibold text-red-700 dark:text-red-400 flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
           </div>
         )}
@@ -275,9 +277,9 @@ export default function InboxPage() {
             {data.myCheckouts.length > 0 && (
               <Card icon={Lock} tone={data.myStaleCheckouts.length > 0 ? "rose" : "blue"} title="Your active checkouts" count={data.myCheckouts.length}>
                 {data.myStaleCheckouts.length > 0 && (
-                  <div className="mb-2 text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded px-2 py-1">
+                  <div className="mb-2 text-[11px] font-semibold text-rose-700 dark:text-rose-400 border-l-2 border-rose-500 pl-2">
                     <AlertTriangle className="inline w-3 h-3 mr-1" />
-                    {data.myStaleCheckouts.length} past expected release - please check in or extend
+                    {data.myStaleCheckouts.length} past the expected release. Check in or extend.
                   </div>
                 )}
                 <ul className="space-y-1.5">
@@ -460,7 +462,7 @@ function Card({ icon: Icon, title, count, children }: CardProps) {
           <Icon className="w-4 h-4 text-[var(--color-text-muted)]" />
           {title}
         </h2>
-        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[11px] font-black text-[var(--color-text)] tabular-nums">{count > 99 ? "99+" : count}</span>
+        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[11px] font-black text-[var(--color-text)] tabular-nums">{badgeText(count)}</span>
       </div>
       {children}
     </div>

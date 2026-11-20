@@ -77,11 +77,11 @@ export default function FormFillModal({ orgId, documentId, formName, question, a
           <div className="py-16 flex flex-col items-center gap-3 text-[var(--color-text-muted)]">
             <Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-muted)]" />
             <div className="text-sm font-bold text-[var(--color-text)]">Drafting every field from the answer and its proof</div>
-            <div className="text-xs">Names, signatures and numbers are left for you - never invented.</div>
+            <div className="text-xs">Names, signatures and numbers are left for you, never made up.</div>
           </div>
         )}
         {error && (
-          <div className="flex items-start gap-2 rounded-lg border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/30 px-3 py-2.5 text-sm text-rose-800 dark:text-rose-300">
+          <div role="alert" className="flex items-start gap-2 border-l-2 border-rose-500 pl-3 py-1 text-sm text-rose-800 dark:text-rose-300">
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
           </div>
         )}
@@ -93,7 +93,7 @@ export default function FormFillModal({ orgId, documentId, formName, question, a
               </div>
             )}
             {missing.length > 0 && (
-              <div className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-3 py-2.5 text-[13px] text-amber-900 dark:text-amber-200">
+              <div className="border-l-2 border-amber-500 pl-3 py-1 text-[13px] text-amber-900 dark:text-amber-200">
                 <b>{missing.length} field{missing.length === 1 ? "" : "s"} need you:</b> {missing.slice(0, 8).map((f) => f.label).join(", ")}{missing.length > 8 ? "…" : ""}
               </div>
             )}
@@ -107,10 +107,10 @@ export default function FormFillModal({ orgId, documentId, formName, question, a
         )}
       </ModalBody>
       <ModalFooter>
-        <span className="mr-auto text-[11px] text-[var(--color-text-muted)]">Review every field before you submit - you own what&apos;s on this form.</span>
+        <span className="mr-auto text-[11px] text-[var(--color-text-muted)]">Check every field before you submit it.</span>
         {draft && (
           <button type="button" onClick={() => void copyAll()}
-            className="inline-flex items-center gap-1.5 text-[13px] font-bold px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-[var(--color-accent)]">
+            className="inline-flex items-center gap-1.5 text-[13px] font-bold px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-[var(--color-border-strong)]">
             {copied ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />} {copied ? "Copied" : "Copy as text"}
           </button>
         )}

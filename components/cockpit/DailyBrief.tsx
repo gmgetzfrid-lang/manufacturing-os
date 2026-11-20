@@ -101,17 +101,17 @@ export function DailyBrief({ data }: { data: InboxSnapshot }) {
     <div className="rounded-2xl border border-[var(--color-border)] shadow-sm p-5 bg-[var(--color-surface-2)]">
       <div className="flex items-start gap-3">
         <div className="w-10 h-10 rounded-xl flex items-center justify-center shadow-sm shrink-0 bg-[var(--color-text)]">
-          <Zap className="w-5 h-5 text-[var(--color-text)]" />
+          <Zap className="w-5 h-5 text-[var(--color-surface)]" />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <h2 className="text-sm font-black uppercase tracking-widest text-[var(--color-text-muted)]">Daily brief</h2>
             {urgent > 0 && <span className="inline-flex items-center gap-1 text-[11px] font-black uppercase tracking-wider text-rose-600 bg-rose-50 border border-rose-100 rounded-full px-2 py-0.5">{urgent} urgent</span>}
           </div>
-          <p className="text-sm text-[var(--color-text-faint)] mt-1 leading-relaxed">{narrative}</p>
+          <p className="text-sm text-[var(--color-text-muted)] mt-1 leading-relaxed">{narrative}</p>
           {next && (
-            <Link href={next.href} className="inline-flex items-center gap-1.5 mt-3 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-bold hover:bg-[var(--color-accent-hover)] transition-colors">
-              <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text)]">Start here</span>
+            <Link href={next.href} className="inline-flex items-center gap-1.5 mt-3 px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-xs font-bold hover:bg-[var(--color-surface-2)] transition-colors">
+              <span className="text-[11px] font-black uppercase tracking-wider opacity-80">Start here</span>
               {next.label}
               <ChevronRight className="w-3.5 h-3.5" />
             </Link>
@@ -119,7 +119,7 @@ export function DailyBrief({ data }: { data: InboxSnapshot }) {
           {sentences.length > 0 && (
             <div className="flex flex-wrap gap-1.5 mt-3">
               {sentences.map((line, i) => (
-                <span key={i} className="inline-flex items-center text-[11px] font-bold text-[var(--color-text-faint)] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-full px-2.5 py-1">{line}</span>
+                <span key={i} className="inline-flex items-center text-[11px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-full px-2.5 py-1">{line}</span>
               ))}
             </div>
           )}

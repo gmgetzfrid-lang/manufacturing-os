@@ -3,6 +3,9 @@
 import React, { useState, useEffect } from 'react';
 import { useDraft } from "@/hooks/useDraft";
 import FileThumb from "@/components/ui/FileThumb";
+import LoadingBlock from "@/components/ui/LoadingBlock";
+import { useFileDrag } from "@/hooks/useFileDrag";
+import { tryUpload } from "@/lib/uploadRetry";
 import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { uploadTicketAttachment } from '@/lib/storage';
@@ -17,7 +20,6 @@ import { loadCodebook } from '@/lib/codebook';
 import IsoGuidance from '@/components/ui/IsoGuidance';
 import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
 import { Input, Select } from '@/components/ui/Field';
-import { Spinner } from '@/components/ui/Spinner';
 import { appAlert } from '@/components/providers/DialogProvider';
 import {
   ArrowLeft,
@@ -111,6 +113,11 @@ export default function NewTicketPage() {
 
   // File State
   const [files, setFiles] = useState<File[]>([]);
+  // Each picked file's own upload state, so one that fails shows its own
+  // Try again and never holds up the others.
+  const [fileState, setFileState] = useState<Map<File, { state: 'up' | 'done' | 'failed'; error?: string }>>(new Map());
+  const markFile = (f: File, v: { state: 'up' | 'done' | 'failed'; error?: string } | null) =>
+    setFileState((prev) => { const n = new Map(prev); if (v) n.set(f, v); else n.delete(f); return n; });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string>('');
 
@@ -135,6 +142,14 @@ export default function NewTicketPage() {
     const opts = config.units?.options ?? [];
     if (opts.some((o) => String(o.value) === prefillUnit)) setUnit((u) => u || prefillUnit);
   }, [prefillUnit, config]);
+
+  // The unit and type used last time come back first, so a run of requests
+  // for the same unit needs no picking.
+  const lastKey = activeOrgId ? `request:last:${activeOrgId}` : null;
+  const readLast = (): { unit?: string; requestType?: string } => {
+    if (!lastKey) return {};
+    try { return JSON.parse(localStorage.getItem(lastKey) || '{}') as { unit?: string; requestType?: string }; } catch { return {}; }
+  };
 
   // --- FETCH CONFIG ---
   useEffect(() => {
@@ -164,9 +179,13 @@ export default function NewTicketPage() {
           } catch { /* codebook optional — free-text unit input remains */ }
         }
         setConfig(cfg);
-        // Defaults fill only what a restored draft didn't.
-        if (cfg.requestTypes?.options?.length > 0) setRequestType((t) => t || String(cfg.requestTypes.options[0].value));
-        if (cfg.units?.options?.length > 0) setUnit((u) => u || String(cfg.units.options[0].value));
+        // Defaults fill only what a restored draft didn't: last time's
+        // choice when it's still on the list, else the first option.
+        const last = readLast();
+        const has = (opts: { value: unknown }[] | undefined, v?: string) => !!v && (opts ?? []).some((o) => String(o.value) === v);
+        if (cfg.requestTypes?.options?.length > 0) setRequestType((t) => t || (has(cfg.requestTypes.options, last.requestType) ? last.requestType! : String(cfg.requestTypes.options[0].value)));
+        if (cfg.units?.options?.length > 0) setUnit((u) => u || (has(cfg.units.options, last.unit) ? last.unit! : String(cfg.units.options[0].value)));
+        else if (last.unit) setUnit((u) => u || last.unit!);
         if (cfg.priorities?.options?.length > 0 && !draftPriority.current) {
           const mid = Math.floor(cfg.priorities.options.length / 2);
           setPriority(Number(cfg.priorities.options[mid].value));
@@ -178,12 +197,12 @@ export default function NewTicketPage() {
       }
     };
     loadConfig();
+    // readLast only reads this org's key.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeOrgId]);
 
   // --- HANDLERS ---
 
-  // Dropzone state (visual feedback while a file is being dragged)
-  const [dragOver, setDragOver] = useState(false);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   // Kept across a retry: the request's number, and the files already up
   // (a failed attachment never costs a new number or a second upload).
@@ -204,19 +223,52 @@ export default function NewTicketPage() {
     e.target.value = '';
   };
 
-  const onDropFiles = (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragOver(false);
-    const dropped = Array.from(e.dataTransfer.files ?? []);
-    if (dropped.length === 0) return;
-    setFiles((prev) => [...prev, ...dropped]);
-  };
+  const drag = useFileDrag((dropped) => setFiles((prev) => [...prev, ...dropped]), isSubmitting);
 
   const removeFile = (index: number) => {
+    const f = files[index];
+    if (f) { uploadedRef.current.delete(f); markFile(f, null); }
     setFiles(prev => prev.filter((_, i) => i !== index));
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const toAttachment = (file: File, url: string): TicketAttachment => ({
+    id: crypto.randomUUID(),
+    name: file.name,
+    url,
+    type: 'Source',
+    status: 'submitted',
+    size: (file.size / 1024 / 1024).toFixed(2) + ' MB',
+    uploadedBy: userEmail || 'Unknown',
+    uploadedAt: new Date().toISOString()
+  });
+
+  // One file up, on its own. Safe to repeat: it only sends the file; the
+  // request itself is saved once, by Submit.
+  const uploadOne = async (file: File, ticketNumber: string): Promise<TicketAttachment> => {
+    markFile(file, { state: 'up' });
+    try {
+      const att = await tryUpload(file.name, async () => {
+        const result = await uploadTicketAttachment({ file, orgId: activeOrgId!, ticketId: ticketNumber });
+        return toAttachment(file, result.url);
+      }, { onRetried: (a) => { uploadedRef.current.set(file, a); markFile(file, { state: 'done' }); } });
+      uploadedRef.current.set(file, att);
+      markFile(file, { state: 'done' });
+      return att;
+    } catch (e) {
+      markFile(file, { state: 'failed', error: e instanceof Error ? e.message : String(e) });
+      throw e;
+    }
+  };
+
+  // Try one failed file again right from its row.
+  const retryFile = async (file: File) => {
+    if (!activeOrgId) return;
+    const ticketNumber = ticketNoRef.current ?? await generateTicketNumber(activeOrgId);
+    ticketNoRef.current = ticketNumber;
+    try { await uploadOne(file, ticketNumber); } catch { /* the row shows why */ }
+  };
+
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!title || !description || !unit) return;
     if (!activeOrgId) {
@@ -225,7 +277,7 @@ export default function NewTicketPage() {
     }
     
     setIsSubmitting(true);
-    setUploadStatus('Initializing Request...');
+    setUploadStatus('Starting…');
 
     try {
       if (!uid) throw new Error("Not authenticated");
@@ -280,32 +332,20 @@ export default function NewTicketPage() {
           if (had) { uploadedAttachments.push(had); continue; }
           setUploadStatus(`Uploading ${n} of ${files.length}: ${file.name}`);
           try {
-            const result = await uploadTicketAttachment({ file, orgId: activeOrgId, ticketId: ticketNumber });
-            const att: TicketAttachment = {
-              id: crypto.randomUUID(),
-              name: file.name,
-              url: result.url,
-              type: 'Source',
-              status: 'submitted',
-              size: (file.size / 1024 / 1024).toFixed(2) + ' MB',
-              uploadedBy: userEmail || 'Unknown',
-              uploadedAt: new Date().toISOString()
-            };
-            uploadedRef.current.set(file, att);
-            uploadedAttachments.push(att);
+            uploadedAttachments.push(await uploadOne(file, ticketNumber));
           } catch (e) {
             failedFiles.push(`${file.name} (${e instanceof Error ? e.message : String(e)})`);
           }
         }
         if (failedFiles.length) {
-          await appAlert({ title: "Not sent yet", message: `${failedFiles.length} of ${files.length} file${files.length === 1 ? "" : "s"} didn't upload: ${failedFiles.join("; ")}. The request isn't sent yet and everything you typed is still here. Press Submit to try ${failedFiles.length === 1 ? "that file" : "those files"} again; the ones that went up won't upload twice.`, tone: "danger" });
+          await appAlert({ title: "Not sent yet", message: `${failedFiles.length} of ${files.length} file${files.length === 1 ? "" : "s"} didn't upload: ${failedFiles.join("; ")}. The request isn't sent yet and everything you typed is still here. Tap Try again on ${failedFiles.length === 1 ? "that file" : "those files"}, then Submit; the ones that went up won't upload twice.`, tone: "danger" });
           setIsSubmitting(false);
           setUploadStatus('');
           return;
         }
       }
 
-      setUploadStatus('Finalizing Ticket...');
+      setUploadStatus('Saving the request…');
       const now = new Date().toISOString();
       // Every request enters the assignment queue (Admin / DraftingSupervisor).
       // Engineering review is a manual branch from there, not an auto-gate.
@@ -398,26 +438,26 @@ export default function NewTicketPage() {
         }
       })();
 
-      setUploadStatus('Done!');
+      setUploadStatus('Opening it…');
       draft.clear();
-      setTimeout(() => {
-        router.push('/requests'); // Redirect to new route
-      }, 500);
+      try { if (lastKey) localStorage.setItem(lastKey, JSON.stringify({ unit, requestType })); } catch { /* this device only */ }
+      // Straight to the new request, not back to the list.
+      router.push(inserted?.id ? `/requests/${inserted.id}` : '/requests');
 
     } catch (error) {
       console.error("Creation failed:", error);
       const msg = error instanceof Error ? error.message : String(error);
-      await appAlert({ message: `Failed to create ticket: ${msg}`, tone: "danger" });
+      await appAlert({ message: `The request wasn't sent: ${msg}. Everything you typed is still here.`, tone: "danger" });
       setIsSubmitting(false);
       setUploadStatus('');
     }
-  };
+  }
 
   if (loadingConfig) {
     return (
-      <div className="min-h-full flex items-center justify-center">
-        <Spinner size="lg" />
-      </div>
+      <PageShell width="form">
+        <LoadingBlock what="the request form" rows={6} />
+      </PageShell>
     );
   }
 
@@ -427,17 +467,19 @@ export default function NewTicketPage() {
       {/* Header */}
       <div className="flex items-start gap-3">
         <button
+          type="button"
           onClick={() => router.back()}
+          aria-label="Back"
           className="p-2 mt-1 hover:bg-[var(--color-surface-2)] rounded-full text-[var(--color-text-muted)] transition-colors"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
         <PageHeaderBar
           className="flex-1 min-w-0"
-          title="New Request"
+          title="New request"
           subtitle={
             <>
-              {draft.restored ? <>Your unsent draft is back. <button type="button" className="font-bold underline" onClick={() => { draft.clear(); setTitle(""); setDescription(""); setTargetDate(""); setCustomValues({}); }}>Start over</button>{" "}</> : <>Submit a new job ticket.{" "}</>}
+              {draft.restored ? <>Your unsent draft is back. <button type="button" className="font-bold underline" onClick={() => { draft.clear(); setTitle(""); setDescription(""); setTargetDate(""); setCustomValues({}); }}>Start over</button>{" "}</> : <>What do you need drawn or changed?{" "}</>}
               <IsoGuidance topic="drafting_request_intent" />
             </>
           }
@@ -455,8 +497,8 @@ export default function NewTicketPage() {
                 <div className="text-sm font-bold text-[var(--color-text)] truncate mt-0.5">
                   {sourceDocNum || sourceDocTitle || sourceFileName || 'Document'} {sourceDocRev ? `· Rev ${sourceDocRev}` : ''}
                 </div>
-                <div className="text-[11px] text-[var(--color-text)] mt-0.5">
-                  Attached automatically as a Source reference. It&apos;ll appear on the ticket once you submit.
+                <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
+                  Attached as the source file.
                 </div>
               </div>
             </div>
@@ -541,7 +583,7 @@ export default function NewTicketPage() {
                   onChange={(e) => setTargetDate(e.target.value)}
                 />
                 <p className="text-[11px] text-[var(--color-text-muted)] mt-1">
-                  Leave blank to use the org default for this request type. Past-due tickets get flagged on the list.
+                  Blank uses the usual time for this type.
                 </p>
               </div>
             </div>
@@ -596,15 +638,8 @@ export default function NewTicketPage() {
               tabIndex={0}
               onClick={() => fileInputRef.current?.click()}
               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInputRef.current?.click(); } }}
-              onDragEnter={(e) => { e.preventDefault(); setDragOver(true); }}
-              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={onDropFiles}
-              className={`border-2 border-dashed rounded-xl p-8 text-center transition-all cursor-pointer group ${
-                dragOver
-                  ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] ring-2 ring-[var(--color-accent-ring)] scale-[1.01]'
-                  : 'border-[var(--color-border-strong)] bg-[var(--color-surface-2)] hover:border-[var(--color-accent)] hover:bg-[var(--color-surface-2)]'
-              }`}
+              {...drag.bind}
+              className={`border-2 border-dashed rounded-xl p-8 text-center transition-all cursor-pointer group border-[var(--color-border-strong)] bg-[var(--color-surface-2)] hover:border-[var(--color-text-muted)] ${drag.ring}`}
             >
               <input
                 ref={fileInputRef}
@@ -614,34 +649,53 @@ export default function NewTicketPage() {
                 onChange={handleFileSelect}
               />
               <div className="flex flex-col items-center pointer-events-none">
-                <div className={`p-3 bg-[var(--color-surface)] rounded-full shadow-sm mb-3 transition-transform ${dragOver ? 'scale-110' : 'group-hover:scale-105'}`}>
-                  <UploadCloud className={`w-6 h-6 ${dragOver ? 'text-[var(--color-text)]' : 'text-[var(--color-text-muted)]'}`} />
+                <div className="p-3 bg-[var(--color-surface)] rounded-full shadow-sm mb-3">
+                  <UploadCloud className={`w-6 h-6 ${drag.over ? 'text-[var(--color-text)]' : 'text-[var(--color-text-muted)]'}`} />
                 </div>
-                <p className="text-sm font-bold text-[var(--color-text)]">{dragOver ? 'Drop to attach' : 'Drop files here, or click to browse'}</p>
+                <p className="text-sm font-bold text-[var(--color-text)]">{drag.over ? drag.say : 'Drop files here, or tap to pick'}</p>
                 <p className="text-xs text-[var(--color-text-faint)] mt-1">PDF, JPG, PNG, DWG · multiple files OK</p>
               </div>
             </div>
 
             {files.length > 0 && (
               <div className="mt-4 space-y-2">
-                {files.map((file, idx) => (
-                  <div key={idx} className="flex items-center justify-between p-3 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg shadow-sm">
+                {files.map((file, idx) => {
+                  const st = fileState.get(file);
+                  return (
+                  <div key={idx} className={`flex items-center justify-between gap-2 p-3 bg-[var(--color-surface)] border rounded-lg shadow-sm ${st?.state === 'failed' ? 'border-red-300 dark:border-red-500/50' : 'border-[var(--color-border)]'}`}>
                     <div className="flex items-center gap-3 min-w-0">
                       <FileThumb file={file} />
                       <div className="min-w-0">
-                        <p className="text-sm font-bold text-[var(--color-text)] truncate max-w-[200px]">{file.name}</p>
-                        <p className="text-xs text-[var(--color-text-muted)]">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
+                        <p className="text-sm font-bold text-[var(--color-text)] truncate max-w-[200px] sm:max-w-sm">{file.name}</p>
+                        <p className="text-xs text-[var(--color-text-muted)]">
+                          {(file.size / 1024 / 1024).toFixed(2)} MB
+                          {st?.state === 'up' && <> · Uploading…</>}
+                          {st?.state === 'done' && <span className="text-emerald-700 dark:text-emerald-400 font-semibold"> · Uploaded</span>}
+                          {st?.state === 'failed' && <span className="text-red-700 dark:text-red-400 font-semibold"> · Didn&apos;t upload: {st.error}</span>}
+                        </p>
                       </div>
                     </div>
-                    <button 
-                      type="button"
-                      onClick={() => removeFile(idx)}
-                      className="p-1 hover:bg-red-50 text-[var(--color-text-faint)] hover:text-red-500 rounded transition-colors"
-                    >
-                      <X className="w-5 h-5" />
-                    </button>
+                    <div className="flex items-center gap-1 shrink-0">
+                      {st?.state === 'failed' && (
+                        <button type="button" onClick={() => void retryFile(file)} className="h-8 px-2.5 rounded-lg border border-[var(--color-border)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                          Try again
+                        </button>
+                      )}
+                      {st?.state === 'up' ? <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)]" /> : (
+                        <button
+                          type="button"
+                          onClick={() => removeFile(idx)}
+                          aria-label={`Remove ${file.name}`}
+                          disabled={isSubmitting}
+                          className="p-1 hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)] rounded transition-colors disabled:opacity-40"
+                        >
+                          <X className="w-5 h-5" />
+                        </button>
+                      )}
+                    </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -664,7 +718,7 @@ export default function NewTicketPage() {
               ) : (
                 <>
                   <Save className="w-5 h-5 mr-2" />
-                  Submit Request
+                  Submit request
                 </>
               )}
             </button>
