@@ -190,7 +190,7 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
   };
 
   const inp = "h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent-ring)]";
-  const lbl = "block mb-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]";
+  const lbl = "block mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]";
   // A choice: picked is dark, the rest a quiet fill.
   const chip = (on: boolean) => `h-8 px-3 rounded-lg text-[12px] font-bold ${on ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`;
   return (
@@ -199,7 +199,7 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
         className="absolute left-1/2 top-10 -translate-x-1/2 w-[560px] max-w-[96vw] max-h-[88dvh] overflow-y-auto rounded-2xl bg-[var(--color-surface)] text-[var(--color-text)] shadow-2xl text-[12.5px] max-sm:left-0 max-sm:right-0 max-sm:top-auto max-sm:bottom-0 max-sm:translate-x-0 max-sm:w-full max-sm:max-w-none max-sm:rounded-b-none max-sm:max-h-[92dvh]">
         <div className="sticky top-0 z-10 flex items-start justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 pt-3 pb-2.5">
           <div className="min-w-0">
-            <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Into the schedule</div>
+            <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Into the schedule</div>
             <div className="mt-0.5 text-[15px] font-bold">{isNew ? `New work order: ${k.lower}` : k.word === "Discovery" ? "Discovery work" : "Added scope"}</div>
             <div className="text-[12px] text-[var(--color-text-muted)]">Work that wasn&apos;t in the plan, and what it does to it.</div>
           </div>
@@ -338,7 +338,7 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
 
           {/* What it does to the schedule — before it's saved. */}
           <div className={`border-t border-[var(--color-border)] pt-3 space-y-1 ${plan?.impact.critical ? "border-l-2 border-l-rose-500 pl-3" : ""}`}>
-            <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">What it does to the schedule</div>
+            <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">What it does to the schedule</div>
             {!plan ? <div className="text-[var(--color-text-muted)]">{timeProblem && filled.length ? timeProblem : "Add the work it needs (a step and its hours) to see."}</div> : (
               <>
                 <div className="font-bold">{impactLine(plan.impact, hrs, typeWord(ptype))}</div>

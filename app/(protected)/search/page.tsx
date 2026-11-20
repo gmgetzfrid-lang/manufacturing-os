@@ -127,7 +127,7 @@ export default function SearchPage() {
                     <span className="flex-1 min-w-0">
                       <span className="block text-[14px] font-bold text-[var(--color-text)] truncate">{h.title}</span>
                       {h.subtitle && <span className="block text-[13px] text-[var(--color-text-muted)] truncate mt-0.5">{h.subtitle}</span>}
-                      <span className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mt-1">{OTHER_LABEL[h.kind]}</span>
+                      <span className="block text-[13px] font-semibold text-[var(--color-text-muted)] mt-1">{OTHER_LABEL[h.kind]}</span>
                     </span>
                     {h.badge && <span className="text-[11px] font-bold uppercase text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded shrink-0">{h.badge}</span>}
                   </Link>

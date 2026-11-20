@@ -190,7 +190,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
       <div className="px-4 pb-2 overflow-x-auto">
         <table className="w-full text-xs min-w-[640px]">
           <thead>
-            <tr className="text-left text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+            <tr className="text-left text-[13px] font-semibold text-[var(--color-text-muted)]">
               <th className="py-1.5 w-6" />
               <th className="py-1.5">Budget line</th>
               <th className="py-1.5">Type</th>
@@ -287,7 +287,7 @@ function Fact({ label, value, sub, tone }: { label: string; value: string; sub?:
   const ring = tone === "warn" ? "border-amber-500/50 bg-amber-500/[0.06]" : tone === "ok" ? "border-emerald-500/40 bg-emerald-500/[0.05]" : "border-[var(--color-border)] bg-[var(--color-surface)]";
   return (
     <div className={`rounded-xl border px-3 py-2 ${ring}`}>
-      <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">{label}</div>
+      <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">{label}</div>
       <div className="text-sm font-black tabular-nums text-[var(--color-text)]">{value}</div>
       {sub && <div className={`text-[11px] font-bold ${tone === "warn" ? "text-amber-700 dark:text-amber-300" : "text-[var(--color-text-muted)]"}`}>{sub}</div>}
     </div>

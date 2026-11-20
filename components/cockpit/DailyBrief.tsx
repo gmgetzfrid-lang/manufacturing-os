@@ -105,13 +105,13 @@ export function DailyBrief({ data }: { data: InboxSnapshot }) {
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <h2 className="text-sm font-black uppercase tracking-widest text-[var(--color-text-muted)]">Daily brief</h2>
-            {urgent > 0 && <span className="inline-flex items-center gap-1 text-[11px] font-black uppercase tracking-wider text-rose-600 bg-rose-50 border border-rose-100 rounded-full px-2 py-0.5">{urgent} urgent</span>}
+            <h2 className="text-sm font-semibold text-[var(--color-text-muted)]">Daily brief</h2>
+            {urgent > 0 && <span className="inline-flex items-center gap-1 text-[13px] font-semibold text-rose-600 bg-rose-50 border border-rose-100 rounded-full px-2 py-0.5">{urgent} urgent</span>}
           </div>
           <p className="text-sm text-[var(--color-text-muted)] mt-1 leading-relaxed">{narrative}</p>
           {next && (
             <Link href={next.href} className="inline-flex items-center gap-1.5 mt-3 px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-xs font-bold hover:bg-[var(--color-surface-2)] transition-colors">
-              <span className="text-[11px] font-black uppercase tracking-wider opacity-80">Start here</span>
+              <span className="text-[13px] font-semibold opacity-80">Start here</span>
               {next.label}
               <ChevronRight className="w-3.5 h-3.5" />
             </Link>

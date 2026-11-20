@@ -41,7 +41,7 @@ export default function PhaseLines({ rows, print }: { rows: PhaseStanding[]; pri
   return (
     <div data-phase-lines>
       <div className={`flex items-baseline justify-between gap-2 ${print ? "mb-2" : "mb-1"}`}>
-        <div className={print ? "text-[12px] font-semibold text-[var(--color-text-muted)]" : "text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]"}>By phase</div>
+        <div className={print ? "text-[12px] font-semibold text-[var(--color-text-muted)]" : "text-[13px] font-semibold text-[var(--color-text-muted)]"}>By phase</div>
         <div className={`${print ? "text-[11px]" : "text-[12px]"} text-[var(--color-text-muted)]`}>Each phase against its own plan</div>
       </div>
       {/* On screen the phases are rows on the card, split by hairlines; on paper, a framed list. */}

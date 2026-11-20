@@ -295,7 +295,7 @@ export default function ColumnManager(props: {
               })}
               {renameError && (
                 <div className="mt-3 text-xs border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
-                  <div className="font-black uppercase tracking-widest text-[11px] mb-1">Rename failed</div>
+                  <div className="font-semibold text-[13px] mb-1">Rename failed</div>
                   {renameError}
                 </div>
               )}

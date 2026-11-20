@@ -121,7 +121,7 @@ export default function RelatedPanel({
     <div className="space-y-2.5">
       <div className="flex items-center gap-2">
         <Waypoints className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-        <span className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest flex-1">Related</span>
+        <span className="text-[13px] font-semibold text-[var(--color-text)] flex-1">Related</span>
         <button onClick={() => openRelationshipGraph(documentId)}
           className="text-[11px] font-bold text-[var(--color-accent-text)] hover:underline">Open graph</button>
         {shortLink && (
@@ -230,7 +230,7 @@ export default function RelatedPanel({
       {/* Automatic layer — what the system already knows. */}
       {autoShown.length > 0 && (
         <div>
-          <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mb-1">
+          <div className="text-[13px] font-semibold text-[var(--color-text-faint)] mb-1">
             Found automatically
           </div>
           <div className="space-y-0.5">
@@ -254,7 +254,7 @@ export default function RelatedPanel({
         <div className="border-l-2 border-amber-500 pl-2.5 py-1 space-y-1.5">
           <div className="flex items-center gap-1.5">
             <Sparkles className="w-3 h-3 text-amber-600" />
-            <span className="text-[11px] font-black uppercase tracking-widest text-amber-800 dark:text-amber-300">
+            <span className="text-[13px] font-semibold text-amber-800 dark:text-amber-300">
               Found · needs review
             </span>
           </div>
@@ -287,7 +287,7 @@ export default function RelatedPanel({
       {/* Linked from — the other direction of the web. What points HERE. */}
       {backlinks && (backlinks.docs.length > 0 || backlinks.projects.length > 0) && (
         <div>
-          <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mb-1">
+          <div className="text-[13px] font-semibold text-[var(--color-text-faint)] mb-1">
             Linked from
           </div>
           <div className="space-y-0.5">

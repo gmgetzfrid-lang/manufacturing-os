@@ -72,7 +72,7 @@ export default function MentionsPanel({ orgId, assetId, tag }: Props) {
   return (
     <section className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden">
       <div className="px-4 sm:px-5 pt-4 pb-3 border-b border-[var(--color-border)] flex items-center justify-between gap-2">
-        <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] inline-flex items-center gap-2">
+        <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)] inline-flex items-center gap-2">
           <Link2 className="w-4 h-4" /> Mentioned in
         </h2>
         {docs && docs.length > 0 && (

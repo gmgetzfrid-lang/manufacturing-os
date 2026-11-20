@@ -169,12 +169,12 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
             </p>
             <div className="flex items-end gap-2 flex-wrap">
               <label className="block flex-1 min-w-48">
-                <span className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">Your name (required)</span>
+                <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Your name (required)</span>
                 <input value={ackName} onChange={(e) => setAckName(e.target.value)} placeholder="e.g. Dave Miller, Acme Fabricators"
                   className="mt-1 w-full h-10 rounded-[10px] border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-base sm:text-[14px] text-[var(--color-text)]" />
               </label>
               <label className="block flex-1 min-w-48">
-                <span className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">Note (optional)</span>
+                <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Note (optional)</span>
                 <input value={ackNote} onChange={(e) => setAckNote(e.target.value)} placeholder="e.g. received, distributing to shop"
                   className="mt-1 w-full h-10 rounded-[10px] border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-base sm:text-[14px] text-[var(--color-text)]" />
               </label>

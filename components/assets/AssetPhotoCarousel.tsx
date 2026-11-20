@@ -138,7 +138,7 @@ export default function AssetPhotoCarousel({
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-[15px] font-black text-white truncate">{asset.tag}</span>
               {assetType && (
-                <span className="text-[11px] font-black uppercase tracking-widest bg-white/15 text-white/90 px-1.5 py-0.5 rounded">
+                <span className="text-[13px] font-semibold bg-white/15 text-white/90 px-1.5 py-0.5 rounded">
                   {assetType.name}
                 </span>
               )}

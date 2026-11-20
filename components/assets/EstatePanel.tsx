@@ -32,7 +32,7 @@ export default function EstatePanel({ orgId, assetId, tag }: { orgId: string; as
   return (
     <section className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden">
       <div className="px-4 sm:px-5 pt-4 pb-3 border-b border-[var(--color-border)] flex items-center justify-between">
-        <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] inline-flex items-center gap-2"><Waypoints className="w-4 h-4" /> Across the estate</h2>
+        <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)] inline-flex items-center gap-2"><Waypoints className="w-4 h-4" /> Across the estate</h2>
         <Link href={`/documents/graph?q=${encodeURIComponent(tag)}`} className="text-[13px] font-bold text-[var(--color-accent-text)] hover:underline">Explore on the map →</Link>
       </div>
       <div className="p-4 space-y-4">

@@ -18,7 +18,7 @@ import { PageHero } from "@/components/ui/PageHero";
 
 const WIDTHS = {
   /** Dense work surfaces: tables, boards, dashboards. */
-  work: "max-w-7xl",
+  work: "max-w-[1480px]",
   /** Reading/forms: settings, profile, detail panes. */
   form: "max-w-3xl",
   /** Edge-to-edge tools (document table, viewers). */

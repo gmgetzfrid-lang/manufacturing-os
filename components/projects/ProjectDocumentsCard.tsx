@@ -207,7 +207,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-[14px] font-bold text-[var(--color-text)] truncate">{r.label}</span>
                     {r.rev && <span className="text-[11px] font-mono text-[var(--color-text-muted)]">Rev {r.rev}</span>}
-                    {r.status && <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{r.status}</span>}
+                    {r.status && <span className="text-[13px] font-semibold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{r.status}</span>}
                     <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded border ${badge.cls}`} title={badge.hint}>{badge.label}</span>
                   </div>
                   {r.lastSeenAt && <div className="text-[11px] text-[var(--color-text-faint)] mt-0.5">last activity {new Date(r.lastSeenAt).toLocaleDateString()}</div>}

@@ -94,7 +94,7 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
         </div>
 
         <label className="block">
-          <span className="block mb-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Field</span>
+          <span className="block mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]">Field</span>
           <select value={field.key} onChange={(e) => pickField(e.target.value)} className={inp}>
             {BULK_FIELDS.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
           </select>
@@ -105,7 +105,7 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
         )}
         {mode === "replace" && !field.options && (
           <div>
-            <span className="block mb-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">1. Pick the name to replace</span>
+            <span className="block mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]">1. Pick the name to replace</span>
             {values.length === 0 ? (
               <p className="text-[12px] text-[var(--color-text-muted)]">No task has this field filled in.</p>
             ) : (
@@ -134,7 +134,7 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
 
         {mode === "set" && field.options && (
           <label className="block">
-            <span className="block mb-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Set to</span>
+            <span className="block mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]">Set to</span>
             <select value={to} onChange={(e) => setTo(e.target.value)} className={inp}>
               {field.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
@@ -143,7 +143,7 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
         {(mode === "set" || from) && !field.options && (
           <div className="space-y-1.5">
             <label className="block">
-              <span className="block mb-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+              <span className="block mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]">
                 {mode === "replace" ? <>2. Replace &ldquo;<span className="normal-case tracking-normal">{from}</span>&rdquo; with</> : "Set to"}
               </span>
               <input value={to} onChange={(e) => { setTo(e.target.value); if (e.target.value.trim()) setClear(false); }} autoFocus list="bulk-values" disabled={clear}
@@ -160,7 +160,7 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
 
         {plan.length > 0 && (
           <div>
-            <span className="block mb-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Will change {plan.length} task{plan.length === 1 ? "" : "s"}</span>
+            <span className="block mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]">Will change {plan.length} task{plan.length === 1 ? "" : "s"}</span>
             <ul className="max-h-48 overflow-y-auto border-y border-[var(--color-border)] divide-y divide-[var(--color-border)] text-[12.5px]">
               {plan.slice(0, 200).map((c) => (
                 <li key={c.id} className="px-1 py-1.5 flex items-center gap-2">

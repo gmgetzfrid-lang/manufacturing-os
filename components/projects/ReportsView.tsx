@@ -631,7 +631,7 @@ export default function ReportsView(p: Props) {
             {actions}
             {madeHere.length > 0 && (
               <div>
-                <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mb-1">Made lately</div>
+                <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">Made lately</div>
                 <ul className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
                   {madeHere.map((m) => (
                     <li key={`${m.label}:${m.at}`}>
@@ -659,7 +659,7 @@ export default function ReportsView(p: Props) {
         {[{ head: "Reports", sub: "filled in from the project", items: REPORTS.filter((r) => !r.form && (r.id !== "phase" || ph.phases.length > 0)) }, { head: "Forms", sub: "blank, filled in by hand", items: REPORTS.filter((r) => r.form) }].map((g) => (
           <div key={g.head} className="mb-2">
             <div className="px-4 pt-1 pb-1">
-              <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{g.head}</div>
+              <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">{g.head}</div>
               <div className="text-[11.5px] text-[var(--color-text-faint)]">{g.sub}</div>
             </div>
             {g.items.map((r) => {

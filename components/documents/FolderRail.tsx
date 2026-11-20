@@ -188,7 +188,7 @@ export default function FolderRail({
           title="Folders: hover to browse"
         >
           <PanelLeftOpen className="w-4 h-4" />
-          <span className="text-[11px] font-black uppercase tracking-[0.15em] leading-none" style={{ writingMode: "vertical-rl" }}>Folders</span>
+          <span className="text-[13px] font-semibold leading-none" style={{ writingMode: "vertical-rl" }}>Folders</span>
         </div>
 
         <div className="w-6 h-px bg-[var(--color-border)] my-1" />
@@ -256,7 +256,7 @@ export default function FolderRail({
           <div className="h-full flex flex-col">
             <div className="px-3 py-2.5 border-b border-[var(--color-border)] flex items-center justify-between">
               <div>
-                <div className="text-[11px] font-black text-[var(--color-text-faint)] uppercase tracking-widest">Library</div>
+                <div className="text-[13px] font-semibold text-[var(--color-text-faint)] ">Library</div>
                 <div className="text-xs font-bold text-[var(--color-text)] truncate max-w-[180px]">{libraryName}</div>
               </div>
               {isController && (

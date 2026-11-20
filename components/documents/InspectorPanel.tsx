@@ -1009,7 +1009,7 @@ function TransmittalTrail({ orgId, documentId, currentRev }: { orgId: string; do
   if (rows.length === 0) return null;
   return (
     <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 px-3 py-2.5">
-      <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1.5">Transmitted on</div>
+      <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Transmitted on</div>
       <ul className="space-y-1">
         {rows.map((r) => {
           const stale = !!(r.rev && currentRev && r.rev !== currentRev);

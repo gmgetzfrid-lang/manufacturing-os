@@ -27,7 +27,7 @@ export default function ScheduleEmptyState({ canEdit, onImport, onAdd, phaseName
     <Card pad={false}>
       {lead && <div className="px-4 sm:px-5 pt-4">{lead}</div>}
       <div className="px-5 sm:px-6 pt-6 pb-5">
-        <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
+        <div className="text-[13px] font-semibold text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
           <CalendarRange className="w-3.5 h-3.5" /> Schedule
         </div>
         <h2 className="mt-2 text-[15px] font-bold text-[var(--color-text)]">{phaseName ? `No schedule in ${phaseName} yet.` : "No schedule yet."}</h2>

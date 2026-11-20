@@ -542,7 +542,7 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
 
           {/* Document picker */}
           <div>
-            <div className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-[var(--color-text-muted)] mb-1.5 flex items-center gap-1.5"><Package className="w-3.5 h-3.5" /> Documents ({items.length})</div>
+            <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5 flex items-center gap-1.5"><Package className="w-3.5 h-3.5" /> Documents ({items.length})</div>
             <div className="relative">
               <Search className="w-4 h-4 text-[var(--color-text-faint)] absolute left-3 top-1/2 -translate-y-1/2" />
               <Input value={pq} onChange={(e) => setPq(e.target.value)} placeholder="Search by number or title to add…" className="pl-9" />

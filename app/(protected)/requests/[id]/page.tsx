@@ -381,7 +381,7 @@ const WatermarkOverlay = () => (
       {Array.from({ length: 9 }).map((_, i) => (
         <div key={i} className="flex justify-around whitespace-nowrap opacity-[0.07]">
           {Array.from({ length: 3 }).map((__, j) => (
-            <span key={j} className="text-xl font-semibold uppercase tracking-[0.45em] text-[var(--color-text)]">
+            <span key={j} className="text-xl font-semibold text-[var(--color-text)]">
               Preliminary&nbsp;·&nbsp;Not for Construction
             </span>
           ))}
@@ -671,7 +671,7 @@ const FileViewerModal = ({
             <div className="min-w-0">
               <h3 className="font-bold text-lg leading-none flex items-center min-w-0">
                 <span className="truncate">{file.name}</span>
-                {file.type === 'Draft' && <span className="ml-3 shrink-0 px-2 py-0.5 border border-amber-400/60 text-amber-300 text-[11px] font-black rounded uppercase tracking-wider">Draft, not for construction</span>}
+                {file.type === 'Draft' && <span className="ml-3 shrink-0 px-2 py-0.5 border border-amber-400/60 text-amber-300 text-[13px] font-semibold rounded ">Draft, not for construction</span>}
               </h3>
               <div className="flex items-center text-xs text-slate-400 mt-1.5 space-x-2">
                 <span className="bg-slate-800 px-2 py-0.5 rounded border border-slate-700">{file.type}</span>
@@ -1692,7 +1692,7 @@ export default function TicketDetailView() {
           <div>
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-amber-800 dark:text-amber-300 inline-flex items-center gap-1.5"><RotateCcw className="w-3.5 h-3.5" /> What to fix</h2>
+                <h2 className="text-[13px] font-semibold text-amber-800 dark:text-amber-300 inline-flex items-center gap-1.5"><RotateCcw className="w-3.5 h-3.5" /> What to fix</h2>
                 {latestRevision.category && (
                   <span className="text-[12px] font-bold text-[var(--color-text-muted)]">{latestRevision.category}</span>
                 )}
@@ -1733,7 +1733,7 @@ export default function TicketDetailView() {
             <div className="flex items-start gap-3">
               <Archive className="w-4 h-4 text-[var(--color-text-muted)] shrink-0 mt-0.5" />
               <div className="min-w-0">
-                <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Archived</h2>
+                <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)]">Archived</h2>
                 <p className="text-[14px] text-[var(--color-text)] mt-1.5 leading-relaxed">
                   It closed a while ago, so its files and comments moved to the archive{' '}
                   {ticket.archiveId ? <span className="font-mono font-bold">{ticket.archiveId}</span> : ''}. This page keeps the summary.
@@ -1813,12 +1813,12 @@ export default function TicketDetailView() {
                 </div>
               </div>
             </div>
-            <div className="mt-5 pt-4 border-t border-[var(--color-border)]"><div className="text-[11px] text-[var(--color-text-muted)] font-bold uppercase tracking-[0.12em] mb-1.5">Scope of work</div><div className="text-[14px] text-[var(--color-text)] leading-relaxed whitespace-pre-wrap">{ticket.description}</div></div>
+            <div className="mt-5 pt-4 border-t border-[var(--color-border)]"><div className="text-[13px] text-[var(--color-text-muted)] font-semibold mb-1.5">Scope of work</div><div className="text-[14px] text-[var(--color-text)] leading-relaxed whitespace-pre-wrap">{ticket.description}</div></div>
           </Card>
 
           <div {...filesDrag.bind} className={`bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden flex flex-col ${filesDrag.ring}`}>
              <div className="px-4 sm:px-5 pt-4 pb-3 flex flex-col sm:flex-row justify-between sm:items-center gap-2">
-               <h2 className="text-[11px] font-extrabold text-[var(--color-text-muted)] uppercase tracking-[0.14em] flex items-center"><Paperclip className="w-3.5 h-3.5 mr-1.5" /> Files</h2>
+               <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center"><Paperclip className="w-3.5 h-3.5 mr-1.5" /> Files</h2>
                {filesDrag.over
                  ? <span className="text-[13px] font-bold text-[var(--color-text)]">{filesDrag.say}</span>
                  : isUploading
@@ -1830,7 +1830,7 @@ export default function TicketDetailView() {
              )}
 
              <div className="px-4 sm:px-5 py-4 border-t border-[var(--color-border)] order-1">
-               <h3 className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-2">Source and reference</h3>
+               <h3 className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">Source and reference</h3>
                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4">
                  {sourceFiles.length === 0 ? <p className="text-[13px] text-[var(--color-text-muted)]">No source files provided.</p> : sourceFiles.map((file, idx) => (
                    <div key={idx} className="flex items-center justify-between py-2 border-b border-[var(--color-border)] last:border-b-0 md:[&:nth-last-child(2):nth-child(odd)]:border-b-0">
@@ -1842,7 +1842,7 @@ export default function TicketDetailView() {
              </div>
 
              <div className={`px-4 sm:px-5 py-4 border-t border-[var(--color-border)] ${['FINAL_DRAFT', 'PENDING_FINAL_APPROVAL', 'CLOSED'].includes(ticket.status) ? 'order-3 opacity-70' : 'order-2'}`}>
-               <h3 className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-2">Work in progress (drafts)</h3>
+               <h3 className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">Work in progress (drafts)</h3>
                <div className="space-y-3">
                  {sortedDrafts.length === 0 ? <p className="text-[13px] text-[var(--color-text-muted)]">No drafts started yet.</p> : (
                     <>
@@ -1885,7 +1885,7 @@ export default function TicketDetailView() {
                         <div className="space-y-3 pt-2">
                           <div className="flex items-center gap-3">
                             <div className="h-px bg-[var(--color-border)] flex-1"/>
-                            <span className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase tracking-widest">Earlier versions</span>
+                            <span className="text-[13px] font-semibold text-[var(--color-text-faint)] ">Earlier versions</span>
                             <div className="h-px bg-[var(--color-border)] flex-1"/>
                           </div>
                           <div>
@@ -1910,7 +1910,7 @@ export default function TicketDetailView() {
              </div>
 
              <div className={`px-4 sm:px-5 py-4 border-t border-[var(--color-border)] ${['FINAL_DRAFT', 'PENDING_FINAL_APPROVAL', 'CLOSED'].includes(ticket.status) ? 'order-2' : 'order-3'}`}>
-               <h3 className="text-[11px] font-bold uppercase tracking-[0.12em] mb-2 flex items-center text-[var(--color-text-muted)]">
+               <h3 className="text-[13px] font-semibold mb-2 flex items-center text-[var(--color-text-muted)]">
                  <CheckCircle2 className="w-3 h-3 mr-1" /> Issued for construction
                  {ticket.deliverableRev && /^\d+$/.test(ticket.deliverableRev) && (
                    <span className="ml-2 px-1.5 py-0.5 bg-[var(--color-surface-2)] text-[var(--color-text)] text-[11px] font-black rounded normal-case tracking-normal">Rev {ticket.deliverableRev}</span>
@@ -1957,7 +1957,7 @@ export default function TicketDetailView() {
                        {comment.user !== userEmail && <UserAvatar email={comment.user} size={24} rounded="full" className="mb-1" />}
                        <div className={`rounded-2xl p-3.5 shadow-sm text-sm relative group ${comment.type === 'Rejection' || comment.type === 'Revision' ? 'bg-amber-50 border border-amber-200 text-amber-900 dark:bg-amber-500/10 dark:border-amber-500/30 dark:text-amber-200 rounded-bl-none' : comment.type === 'Approval' ? 'bg-emerald-50 border border-emerald-100 text-emerald-900 dark:bg-emerald-500/10 dark:border-emerald-500/30 dark:text-emerald-200 rounded-bl-none' : comment.user === userEmail ? 'bg-[var(--color-surface-2)] text-[var(--color-text)] rounded-br-none ' : `${OTHER_BUBBLE} rounded-bl-none`}`}>
                           {comment.user !== userEmail && comment.type === 'General' && (
-                            <div className="text-[11px] font-black uppercase tracking-wider mb-1 opacity-60">{authorLabel(comment.user)}</div>
+                            <div className="text-[13px] font-semibold mb-1 opacity-60">{authorLabel(comment.user)}</div>
                           )}
                           
                           {/* HEADER: Type & Category */}

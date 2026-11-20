@@ -134,9 +134,9 @@ function FieldInput({ field: f, value, onChange, needsYou }: {
   const base = `w-full rounded-lg border px-3 py-2 text-[14px] text-[var(--color-text)] focus:outline-none focus:border-[var(--color-border-strong)] focus:ring-2 focus:ring-[var(--color-border)] ${ring}`;
   return (
     <div className="py-3">
-      <label htmlFor={id} className="flex items-center gap-2 text-[11px] font-extrabold uppercase tracking-[0.12em] text-[var(--color-text-muted)] mb-1.5">
+      <label htmlFor={id} className="flex items-center gap-2 text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">
         {f.label}
-        {needsYou && <span className="text-[11px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">· needs you</span>}
+        {needsYou && <span className="text-[13px] font-semibold text-amber-700 dark:text-amber-400">· needs you</span>}
       </label>
       {f.kind === "long" ? (
         <textarea id={id} value={value} onChange={(e) => onChange(e.target.value)} rows={Math.min(14, Math.max(4, Math.ceil(value.length / 90)))} className={`${base} leading-relaxed`} />

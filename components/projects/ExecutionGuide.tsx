@@ -109,7 +109,7 @@ export default function ExecutionGuide({ open: openProp, onOpenChange, buttonCla
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mb-2">{title}</div>
+      <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">{title}</div>
       <div className="space-y-2">{children}</div>
     </div>
   );

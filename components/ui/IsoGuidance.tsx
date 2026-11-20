@@ -182,7 +182,7 @@ export default function IsoGuidance({ topic, placement, size }: Props) {
       <div>
         <div className="flex items-center gap-1.5 mb-1.5">
           <ShieldCheck className="w-3 h-3 text-emerald-400" />
-          <span className="text-[11px] font-black text-emerald-300 uppercase tracking-widest">ISO Guidance</span>
+          <span className="text-[13px] font-semibold text-emerald-300 ">ISO Guidance</span>
         </div>
         <div className="text-[11px] font-bold mb-1">{entry.title}</div>
         <div className="text-[11px] text-slate-200 leading-relaxed">{entry.body}</div>

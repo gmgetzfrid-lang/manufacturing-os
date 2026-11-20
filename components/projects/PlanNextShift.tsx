@@ -319,7 +319,7 @@ function Confirm({ milestones, action, next, now, tz, times, mode, crews, when, 
         </div>
       )}
       <div className={`rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 space-y-1 ${plan.impact.critical || (moved && dh > 0) ? "border-l-2 border-l-rose-500" : ""}`}>
-        <div className="font-black text-[11px] uppercase tracking-wider text-[var(--color-text-muted)]">What it does to the schedule</div>
+        <div className="font-semibold text-[13px] text-[var(--color-text-muted)]">What it does to the schedule</div>
         <div>{ptype.word} (forecast): {Number.isFinite(f0) ? `${when(f0)} → ` : ""}<b className={moved && dh > 0 ? "text-rose-700 dark:text-rose-400" : ""}>{Number.isFinite(f1) ? when(f1) : "-"}</b>{!moved ? ": unchanged" : dh > 0 ? `: ${dh} h later` : `: ${-dh} h sooner`}</div>
         {plan.impact.critical && <div className="font-bold text-rose-700 dark:text-rose-400">Touches the critical path.</div>}
         {plan.pushed.length > 0
@@ -366,7 +366,7 @@ function Tag({ tone, children }: { tone: "rose" | "amber" | "emerald" | "slate";
     : tone === "amber" ? "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-900"
       : tone === "emerald" ? "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-200 dark:border-emerald-900"
         : "bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700";
-  return <span className={`inline-block max-w-full break-words px-1.5 py-px rounded border text-[11px] font-black uppercase tracking-wider ${cls}`}>{children}</span>;
+  return <span className={`inline-block max-w-full break-words px-1.5 py-px rounded border text-[13px] font-semibold ${cls}`}>{children}</span>;
 }
 
 function Ready({ x }: { x: LookAheadItem }) {

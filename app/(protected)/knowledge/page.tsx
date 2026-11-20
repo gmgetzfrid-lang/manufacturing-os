@@ -166,11 +166,11 @@ export default function KnowledgePage() {
             <ModalHeader icon={BookOpen} title="New knowledge library" onClose={creating ? undefined : () => setShowCreate(false)} />
             <ModalBody className="space-y-3">
               <label className="block">
-                <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">Name</span>
+                <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Name</span>
                 <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Engineering Standards & Practices" autoFocus />
               </label>
               <label className="block">
-                <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">Description (optional)</span>
+                <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Description (optional)</span>
                 <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2}
                   placeholder="What lives in this library and who should ask it questions" />
               </label>

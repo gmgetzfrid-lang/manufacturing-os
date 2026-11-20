@@ -44,7 +44,7 @@ function DeleteSafetyModalBody({
         </p>
 
         <div className="space-y-2">
-          <label className="text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider">
+          <label className="text-[13px] font-semibold text-[var(--color-text-muted)] ">
             Type{" "}
             <span className="select-all font-mono text-[var(--color-text)] bg-[var(--color-surface-2)] px-1 py-0.5 rounded border border-[var(--color-border)] normal-case">
               {libraryName}

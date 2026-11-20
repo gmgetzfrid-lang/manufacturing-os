@@ -178,7 +178,7 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
         onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between sticky top-0 bg-[var(--color-surface)] rounded-t-2xl z-10">
           <div>
-            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Output docs</div>
+            <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Output docs</div>
             <h2 className="mt-1 text-[24px] leading-tight font-black tracking-[-0.02em] text-[var(--color-text)]">
               {template ? (template.name || "Edit template") : "New output template."}
             </h2>
@@ -192,11 +192,11 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
         <div className="p-5 space-y-5">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="block">
-              <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Name</span>
+              <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Name</span>
               <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Scope of Work" />
             </label>
             <label className="block">
-              <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">One document per…</span>
+              <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">One document per…</span>
               <Select value={mode} onChange={(e) => setMode(e.target.value as OutputTemplate["mode"])}>
                 <option value="per_row">Row - one document per spreadsheet row</option>
                 <option value="summary">Summary - one document covering all rows</option>
@@ -205,14 +205,14 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
             </label>
           </div>
           <label className="block">
-            <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Description</span>
+            <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Description</span>
             <Input value={description} onChange={(e) => setDescription(e.target.value)}
               placeholder="Issued to contractors for turnaround work orders" />
           </label>
 
           {/* ── Blank template ─────────────────────────────────────────── */}
           <div {...templateDrag.bind} className={`rounded-xl border border-[var(--color-border)] p-3.5 ${templateDrag.ring}`}>
-            <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5">
+            <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">
               Blank template: it sets all the formatting
               {templateDrag.over && <span className="normal-case tracking-normal font-bold text-[var(--color-text)]"> · {templateDrag.say}</span>}
             </div>
@@ -256,7 +256,7 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
           {/* ── Fill points ────────────────────────────────────────────── */}
           {placeholders.length > 0 && (
             <div className="rounded-xl border border-[var(--color-border)] p-3.5">
-              <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-2">
+              <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">
                 Fill points - what goes in each blank
               </div>
               <ul className="space-y-2">
@@ -302,7 +302,7 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
 
           {/* ── Examples ───────────────────────────────────────────────── */}
           <div {...exampleDrag.bind} className={`rounded-xl border border-[var(--color-border)] p-3.5 ${exampleDrag.ring}`}>
-            <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5">
+            <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">
               Example documents: the voice to copy
               {exampleDrag.over && <span className="normal-case tracking-normal font-bold text-[var(--color-text)]"> · {exampleDrag.say}</span>}
             </div>
@@ -336,14 +336,14 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
           )}
 
           <label className="block">
-            <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Standing instructions</span>
+            <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Standing instructions</span>
             <Textarea rows={3} value={instructions} onChange={(e) => setInstructions(e.target.value)}
               className="text-xs"
               placeholder="e.g. Written for contractors - never assume tools or scaffolding are provided. Always name the unit and equipment tag in the first sentence. Use our abbreviations (T/A, PSV, MOC)." />
           </label>
 
           <label className="block">
-            <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">File naming</span>
+            <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">File naming</span>
             <Input value={filenamePattern} onChange={(e) => setFilenamePattern(e.target.value)}
               placeholder="SOW-{wo_number}-{unit}" className="text-xs font-mono" />
             <span className="block mt-1 text-[11px] text-[var(--color-text-muted)]">

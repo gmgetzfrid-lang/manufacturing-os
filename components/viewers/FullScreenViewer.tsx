@@ -1343,7 +1343,7 @@ export default function FullScreenViewer({
               <button type="button" onClick={() => setStampMenuOpen((v) => !v)} aria-expanded={stampMenuOpen} aria-label="Stamp" title="Stamp" className={vTool(stampMenuOpen)}><StampIcon className="w-5 h-5" /></button>
               {stampMenuOpen && (
                 <div className="absolute left-12 bottom-0 w-64 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl p-2 z-50 max-h-[min(52vh,30rem)] overflow-y-auto">
-                  <div className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.14em] px-2 pb-2">Standard</div>
+                  <div className="text-[13px] font-semibold text-[var(--color-text-muted)] px-2 pb-2">Standard</div>
                   {/* Each stamp shown as it lands on the sheet: its color on paper. */}
                   <div className="grid grid-cols-1 gap-1">
                     {STAMPS.map((s) => (
@@ -1354,7 +1354,7 @@ export default function FullScreenViewer({
                   </div>
 
                   <div className="mt-3 pt-2 border-t border-[var(--color-border)] flex items-center justify-between px-2 pb-2">
-                    <span className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.14em]">Custom</span>
+                    <span className="text-[13px] font-semibold text-[var(--color-text-muted)] ">Custom</span>
                     <button
                       type="button"
                       onClick={() => stampFileInputRef.current?.click()}
@@ -1421,7 +1421,7 @@ export default function FullScreenViewer({
               </div>
               <div className="w-px h-5 shrink-0 bg-[var(--color-border)]" />
               <label className="flex items-center gap-2 shrink-0">
-                <span className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.14em]">Width</span>
+                <span className="text-[13px] font-semibold text-[var(--color-text-muted)] ">Width</span>
                 <input type="range" min={1} max={12} value={strokeWidth} onChange={(e) => setStrokeWidth(Number(e.target.value))}
                   className="w-24 h-1 rounded-lg accent-[var(--color-ink-fg)] cursor-pointer" />
                 <span className="text-[12px] tabular-nums text-[var(--color-text)] w-5 text-right">{strokeWidth}</span>

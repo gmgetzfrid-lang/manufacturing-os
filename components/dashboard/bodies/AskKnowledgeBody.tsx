@@ -277,7 +277,7 @@ export default function AskKnowledgeBody() {
             ) : parts && (
               <>
                 {parts.v?.verdict && (
-                  <span className={`mt-2 inline-flex px-2 py-0.5 rounded-md text-[11px] font-black uppercase tracking-[0.08em] ${VERDICT[parts.v.verdict].cls}`}>
+                  <span className={`mt-2 inline-flex px-2 py-0.5 rounded-md text-[13px] font-semibold ${VERDICT[parts.v.verdict].cls}`}>
                     {VERDICT[parts.v.verdict].label}
                   </span>
                 )}
@@ -286,7 +286,7 @@ export default function AskKnowledgeBody() {
                 </p>
                 {parts.p.settle.length > 0 && (
                   <div className="mt-2 border-l-2 border-amber-500 pl-2.5">
-                    <div className="text-[11px] font-black uppercase tracking-wider text-amber-800 dark:text-amber-300">To settle this</div>
+                    <div className="text-[13px] font-semibold text-amber-800 dark:text-amber-300">To settle this</div>
                     <ul className="mt-0.5 space-y-0.5">
                       {parts.p.settle.slice(0, 2).map((b, i) => (
                         <li key={i} className="text-[11px] text-[var(--color-text)]"><Inline text={b.text} onCite={(n) => openCite(citeByN(n))} /></li>
@@ -303,7 +303,7 @@ export default function AskKnowledgeBody() {
                 )}
                 {proof.length > 0 && (
                   <div className="mt-2.5 space-y-1.5">
-                    <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">The proof</div>
+                    <div className="text-[13px] font-semibold text-[var(--color-text-faint)]">The proof</div>
                     {proof.map((c) => {
                       const win = c.quote ? (c.highlight ? quoteWindow(c.quote, c.highlight) : null) : null;
                       const clause = c.quote ? clauseFor(c.quote, c.highlight, c.section) : null;
@@ -368,7 +368,7 @@ export default function AskKnowledgeBody() {
         {!busy && !last && (
           (recent ?? []).length > 0 ? (
             <div>
-              <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-faint)] mb-1">Your recent questions</div>
+              <div className="text-[13px] font-semibold text-[var(--color-text-faint)] mb-1">Your recent questions</div>
               <ul className="space-y-0.5">
                 {(recent ?? []).map((t) => (
                   <li key={t.id}>

@@ -457,7 +457,7 @@ export default function RestorePage() {
           {/* Users */}
           {plan.users.length > 0 && (
             <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden">
-              <div className="px-4 sm:px-5 py-3 border-b border-[var(--color-border)] text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] flex items-center gap-1.5"><Users className="w-3.5 h-3.5" /> User reconciliation (by email)</div>
+              <div className="px-4 sm:px-5 py-3 border-b border-[var(--color-border)] text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center gap-1.5"><Users className="w-3.5 h-3.5" /> User reconciliation (by email)</div>
               <div className="divide-y divide-[var(--color-border)] max-h-72 overflow-y-auto">
                 {plan.users.map((u) => (
                   <div key={u.email} className="px-4 py-2 flex items-center gap-3">
@@ -478,7 +478,7 @@ export default function RestorePage() {
 
           {/* Tables */}
           <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden">
-            <div className="px-4 sm:px-5 py-3 border-b border-[var(--color-border)] text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] flex items-center gap-1.5"><Database className="w-3.5 h-3.5" /> What would import</div>
+            <div className="px-4 sm:px-5 py-3 border-b border-[var(--color-border)] text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center gap-1.5"><Database className="w-3.5 h-3.5" /> What would import</div>
             <div className="divide-y divide-[var(--color-border)] max-h-72 overflow-y-auto">
               {plan.counts.tables.filter((t) => t.rows > 0).map((t) => (
                 <div key={t.name} className="px-4 py-1.5 flex items-center gap-3" title={t.reason}>
@@ -540,7 +540,7 @@ export default function RestorePage() {
           {/* Put files back (ZIP only, after records) */}
           {applyResult && fileEntryCount > 0 && (
             <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
-              <div className="flex items-center gap-2 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mb-1">
+              <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">
                 <FolderArchive className="w-4 h-4" /> Put the files back
               </div>
               <p className="text-[13px] text-[var(--color-text-muted)] mb-3 max-w-2xl">

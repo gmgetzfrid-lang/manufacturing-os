@@ -224,7 +224,7 @@ export function SkillHint({ skills, picked, question, answerMode }: { skills: An
 }
 
 function Head({ children }: { children: React.ReactNode }) {
-  return <div className="px-2 pt-1 pb-0.5 text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">{children}</div>;
+  return <div className="px-2 pt-1 pb-0.5 text-[13px] font-semibold text-[var(--color-text-faint)]">{children}</div>;
 }
 
 function Toggle({ on }: { on: boolean }) {

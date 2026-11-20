@@ -177,7 +177,7 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
         ) : (
           <div className="flex-1 overflow-y-auto p-5 space-y-3">
             <div className="space-y-1">
-              <label className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Library</label>
+              <label className="text-[13px] font-semibold text-[var(--color-text-muted)]">Library</label>
               <div className="flex items-center gap-2">
                 <select value={upLibraryId} onChange={(e) => { setUpLibraryId(e.target.value); setFolderId(""); }} className={`${fieldCls} flex-1`}>
                   <option value="">Choose a library…</option>
@@ -188,7 +188,7 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
             </div>
 
             <div className="space-y-1">
-              <label className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Folder</label>
+              <label className="text-[13px] font-semibold text-[var(--color-text-muted)]">Folder</label>
               <div className="flex items-center gap-2">
                 <select value={folderId} onChange={(e) => setFolderId(e.target.value)} disabled={!upLibraryId} className={`${fieldCls} flex-1 disabled:opacity-50`}>
                   <option value="">{upLibraryId ? "Library root" : "Pick a library first"}</option>
@@ -199,7 +199,7 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
             </div>
 
             <div className="space-y-1">
-              <label className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">PDF</label>
+              <label className="text-[13px] font-semibold text-[var(--color-text-muted)]">PDF</label>
               <label {...pdfDrag.bind} className={`flex items-center gap-3 rounded-lg border-2 border-dashed border-[var(--color-border-strong)] p-3 cursor-pointer hover:bg-[var(--color-surface-2)] ${pdfDrag.ring}`}>
                 <input type="file" accept="application/pdf" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="sr-only" />
                 {pdfDrag.over ? (
@@ -220,11 +220,11 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
 
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
-                <label className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Document number *</label>
+                <label className="text-[13px] font-semibold text-[var(--color-text-muted)]">Document number *</label>
                 <input value={docNum} onChange={(e) => setDocNum(e.target.value)} placeholder="e.g. ISO-C7-001" className={`${fieldCls} w-full`} />
               </div>
               <div className="space-y-1">
-                <label className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Title</label>
+                <label className="text-[13px] font-semibold text-[var(--color-text-muted)]">Title</label>
                 <input value={docTitle} onChange={(e) => setDocTitle(e.target.value)} placeholder="optional" className={`${fieldCls} w-full`} />
               </div>
             </div>

@@ -127,7 +127,7 @@ export default function ThreadRail(p: RailProps) {
               <div className="mt-2">
                 <button onClick={() => setSettledOpen((v) => !v)}
                   aria-expanded={settledOpen}
-                  className="w-full flex items-center gap-1 px-2 py-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+                  className="w-full flex items-center gap-1 px-2 py-1 text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
                   {settledOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
                   Settled <span className="font-bold normal-case tracking-normal">({settled.length})</span>
                 </button>
@@ -144,7 +144,7 @@ export default function ThreadRail(p: RailProps) {
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="mt-2">
-      <div className="px-2 py-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{label}</div>
+      <div className="px-2 py-1 text-[13px] font-semibold text-[var(--color-text-muted)]">{label}</div>
       <div className="space-y-0.5">{children}</div>
     </div>
   );

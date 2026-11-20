@@ -89,7 +89,7 @@ export function UserTurn({ m, mine, onOpenAttachment }: {
             onClick={() => bubbleRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
             title="Back to the question"
             className="max-w-[70%] inline-flex items-center gap-2 h-8 px-3 rounded-full bg-[var(--color-surface)] shadow-[var(--shadow-card)] ring-1 ring-[var(--color-border)] text-[12.5px] text-[var(--color-text)] animate-pop">
-            <span className="shrink-0 text-[11px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">{who}</span>
+            <span className="shrink-0 text-[13px] font-semibold text-[var(--color-text-faint)]">{who}</span>
             <span className="truncate">{m.content}</span>
           </button>
         </div>
@@ -205,7 +205,7 @@ export function AssistantTurn({
     return (
       <article className="max-w-3xl">
         <div className="mb-4 flex items-center gap-x-3 gap-y-1 flex-wrap">
-          <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Internet answer</span>
+          <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Internet answer</span>
           <span className="inline-flex items-center gap-1 text-[12px] font-bold text-amber-700 dark:text-amber-400">
             <Globe className="w-3.5 h-3.5 shrink-0" />
             {answer.liveWeb ? "From a live web search" : "From the model's general knowledge"}, not your controlled documents
@@ -299,7 +299,7 @@ function ToolsTurn({ m, payload, actions, onConfirm, latest }: {
             onClick={() => setShowTrace((s) => !s)} aria-expanded={showTrace}
             className="group w-full flex items-center gap-x-3 gap-y-1 flex-wrap text-left"
           >
-            <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] group-hover:text-[var(--color-text)]">
+            <span className="text-[13px] font-semibold text-[var(--color-text-muted)] group-hover:text-[var(--color-text)]">
               {steps.length} {steps.length === 1 ? "step" : "steps"} it took
             </span>
             {!showTrace && steps.length > 0 && (

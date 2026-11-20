@@ -227,7 +227,7 @@ function Plan({
     <div className={`rounded-xl p-4 flex flex-col ${featured ? "bg-[var(--color-surface-2)]" : "ring-1 ring-[var(--color-border)]"}`}>
       <div className="flex items-center justify-between mb-1">
         <div className="text-[14px] font-bold text-[var(--color-text)]">{name}</div>
-        {featured && <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">Most picked</span>}
+        {featured && <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Most picked</span>}
       </div>
       <div className="text-[13px] text-[var(--color-text-muted)]">{tagline}</div>
       <div className="mt-2 text-[15px] font-extrabold text-[var(--color-text)]">{price}{price !== "Contact" && <span className="text-[13px] font-semibold text-[var(--color-text-muted)]"> a month</span>}</div>

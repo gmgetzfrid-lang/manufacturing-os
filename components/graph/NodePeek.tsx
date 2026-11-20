@@ -102,7 +102,7 @@ export default function NodePeek({
             interrogate is a link nobody trusts. */}
         {(loading || (evidence && evidence.length > 0)) && (
           <div className="border-t border-[var(--color-border)] pt-2">
-            <div className="flex items-center gap-1 text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+            <div className="flex items-center gap-1 text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">
               <Quote className="w-3 h-3" />
               {isAsset ? "Mentioned in" : "Mentions"}
               {evidence && <span className="text-[var(--color-text-faint)]">· {evidence.length}</span>}
@@ -127,7 +127,7 @@ export default function NodePeek({
                   “{e.snippet}”
                 </div>
                 {e.confidence < 0.9 && (
-                  <div className="text-[11px] font-black uppercase tracking-wider text-amber-700 mt-0.5">
+                  <div className="text-[13px] font-semibold text-amber-700 mt-0.5">
                     {e.origin} match · unreviewed
                   </div>
                 )}
@@ -146,7 +146,7 @@ export default function NodePeek({
         {/* WHERE TO — walking the web is the whole interaction. */}
         {connections.length > 0 && (
           <div className="border-t border-[var(--color-border)] pt-2">
-            <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+            <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">
               Connected · {connections.length}
             </div>
             <div className="space-y-0.5">

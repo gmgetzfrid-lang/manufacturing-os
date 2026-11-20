@@ -61,7 +61,7 @@ export function CategorizeBanner({ orgId, userId, assets, types, book, onDone }:
 
   return (
     <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
-      <h2 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Sort equipment</h2>
+      <h2 className="mb-2 text-[13px] font-semibold text-[var(--color-text-muted)]">Sort equipment</h2>
       {result ? (
         <div className="space-y-1">
           <div className="flex items-center gap-2 text-xs font-black text-emerald-700 dark:text-emerald-300">
@@ -182,7 +182,7 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
     <section id="area-flow-panel" className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5"
       style={{ animation: "rise 0.4s var(--ease-fluid) both" }}>
       <div className="flex items-center gap-2 flex-wrap mb-2">
-        <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Process flows</h2>
+        <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)]">Process flows</h2>
         <span className="text-[13px] text-[var(--color-text-muted)]">
           {flows === null ? "" : `${confirmed.length} confirmed${proposed.length > 0 ? ` · ${proposed.length} proposed` : ""}`}
         </span>
@@ -212,7 +212,7 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
           {note && <div role="status" className={`text-[11px] mb-2 ${note.startsWith("Couldn't") ? "text-rose-700 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>{note}</div>}
           {proposed.length > 0 && (
             <div className="space-y-1 mb-2">
-              <div className="text-[11px] font-black uppercase tracking-widest text-amber-700 dark:text-amber-400">Proposed by the AI. Confirm or reject each.</div>
+              <div className="text-[13px] font-semibold text-amber-700 dark:text-amber-400">Proposed by the AI. Confirm or reject each.</div>
               {proposed.map((f) => (
                 <div key={f.id} className="flex items-center gap-2 rounded-lg border border-dashed border-amber-300 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20 px-2.5 py-1.5">
                   <span className="text-[11px] font-black text-[var(--color-text)]">{endpointLabel(f.from_kind, f.from_ref)}</span>

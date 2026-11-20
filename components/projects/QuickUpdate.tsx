@@ -616,7 +616,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
                 return (
                   <React.Fragment key={l.id}>
                     {head && (
-                      <li className="sticky top-0 z-[1] px-4 py-1.5 bg-[var(--color-surface-2)] text-[11.5px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+                      <li className="sticky top-0 z-[1] px-4 py-1.5 bg-[var(--color-surface-2)] text-[11.5px] font-semibold text-[var(--color-text-muted)]">
                         {l.part!.label} · {inPart.filter((x) => x.include).length} to save{inPart.some((x) => x.already) ? `, ${inPart.filter((x) => x.already).length} already in` : ""}
                       </li>
                     )}
@@ -633,7 +633,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
             </ul>
             {review.unplaced.length > 0 && (
               <div className="px-4 py-3 border-t border-[var(--color-border)] border-l-2 border-l-amber-500">
-                <div className="text-[12px] font-black uppercase tracking-wider text-amber-800 dark:text-amber-300">Couldn&apos;t place ({review.unplaced.length})</div>
+                <div className="text-[13px] font-semibold text-amber-800 dark:text-amber-300">Couldn&apos;t place ({review.unplaced.length})</div>
                 <ul className="mt-1 space-y-1 text-[12.5px] text-[var(--color-text)]">
                   {review.unplaced.map((u, i) => (
                     <li key={i} className="flex flex-wrap items-baseline gap-x-2">

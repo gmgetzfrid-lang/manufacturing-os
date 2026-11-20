@@ -134,13 +134,13 @@ export function RoleDayTabs() {
             className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden"
             style={{ animation: `rise 0.5s var(--ease-fluid) ${i * 90}ms both` }}>
             <div className="p-5">
-              <div className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-[0.14em] text-rose-700 dark:text-rose-400 mb-2">
+              <div className="flex items-center gap-1.5 text-[13px] font-semibold text-rose-700 dark:text-rose-400 mb-2">
                 <XCircle className="w-3.5 h-3.5" /> Before
               </div>
               <p className="text-[14px] text-[var(--color-text-muted)] leading-relaxed">{m.before}</p>
             </div>
             <div className="p-5 border-t border-[var(--color-border)]">
-              <div className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-[0.14em] text-emerald-700 dark:text-emerald-400 mb-2">
+              <div className="flex items-center gap-1.5 text-[13px] font-semibold text-emerald-700 dark:text-emerald-400 mb-2">
                 <CheckCircle2 className="w-3.5 h-3.5" /> After
               </div>
               <p className="text-[14px] text-[var(--color-text)] font-medium leading-relaxed">{m.after}</p>

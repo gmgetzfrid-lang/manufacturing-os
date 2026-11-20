@@ -577,7 +577,7 @@ export default function RevUpModal({
         <div className="px-6 py-5 space-y-5 max-h-[70vh] overflow-y-auto">
           {/* File drop zone */}
           <div>
-            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">New PDF</label>
+            <label className="text-[13px] font-semibold text-[var(--color-text)] ">New PDF</label>
             <div
               {...pdfDrag.bind}
               onClick={() => fileInputRef.current?.click()}
@@ -829,7 +829,7 @@ export default function RevUpModal({
                 </span>
               </div>
               <div>
-                <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">
+                <label className="text-[13px] font-semibold text-[var(--color-text)] ">
                   Note to {doc.checkedOutByName || "the checkout holder"} *
                 </label>
                 <textarea
@@ -887,7 +887,7 @@ function formatSize(bytes: number): string {
 function Field({ label, hint, isoTopic, children }: { label: string; hint?: string; isoTopic?: import("@/components/ui/IsoGuidance").IsoTopic | undefined; children: React.ReactNode }) {
   return (
     <div>
-      <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest inline-flex items-center gap-1">
+      <label className="text-[13px] font-semibold text-[var(--color-text)] inline-flex items-center gap-1">
         {label}
         {isoTopic && <IsoGuidance topic={isoTopic} />}
       </label>

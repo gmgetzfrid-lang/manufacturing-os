@@ -187,7 +187,7 @@ export default function AssetPhotoPopover({
           <div className="flex items-center gap-1.5">
             <span className="text-xs font-black text-[var(--color-text)] truncate">{asset.tag}</span>
             {assetType && (
-              <span className="text-[11px] font-black uppercase tracking-widest bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded">
+              <span className="text-[13px] font-semibold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded">
                 {assetType.name}
               </span>
             )}

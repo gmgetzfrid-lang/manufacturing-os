@@ -42,7 +42,9 @@ export default function ViewTabs({
     return t.exact ? pathname === t.href : pathname === t.href || pathname.startsWith(t.href + "/") || pathname.startsWith(t.href + "?");
   };
 
-  const dark = variant === "dark";
+  // The header is on the light panel now: both variants draw the same.
+  void variant;
+  const dark = false;
   // On a phone the views don't all fit: the strip scrolls on its own (never
   // the page), with the one you're on brought into sight.
   const strip = React.useRef<HTMLDivElement>(null);
@@ -54,9 +56,9 @@ export default function ViewTabs({
   return (
     <div className={`flex items-center gap-3 flex-wrap min-w-0 max-w-full ${dark ? "" : "mb-4"}`}>
       {title && (
-        <span className={`text-[11px] font-extrabold uppercase tracking-[0.14em] ${dark ? "text-[var(--color-ink-muted)]" : "text-[var(--color-text-faint)]"}`}>{title}</span>
+        <span className={`text-[14px] font-medium ${dark ? "text-[var(--color-ink-muted)]" : "text-[var(--color-text-muted)]"}`}>{title}</span>
       )}
-      <div ref={strip} className={`inline-flex items-center gap-1 p-1 rounded-xl min-w-0 max-w-full overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${dark ? "bg-[var(--color-ink-2)] border border-[var(--color-ink-line)]" : "bg-[var(--color-surface-2)] border border-[var(--color-border)]"}`}>
+      <div ref={strip} className={`inline-flex items-center gap-0.5 p-0.5 rounded-md min-w-0 max-w-full overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${dark ? "bg-[var(--color-ink-2)] border border-[var(--color-ink-line)]" : "bg-[var(--color-surface-2)] border border-[var(--color-border-strong)]"}`}>
         {tabs.map((t) => {
           const active = isActive(t);
           const Icon = t.icon;
@@ -67,7 +69,7 @@ export default function ViewTabs({
               aria-current={active ? "page" : undefined}
               className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 px-3 h-8 rounded-lg text-xs font-bold transition-colors ${
                 active
-                  ? (dark ? "bg-white text-[var(--color-ink)] shadow-sm" : "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm")
+                  ? (dark ? "bg-white text-[var(--color-ink)] shadow-sm" : "bg-[var(--color-surface)] text-[var(--color-text)] shadow-[0_1px_2px_rgb(31_39_51/0.15)] ring-1 ring-[var(--color-border-strong)]")
                   : (dark ? "text-[var(--color-ink-muted)] hover:text-white" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]")
               }`}
             >

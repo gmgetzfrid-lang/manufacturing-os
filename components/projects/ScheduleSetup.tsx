@@ -375,10 +375,10 @@ function TypeStep({ projectId, projectName, canManage, onSaved }: Props & { onSa
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
         {other && (
-          <label className="space-y-1"><span className="block text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Its word</span>
+          <label className="space-y-1"><span className="block text-[13px] font-semibold text-[var(--color-text-muted)]">Its word</span>
             <input value={t.word} onChange={(e) => setT({ word: e.target.value, short: t.short })} placeholder="e.g. Tie-in" maxLength={40} className={`${field} w-full`} /></label>
         )}
-        <label className="space-y-1"><span className="block text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Short form</span>
+        <label className="space-y-1"><span className="block text-[13px] font-semibold text-[var(--color-text-muted)]">Short form</span>
           <input value={t.short} onChange={(e) => setT({ word: t.word, short: e.target.value })} placeholder={t.word || "e.g. TA"} maxLength={16} className={`${field} w-full`} /></label>
       </div>
       <div className="border-l-2 border-[var(--color-border-strong)] pl-3 py-0.5 text-[12px] text-[var(--color-text-muted)]">
@@ -413,7 +413,7 @@ function TimeZoneStep({ projectId, timezone, canManage, userId, done, onSaved }:
   return (
     <div className="space-y-2.5">
       <label className="block space-y-1">
-        <span className="block text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">The plant&apos;s time zone</span>
+        <span className="block text-[13px] font-semibold text-[var(--color-text-muted)]">The plant&apos;s time zone</span>
         <select value={tz} onChange={(e) => setTz(e.target.value)} className={`${field} w-full`}>
           <optgroup label="US">{US_ZONES.map((z) => <option key={z} value={z}>{tzLabel(z)}</option>)}</optgroup>
           <optgroup label="All">{all.filter((z) => !US_ZONES.includes(z)).map((z) => <option key={z} value={z}>{z}</option>)}</optgroup>
@@ -446,11 +446,11 @@ function ShiftsStep({ projectId, canManage, done, checking, onSaved }: Props & {
   return (
     <div className="space-y-2.5">
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-        <label className="space-y-1"><span className="block text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Day shift starts</span>
+        <label className="space-y-1"><span className="block text-[13px] font-semibold text-[var(--color-text-muted)]">Day shift starts</span>
           <input type="time" disabled={!canManage} value={t.dayStart} onChange={(e) => setDraft({ ...t, dayStart: e.target.value })} className={`${field} w-full`} /></label>
-        <label className="space-y-1"><span className="block text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Night shift starts</span>
+        <label className="space-y-1"><span className="block text-[13px] font-semibold text-[var(--color-text-muted)]">Night shift starts</span>
           <input type="time" disabled={!canManage} value={t.nightStart} onChange={(e) => setDraft({ ...t, nightStart: e.target.value })} className={`${field} w-full`} /></label>
-        <label className="space-y-1"><span className="block text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Turnover meeting</span>
+        <label className="space-y-1"><span className="block text-[13px] font-semibold text-[var(--color-text-muted)]">Turnover meeting</span>
           <span className="flex items-center gap-1.5"><input type="number" min={0} max={180} step={5} disabled={!canManage} value={meetingLeadMin(t)} onChange={(e) => setDraft({ ...t, meetingBefore: Number(e.target.value) })} className={`${field} w-20`} />
             <span className="text-[12px] text-[var(--color-text-muted)]">min before</span></span></label>
       </div>
@@ -598,7 +598,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3">
         {/* Jobs */}
         <div className="space-y-2 min-w-0">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Jobs with night hours</div>
+          <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Jobs with night hours</div>
           <div className={`border-y border-[var(--color-border)] divide-y divide-[var(--color-border)] ${fileMode ? "opacity-50 pointer-events-none" : ""}`}>
             {jobs.length === 0 && <div className="px-3 py-3 text-[13px] text-[var(--color-text-muted)]">{milestones.length ? "Nothing on the schedule is in night hours: it's all day work." : "No steps yet. Import the schedule first."}</div>}
             {jobs.map((j) => {
@@ -653,7 +653,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
         {/* The shifts as they'll come out — kept in view while the jobs scroll. */}
         <div className="order-first xl:order-none space-y-2 min-w-0 xl:sticky xl:top-0 xl:self-start xl:max-h-[calc(100vh-220px)] xl:overflow-y-auto">
           <div className="flex items-center gap-2">
-            <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">The shifts</span>
+            <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">The shifts</span>
             <span className="ml-auto inline-flex items-center gap-1">
               <button type="button" onClick={() => setOffset((o) => o - 3)} className="w-8 h-8 inline-flex items-center justify-center rounded-lg bg-[var(--color-surface-2)] hover:bg-[var(--color-border)]" aria-label="Earlier days"><ChevronLeft className="w-4 h-4" /></button>
               {offset !== 0 && <button type="button" onClick={() => setOffset(0)} className="px-2.5 h-8 rounded-lg bg-[var(--color-surface-2)] text-[12px] font-bold hover:bg-[var(--color-border)]">Back</button>}
@@ -687,7 +687,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
             };
             return (
               <div key={k} className="border-t border-[var(--color-border)] pt-2">
-                <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{dayF.format(dw.start)}</div>
+                <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">{dayF.format(dw.start)}</div>
                 <div className="mt-1 grid grid-cols-1 sm:grid-cols-2 sm:divide-x divide-[var(--color-border)]">{band("day", dw)}{band("night", nw)}</div>
               </div>
             );

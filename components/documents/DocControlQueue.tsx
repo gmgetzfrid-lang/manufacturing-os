@@ -262,7 +262,7 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
     <div className="mb-4 rounded-2xl border-2 border-[var(--color-border)] bg-[var(--color-surface-2)] overflow-hidden">
       <div className="px-4 py-2.5 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] flex items-center gap-2">
         <Flag className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-xs font-black text-[var(--color-text)] uppercase tracking-widest">
+        <span className="text-[13px] font-semibold text-[var(--color-text)] ">
           Document Control - open items ({total})
         </span>
         <span className="text-[11px] text-[var(--color-text)]">resolved on the record, never dismissed</span>

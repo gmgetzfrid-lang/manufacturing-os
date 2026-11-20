@@ -133,7 +133,7 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
     <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <UserSearch className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">View as</h2>
+        <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)]">View as</h2>
         <span className="text-[13px] text-[var(--color-text-muted)]">See what any member can do, using the same checks the app enforces.</span>
         <select value={pick} aria-label="Member to view as" onChange={(e) => setPick(e.target.value)} className="ml-auto h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs min-w-[180px]">
           <option value="">Pick a member…</option>

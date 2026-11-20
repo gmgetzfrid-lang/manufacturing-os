@@ -57,7 +57,7 @@ export default function VerifyHoldPage() {
         {loading ? (
           <div className="text-white/90">
             <Loader2 className="w-14 h-14 mx-auto animate-spin mb-4" />
-            <div className="text-[11px] font-bold tracking-[0.16em] uppercase">Checking hold…</div>
+            <div className="text-[13px] font-semibold ">Checking hold…</div>
           </div>
         ) : error ? (
           <div className="text-white/90">
@@ -90,24 +90,24 @@ export default function VerifyHoldPage() {
             <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl p-5 text-left space-y-3">
               {result.docLabel && (
                 <div>
-                  <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Document</div>
+                  <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Document</div>
                   <div className="text-[15px] font-bold text-[var(--color-text)]">
                     {result.docLabel}{result.docRev ? ` · Rev ${result.docRev}` : ""}
                   </div>
                 </div>
               )}
               <div className="pt-2 border-t border-[var(--color-border)]">
-                <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Reason</div>
+                <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Reason</div>
                 <div className={`text-[14px] font-bold ${result.active ? "text-red-700" : "text-[var(--color-text)]"}`}>{result.reason ?? "-"}</div>
               </div>
               <div className="grid grid-cols-2 gap-3 pt-2 border-t border-[var(--color-border)] text-xs">
                 <div>
-                  <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Placed</div>
+                  <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Placed</div>
                   <div className="text-[var(--color-text)]">{fmt(result.openedAt)}</div>
                 </div>
                 {!result.active && (
                   <div>
-                    <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Released</div>
+                    <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Released</div>
                     <div className="text-emerald-700 font-bold">{fmt(result.releasedAt)}</div>
                   </div>
                 )}

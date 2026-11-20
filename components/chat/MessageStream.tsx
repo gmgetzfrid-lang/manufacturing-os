@@ -110,7 +110,7 @@ export default function MessageStream({
             <div className="pt-6 max-w-3xl mx-auto"><LoadingBlock what="the conversation" rows={5} /></div>
           ) : empty ? (
             <div className="pt-[8vh] sm:pt-[10vh] max-w-2xl mx-auto animate-rise">
-              <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--color-text-muted)]">
+              <div className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-muted)]">
                 <Icon className="w-3.5 h-3.5" aria-hidden /> {meta.label}
               </div>
               {/* The one big line on an empty chat: what you can do here. */}
@@ -123,7 +123,7 @@ export default function MessageStream({
                   <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" /> {emptyNote}
                 </p>
               )}
-              <div className="mt-6 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Try</div>
+              <div className="mt-6 text-[13px] font-semibold text-[var(--color-text-muted)]">Try</div>
               <div className="mt-2 flex flex-col divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
                 {EXAMPLES[scope].map((e) => (
                   <button key={e} onClick={() => onExample(e)}

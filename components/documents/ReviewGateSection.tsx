@@ -141,7 +141,7 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
         <div className="flex items-center gap-2">
           <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
-          <span className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)]">Pre-publish review</span>
+          <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Pre-publish review</span>
         </div>
         <div className="text-[11px] text-[var(--color-text-muted)] mt-1.5">
           {control.mode === "require" ? "Revisions in this library require reviewer sign-off before they publish." : "The publisher may route a revision through review before it publishes."}
@@ -157,7 +157,7 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
         <div className="flex items-center gap-2">
           <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
-          <span className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)]">Pre-publish review</span>
+          <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Pre-publish review</span>
         </div>
         <div className="text-[11px] text-[var(--color-text-muted)] mt-1.5">A new revision is in review by the assigned reviewers. The current Rev {doc.rev || "-"} remains the controlled copy.</div>
       </div>
@@ -168,7 +168,7 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 space-y-2.5">
       <div className="flex items-center gap-2">
         <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-xs font-black uppercase tracking-wider text-[var(--color-text)]">In review{draftLabel ? ` · ${draftLabel}` : ""}</span>
+        <span className="text-[13px] font-semibold text-[var(--color-text)]">In review{draftLabel ? ` · ${draftLabel}` : ""}</span>
         {!loading && <span className="ml-auto text-[11px] font-bold text-[var(--color-text)]">{signedCount}/{primaries.length} signed</span>}
       </div>
 

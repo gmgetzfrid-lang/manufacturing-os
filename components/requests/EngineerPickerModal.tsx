@@ -171,7 +171,7 @@ export default function EngineerPickerModal({
 
         <ModalBody className="space-y-4">
           <div>
-            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Engineer *</label>
+            <label className="text-[13px] font-semibold text-[var(--color-text)] ">Engineer *</label>
             <div className="mt-1.5 max-h-64 overflow-y-auto rounded-lg border border-[var(--color-border)]">
               {loading ? (
                 <div className="flex items-center gap-2 p-4 text-sm text-[var(--color-text-muted)]">
@@ -227,7 +227,7 @@ export default function EngineerPickerModal({
 
           {requireComment && (
             <div>
-              <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">{commentLabel}</label>
+              <label className="text-[13px] font-semibold text-[var(--color-text)] ">{commentLabel}</label>
               <Textarea
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}

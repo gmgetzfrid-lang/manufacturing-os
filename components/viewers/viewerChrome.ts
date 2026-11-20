@@ -14,13 +14,13 @@ export const vDim =
 export const vPanel =
   "surface-charcoal absolute inset-0 sm:top-3.5 sm:inset-x-3.5 sm:bottom-0 sm:rounded-t-[20px] overflow-hidden flex flex-col shadow-[0_-30px_60px_-30px_rgb(0_0_0/0.6)] animate-in fade-in duration-200";
 
-/** Small all-caps line over the title: number, revision, status. */
+/** Small line over the title: revision, status. */
 export const vKicker =
-  "truncate text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]";
+  "truncate text-[13px] font-semibold text-[var(--color-text-muted)]";
 
 /** The drawing's name: the one big thing in the chrome. */
 export const vTitle =
-  "truncate text-[22px] sm:text-[28px] leading-[1.1] font-black tracking-[-0.02em] text-[var(--color-text)]";
+  "font-display truncate text-[24px] sm:text-[30px] leading-[1.05] font-semibold text-[var(--color-text)]";
 
 /** A quiet icon button on the charcoal. */
 export const vIcon =

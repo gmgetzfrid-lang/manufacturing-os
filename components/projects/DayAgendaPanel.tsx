@@ -404,7 +404,7 @@ export default function DayAgendaPanel({
           <div className="flex items-center gap-2">
             <button onClick={() => onChangeDay(dayKey(addDays(dayMs, -1, tz), tz))} className="w-9 h-9 shrink-0 inline-flex items-center justify-center rounded-[10px] hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Previous day" aria-label="Previous day"><ChevronLeft className="w-4 h-4" /></button>
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+              <div className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-muted)]">
                 <CalendarDays className="w-3.5 h-3.5 shrink-0" /> The day&apos;s work <span title={`Plant time: ${tz}`}>· {tzAbbrev(tz, dayMs)}</span>
               </div>
               <div className={`${inline ? "text-[15px] font-bold" : "text-[22px] sm:text-[26px] font-black tracking-[-0.02em] leading-[1.1]"} truncate`}>{label}</div>
@@ -857,7 +857,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
   return (
     <div className="px-4 pb-3 pt-1 space-y-2 text-[11px]" onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); onClose(); } }}>
       <div className="flex items-center gap-1.5 flex-wrap">
-        <span className="w-16 shrink-0 font-black uppercase tracking-wider text-[11px] text-[var(--color-text-muted)]">% done</span>
+        <span className="w-16 shrink-0 font-semibold text-[13px] text-[var(--color-text-muted)]">% done</span>
         {PCTS.map((v) => (
           <button key={v} disabled={ro} onClick={() => pickPct(v)}
             className={`h-7 min-w-[38px] px-1.5 rounded-md border font-bold tabular-nums pointer-coarse:h-9 ${(stagedPct ?? Math.round(pct)) === v ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"} disabled:opacity-40`}>
@@ -875,7 +875,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
         </span>
       </div>
       <div className="flex items-center gap-1.5 flex-wrap">
-        <span className="w-16 shrink-0 font-black uppercase tracking-wider text-[11px] text-[var(--color-text-muted)]">Status</span>
+        <span className="w-16 shrink-0 font-semibold text-[13px] text-[var(--color-text-muted)]">Status</span>
         {STATUS_BTNS.map((b) => (
           <button key={b.s} disabled={ro} onClick={() => void setStatus(b.s)}
             className={`h-7 px-2.5 rounded-md border font-bold pointer-coarse:h-9 ${(starting ? "in_progress" : stage != null && stage >= 100 ? "completed" : stage != null && stage > 0 ? "in_progress" : active) === b.s ? b.on : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"} disabled:opacity-40`}>
@@ -932,7 +932,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
       )}
       {onAddNote && latest && noteMode === "new" && (
         <div className="flex items-start gap-1.5">
-          <span className="w-16 shrink-0 font-black uppercase tracking-wider text-[11px] text-[var(--color-text-muted)]">Latest</span>
+          <span className="w-16 shrink-0 font-semibold text-[13px] text-[var(--color-text-muted)]">Latest</span>
           <span className="flex-1 italic text-[var(--color-text-muted)]">&ldquo;{latest.body}&rdquo; · {latest.by ?? "someone"}{latest.at ? `, ${new Date(latest.at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}</span>
         </div>
       )}

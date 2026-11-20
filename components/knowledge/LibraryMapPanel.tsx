@@ -129,7 +129,7 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
 
       {forms.length > 0 && (
         <div className="mt-4">
-          <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1.5">Forms &amp; checklists the assistant can fill or point to</div>
+          <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Forms &amp; checklists the assistant can fill or point to</div>
           <ul className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)] overflow-hidden">
             {forms.slice(0, showAll ? forms.length : 6).map((e) => (
               <li key={e.documentId} className="flex items-center gap-2.5 px-3.5 py-2">
@@ -157,7 +157,7 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
       {(catalogs.length > 0 || data?.canMap) && (
         <div className="mt-4">
           <div className="flex items-center gap-2 mb-1.5">
-            <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Catalogs</div>
+            <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Catalogs</div>
             {data?.canMap && (
               <button type="button" onClick={() => setMarking(true)}
                 className="ml-auto inline-flex items-center gap-1 h-7 px-2.5 rounded-lg border border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)] text-[11px] font-black hover:bg-[var(--color-surface-2)] dark:hover:bg-[var(--color-surface-2)]">
@@ -231,7 +231,7 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
           {entries.map((e: CatalogSummaryEntry) => (
             <li key={e.documentId} className="px-3.5 py-2">
               <div className="flex items-center gap-2">
-                <span className="shrink-0 text-[11px] font-bold uppercase tracking-wider text-[var(--color-text)] dark:text-[var(--color-text)] w-28 truncate">{TYPE_LABEL[e.type] ?? e.type}</span>
+                <span className="shrink-0 text-[13px] font-semibold text-[var(--color-text)] dark:text-[var(--color-text)] w-28 truncate">{TYPE_LABEL[e.type] ?? e.type}</span>
                 <span className="text-xs font-bold text-[var(--color-text)] truncate">{e.designation ? `${e.designation} - ` : ""}{e.title || e.name}</span>
               </div>
               {e.purpose && <div className="text-[11px] text-[var(--color-text-muted)] pl-[7.5rem] truncate">{e.purpose}</div>}
@@ -301,13 +301,13 @@ function MarkCatalogModal({ orgId, libraryId, libraryName, docs, onClose, onDone
         ) : (
           <>
             <label className="block">
-              <span className="block text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">What does your team call it?</span>
+              <span className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">What does your team call it?</span>
               <input value={name} onChange={(e) => setName(e.target.value)} autoFocus maxLength={60}
                 placeholder="e.g. Piping specs, Valve data sheets, Coating systems"
                 className="w-full h-9 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-border-strong)]" />
             </label>
             <div>
-              <span className="block text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">Where is it?</span>
+              <span className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">Where is it?</span>
               <div className="space-y-1.5">
                 <label className="flex items-start gap-2 text-[13px] text-[var(--color-text)] cursor-pointer">
                   <input type="radio" className="mt-1 accent-[var(--color-text)]" checked={scope === "document"} onChange={() => setScope("document")} />

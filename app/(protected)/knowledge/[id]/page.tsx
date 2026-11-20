@@ -500,7 +500,7 @@ export default function KnowledgeLibraryPage() {
       >
         {links.length > 0 && (
           <div className="flex items-center gap-1.5 flex-wrap text-[12px] text-[var(--color-ink-text)]">
-            <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-ink-muted)] mr-1">Also searches</span>
+            <span className="text-[13px] font-semibold text-[var(--color-ink-muted)] mr-1">Also searches</span>
             {links.map((l) => (
               <span key={l.id} className="h-7 inline-flex items-center px-2.5 rounded-full border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] font-semibold text-[var(--color-ink-fg)]">
                 {l.linkedLibraryName} · reference
@@ -562,7 +562,7 @@ export default function KnowledgeLibraryPage() {
           )}
           <div className="flex items-center justify-between mb-2">
             <button onClick={() => setDocsOpen((v) => !v)} aria-expanded={docsOpen}
-              className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors">
+              className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors">
               {docsOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
               Documents ({readyDocs}/{docs.length} indexed{indexingDocs > 0 ? ` · ${indexingDocs} in progress` : ""})
             </button>
@@ -884,7 +884,7 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
     <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
       <div className="flex items-start gap-x-3 gap-y-1 flex-wrap">
         <div className="min-w-0 flex-1 basis-[16rem]">
-          <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5" aria-hidden /> Ask this library</h2>
+          <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5" aria-hidden /> Ask this library</h2>
           <div className="mt-1 text-[13px] text-[var(--color-text-muted)]">
             Answers come only from the indexed documents, cited to the page.
             {instructionCount > 0 && (
@@ -929,7 +929,7 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
       )}
       {recent && recent.length > 0 && (
         <div className="mt-4">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mb-1 flex items-center gap-1.5">
+          <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1 flex items-center gap-1.5">
             <History className="w-3 h-3" /> Recent conversations
           </div>
           <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)] -mx-4 sm:-mx-5">

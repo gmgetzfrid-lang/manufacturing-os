@@ -175,7 +175,7 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 space-y-2.5">
       <div className="flex items-center gap-2">
         <CalendarClock className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)]">Review cycle</span>
+        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Review cycle</span>
         <div className="ml-auto"><ReviewPill nextReviewDate={nextDate} leadDays={leadDays} /></div>
       </div>
 

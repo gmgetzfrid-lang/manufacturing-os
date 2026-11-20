@@ -197,13 +197,13 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
               <div className="text-[11px] text-amber-700 dark:text-amber-300 border-l-2 border-amber-500 pl-2.5">{draftNote}</div>
             )}
             <div>
-              <label className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Name</label>
+              <label className="text-[13px] font-semibold text-[var(--color-text-muted)]">Name</label>
               <input value={name} onChange={(e) => setName(e.target.value)}
                 placeholder="Work order references"
                 className="mt-1 w-full px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm" />
             </div>
             <div>
-              <label className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+              <label className="text-[13px] font-semibold text-[var(--color-text-muted)]">
                 {kind === "reasoning" ? "What it does" : "What it finds"}
               </label>
               <input value={description} onChange={(e) => setDescription(e.target.value)}
@@ -215,7 +215,7 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
 
             {kind === "reasoning" && (
               <div>
-                <label className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+                <label className="text-[13px] font-semibold text-[var(--color-text-muted)]">
                   The discipline (open with when it applies)
                 </label>
                 <textarea value={instructions} onChange={(e) => setInstructions(e.target.value)}
@@ -232,7 +232,7 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
 
             {kind === "connection" && (
             <div>
-              <label className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+              <label className="text-[13px] font-semibold text-[var(--color-text-muted)]">
                 Patterns, one per line (regular expressions)
               </label>
               <textarea value={patternsRaw} onChange={(e) => setPatternsRaw(e.target.value)}
@@ -247,7 +247,7 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
 
             {kind === "connection" && (
             <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 p-3">
-              <div className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5">
+              <div className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">
                 <FlaskConical className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Prove it on real text
               </div>
               <textarea value={sample} onChange={(e) => setSample(e.target.value)}
@@ -270,7 +270,7 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
             )}
 
             <div>
-              <label className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Sharing</label>
+              <label className="text-[13px] font-semibold text-[var(--color-text-muted)]">Sharing</label>
               <div className="mt-1 flex items-center gap-2">
                 <button type="button" onClick={() => setVisibility("org")} aria-pressed={visibility === "org"}
                   className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border text-[11px] font-black ${visibility === "org"

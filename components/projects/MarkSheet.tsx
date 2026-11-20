@@ -69,7 +69,7 @@ export default function MarkSheet({ names, status, tz, times, now: clockNow, ahe
         className="absolute left-1/2 top-16 -translate-x-1/2 w-[440px] max-w-[96vw] max-h-[86dvh] overflow-y-auto rounded-2xl bg-[var(--color-surface)] text-[var(--color-text)] shadow-2xl text-[12.5px] max-sm:left-0 max-sm:right-0 max-sm:top-auto max-sm:bottom-0 max-sm:translate-x-0 max-sm:w-full max-sm:max-w-none max-sm:rounded-b-none max-sm:pb-[env(safe-area-inset-bottom)]">
         <div className="sticky top-0 z-10 flex items-start justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 pt-3 pb-2.5">
           <div className="min-w-0">
-            <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{n === 1 ? "Mark a step" : `Mark ${n} steps`}</div>
+            <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">{n === 1 ? "Mark a step" : `Mark ${n} steps`}</div>
             <div className="mt-0.5 text-[15px] font-bold">{word}</div>
           </div>
           <button type="button" onClick={onClose} aria-label="Close" className="-mr-1.5 w-8 h-8 shrink-0 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
@@ -85,7 +85,7 @@ export default function MarkSheet({ names, status, tz, times, now: clockNow, ahe
           )}
           <WhenFields choices={choices} idx={wi} setIdx={(i) => { setWi(i); setMsg(null); }} clock={clock} setClock={(v) => { setClock(v); setMsg(null); }} tz={tz} times={times} other={otherDay} setOther={(d) => { setOtherDay(d); setMsg(null); }} disabled={busy} />
           <label className="block">
-            <span className="block mb-1"><span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{status === "on_hold" || status === "blocked" ? "Reason" : "Comment"}</span> <span className="text-[11.5px] text-[var(--color-text-muted)]">(required{n > 1 ? ", goes on each step" : ""})</span></span>
+            <span className="block mb-1"><span className="text-[13px] font-semibold text-[var(--color-text-muted)]">{status === "on_hold" || status === "blocked" ? "Reason" : "Comment"}</span> <span className="text-[11.5px] text-[var(--color-text-muted)]">(required{n > 1 ? ", goes on each step" : ""})</span></span>
             <textarea value={note} onChange={(e) => { setNote(e.target.value); setMsg(null); }} rows={2} disabled={busy}
               placeholder={status === "completed" ? "e.g. Bundle pulled and set on the pad" : status === "in_progress" ? "e.g. Blinds going in, 4 of 9" : "e.g. Waiting on the crane"}
               className="w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1.5 text-[12.5px] focus:outline-none focus:border-[var(--color-accent-ring)]" />

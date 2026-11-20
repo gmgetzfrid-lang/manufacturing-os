@@ -472,7 +472,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
 
         {canManage && (
           <div className="pt-3 border-t border-[var(--color-border)] space-y-2">
-            <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">New submit link</div>
+            <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">New submit link</div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Company name (stamped on every submission)" className="h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px]" />
               <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Contact email (optional)" className="h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px]" />

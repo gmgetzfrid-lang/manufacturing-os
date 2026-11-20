@@ -92,7 +92,7 @@ export default function MarkupRequestModal({
             The holder can decline, share their current markup PDF, or upload a stamped copy in response.
           </p>
           <div>
-            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Message *</label>
+            <label className="text-[13px] font-semibold text-[var(--color-text)] ">Message *</label>
             <textarea
               value={message}
               onChange={(e) => setMessage(e.target.value)}

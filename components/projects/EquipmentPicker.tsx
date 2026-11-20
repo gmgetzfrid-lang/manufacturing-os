@@ -30,7 +30,7 @@ import { splitTag } from "@/lib/codebook";
 
 const btn = "inline-flex items-center justify-center gap-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[13px] font-bold px-3.5 h-10 shadow-sm disabled:opacity-50";
 const quiet = "inline-flex items-center justify-center gap-1.5 rounded-[10px] bg-[var(--color-surface-2)] hover:bg-[var(--color-border)] text-[13px] font-semibold text-[var(--color-text)] px-3 h-10 disabled:opacity-50";
-const LBL = "block text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]";
+const LBL = "block text-[13px] font-semibold text-[var(--color-text-muted)]";
 // A suggestion read off the work order: ringed in ink, a tap links it.
 const hit = "w-full flex items-center gap-2 rounded-xl border-2 border-[var(--color-text)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] px-3 min-h-12 text-left";
 const field = "h-10 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[14px] text-[var(--color-text)]";
@@ -340,7 +340,7 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
         {!query && idHit && (!guessHit || guessHit.id !== idHit.id) && (
           <div className="space-y-2" data-id-hit>
             <button type="button" disabled={!!busy} onClick={() => void link(idHit)} className={hit}>
-              <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] shrink-0">From its ID</span>
+              <span className="text-[13px] font-semibold text-[var(--color-text-muted)] shrink-0">From its ID</span>
               <AssetText a={idHit} />
               {busy === idHit.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4 text-[var(--color-text-muted)]" />}
             </button>
@@ -368,7 +368,7 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
         )}
         {!query && guessHit && (
           <button type="button" disabled={!!busy} onClick={() => void link(guessHit)} className={hit}>
-            <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] shrink-0">From its name</span>
+            <span className="text-[13px] font-semibold text-[var(--color-text-muted)] shrink-0">From its name</span>
             <AssetText a={guessHit} />
             {busy === guessHit.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4 text-[var(--color-text-muted)]" />}
           </button>

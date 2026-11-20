@@ -75,7 +75,7 @@ export default function DocClassControl({ documentId, collectionId, libraryId, f
 
   return (
     <div>
-      <div className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-wider mb-1 flex items-center gap-1.5">
+      <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1 flex items-center gap-1.5">
         Document class
         {(loading || busy) && <Loader2 className="w-3 h-3 animate-spin" />}
       </div>

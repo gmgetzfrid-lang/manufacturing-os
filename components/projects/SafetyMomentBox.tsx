@@ -51,7 +51,7 @@ export function SafetyMomentBox({ jobs, shift, T, print, project, recent, label,
     // Printed: a page of its own — the cards may break between, never inside.
     <div className={print ? "space-y-[6pt]" : "keep space-y-2"}>
       <div className="flex flex-wrap items-baseline gap-x-2">
-        <span className={print ? "inline-flex items-center gap-1 font-semibold text-[var(--color-text)] text-[10pt]" : "inline-flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]"}>
+        <span className={print ? "inline-flex items-center gap-1 font-semibold text-[var(--color-text)] text-[10pt]" : "inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-muted)]"}>
           <ShieldAlert className="w-3.5 h-3.5 self-center" aria-hidden="true" /> Safety topics{label ? `: ${label}` : ""}
         </span>
         {!print && <span className="text-[12px] text-[var(--color-text-muted)]">Tap one to present it full screen</span>}
@@ -84,7 +84,7 @@ function TopicCard({ t, n, tone, print, onPresent, onUse, chosen }: { t: SafetyT
         : "group snap-start shrink-0 min-w-0 flex flex-col w-[86%] sm:w-auto px-3 sm:px-4 first:pl-0 py-1 cursor-pointer"}>
       <div className="flex items-center gap-1.5">
         <span className={`shrink-0 rounded-full ${tone.num} font-bold flex items-center justify-center ${print ? "w-[13pt] h-[13pt] text-[8pt]" : "w-5 h-5 text-[11px]"}`}>{n}</span>
-        <span className={`min-w-0 truncate ${tone.kick} ${print ? "font-semibold text-[9pt]" : "text-[11px] font-extrabold uppercase tracking-[0.14em]"}`}>{t.kicker}</span>
+        <span className={`min-w-0 truncate ${tone.kick} ${print ? "font-semibold text-[9pt]" : "text-[13px] font-semibold "}`}>{t.kicker}</span>
         {!print && (
           <button type="button" onClick={(e) => { e.stopPropagation(); onPresent(); }} title="Present this topic full screen" aria-label={`Present ${t.title}`}
             className="ml-auto shrink-0 p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
@@ -147,14 +147,14 @@ function Presenter({ topics, at, label, onMove, onClose }: { topics: SafetyTopic
     <div className="fixed inset-0 z-[400] bg-[var(--color-ink)] text-white flex flex-col" role="dialog" aria-modal="true" aria-label={`Safety topic ${at + 1} of ${topics.length}`}>
       <div className="flex items-center gap-3 px-5 py-3 border-b border-white/10">
         <ShieldAlert className="w-5 h-5 text-white/60" aria-hidden />
-        <span className="text-[13px] font-black uppercase tracking-widest text-white/70">Safety{label ? `: ${label}` : ""}</span>
+        <span className="text-[13px] font-semibold text-white/70">Safety{label ? `: ${label}` : ""}</span>
         <span className="ml-auto text-[13px] font-bold text-white/60 tabular-nums">{at + 1} / {topics.length}</span>
         <button type="button" onClick={onClose} aria-label="Close" className="p-1.5 rounded-md hover:bg-white/10"><X className="w-5 h-5" /></button>
       </div>
       <div className="flex-1 overflow-y-auto px-6 sm:px-14 py-8 max-w-5xl w-full mx-auto">
         <div className="flex items-center gap-3">
           <span className={`w-9 h-9 rounded-full ${tone.numDark} text-[18px] font-black flex items-center justify-center`}>{at + 1}</span>
-          <span className="text-[15px] font-black uppercase tracking-widest text-white/70">{t.kicker}</span>
+          <span className="text-[15px] font-semibold text-white/70">{t.kicker}</span>
         </div>
         <h2 className="mt-3 text-[34px] sm:text-[48px] font-black leading-[1.05]">{t.title}</h2>
         <p className="mt-3 text-[18px] sm:text-[22px] text-white/75 leading-snug">{t.why}</p>

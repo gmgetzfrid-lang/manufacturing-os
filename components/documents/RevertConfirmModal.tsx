@@ -90,7 +90,7 @@ export default function RevertConfirmModal({
           </div>
 
           <div>
-            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Reason *</label>
+            <label className="text-[13px] font-semibold text-[var(--color-text)] ">Reason *</label>
             <textarea
               value={reason}
               onChange={(e) => setReason(e.target.value)}
@@ -101,7 +101,7 @@ export default function RevertConfirmModal({
           </div>
 
           <div>
-            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">MOC Reference</label>
+            <label className="text-[13px] font-semibold text-[var(--color-text)] ">MOC Reference</label>
             <input
               value={mocRef}
               onChange={(e) => setMocRef(e.target.value)}

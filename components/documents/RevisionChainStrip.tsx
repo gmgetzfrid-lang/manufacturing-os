@@ -53,7 +53,7 @@ export default function RevisionChainStrip({ documentId, refreshKey }: RevisionC
 
   return (
     <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl p-3">
-      <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest mb-2">
+      <div className="text-[13px] font-semibold text-[var(--color-text)] mb-2">
         Revision Chain
       </div>
       <div className="flex items-center gap-1 overflow-x-auto pb-1">

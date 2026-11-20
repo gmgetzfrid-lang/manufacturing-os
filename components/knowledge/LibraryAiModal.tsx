@@ -109,7 +109,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
 
         <ModalBody className="space-y-5">
           <div>
-            <label htmlFor="library-kind" className="block text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+            <label htmlFor="library-kind" className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">
               What&apos;s in this library
             </label>
             <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
@@ -133,7 +133,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
           </div>
 
           <div>
-            <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+            <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">
               Standing instructions
             </div>
             <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
@@ -145,7 +145,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
           </div>
 
           <div>
-            <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+            <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">
               Numbering &amp; code decoder
             </div>
             <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
@@ -159,7 +159,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
           </div>
 
           <div>
-            <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+            <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">
               Pinned reference documents
             </div>
             <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
@@ -197,7 +197,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
           </div>
 
           <div>
-            <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+            <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">
               AI features
             </div>
             <label className="flex items-start gap-2.5 rounded-xl border border-[var(--color-border)] px-3 py-2.5 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors">
@@ -262,7 +262,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
           </div>
 
           <div>
-            <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1 flex items-center gap-1.5">
+            <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1 flex items-center gap-1.5">
               <Link2 className="w-3.5 h-3.5" /> Linked reference libraries
             </div>
             <p className="text-[11px] text-[var(--color-text-muted)] mb-2">

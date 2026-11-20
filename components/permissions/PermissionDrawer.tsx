@@ -329,7 +329,7 @@ export default function PermissionsDrawer(props: {
       <div className="h-full w-full max-w-[560px] bg-[var(--color-surface)] text-[var(--color-text)] shadow-2xl sm:rounded-l-[20px] animate-in slide-in-from-right duration-300 ease-fluid flex flex-col">
         <div className="flex items-start justify-between gap-3 px-5 sm:px-6 pt-5 pb-4 border-b border-[var(--color-border)] shrink-0">
           <div className="min-w-0">
-            <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+            <div className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-muted)]">
               <Shield className="h-3.5 w-3.5" /> Permissions · {nodeType === "collection" ? "folder" : nodeType}
             </div>
             <h2 className="mt-2 text-[30px] sm:text-[34px] leading-none font-black tracking-[-0.03em] break-words">{nodeLabel}</h2>

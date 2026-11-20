@@ -165,7 +165,7 @@ export default function LibraryHomeBoard({
   return (
     <div className="mb-5 rounded-2xl border-2 border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-4">
       <div className="flex items-center justify-between mb-3">
-        <div className="text-xs font-black uppercase tracking-widest text-[var(--color-text-muted)]">Customizing home</div>
+        <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Customizing home</div>
         <div className="flex items-center gap-2">
           <button onClick={disableHome} disabled={saving} className="px-3 py-1.5 rounded-lg text-xs font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Turn off home</button>
           <button onClick={() => setEditing(false)} disabled={saving} className="px-3 py-1.5 rounded-lg text-xs font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-3.5 h-3.5 inline -mt-0.5" /> Cancel</button>
@@ -217,7 +217,7 @@ export default function LibraryHomeBoard({
                   <button onClick={() => cycleWidth(p.id, p.width)} title="Resize" className="p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><Maximize2 className="w-3.5 h-3.5" /></button>
                   <button onClick={() => remove(p.id)} title="Remove" className="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]"><Trash2 className="w-3.5 h-3.5" /></button>
                 </div>
-                <div className="text-[11px] text-[var(--color-text-faint)] font-semibold uppercase tracking-wider mb-1">{M.label} · {(p.width ?? "half")}</div>
+                <div className="text-[13px] text-[var(--color-text-faint)] font-semibold mb-1">{M.label} · {(p.width ?? "half")}</div>
                 {p.type === "recentDocs" && (
                   <label className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
                     Show
@@ -337,7 +337,7 @@ function Stat({ label, value }: { label: string; value: number }) {
   return (
     <div className="rounded-xl bg-[var(--color-surface-2)] px-3 py-2.5 flex items-baseline gap-2">
       <div className="text-[15px] font-black tabular-nums text-[var(--color-text)]">{value}</div>
-      <div className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">{label}</div>
+      <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">{label}</div>
     </div>
   );
 }

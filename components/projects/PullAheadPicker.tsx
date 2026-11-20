@@ -250,7 +250,7 @@ function Tag({ tone, children }: { tone: "rose" | "amber" | "emerald" | "slate";
     : tone === "amber" ? "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-900"
       : tone === "emerald" ? "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-200 dark:border-emerald-900"
         : "bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700";
-  return <span className={`inline-block max-w-full break-words px-1.5 py-px rounded border text-[11px] font-black uppercase tracking-wider ${cls}`}>{children}</span>;
+  return <span className={`inline-block max-w-full break-words px-1.5 py-px rounded border text-[13px] font-semibold ${cls}`}>{children}</span>;
 }
 
 function Ready({ x, kind }: { x: LookAheadItem; kind: string }) {

@@ -1415,7 +1415,7 @@ export default function ExecutionView({
               phases) so the key shows even for a one-root schedule. */}
           {colors.groups.length > 1 && (
             <div className="mt-2.5 flex items-center gap-x-3 gap-y-1 flex-wrap text-[12px]">
-              <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Phases</span>
+              <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Phases</span>
               {colors.groups.map((g) => {
                 const c = colors.colorOf(g);
                 return (
@@ -1512,7 +1512,7 @@ export default function ExecutionView({
                   onDoubleClick={() => { setUserLeftW(LEFT_W); try { localStorage.removeItem("timeline:leftW"); } catch { /* private mode */ } }}
                   className="absolute top-0 -right-1 z-30 h-full w-2 cursor-col-resize hover:bg-[var(--color-accent)]/30 active:bg-[var(--color-accent)]/50" />
               )}
-              <div className="sticky top-0 z-10 bg-[var(--color-surface)]/95 backdrop-blur border-b border-[var(--color-border)] flex items-center px-3 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]" style={{ height: AXIS_H }}>
+              <div className="sticky top-0 z-10 bg-[var(--color-surface)]/95 backdrop-blur border-b border-[var(--color-border)] flex items-center px-3 text-[13px] font-semibold text-[var(--color-text-muted)]" style={{ height: AXIS_H }}>
                 <ListTree className="w-3.5 h-3.5 mr-1.5 text-[var(--color-text-muted)]" /> Work breakdown
               </div>
               {win.first > 0 && <div style={{ height: win.first * ROW_H }} aria-hidden />}
@@ -2382,7 +2382,7 @@ function Legend() {
     <div className="px-3 sm:px-4 py-2.5 border-t border-[var(--color-border)] bg-[var(--color-surface)] space-y-1.5">
       {/* Status colours */}
       <div className="flex items-center gap-3 flex-wrap">
-        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Status</span>
+        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Status</span>
         {entries.map(([s, label]) => (
           <span key={s} className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
             <span className={`w-2.5 h-2.5 rounded-sm ${statusTone(s).bar}`} /> {label}
@@ -2391,7 +2391,7 @@ function Legend() {
       </div>
       {/* Symbol key — what the shapes mean (MS-Project-style vocabulary). */}
       <div className="flex items-center gap-3.5 flex-wrap">
-        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Symbols</span>
+        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Symbols</span>
         <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]" title="A task; the lighter fill shows % complete">
           <span className="relative w-7 h-2.5 rounded bg-[var(--color-text-muted)] overflow-hidden"><span className="absolute inset-y-0 left-0 bg-white/40" style={{ width: "55%" }} /></span> Task (fill = % done)
         </span>

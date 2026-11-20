@@ -265,7 +265,7 @@ function Step1Targets({
         {targets.map((t, i) => (
           <div key={i} className="border border-[var(--color-border)] rounded-lg p-3 bg-slate-50/40">
             <div className="flex items-center justify-between mb-2">
-              <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Target {i + 1}</div>
+              <div className="text-[13px] font-semibold text-[var(--color-text)] ">Target {i + 1}</div>
               {targets.length > 2 && (
                 <button onClick={() => onRemove(i)} className="text-[11px] text-red-600 hover:text-red-800 inline-flex items-center gap-1">
                   <Trash2 className="w-3 h-3" /> Remove
@@ -364,7 +364,7 @@ function Step2Tags({
       </div>
 
       <div className="border border-[var(--color-border)] rounded-lg overflow-hidden">
-        <div className="grid bg-[var(--color-surface-2)] border-b border-[var(--color-border)] text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest"
+        <div className="grid bg-[var(--color-surface-2)] border-b border-[var(--color-border)] text-[13px] font-semibold text-[var(--color-text)] "
              style={{ gridTemplateColumns: `minmax(120px, 1fr) repeat(${targets.length}, minmax(80px, 100px))` }}>
           <div className="px-3 py-2">Tag</div>
           {targets.map((t, i) => (
@@ -442,7 +442,7 @@ function Step3Confirm({
 
       {/* Reason */}
       <label className="block">
-        <span className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Reason for split *</span>
+        <span className="text-[13px] font-semibold text-[var(--color-text)] ">Reason for split *</span>
         <textarea
           value={reason}
           onChange={(e) => setReason(e.target.value)}
@@ -454,7 +454,7 @@ function Step3Confirm({
 
       {/* MOC */}
       <label className="block">
-        <span className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest inline-flex items-center gap-1">
+        <span className="text-[13px] font-semibold text-[var(--color-text)] inline-flex items-center gap-1">
           MOC Reference
           <HelpTooltip>
             <b>Management of Change.</b> If this split is happening because of a formal MOC ticket, paste the MOC number here so the audit trail links the change back to its authorization.
@@ -469,7 +469,7 @@ function Step3Confirm({
 
       {/* Carry-over */}
       <div className="border border-[var(--color-border)] rounded-lg p-3 bg-[var(--color-surface)]">
-        <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest mb-2 inline-flex items-center gap-1">
+        <div className="text-[13px] font-semibold text-[var(--color-text)] mb-2 inline-flex items-center gap-1">
           Carry over from source
           <HelpTooltip>
             These options copy operational state from the source document onto every new sheet so you don&apos;t lose context when splitting.

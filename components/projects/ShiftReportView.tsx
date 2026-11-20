@@ -1087,7 +1087,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
             {showTimes && (
               <div className="absolute right-0 top-full mt-1 z-30 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl p-3 space-y-1.5 text-[12px] w-[23rem] max-w-[calc(100vw-1.5rem)]">
                 <div className="flex items-center gap-2">
-                  <span className="flex-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Shift change times, plant time</span>
+                  <span className="flex-1 text-[13px] font-semibold text-[var(--color-text-muted)]">Shift change times, plant time</span>
                   <button type="button" onClick={() => setShowTimes(false)} aria-label="Close" className="w-7 h-7 -mr-1 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
                 </div>
                 <label className="flex items-center justify-between gap-2 text-[var(--color-text-muted)]"><span className="inline-flex items-center gap-1"><Sun className="w-3 h-3" /> Day starts</span>
@@ -1129,7 +1129,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
               <>
                 <div className="fixed inset-0 z-20" onClick={() => setShowSecs(false)} aria-hidden />
                 <div className="absolute right-0 top-full mt-1 z-30 w-64 max-w-[calc(100vw-1.5rem)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl p-3 text-[12px]">
-                  <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Show on the report</div>
+                  <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Show on the report</div>
                   <div className="mt-1.5 space-y-1">
                     {reportAll.map((x) => (
                       <label key={x.id} className="flex items-center gap-2 cursor-pointer select-none py-0.5">
@@ -1248,7 +1248,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         <div className="px-3 sm:px-4 pb-2 flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-1.5">
           {crews.length > 1 && (
             <div className="min-w-0 w-full sm:w-auto sm:flex-1 flex items-center gap-1 overflow-x-auto scroll-quiet" role="group" aria-label="Show one crew">
-              <span className="shrink-0 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mr-0.5">Crew</span>
+              <span className="shrink-0 text-[13px] font-semibold text-[var(--color-text-muted)] mr-0.5">Crew</span>
               {[{ who: null as string | null, steps: 0 }, ...crews].map((x) => {
                 const on = crew === x.who;
                 return (
@@ -1262,7 +1262,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
             </div>
           )}
           <div className="shrink-0 flex items-center gap-1" role="group" aria-label="Show only">
-            <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mr-0.5">Only</span>
+            <span className="text-[13px] font-semibold text-[var(--color-text-muted)] mr-0.5">Only</span>
             <button type="button" aria-pressed={criticalOnly} onClick={() => setOnlyPick((v) => ({ ...v, critical: !v.critical }))}
               className={`shrink-0 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${criticalOnly ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
               Critical path
@@ -2966,11 +2966,11 @@ function closeSection(title: string, signers: string[], sub = "Notes, actions an
       // On paper two framed boxes; on screen two plain columns on the card.
       <div className={`grid grid-cols-1 sm:grid-cols-2 keep ${print ? "gap-2" : "gap-x-6 gap-y-4"}`}>
         <div className={print ? "rounded-md border border-[var(--color-border)] px-2.5 py-1.5" : ""}>
-          <div className={print ? "text-[12px] font-semibold text-slate-600 dark:text-slate-300" : "mb-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]"}>Notes &amp; actions</div>
+          <div className={print ? "text-[12px] font-semibold text-slate-600 dark:text-slate-300" : "mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]"}>Notes &amp; actions</div>
           {notes ? notes(print) : Array.from({ length: print ? 4 : 3 }).map((_, i) => <div key={i} className="h-5 border-b border-dotted border-[var(--color-border-strong)]" />)}
         </div>
         <div className={print ? "rounded-md border border-[var(--color-border)] px-2.5 py-1.5 space-y-2" : "space-y-2"}>
-          <div className={print ? "text-[12px] font-semibold text-slate-600 dark:text-slate-300" : "text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]"}>Sign-off</div>
+          <div className={print ? "text-[12px] font-semibold text-slate-600 dark:text-slate-300" : "text-[13px] font-semibold text-[var(--color-text-muted)]"}>Sign-off</div>
           {signers.map((who) => (
             <div key={who} className="flex items-end gap-2 text-[11px] text-[var(--color-text-muted)]">
               <span className="w-40 shrink-0">{who}</span>
@@ -3012,7 +3012,7 @@ function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehea
       <div className="flex items-center gap-3 flex-wrap">
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2 flex-wrap">
-            <span className={print ? "text-[11px] font-semibold text-slate-500" : "text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]"}>{title}</span>
+            <span className={print ? "text-[11px] font-semibold text-slate-500" : "text-[13px] font-semibold text-[var(--color-text-muted)]"}>{title}</span>
             <h2 className={`${print ? "text-[14pt]" : "basis-full text-[15px] text-[var(--color-text)]"} font-bold tracking-tight leading-tight ${print ? "truncate" : ""}`}>{print ? (projectName ?? "Schedule") : when}</h2>
           </div>
           <div className={print ? "text-[11px] text-slate-700" : "mt-0.5 text-[12px] text-[var(--color-text-muted)]"}>
@@ -3082,7 +3082,7 @@ function StandTiles({ actual, planned, standing, gap, done, total, pastDue, past
   if (!print) return (
     <dl className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-3 keep">
       <div className="min-w-0">
-        <dt className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Progress</dt>
+        <dt className="text-[13px] font-semibold text-[var(--color-text-muted)]">Progress</dt>
         <dd className="mt-0.5 text-[14px] font-bold tabular-nums">{actual}% <span className="text-[12px] font-medium text-[var(--color-text-muted)]">of {planned}% planned</span></dd>
         <div className="relative mt-1.5 h-1.5 rounded-full bg-[var(--color-surface-2)]" aria-hidden>
           <div className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-text)]" style={{ width: `${Math.min(100, actual)}%` }} />
@@ -3090,17 +3090,17 @@ function StandTiles({ actual, planned, standing, gap, done, total, pastDue, past
         </div>
       </div>
       <div className="min-w-0">
-        <dt className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{gap.label}</dt>
+        <dt className="text-[13px] font-semibold text-[var(--color-text-muted)]">{gap.label}</dt>
         <dd className={`mt-0.5 text-[14px] font-bold tabular-nums ${gapTone}`}>{gap.value}</dd>
         <dd className="text-[12px] text-[var(--color-text-muted)]">{standing === "behind" ? "planned work-hours not done" : standing === "ahead" ? "work-hours done early" : "planned work-hours, either way"}</dd>
       </div>
       <div className="min-w-0">
-        <dt className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Steps done</dt>
+        <dt className="text-[13px] font-semibold text-[var(--color-text-muted)]">Steps done</dt>
         <dd className="mt-0.5 text-[14px] font-bold tabular-nums">{done} <span className="text-[12px] font-medium text-[var(--color-text-muted)]">of {total}</span></dd>
         <dd className="text-[12px] text-[var(--color-text-muted)]">all crews, whole job</dd>
       </div>
       <div className="min-w-0">
-        <dt className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{pastDueLabel}</dt>
+        <dt className="text-[13px] font-semibold text-[var(--color-text-muted)]">{pastDueLabel}</dt>
         <dd className={`mt-0.5 text-[14px] font-bold tabular-nums ${pastDue ? "text-amber-700 dark:text-amber-400" : ""}`}>{pastDue}</dd>
         <dd className="text-[12px] text-[var(--color-text-muted)]">steps past their finish{pastDueHeld ? `, ${pastDueHeld} on hold or blocked` : ""}</dd>
       </div>
@@ -3197,7 +3197,7 @@ function Stat({ label, value, tone }: { label: string; value: string; tone: "eme
     // On screen a compact label and value (no big numbers); on paper the
     // framed tile it always was (print: classes).
     <div className="min-w-0 print:rounded-lg print:border print:border-slate-200 print:px-3 print:py-1.5">
-      <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] print:normal-case print:tracking-normal print:font-medium print:text-slate-500">{label}</div>
+      <div className="text-[13px] font-semibold text-[var(--color-text-muted)] print:normal-case print:tracking-normal print:font-medium print:text-slate-500">{label}</div>
       <div className={`mt-0.5 print:mt-0 text-[14px] print:text-[20px] font-bold leading-tight tabular-nums ${t}`}>{value}</div>
     </div>
   );

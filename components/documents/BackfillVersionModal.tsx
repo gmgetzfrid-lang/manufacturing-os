@@ -189,7 +189,7 @@ export default function BackfillVersionModal({
         <div className="p-5 space-y-4">
           {/* File picker */}
           <div>
-            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">File (PDF) *</label>
+            <label className="text-[13px] font-semibold text-[var(--color-text)] ">File (PDF) *</label>
             <div
               className={`mt-1 border-2 border-dashed border-[var(--color-border-strong)] rounded-xl p-4 hover:bg-[var(--color-surface-2)] transition-colors cursor-pointer text-center ${fileDrag.ring}`}
               onClick={() => inputRef.current?.click()}
@@ -337,7 +337,7 @@ export default function BackfillVersionModal({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">{label}</span>
+      <span className="text-[13px] font-semibold text-[var(--color-text)] ">{label}</span>
       <div className="mt-1">{children}</div>
     </label>
   );

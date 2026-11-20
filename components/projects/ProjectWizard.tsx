@@ -592,7 +592,7 @@ function rows<T>(arr: T[], i: number, patch: Partial<T>): T[] {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">{label}</label>
+      <label className="text-[13px] font-semibold text-[var(--color-text)] ">{label}</label>
       <div className="mt-1">{children}</div>
     </div>
   );

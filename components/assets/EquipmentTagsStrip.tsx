@@ -70,7 +70,7 @@ export default function EquipmentTagsStrip({
     <div className={`space-y-2 ${className}`} onClick={(e) => e.stopPropagation()}>
       <div className="flex items-center gap-1.5">
         <Tag className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-        <span className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text)]">
+        <span className="text-[13px] font-semibold text-[var(--color-text)]">
           Equipment & Asset Tags
         </span>
         <span className="text-[11px] text-[var(--color-text-faint)] ml-auto inline-flex items-center gap-1">
@@ -79,7 +79,7 @@ export default function EquipmentTagsStrip({
       </div>
       {groups.map((g) => (
         <div key={g.key} className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-2">
-          <div className="text-[11px] font-bold uppercase tracking-widest text-[var(--color-text-muted)] mb-1">
+          <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">
             {g.label} <span className="text-[var(--color-text-faint)] font-normal normal-case">· {g.tags.length}</span>
           </div>
           <div className="flex flex-wrap gap-1">

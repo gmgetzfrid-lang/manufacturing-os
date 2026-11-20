@@ -199,7 +199,7 @@ export default function ProfilePage() {
 
           <Row icon={Mail} label="Email" value={userEmail ?? "-"} mono />
           <div className="mt-3">
-            <label htmlFor="profile-display-name" className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] inline-flex items-center gap-1">
+            <label htmlFor="profile-display-name" className="text-[13px] font-semibold text-[var(--color-text-muted)] inline-flex items-center gap-1">
               <Edit3 className="w-3 h-3" /> Display name
             </label>
             <Input
@@ -230,7 +230,7 @@ export default function ProfilePage() {
                   <Briefcase className="w-4 h-4 text-[var(--color-text-muted)]" />
                   <div className="flex-1 min-w-0">
                     <div className="text-[14px] font-bold text-[var(--color-text)] truncate">{o.org_name}</div>
-                    <div className="text-[11px] text-[var(--color-text-muted)] font-mono uppercase tracking-wider">{o.role}</div>
+                    <div className="text-[13px] text-[var(--color-text-muted)] font-mono ">{o.role}</div>
                   </div>
                   {o.org_id === activeOrgId && <span className="text-[11px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded">current</span>}
                 </li>
@@ -277,7 +277,7 @@ function Row({ icon: Icon, label, value, mono }: { icon: React.ComponentType<{ c
   return (
     <div className="flex items-center gap-3 py-1.5">
       <Icon className="w-4 h-4 text-[var(--color-text-faint)]" />
-      <span className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] w-16">{label}</span>
+      <span className="text-[13px] font-semibold text-[var(--color-text-muted)] w-16">{label}</span>
       <span className={`text-[14px] text-[var(--color-text)] min-w-0 truncate ${mono ? "font-mono" : ""}`}>{value}</span>
     </div>
   );

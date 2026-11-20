@@ -818,7 +818,7 @@ export default function RequestPortal() {
           <Card label="More filters" className="animate-in fade-in slide-in-from-top-2">
            <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
              <div>
-               <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)] mb-2">Request type</div>
+               <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">Request type</div>
                <div className="flex flex-wrap gap-2">
                  <button 
                    onClick={() => setFilters({...filters, type: 'ALL'})} 
@@ -842,8 +842,8 @@ export default function RequestPortal() {
                  )}
                </div>
              </div>
-             <div><div className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)] mb-2">Timeframe</div><div className="flex flex-wrap gap-2">{['all', 'today', 'week', 'month'].map(range => (<button key={range} onClick={() => setFilters({...filters, dateRange: range as FilterConfig['dateRange']})} className={`px-3 h-8 rounded-full text-[12.5px] font-semibold border transition-colors ${filters.dateRange === range ? 'bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]' : 'bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]'}`}>{range.charAt(0).toUpperCase() + range.slice(1)}</button>))}</div></div>
-             <div><div className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)] mb-2">Urgency</div><div className="flex items-center gap-2 h-8"><input type="checkbox" id="urgentOnly" checked={filters.priority === 'urgent'} onChange={(e) => setFilters({...filters, priority: e.target.checked ? 'urgent' : 'all'})} className="w-4 h-4 text-[var(--color-text)] border-[var(--color-border-strong)] rounded focus:ring-[var(--color-accent-ring)]" /><label htmlFor="urgentOnly" className="text-[14px] text-[var(--color-text)] cursor-pointer">Urgent and RFI only</label></div></div>
+             <div><div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">Timeframe</div><div className="flex flex-wrap gap-2">{['all', 'today', 'week', 'month'].map(range => (<button key={range} onClick={() => setFilters({...filters, dateRange: range as FilterConfig['dateRange']})} className={`px-3 h-8 rounded-full text-[12.5px] font-semibold border transition-colors ${filters.dateRange === range ? 'bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]' : 'bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]'}`}>{range.charAt(0).toUpperCase() + range.slice(1)}</button>))}</div></div>
+             <div><div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">Urgency</div><div className="flex items-center gap-2 h-8"><input type="checkbox" id="urgentOnly" checked={filters.priority === 'urgent'} onChange={(e) => setFilters({...filters, priority: e.target.checked ? 'urgent' : 'all'})} className="w-4 h-4 text-[var(--color-text)] border-[var(--color-border-strong)] rounded focus:ring-[var(--color-accent-ring)]" /><label htmlFor="urgentOnly" className="text-[14px] text-[var(--color-text)] cursor-pointer">Urgent and RFI only</label></div></div>
              <div className="flex items-end md:justify-end"><button onClick={clearAllFilters} className="flex items-center text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] font-bold transition-all"><FilterX className="w-4 h-4 mr-2" />Reset filters</button></div>
            </div>
           </Card>
@@ -951,9 +951,9 @@ export default function RequestPortal() {
                       <tr>
                         <th className="w-12 px-4 sm:px-5 py-3"><input type="checkbox" checked={selectedTicketIds.size === paginatedTickets.length && paginatedTickets.length > 0} onChange={handleSelectAll} className="rounded border-[var(--color-border-strong)] text-[var(--color-text)] focus:ring-[var(--color-accent-ring)] w-4 h-4 cursor-pointer" /></th>
                         {[{ id: 'ticketId', label: 'Request ID' }, { id: 'status', label: 'Status' }, { id: 'title', label: 'Details' }, { id: 'unit', label: 'Unit' }, { id: 'priority', label: 'Priority' }, { id: 'lastModified', label: 'Last Activity' }].map((col) => (
-                          <th key={col.id} className="px-4 py-3 text-left text-[11px] font-extrabold text-[var(--color-text-muted)] uppercase tracking-[0.12em] cursor-pointer hover:text-[var(--color-text)] transition-colors group" onClick={() => handleSort(col.id as SortField)}><div className="flex items-center space-x-1"><span>{col.label}</span><ArrowUpDown className={`w-3 h-3 ${sortConfig.field === col.id ? 'text-[var(--color-text)]' : 'text-[var(--color-text-faint)]'}`} /></div></th>
+                          <th key={col.id} className="px-4 py-3 text-left text-[13px] font-semibold text-[var(--color-text-muted)] cursor-pointer hover:text-[var(--color-text)] transition-colors group" onClick={() => handleSort(col.id as SortField)}><div className="flex items-center space-x-1"><span>{col.label}</span><ArrowUpDown className={`w-3 h-3 ${sortConfig.field === col.id ? 'text-[var(--color-text)]' : 'text-[var(--color-text-faint)]'}`} /></div></th>
                         ))}
-                        <th className="px-4 sm:px-5 py-3 text-right text-[11px] font-extrabold text-[var(--color-text-muted)] uppercase tracking-[0.12em]"><span className="sr-only">Actions</span></th>
+                        <th className="px-4 sm:px-5 py-3 text-right text-[13px] font-semibold text-[var(--color-text-muted)] "><span className="sr-only">Actions</span></th>
                       </tr>
                     </thead>
                     <tbody className="bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">

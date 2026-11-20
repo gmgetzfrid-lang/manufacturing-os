@@ -23,7 +23,7 @@ export function QuickLaunch() {
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm overflow-hidden">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
         <Zap className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)]">Quick launch</span>
+        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Quick launch</span>
       </div>
       <div className="p-2">
         {QUICK_ACTIONS.map((a) => {

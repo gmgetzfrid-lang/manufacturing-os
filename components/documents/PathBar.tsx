@@ -112,7 +112,7 @@ export default function PathBar({ library, segments, onNavigate, onDropItems, on
   const here = onDark ? "text-white" : "text-[var(--color-text)] font-bold";
 
   return (
-    <nav className={`flex items-center min-w-0 overflow-hidden ${onDark ? "text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--color-ink-muted)]" : "text-xs font-medium text-[var(--color-text-muted)]"}`} aria-label="Folder path">
+    <nav className={`flex items-center min-w-0 overflow-hidden ${onDark ? "text-[13px] font-semibold text-[var(--color-ink-muted)]" : "text-xs font-medium text-[var(--color-text-muted)]"}`} aria-label="Folder path">
       {home && (
         <>
           <Link href={home.href} className={`${chip} max-sm:hidden`}>{home.label}</Link>

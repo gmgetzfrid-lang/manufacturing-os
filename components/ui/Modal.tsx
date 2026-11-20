@@ -60,11 +60,11 @@ export function Modal({
       aria-modal="true"
     >
       <div
-        className="absolute inset-0 bg-[var(--color-ink)]/50 backdrop-blur-[3px] animate-in fade-in"
+        className="absolute inset-0 bg-[var(--color-ink)]/55 animate-in fade-in"
         onClick={dismissable ? onClose : undefined}
       />
       <div
-        className={`relative w-full ${SIZES[size]} max-h-[90vh] flex flex-col bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-2xl shadow-2xl animate-in fade-in zoom-in-95 ease-spring ${className}`}
+        className={`relative w-full ${SIZES[size]} max-h-[90vh] flex flex-col bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border-strong)] rounded-xl shadow-2xl animate-in fade-in zoom-in-95 ease-spring ${className}`}
       >
         {children}
       </div>
@@ -95,8 +95,8 @@ export function ModalHeader({
         </div>
       )}
       <div className="min-w-0 flex-1">
-        <h2 className="text-sm font-black truncate">{title}</h2>
-        {subtitle && <p className="text-xs text-[var(--color-text-muted)] mt-0.5">{subtitle}</p>}
+        <h2 className="font-display text-[20px] leading-tight font-semibold truncate">{title}</h2>
+        {subtitle && <p className="text-[14px] text-[var(--color-text-muted)] mt-0.5">{subtitle}</p>}
       </div>
       {onClose && (
         <button

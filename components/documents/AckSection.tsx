@@ -181,7 +181,7 @@ export default function AckSection({ doc, orgId, canManage }: {
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 space-y-2.5">
       <div className="flex items-center gap-2">
         <ClipboardCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)]">Read &amp; understood</span>
+        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Read &amp; understood</span>
         <div className="ml-auto"><AckPill summary={summary} /></div>
       </div>
 

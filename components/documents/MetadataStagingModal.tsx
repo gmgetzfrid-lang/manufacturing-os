@@ -766,7 +766,7 @@ export default function MetadataStagingModal({
         {detailed && (<>
         <div className="px-4 sm:px-6 py-3 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] shrink-0">
           <div className="flex items-center gap-3 flex-wrap">
-            <span className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest flex items-center gap-1">
+            <span className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center gap-1">
               <Wand2 className="w-3 h-3" /> Apply to all:
             </span>
             <div className="inline-flex items-center gap-1.5">
@@ -805,22 +805,22 @@ export default function MetadataStagingModal({
           <table className="w-full text-xs">
             <thead className="sticky top-0 bg-[var(--color-surface)] border-b border-[var(--color-border)] z-10">
               <tr>
-                <th className="text-left px-3 py-2 text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-wider w-8"></th>
-                <th className="text-left px-3 py-2 text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-wider">File</th>
+                <th className="text-left px-3 py-2 text-[13px] font-semibold text-[var(--color-text-muted)] w-8"></th>
+                <th className="text-left px-3 py-2 text-[13px] font-semibold text-[var(--color-text-muted)] ">File</th>
                 {!canonical.docNumber && (
-                  <th className="text-left px-3 py-2 text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-wider">Document #</th>
+                  <th className="text-left px-3 py-2 text-[13px] font-semibold text-[var(--color-text-muted)] ">Document #</th>
                 )}
                 {!canonical.title && (
-                  <th className="text-left px-3 py-2 text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-wider">Title</th>
+                  <th className="text-left px-3 py-2 text-[13px] font-semibold text-[var(--color-text-muted)] ">Title</th>
                 )}
                 {!canonical.rev && (
-                  <th className="text-left px-3 py-2 text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-wider w-16">Rev</th>
+                  <th className="text-left px-3 py-2 text-[13px] font-semibold text-[var(--color-text-muted)] w-16">Rev</th>
                 )}
                 {!canonical.status && (
-                  <th className="text-left px-3 py-2 text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-wider w-32">Status</th>
+                  <th className="text-left px-3 py-2 text-[13px] font-semibold text-[var(--color-text-muted)] w-32">Status</th>
                 )}
                 {customColumns.map((c) => (
-                  <th key={c.key} className="text-left px-3 py-2 text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-wider">
+                  <th key={c.key} className="text-left px-3 py-2 text-[13px] font-semibold text-[var(--color-text-muted)] ">
                     {c.label}{c.required && " *"}
                   </th>
                 ))}

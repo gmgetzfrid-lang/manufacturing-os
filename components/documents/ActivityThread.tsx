@@ -396,7 +396,7 @@ function MessageRow({ msg, meIsAuthor, replies, onReply, onMarkResolved, isReply
   if (msg.kind === "handoff") {
     return (
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3">
-        <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest flex items-center gap-1 mb-1">
+        <div className="text-[13px] font-semibold text-[var(--color-text)] flex items-center gap-1 mb-1">
           <Pencil className="w-3 h-3" /> Handoff · {msg.userName}
         </div>
         <div className="text-xs text-[var(--color-text)] whitespace-pre-wrap">{msg.text}</div>
@@ -409,7 +409,7 @@ function MessageRow({ msg, meIsAuthor, replies, onReply, onMarkResolved, isReply
     const title = (msg.metadata?.title as string | undefined) || "Proposal";
     return (
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
-        <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest flex items-center gap-1 mb-1">
+        <div className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center gap-1 mb-1">
           <Zap className="w-3 h-3" /> Proposal · {msg.userName}
         </div>
         <div className="text-xs font-bold text-[var(--color-text)] mb-1">{title}</div>
@@ -423,7 +423,7 @@ function MessageRow({ msg, meIsAuthor, replies, onReply, onMarkResolved, isReply
     return (
       <div className="rounded-lg border border-[var(--color-border)] border-l-2 border-l-amber-500 bg-[var(--color-surface)] p-3">
         <div className="flex items-center justify-between mb-1">
-          <div className="text-[11px] font-black text-amber-800 dark:text-amber-300 uppercase tracking-widest flex items-center gap-1">
+          <div className="text-[13px] font-semibold text-amber-800 dark:text-amber-300 flex items-center gap-1">
             <HelpCircle className="w-3 h-3" /> Question · {msg.userName}
           </div>
           {msg.resolvedAt ? (
@@ -478,7 +478,7 @@ function MessageRow({ msg, meIsAuthor, replies, onReply, onMarkResolved, isReply
   if (msg.kind === "markup_ref") {
     return (
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3">
-        <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest flex items-center gap-1 mb-1">
+        <div className="text-[13px] font-semibold text-[var(--color-text)] flex items-center gap-1 mb-1">
           <FileSignature className="w-3 h-3" /> Markup request · {msg.userName}
         </div>
         <div className="text-xs text-[var(--color-text)]">{msg.text}</div>

@@ -96,7 +96,7 @@ export function CommandDeck({
       className={`rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] text-[var(--color-text)] ${fill ? "h-full flex flex-col" : ""}`}>
       <div className={`p-4 sm:p-5 ${fill ? "flex-1 min-h-0 overflow-y-auto" : ""}`}>
         <div className="flex items-center gap-2">
-          <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+          <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)]">
             {first ? (actionCount > 0 && actionCount < attentionCount ? `Needs you · ${actionCount} to act on` : "Needs you") : "Nothing waiting"}
           </h2>
           <div className="flex-1" />
@@ -119,7 +119,7 @@ export function CommandDeck({
             {row(first, true)}
             {rest.length > 0 && (
               <>
-                <div className="mt-3 mb-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Also open</div>
+                <div className="mt-3 mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]">Also open</div>
                 {rest.slice(0, SHOWN - 1).map((it) => row(it, false))}
                 {more > 0 && (
                   <button type="button" onClick={() => openCenter("all")}

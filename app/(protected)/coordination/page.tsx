@@ -376,7 +376,7 @@ function CoordinationRadar({
                 <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
                 <div className="min-w-0 flex-1">
                   <div className="text-[14px] font-bold text-[var(--color-text)] truncate">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)] mr-1.5">{scope.kind}</span>
+                    <span className="text-[13px] font-semibold text-[var(--color-text-muted)] mr-1.5">{scope.kind}</span>
                     {scope.tag}
                   </div>
                   <div className="text-[12px] text-[var(--color-text-muted)] flex items-center gap-1.5 mt-0.5">

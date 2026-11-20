@@ -67,7 +67,7 @@ export default function RightPanel({
   const header: PaneHeader = (kicker, title, sub) => (
     <div className="px-5 pt-4 pb-4 border-b border-[var(--color-border)] shrink-0">
       <div className="flex items-center gap-2 min-h-9">
-        <div className="min-w-0 flex-1 truncate text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{kicker}</div>
+        <div className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[var(--color-text-muted)]">{kicker}</div>
         <button onClick={onClose} title="Close panel" aria-label="Close panel" className="w-9 h-9 grid place-items-center rounded-[10px] bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
           <X className="w-4 h-4" />
         </button>
@@ -225,7 +225,7 @@ function InstructionsPane({
 
   const flash = (what: string) => { setSaved(what); setTimeout(() => setSaved(null), 1800); };
   const field = "w-full px-3 py-2 text-[13.5px] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-border-strong)] focus:ring-2 focus:ring-[var(--color-border)]";
-  const label = "text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mb-1";
+  const label = "text-[13px] font-semibold text-[var(--color-text-muted)] mb-1";
   const own = instructions.trim() ? 1 : 0;
   const total = own + standingCount;
 

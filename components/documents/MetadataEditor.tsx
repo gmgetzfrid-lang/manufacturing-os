@@ -355,7 +355,7 @@ export default function MetadataEditor(props: {
 
           {/* ── CORE FIELDS ─────────────────────────────────────────────── */}
           <div>
-            <div className="text-xs font-bold text-[var(--color-text-faint)] uppercase tracking-wider mb-3">Document</div>
+            <div className="text-[13px] font-semibold text-[var(--color-text-faint)] mb-3">Document</div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="text-xs font-bold text-[var(--color-text-muted)]">Title</label>
@@ -405,7 +405,7 @@ export default function MetadataEditor(props: {
           {/* ── CUSTOM COLUMNS ───────────────────────────────────────────── */}
           {columns.length > 0 && (
             <div>
-              <div className="text-xs font-bold text-[var(--color-text-faint)] uppercase tracking-wider mb-3">Custom Fields</div>
+              <div className="text-[13px] font-semibold text-[var(--color-text-faint)] mb-3">Custom Fields</div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {columns.map((col) => (
                   <div key={col.key} className={col.type === "tags" || col.type === "multi" ? "md:col-span-2" : ""}>

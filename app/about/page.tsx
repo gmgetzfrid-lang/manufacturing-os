@@ -49,7 +49,7 @@ const quietOnPaper =
 /** The one huge line of a section. */
 const huge = "text-[36px] sm:text-[48px] lg:text-[60px] leading-[1.02] font-black tracking-[-0.035em]";
 /** Small all-caps label. */
-const label = "text-[11px] font-extrabold uppercase tracking-[0.16em]";
+const label = "text-[13px] font-semibold ";
 /** A white card on the paper: soft depth, no outline. */
 const card = "rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)]";
 const wrap = "max-w-[1200px] mx-auto px-4 sm:px-6";

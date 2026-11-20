@@ -238,7 +238,7 @@ export default function PlotPlanBoard() {
         {editing && (
           <div className="md:w-64 shrink-0 border-b md:border-b-0 md:border-r border-[var(--color-border)] flex flex-col max-h-72 md:max-h-none">
             <div className="p-4 border-b border-[var(--color-border)]">
-              <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mb-2">Place an asset</div>
+              <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">Place an asset</div>
               <div className="relative">
                 <Search className="w-3.5 h-3.5 text-[var(--color-text-faint)] absolute left-2.5 top-1/2 -translate-y-1/2" />
                 <input value={pickerSearch} onChange={(e) => setPickerSearch(e.target.value)} aria-label="Search equipment" placeholder="Search equipment…" className="w-full h-9 pl-8 pr-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-[13px] outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]" />
@@ -306,7 +306,7 @@ export default function PlotPlanBoard() {
         {!editing && selAsset && selMarker && (
           <div className="md:w-72 shrink-0 border-t md:border-t-0 md:border-l border-[var(--color-border)] p-5">
             <div className="flex items-center gap-2 mb-2">
-              <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)] flex-1">On this drawing</div>
+              <div className="text-[13px] font-semibold text-[var(--color-text-muted)] flex-1">On this drawing</div>
               <button type="button" onClick={() => setSelectedMarker(null)} aria-label="Close" className="w-9 h-9 grid place-items-center rounded-[10px] bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
             </div>
             <div className="text-[30px] leading-none font-black tracking-[-0.02em] text-[var(--color-text)] break-words mb-2">{selAsset.tag}</div>

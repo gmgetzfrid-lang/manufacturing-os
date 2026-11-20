@@ -363,7 +363,7 @@ function AuditRowItem({ row, docMeta }: AuditRowItemProps) {
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className={`text-[11px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-md border ${style.tone}`}>
+          <span className={`text-[13px] font-semibold px-1.5 py-0.5 rounded-md border ${style.tone}`}>
             {prettyAction(row.action)}
           </span>
           <span className="text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1">

@@ -56,7 +56,7 @@ export default function CollapsibleSection({
       >
         <ChevronRight className={`w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
         {Icon && <Icon className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />}
-        <span className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)]">{title}</span>
+        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">{title}</span>
         {summary && <span className="ml-auto flex items-center gap-1 flex-wrap justify-end min-w-0">{summary}</span>}
       </button>
       {open && (

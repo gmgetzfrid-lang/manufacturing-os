@@ -590,7 +590,7 @@ export default function CheckInPanel({
       {/* THE PSM GATE — a drawing change states its MOC position, always. */}
       {selected?.moc === "required" && (
         <div className="space-y-1.5 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-2.5">
-          <div className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-wider">
+          <div className="text-[13px] font-semibold text-[var(--color-text-muted)] ">
             Management of Change <span className="text-rose-500">*</span>
           </div>
           <div className="flex bg-[var(--color-surface)] p-1 rounded-md border border-[var(--color-border)]">

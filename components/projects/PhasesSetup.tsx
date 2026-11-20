@@ -235,12 +235,12 @@ export function PhasesSetup({ orgId, projectId, projectName, phases: saved, uid,
       <ModalBody className="space-y-5">
 
         <label className="block">
-          <span className="block mb-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Project name</span>
+          <span className="block mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]">Project name</span>
           <input value={name} onChange={(e) => setName(e.target.value)} className={`${input} w-full max-w-lg`} />
         </label>
 
         <div>
-          <span className="block mb-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">AFE{afe?.number ? ` ${afe.number}` : ""}</span>
+          <span className="block mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]">AFE{afe?.number ? ` ${afe.number}` : ""}</span>
           <div className="flex items-center gap-2 flex-wrap">
             <input value={afeDraft} onChange={(e) => setAfeDraft(e.target.value)} inputMode="decimal" placeholder={linesTotal ? money(linesTotal) : "$0"} aria-label="AFE amount" className={`${input} w-44`} />
             <span className="text-[12.5px] text-[var(--color-text-muted)]">
@@ -252,7 +252,7 @@ export function PhasesSetup({ orgId, projectId, projectName, phases: saved, uid,
         </div>
 
         <div>
-          <div className="grid grid-cols-[minmax(0,1.4fr)_repeat(2,minmax(0,1fr))_80px_110px_36px] gap-2 items-end pb-1.5 max-sm:hidden text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+          <div className="grid grid-cols-[minmax(0,1.4fr)_repeat(2,minmax(0,1fr))_80px_110px_36px] gap-2 items-end pb-1.5 max-sm:hidden text-[13px] font-semibold text-[var(--color-text-muted)]">
             <span>Phase</span><span>Starts</span><span>Finishes</span><span className="text-right">Share</span><span className="text-right">Budget</span><span />
           </div>
           <div className="space-y-2 max-sm:space-y-0 max-sm:divide-y max-sm:divide-[var(--color-border)] max-sm:border-y max-sm:border-[var(--color-border)]">
@@ -281,7 +281,7 @@ export function PhasesSetup({ orgId, projectId, projectName, phases: saved, uid,
         {phases.length > 1 && (
           <div>
             <div className="flex items-baseline justify-between gap-2 mb-2">
-              <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Split the {afe?.authorized != null ? "AFE" : "budget"}: drag the line</span>
+              <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Split the {afe?.authorized != null ? "AFE" : "budget"}: drag the line</span>
               <button type="button" onClick={() => shares(evenShares(phases.length))} className="text-[12.5px] font-semibold text-[var(--color-text)] hover:underline">Split evenly</button>
             </div>
             <SplitBar phases={phases} total={total} onShares={shares} />

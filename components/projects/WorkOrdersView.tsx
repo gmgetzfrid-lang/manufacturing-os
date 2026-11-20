@@ -438,7 +438,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
                     {/* Its steps: inside the work order, indented, each a row that opens to its card. */}
                     <div className="px-2 sm:px-3 pt-2.5 pb-1">
                       <div className="ml-2 sm:ml-5 pl-2 sm:pl-3 border-l-2 border-[var(--color-border-strong)]">
-                        <div className="mb-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+                        <div className="mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]">
                           {single ? "The step" : `Steps · ${o.done} of ${o.steps.length} done`}
                         </div>
                         <div className="rounded-xl bg-[var(--color-surface)] shadow-[0_1px_2px_rgb(11_18_32/0.06)] overflow-hidden">

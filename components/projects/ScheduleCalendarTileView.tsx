@@ -400,7 +400,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
     const head = (
       <button type="button" onClick={() => openShift(key, band)}
         title={`${band === "day" ? "Day" : "Night"} shift ${clockLabel(w.start, tz)}–${clockLabel(w.end, tz)}${band === "night" ? ` (into ${fmtInTz(w.end, tz, { weekday: "short" })} morning)` : ""}: open its list to enter progress`}
-        className={`shrink-0 flex items-center gap-1 px-1 min-w-0 ${big ? "text-[11px]" : "text-[11px]"} font-black uppercase tracking-wider hover:underline ${band === "day" ? "text-sky-900/80 dark:text-sky-300" : "text-violet-900/80 dark:text-violet-200"}`}>
+        className={`shrink-0 flex items-center gap-1 px-1 min-w-0 ${big ? "text-[11px]" : "text-[11px]"} font-semibold hover:underline ${band === "day" ? "text-sky-900/80 dark:text-sky-300" : "text-violet-900/80 dark:text-violet-200"}`}>
         {band === "day" ? <Sun className="w-2.5 h-2.5 shrink-0" aria-hidden /> : <Moon className="w-2.5 h-2.5 shrink-0" aria-hidden />}
         {band === "day" ? "Day" : "Night"}
         <span className="font-semibold normal-case tracking-normal opacity-80 truncate">{clockLabel(w.start, tz)}–{band === "night" && !short ? `${fmtInTz(w.end, tz, { weekday: "short" })} ` : ""}{clockLabel(w.end, tz)}</span>
@@ -623,7 +623,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
           ]} />
         <div className="ml-auto inline-flex items-center gap-1.5 flex-wrap">
           {mode !== "day" && <>
-            <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Crew</span>
+            <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Crew</span>
             <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-[10px] p-0.5 gap-0.5" role="group" aria-label="Crew">
               {([["all", "All"], ["day", "Day"], ["night", "Night"]] as const).map(([id, label]) => (
                 <button key={id} onClick={() => setCrewFilter(id)} aria-pressed={crewFilter === id}
@@ -634,7 +634,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
               ))}
             </div>
           </>}
-          <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Show</span>
+          <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Show</span>
           <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-[10px] p-0.5 gap-0.5" role="group" aria-label="Show">
             {([["tasks", "Tasks"], ["subtasks", "Sub-tasks"]] as const).map(([id, label]) => (
               <button
@@ -657,7 +657,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
           area, zone, phase, sub-project, etc. */}
       {units.length > 1 && (
         <div className="px-3 sm:px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex items-center gap-3 flex-wrap text-[12px]">
-          <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Groups</span>
+          <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Groups</span>
           {units.map((u) => {
             const color = colorFor(u);
             return (
@@ -815,7 +815,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                   title={`${fmtInTz(addDaysUTC(weekDays[0], -1, tz), tz, { weekday: "long" })} night: open its list`}
                   className="min-w-0 border-r border-[var(--color-border)] bg-violet-50/60 dark:bg-violet-950/20 flex flex-col items-center justify-center gap-1 text-violet-900/80 dark:text-violet-200 hover:bg-violet-100/70">
                   <Moon className="w-3.5 h-3.5" aria-hidden />
-                  <span className="text-[11px] font-black uppercase tracking-wider">{fmtInTz(addDaysUTC(weekDays[0], -1, tz), tz, { weekday: "short" })}</span>
+                  <span className="text-[13px] font-semibold ">{fmtInTz(addDaysUTC(weekDays[0], -1, tz), tz, { weekday: "short" })}</span>
                   {prevNight.length > 0 && <span className="text-[11px] font-bold tabular-nums">{prevNight.length}</span>}
                 </button>
                 {weekDays.map((day, i) => {
@@ -843,7 +843,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
       {/* Weekday header */}
       <div className="grid grid-cols-7 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
         {WEEKDAYS.map((d) => (
-          <div key={d} className="px-2 py-2 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] text-center">{d}</div>
+          <div key={d} className="px-2 py-2 text-[13px] font-semibold text-[var(--color-text-muted)] text-center">{d}</div>
         ))}
       </div>
 
@@ -895,7 +895,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                       className={`inline-flex items-center gap-1 text-[11px] font-bold rounded px-1 -ml-1 hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-accent-text)] transition-colors ${isToday ? "text-rose-600 dark:text-rose-400" : inMonth ? "text-[var(--color-text)]" : "text-slate-300"}`}
                     >
                       {wallClock(day.getTime(), tz).day}
-                      {items.length > 0 && <span className="text-[11px] font-black uppercase tracking-wider opacity-0 group-hover/tile:opacity-70">Open day</span>}
+                      {items.length > 0 && <span className="text-[13px] font-semibold opacity-0 group-hover/tile:opacity-70">Open day</span>}
                     </button>
                     {items.length > 0 && (
                       <span className={`ml-auto min-w-0 truncate whitespace-nowrap text-[11px] font-semibold tabular-nums ${inMonth ? "text-[var(--color-text-faint)]" : "text-slate-300"}`}>

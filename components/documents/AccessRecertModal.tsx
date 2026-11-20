@@ -117,7 +117,7 @@ export default function AccessRecertModal({ libraryId, orgId, name, uid, userNam
 
             {/* Access list */}
             <div>
-              <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5">Current access · {grants.length}</div>
+              <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Current access · {grants.length}</div>
               {grants.length === 0 ? (
                 <div className="text-[11px] text-[var(--color-text-muted)]">No explicit grants on this library (inherited / default access only).</div>
               ) : (

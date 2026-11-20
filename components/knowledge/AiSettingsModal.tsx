@@ -197,7 +197,7 @@ export function KeyEditor({ orgId, current, onChanged }: {
   return (
     <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 space-y-3">
       <div className="flex items-center justify-between gap-2">
-        <div className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+        <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">
           Your API key (only you use it, only you pay for it)
         </div>
         {current && !grandfatheredBlocked ? (
@@ -218,7 +218,7 @@ export function KeyEditor({ orgId, current, onChanged }: {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <label className="block">
-          <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Provider</span>
+          <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Provider</span>
           <Select value={provider} onChange={(e) => {
             setProvider(e.target.value);
             const meta = PROVIDERS.find((p) => p.id === e.target.value);
@@ -228,7 +228,7 @@ export function KeyEditor({ orgId, current, onChanged }: {
           </Select>
         </label>
         <label className="block">
-          <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Main model</span>
+          <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Main model</span>
           <Select value={model} onChange={(e) => pickModel(e.target.value)} disabled={busy !== null}>
             {options.map((m) => <option key={m} value={m}>{modelLabel(m, offered)}</option>)}
           </Select>
@@ -236,7 +236,7 @@ export function KeyEditor({ orgId, current, onChanged }: {
       </div>
       <p className="text-[11px] text-[var(--color-text-muted)]">{PROVIDER_BLOCK_MESSAGE}</p>
       <label className="block">
-        <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">
           API key {current ? "(leave blank to keep the saved key)" : ""}
         </span>
         <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)}
@@ -303,7 +303,7 @@ export function JobModelsEditor({ orgId, current, jobModels, ready, jobUse, onCh
 
   return (
     <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 space-y-3">
-      <div className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
+      <div className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center gap-1.5">
         <Sparkles className="w-3.5 h-3.5" /> Model for each job
       </div>
       {!ready && (
@@ -471,7 +471,7 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
   return (
     <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 space-y-3">
       <div className="flex items-center justify-between gap-2">
-        <div className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
+        <div className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center gap-1.5">
           <Sparkles className="w-3.5 h-3.5" /> Meaning-based search (optional)
         </div>
         {saved ? (
@@ -499,7 +499,7 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <label className="block">
-          <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Provider</span>
+          <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Provider</span>
           <Select value={provider} onChange={(e) => {
             setProvider(e.target.value);
             setModel(defaultEmbeddingModel(e.target.value as "voyage" | "openai"));
@@ -508,7 +508,7 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
           </Select>
         </label>
         <label className="block">
-          <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Model</span>
+          <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Model</span>
           <Select value={model} onChange={(e) => setModel(e.target.value)}>
             {meta.models.map((m) => <option key={m} value={m}>{m}</option>)}
           </Select>
@@ -517,7 +517,7 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
       <p className="text-[11px] text-[var(--color-text-muted)]">{meta.hint}</p>
 
       <label className="block">
-        <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">
           Embeddings API key {saved ? "(leave blank to keep the saved key)" : ""}
         </span>
         <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)}
@@ -631,7 +631,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
   return (
     <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 space-y-3">
       <div className="flex items-center justify-between gap-2">
-        <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
+        <div className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center gap-1.5">
           <Gauge className="w-3.5 h-3.5" /> Your AI usage - {usage.monthLabel}
         </div>
         <span className={`text-xs font-black ${capped ? "text-rose-600" : hot ? "text-amber-600" : "text-[var(--color-text)]"}`}>
@@ -673,7 +673,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
       {usage.team && (
         <div className="pt-2 border-t border-[var(--color-border)] space-y-2">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
+            <span className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center gap-1.5">
               <Users className="w-3.5 h-3.5" /> Team this month
             </span>
             <div className="ml-auto flex items-center gap-1.5">

@@ -285,11 +285,11 @@ export default function AdminUsersPage() {
               <table className="min-w-full divide-y divide-[var(--color-border)]">
                 <thead>
                   <tr>
-                    <th className="px-5 py-3 text-left text-[11px] font-extrabold text-[var(--color-text-muted)] uppercase tracking-[0.12em]">User</th>
-                    <th className="px-5 py-3 text-left text-[11px] font-extrabold text-[var(--color-text-muted)] uppercase tracking-[0.12em]">Role</th>
-                    <th className="px-5 py-3 text-left text-[11px] font-extrabold text-[var(--color-text-muted)] uppercase tracking-[0.12em]">Status</th>
-                    <th className="px-5 py-3 text-left text-[11px] font-extrabold text-[var(--color-text-muted)] uppercase tracking-[0.12em]">Joined</th>
-                    <th className="px-5 py-3 text-right text-[11px] font-extrabold text-[var(--color-text-muted)] uppercase tracking-[0.12em]"><span className="sr-only">Actions</span></th>
+                    <th className="px-5 py-3 text-left text-[13px] font-semibold text-[var(--color-text-muted)] ">User</th>
+                    <th className="px-5 py-3 text-left text-[13px] font-semibold text-[var(--color-text-muted)] ">Role</th>
+                    <th className="px-5 py-3 text-left text-[13px] font-semibold text-[var(--color-text-muted)] ">Status</th>
+                    <th className="px-5 py-3 text-left text-[13px] font-semibold text-[var(--color-text-muted)] ">Joined</th>
+                    <th className="px-5 py-3 text-right text-[13px] font-semibold text-[var(--color-text-muted)] "><span className="sr-only">Actions</span></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--color-border)]">
@@ -397,7 +397,7 @@ export default function AdminUsersPage() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-1">First name</label>
+                  <label className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">First name</label>
                   <Input
                     required type="text" value={formData.firstName}
                     onChange={e => setFormData({...formData, firstName: e.target.value})}
@@ -405,7 +405,7 @@ export default function AdminUsersPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-1">Last name</label>
+                  <label className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">Last name</label>
                   <Input
                     required type="text" value={formData.lastName}
                     onChange={e => setFormData({...formData, lastName: e.target.value})}
@@ -415,7 +415,7 @@ export default function AdminUsersPage() {
               </div>
 
               <div>
-                <label className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-1">Work email</label>
+                <label className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">Work email</label>
                 <Input
                   required type="email" value={formData.email}
                   onChange={e => setFormData({...formData, email: e.target.value})}
@@ -424,7 +424,7 @@ export default function AdminUsersPage() {
               </div>
 
               <div>
-                <label className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-1">Temporary password</label>
+                <label className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">Temporary password</label>
                 <Input
                   required type="text" value={formData.password}
                   onChange={e => setFormData({...formData, password: e.target.value})}
@@ -434,7 +434,7 @@ export default function AdminUsersPage() {
               </div>
 
               <div>
-                <label className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-1">Role</label>
+                <label className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">Role</label>
                 <Select
                   value={formData.role}
                   onChange={e => setFormData({...formData, role: e.target.value})}
@@ -495,7 +495,7 @@ function RoleAddPicker({
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div className="absolute left-0 z-50 mt-1 w-72 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg py-1 max-h-72 overflow-auto animate-in fade-in zoom-in-95 duration-150">
-            <div className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-faint)] border-b border-[var(--color-border)]">
+            <div className="px-3 py-1.5 text-[13px] font-semibold text-[var(--color-text-faint)] border-b border-[var(--color-border)]">
               Roles that add new access
             </div>
             {options.map((r) => {

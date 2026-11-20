@@ -4231,7 +4231,7 @@ export default function LibraryExplorerPage() {
                   <button type="button" onClick={() => setMapOpen((v) => !v)} aria-expanded={mapOpen}
                     className="w-full px-4 sm:px-5 py-3.5 flex items-center gap-2 text-left rounded-2xl hover:bg-[var(--color-surface-2)]/60">
                     <ChevronDown className={`w-3.5 h-3.5 text-[var(--color-text-muted)] transition-transform ${mapOpen ? "" : "-rotate-90"}`} />
-                    <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Map</span>
+                    <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Map</span>
                     <span className="text-[13px] text-[var(--color-text-muted)] truncate">
                       {mapFolder.name} › its files › the equipment on each
                     </span>
@@ -4286,7 +4286,7 @@ export default function LibraryExplorerPage() {
                 )}
                 <div className="px-4 sm:px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3 flex-wrap">
                   <h2 className="flex items-baseline gap-2 shrink-0 min-w-0">
-                    <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{noun.many === "documents" ? "Documents" : library.name}</span>
+                    <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">{noun.many === "documents" ? "Documents" : library.name}</span>
                     <span className="text-[13px] text-[var(--color-text-muted)] tabular-nums"
                       title="Documents filed directly in this folder">{filteredDocs.length.toLocaleString()} here</span>
                     {folderCounts && (() => {
@@ -4512,7 +4512,7 @@ export default function LibraryExplorerPage() {
                     onMouseDown={handleMarqueeMouseDown}
                   >
                     <table className="w-full text-left text-sm table-fixed min-w-[640px]">
-                      <thead className="border-b border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] uppercase font-extrabold tracking-[0.12em]">
+                      <thead className="border-b border-[var(--color-border)] text-[13px] text-[var(--color-text-muted)] font-semibold ">
                         <tr>
                           <th className={`px-3 ${headerPad}`} style={{ width: "36px" }}>
                             <input
@@ -5578,18 +5578,18 @@ function LibraryNumberingModal({ orgId, libraryId, onClose }: {
             </label>
             <div className="grid grid-cols-3 gap-2">
               <div className="col-span-1">
-                <label className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text)]">Prefix</label>
+                <label className="text-[13px] font-semibold text-[var(--color-text)]">Prefix</label>
                 <input value={cfg.prefix} onChange={(e) => setCfg({ ...cfg, prefix: e.target.value })}
                   placeholder="PROC-" className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm font-mono" />
               </div>
               <div>
-                <label className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text)]">Digits</label>
+                <label className="text-[13px] font-semibold text-[var(--color-text)]">Digits</label>
                 <input type="number" min={1} max={8} value={cfg.pad}
                   onChange={(e) => setCfg({ ...cfg, pad: Math.max(1, Math.min(8, Number(e.target.value) || 4)) })}
                   className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
               </div>
               <div>
-                <label className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text)]">Next #</label>
+                <label className="text-[13px] font-semibold text-[var(--color-text)]">Next #</label>
                 <input type="number" min={1} value={cfg.next_number}
                   onChange={(e) => setCfg({ ...cfg, next_number: Math.max(1, Number(e.target.value) || 1) })}
                   className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />

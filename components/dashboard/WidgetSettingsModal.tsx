@@ -110,7 +110,7 @@ export default function WidgetSettingsModal({ widget, onClose, onSave }: Props) 
         <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]">
           <div className="flex items-center gap-2 min-w-0">
             <div className="min-w-0">
-              <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Settings2 className="w-3.5 h-3.5" /> Widget settings</div>
+              <div className="text-[13px] font-semibold text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Settings2 className="w-3.5 h-3.5" /> Widget settings</div>
               <h2 className="mt-1 text-[24px] leading-tight font-black tracking-[-0.02em] text-[var(--color-text)] truncate">{meta.title}.</h2>
               <p className="mt-0.5 text-[13px] text-[var(--color-text-muted)]">Only this widget changes.</p>
             </div>

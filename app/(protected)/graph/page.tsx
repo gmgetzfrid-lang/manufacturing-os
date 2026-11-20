@@ -798,7 +798,7 @@ function GraphPageInner() {
               <div className="absolute bottom-3 right-3 w-72 max-w-[calc(100%-1.5rem)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl p-3 space-y-2 z-10">
                 <div className="flex items-center gap-1.5">
                   <Route className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-                  <span className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text)] flex-1">Connection path</span>
+                  <span className="text-[13px] font-semibold text-[var(--color-text)] flex-1">Connection path</span>
                   <button onClick={() => { setPathMode(false); setPathEnds({ from: null, to: null }); }}
                     aria-label="Close" className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
                     <X className="w-3.5 h-3.5" />
@@ -936,7 +936,7 @@ function GraphPageInner() {
               <div className="absolute bottom-3 right-3 w-72 max-w-[calc(100%-1.5rem)] rounded-xl border border-emerald-300 dark:border-emerald-900 bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl p-3 space-y-2 z-10">
                 <div className="flex items-center gap-1.5">
                   <Link2 className="w-3.5 h-3.5 text-emerald-600" />
-                  <span className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text)] flex-1">Draw a connection</span>
+                  <span className="text-[13px] font-semibold text-[var(--color-text)] flex-1">Draw a connection</span>
                   <button onClick={() => setConnect(null)} aria-label="Done connecting"
                     className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
                     <X className="w-3.5 h-3.5" />

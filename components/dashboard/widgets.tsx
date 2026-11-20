@@ -190,7 +190,7 @@ function DailyBriefBody() {
         <div className="border-t border-[var(--color-border)] pt-3">
           <div className="flex items-center gap-1.5 mb-2">
             <Zap className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-            <span className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">Suggested actions</span>
+            <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Suggested actions</span>
           </div>
           <ul className="space-y-1.5">
             {nudges.map((n) => (
@@ -344,7 +344,7 @@ function WidgetCard({
   return (
     <div className={`border-t border-[var(--color-border)] pt-3 ${edge ? `${edge} pl-3` : ""}`}>
       <div className="flex items-center justify-between mb-2">
-        <h2 className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
+        <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
           <Icon className={`w-3.5 h-3.5 ${iconTones[tone]}`} />
           {title}
         </h2>
@@ -661,7 +661,7 @@ function CommandDeckBody() {
   if (loading && !data) {
     return (
       <div className="h-full rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5" aria-busy="true">
-        <div className="flex items-center gap-2 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+        <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--color-text-muted)]">
           <Loader2 className="w-3.5 h-3.5 animate-spin" /> Needs you
         </div>
         <div className="mt-4 h-4 w-2/3 rounded bg-[var(--color-surface-2)] animate-pulse" />

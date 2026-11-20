@@ -243,7 +243,7 @@ export default function AssetPhotoUploader({
         {/* Pending photos list */}
         {pending.length > 0 && (
           <div className="flex-1 overflow-auto px-5 pt-4 pb-2">
-            <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-2">
+            <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">
               Photos to upload ({pending.length})
             </div>
             <div className="space-y-2">

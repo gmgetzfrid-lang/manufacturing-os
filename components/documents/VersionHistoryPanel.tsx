@@ -216,7 +216,7 @@ export default function VersionHistoryPanel({
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between px-1">
-        <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest flex items-center gap-1.5">
+        <div className="text-[13px] font-semibold text-[var(--color-text)] flex items-center gap-1.5">
           <Layers className="w-3 h-3" /> Version History
           <HelpTooltip>
             Every revision of this document, newest first. Each row links to its file, SHA-256 hash,
@@ -521,7 +521,7 @@ function SignoffBit({ icon, label, name }: { icon: React.ReactNode; label: strin
   return (
     <span className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-muted)]">
       <span className="text-[var(--color-text-faint)]">{icon}</span>
-      <span className="font-bold uppercase tracking-wider text-[11px]">{label}</span>
+      <span className="font-semibold text-[13px]">{label}</span>
       <span className="text-[var(--color-text)] font-medium">{name}</span>
     </span>
   );

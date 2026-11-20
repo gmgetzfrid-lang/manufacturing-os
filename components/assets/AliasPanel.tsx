@@ -72,7 +72,7 @@ export default function AliasPanel({
     <section className="rounded-2xl shadow-[var(--shadow-card)] bg-[var(--color-surface)] p-4 sm:p-5 space-y-2.5">
       <div className="flex items-center gap-2 text-[var(--color-text-muted)]">
         <Tags className="w-4 h-4" />
-        <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Also known as</h2>
+        <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)]">Also known as</h2>
       </div>
       <p className="text-[13px] text-[var(--color-text-muted)]">
         Nicknames, old tags before a renumber, vendor names.

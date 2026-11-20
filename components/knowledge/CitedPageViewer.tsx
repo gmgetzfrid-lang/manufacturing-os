@@ -388,7 +388,7 @@ export default function CitedPageViewer({
         {/* Header: where you are, the document (big), the page in words. */}
         <div className="px-4 sm:px-5 pt-3 pb-3.5 shrink-0">
           <div className="flex items-center gap-1.5 min-h-9">
-            <div className="min-w-0 flex-1 truncate text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+            <div className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[var(--color-text-muted)]">
               {list.length > 1 ? `Source ${idx + 1} of ${list.length}` : "Cited page"}{section ? ` · ${section}` : ""}
             </div>
             {url && (

@@ -122,7 +122,7 @@ export default function HoldStrip({
 
   return (
     <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-4 space-y-3">
-      <div className="text-xs font-bold text-[var(--color-text-faint)] uppercase tracking-wider flex items-center justify-between">
+      <div className="text-[13px] font-semibold text-[var(--color-text-faint)] flex items-center justify-between">
         <span className="flex items-center gap-1.5">
           <AlertOctagon className="w-3 h-3" /> Holds
           <HelpTooltip>
@@ -164,7 +164,7 @@ export default function HoldStrip({
 
       {canEdit && (
         <div className="pt-1 border-t border-[var(--color-border)] space-y-2">
-          <div className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-wider">Place hold</div>
+          <div className="text-[13px] font-semibold text-[var(--color-text-muted)] ">Place hold</div>
           <div className="flex flex-wrap gap-1.5">
             {PREDEFINED_HOLD_REASONS.map((r) => (
               <span key={r} className="inline-flex items-center gap-0.5">

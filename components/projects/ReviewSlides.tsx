@@ -92,7 +92,7 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
     <div ref={shell} className="fixed inset-0 z-[400] bg-slate-950 text-white flex flex-col" role="dialog" aria-modal="true" aria-label={`${name}: slide ${at + 1} of ${slides.length}`} data-review-slides>
       {!full && (
         <div className="flex items-center gap-2 px-3 sm:px-5 py-2 border-b border-white/10">
-          <span className="min-w-0 flex-1 truncate text-[13px] font-black uppercase tracking-widest text-white/70">{name}</span>
+          <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-white/70">{name}</span>
           <span className="text-[13px] font-bold text-white/60 tabular-nums whitespace-nowrap" data-slide-count>{at + 1} / {slides.length}</span>
           <button type="button" onClick={onDownload} disabled={downloading} className={bar}>{downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}<span className="hidden sm:inline">Download </span>PowerPoint</button>
           {canFull && wide && <button type="button" onClick={toggleFull} className={bar}><Maximize2 className="w-4 h-4" /> Full screen</button>}
@@ -133,7 +133,7 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
             </div>
             {more.sections.map((sec, i) => (
               <div key={i} className="mt-4">
-                <div className="text-[11px] font-black uppercase tracking-widest" style={{ color: C.acc }}>{T(sec.title)}</div>
+                <div className="text-[13px] font-semibold " style={{ color: C.acc }}>{T(sec.title)}</div>
                 {sec.numbered
                   ? <ol className="mt-1.5 list-decimal pl-5 space-y-1.5 text-[14.5px] leading-snug">{sec.lines.map((l, n) => <li key={n}>{T(l)}</li>)}</ol>
                   : sec.lines.length === 1 ? <p className="mt-1.5 text-[14.5px] leading-snug">{T(sec.lines[0])}</p>
@@ -293,11 +293,11 @@ function Page({ spec, open }: { spec: SlideSpec; open?: Open }) {
   const b = spec.body;
   return (
     <div className="px-4 py-5">
-      <div className="text-[11px] font-black uppercase tracking-widest" style={{ color: C.acc }}>{T(spec.kicker)}</div>
+      <div className="text-[13px] font-semibold " style={{ color: C.acc }}>{T(spec.kicker)}</div>
       <h2 className="mt-1 text-[21px] font-black leading-tight">{T(spec.title)}</h2>
       {b.k === "cover" && <>
         {b.sub && <p className="mt-2 text-[14px]" style={{ color: C.soft }}>{T(b.sub)}</p>}
-        {b.table && <><div className="mt-5 text-[11px] font-black uppercase tracking-widest" style={{ color: C.acc }}>What this review measures</div><div className="mt-2"><Rows head={b.table.head} rows={b.table.rows} /></div></>}
+        {b.table && <><div className="mt-5 text-[13px] font-semibold " style={{ color: C.acc }}>What this review measures</div><div className="mt-2"><Rows head={b.table.head} rows={b.table.rows} /></div></>}
         {!b.table && <ol className="mt-5 space-y-1.5 text-[15px]">{b.agenda.map((t, i) => <li key={i}>{i + 1}. {T(t)}</li>)}</ol>}
         <p className="mt-6 text-[13px]" style={{ color: C.soft }}>{T(b.meta)}</p>
       </>}
@@ -324,7 +324,7 @@ function Page({ spec, open }: { spec: SlideSpec; open?: Open }) {
 }
 function PanePage({ pane }: { pane: SlidePane }) {
   const items = (pane.items ?? []).map(itemOf);
-  const label = "text-[11px] font-black uppercase tracking-wider";
+  const label = "text-[13px] font-semibold ";
   return (
     <div>
       {pane.title && <div className={label} style={{ color: C.acc }}>{T(pane.title)}</div>}

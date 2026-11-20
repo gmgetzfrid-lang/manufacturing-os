@@ -34,7 +34,7 @@ export default function FavoritesStrip({
     <div className="px-4 sm:px-5 py-3.5 border-b border-[var(--color-border)] last:border-b-0">
       <div className="flex items-center gap-2 mb-2">
         <Star className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">
           My favorites
         </span>
         <span className="text-[11px] text-[var(--color-text-faint)]">· {favs.length}</span>

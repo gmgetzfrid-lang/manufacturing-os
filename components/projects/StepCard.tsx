@@ -654,12 +654,12 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
                 ))}
               </div>
               <label className="block">
-                <span className="block mb-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{ADDED[foundEdit.kind].what}</span>
+                <span className="block mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]">{ADDED[foundEdit.kind].what}</span>
                 <input value={foundEdit.what} onChange={(e) => { setFoundEdit({ ...foundEdit, what: e.target.value }); setFoundMsg(null); }} aria-label={ADDED[foundEdit.kind].what}
                   className="h-9 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)]" />
               </label>
               <div>
-                <span className="block mb-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Work order #</span>
+                <span className="block mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]">Work order #</span>
                 <div className="flex flex-wrap items-center gap-1.5">
                   <input value={foundEdit.wo} onChange={(e) => { setFoundEdit({ ...foundEdit, wo: e.target.value }); setFoundMsg(null); }} aria-label="Work order number" placeholder="e.g. 310990"
                     className="h-9 w-36 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 font-mono text-[12.5px] text-[var(--color-text)]" />
@@ -692,7 +692,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
         {m.actualParty?.trim() && m.actualParty.trim() !== planned && <> · <span className="font-semibold text-[var(--color-text)]">done by {m.actualParty.trim()}</span></>}
       </div>
       <table className="text-[12.5px]">
-        <thead><tr className="text-[11px] uppercase tracking-[0.14em] text-[var(--color-text-muted)]"><th /><th className={`${cell} text-left font-extrabold`}>Start</th><th className={`${cell} text-left font-extrabold`}>Finish</th></tr></thead>
+        <thead><tr className="text-[13px] text-[var(--color-text-muted)]"><th /><th className={`${cell} text-left font-extrabold`}>Start</th><th className={`${cell} text-left font-extrabold`}>Finish</th></tr></thead>
         <tbody>
           <tr><td className={`${cell} text-[var(--color-text-muted)]`}>Plan</td><td className={cell}>{Number.isFinite(ps) ? when(ps) : "-"}</td><td className={cell}>{Number.isFinite(pf) ? when(pf) : "-"}</td></tr>
           <tr className="font-semibold"><td className={`${cell} font-normal text-[var(--color-text-muted)]`}>Actual</td><td className={cell}>{Number.isFinite(as) ? when(as) : "-"}</td><td className={cell}>{Number.isFinite(af) ? when(af) : held ? (m.status === "blocked" ? "blocked" : "on hold") : started ? `${pct}%` : "-"}</td></tr>
@@ -756,7 +756,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
           )}
           {(action === "start" || action === "resume" || action === "progress" || action === "finish") && (
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Resource</span>
+              <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Resource</span>
               {byOther ? (
                 <input value={by} onChange={(e) => { setBy(e.target.value); setMsg(null); }} autoFocus placeholder="Crew or company" aria-label="Resource"
                   className="h-8 flex-1 min-w-[10rem] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px]" />
@@ -811,7 +811,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
 
       <div className="border-t border-[var(--color-border)] pt-2">
         <div className="flex items-baseline justify-between gap-2 mb-0.5">
-          <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">History</span>
+          <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">History</span>
           {toSet > 0 && <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-400">{toSet === 1 ? "1 time" : `${toSet} times`} to set</span>}
           {canEdit && onUpdate && (started || history.length > 0) && (
             <button type="button" onClick={() => void startOver()} disabled={busy} className="ml-auto text-[11px] font-semibold text-rose-700 dark:text-rose-400 hover:underline disabled:opacity-50">Start over</button>

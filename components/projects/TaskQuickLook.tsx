@@ -38,7 +38,7 @@ function Tile({ label, sub, big, small, tone }: { label: string; sub?: string; b
 
 function Heading({ children, hint }: { children: React.ReactNode; hint?: string }) {
   return (
-    <h3 className="mt-4 mb-1.5 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+    <h3 className="mt-4 mb-1.5 text-[13px] font-semibold text-[var(--color-text-muted)]">
       {children}{hint && <span className="ml-1.5 normal-case font-semibold tracking-normal text-[var(--color-text-faint)]">{hint}</span>}
     </h3>
   );
@@ -95,7 +95,7 @@ export function QuickLookCard({ look, goalAt, noteOf, fmt, onOpen, onClose }: {
             <div className="rounded-lg border border-[var(--color-border)] overflow-hidden">
               <table className="w-full text-[12px]">
                 <thead>
-                  <tr className="bg-[var(--color-surface-2)] text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] text-left">
+                  <tr className="bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text-muted)] text-left">
                     <th className="px-2 py-1 w-[104px]">Starts</th>
                     <th className="px-2 py-1 w-[104px] hidden sm:table-cell">Done by</th>
                     <th className="px-2 py-1">Step</th>

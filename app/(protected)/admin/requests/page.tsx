@@ -282,7 +282,7 @@ export default function DraftingConfigPage() {
           {/* SECTION: REQUEST ROUTING */}
           <div className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden">
             <div className="px-5 sm:px-6 pt-5 pb-3 border-b border-[var(--color-border)]">
-              <h3 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Request routing</h3>
+              <h3 className="text-[13px] font-semibold text-[var(--color-text-muted)]">Request routing</h3>
               <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">Who gets notified when a new request needs approval or assignment.</p>
             </div>
             <div className="p-5 sm:p-6">
@@ -337,13 +337,13 @@ function ConfigSection({
     <div className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden">
       <div className="px-5 sm:px-6 pt-5 pb-3 border-b border-[var(--color-border)] flex justify-between items-center">
         <div>
-          <h3 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{title}</h3>
+          <h3 className="text-[13px] font-semibold text-[var(--color-text-muted)]">{title}</h3>
           <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">{desc}</p>
         </div>
       </div>
       <div className="p-5 sm:p-6">
         <div className="mb-6">
-          <label className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-2">Form label</label>
+          <label className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">Form label</label>
           <Input
             value={config.label}
             onChange={(e) => onLabelChange(e.target.value)}
@@ -351,7 +351,7 @@ function ConfigSection({
           />
         </div>
         
-        <label className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-2">Dropdown options</label>
+        <label className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">Dropdown options</label>
         <div className="space-y-2">
           {config.options.map((opt, i) => (
             <div key={i} className="flex items-center gap-2 group">
@@ -415,7 +415,7 @@ function CustomCategoriesSection({
     <div className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden">
       <div className="px-5 sm:px-6 pt-5 pb-3 border-b border-[var(--color-border)] flex flex-wrap justify-between items-center gap-3">
         <div className="min-w-0 flex-1 basis-64">
-          <h3 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Custom categories</h3>
+          <h3 className="text-[13px] font-semibold text-[var(--color-text-muted)]">Custom categories</h3>
           <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">
             Add sections with your own fields so requesters can capture
             org-specific context (e.g. <i>Inspection Type</i>, <i>Equipment Tag</i>,
@@ -571,7 +571,7 @@ function FieldEditor({
       />
       {isChoice && (
         <div className="mt-2 space-y-1">
-          <div className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-wider">Choices</div>
+          <div className="text-[13px] font-semibold text-[var(--color-text-muted)] ">Choices</div>
           {(field.options ?? []).map((opt, oi) => (
             <div key={oi} className="flex gap-1 items-center">
               <input

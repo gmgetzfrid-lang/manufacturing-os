@@ -91,7 +91,7 @@ export default function ViewSelector({
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div className="absolute right-0 mt-1 w-64 origin-top-right bg-[var(--color-surface)] text-[var(--color-text)] rounded-xl border border-[var(--color-border)] ring-1 ring-black/5 shadow-lg z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             <div className="px-3 py-2 border-b border-[var(--color-border)]">
-              <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Views</div>
+              <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Views</div>
             </div>
             <div className="max-h-72 overflow-y-auto">
               {loading ? (
@@ -102,7 +102,7 @@ export default function ViewSelector({
                 <>
                   {orgViews.length > 0 && (
                     <>
-                      <div className="px-3 py-1 text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)] bg-[var(--color-surface-2)]">Admin Views</div>
+                      <div className="px-3 py-1 text-[13px] font-semibold text-[var(--color-text-faint)] bg-[var(--color-surface-2)]">Admin Views</div>
                       {orgViews.map((v) => (
                         <ViewRow key={v.id} v={v} active={v.id === activeViewId} onApply={() => apply(v)} onDelete={isAdmin ? () => remove(v.id) : undefined} />
                       ))}
@@ -110,7 +110,7 @@ export default function ViewSelector({
                   )}
                   {userViews.length > 0 && (
                     <>
-                      <div className="px-3 py-1 text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)] bg-[var(--color-surface-2)]">My Views</div>
+                      <div className="px-3 py-1 text-[13px] font-semibold text-[var(--color-text-faint)] bg-[var(--color-surface-2)]">My Views</div>
                       {userViews.map((v) => (
                         <ViewRow key={v.id} v={v} active={v.id === activeViewId} onApply={() => apply(v)} onDelete={() => remove(v.id)} />
                       ))}
@@ -221,15 +221,15 @@ function SaveViewModal({
         </div>
         <div className="px-5 py-4 space-y-3">
           <div>
-            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Name *</label>
+            <label className="text-[13px] font-semibold text-[var(--color-text)] ">Name *</label>
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Past Due P&IDs" autoFocus className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
           </div>
           <div>
-            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Description</label>
+            <label className="text-[13px] font-semibold text-[var(--color-text)] ">Description</label>
             <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional" className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
           </div>
           <div>
-            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Visibility</label>
+            <label className="text-[13px] font-semibold text-[var(--color-text)] ">Visibility</label>
             <div className="mt-1 flex bg-[var(--color-surface-2)] p-1 rounded-lg w-fit">
               {isAdmin && (
                 <button onClick={() => setScope("org")} className={`px-3 py-1.5 text-xs font-bold rounded-md ${scope === "org" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>

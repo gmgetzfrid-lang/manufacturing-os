@@ -645,7 +645,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                 tell. An idle document opens straight to the form. */}
             {!isIdle && (
             <div>
-              <h3 className="text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider mb-3">Active Collaborators</h3>
+              <h3 className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-3">Active Collaborators</h3>
               {activeSessions.length === 0 ? (
                 <div className="p-4 rounded-xl border border-dashed border-[var(--color-border-strong)] text-center text-[var(--color-text-faint)] text-sm">
                   {isOrphaned
@@ -811,7 +811,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                     </div>
                     {projectChoice === "adhoc" && (
                       <div className="space-y-1.5 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-2">
-                        <div className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-wider">Auto-release after</div>
+                        <div className="text-[13px] font-semibold text-[var(--color-text-muted)] ">Auto-release after</div>
                         <div className="flex bg-[var(--color-surface)] p-1 rounded-md border border-[var(--color-border)]">
                           {([
                             { v: "24h", label: "24 hr" },

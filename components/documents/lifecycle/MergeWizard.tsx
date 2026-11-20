@@ -307,7 +307,7 @@ function Step1Sources({
       </div>
 
       <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-3 space-y-2">
-        <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Sources ({others.length + 1})</div>
+        <div className="text-[13px] font-semibold text-[var(--color-text)] ">Sources ({others.length + 1})</div>
         <SourceChip doc={sourceDoc} primary />
         {others.map((d) => (
           <SourceChip key={d.id} doc={d} onRemove={() => remove(d.id!)} />
@@ -425,7 +425,7 @@ function Step2Target(props: {
 
       {mode === "extend_existing" && (
         <div className="border border-[var(--color-border)] rounded-lg p-3 bg-slate-50/40 space-y-2">
-          <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Pick the source to keep</div>
+          <div className="text-[13px] font-semibold text-[var(--color-text)] ">Pick the source to keep</div>
           <div className="space-y-1">
             {props.sources.map((s) => (
               <label key={s.id} className="flex items-center gap-2 text-xs cursor-pointer">
@@ -523,7 +523,7 @@ function Step3TagsAndConfirm(props: {
 
       {props.tagUnion.length > 0 && (
         <div>
-          <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest mb-1">Asset tag union: uncheck to exclude</div>
+          <div className="text-[13px] font-semibold text-[var(--color-text)] mb-1">Asset tag union: uncheck to exclude</div>
           <div className="border border-[var(--color-border)] rounded-lg p-2 max-h-48 overflow-y-auto grid grid-cols-2 md:grid-cols-3 gap-1">
             {props.tagUnion.map((t) => {
               const k = tagKey(t);
@@ -541,7 +541,7 @@ function Step3TagsAndConfirm(props: {
       )}
 
       <label className="block">
-        <span className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Reason for merge *</span>
+        <span className="text-[13px] font-semibold text-[var(--color-text)] ">Reason for merge *</span>
         <textarea
           value={props.reason}
           onChange={(e) => props.setReason(e.target.value)}
@@ -551,12 +551,12 @@ function Step3TagsAndConfirm(props: {
         />
       </label>
       <label className="block">
-        <span className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">MOC Reference</span>
+        <span className="text-[13px] font-semibold text-[var(--color-text)] ">MOC Reference</span>
         <input value={props.moc} onChange={(e) => props.setMoc(e.target.value)} className="mt-1 w-full text-sm border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 font-mono" />
       </label>
 
       <div className="border border-[var(--color-border)] rounded-lg p-3 bg-[var(--color-surface)]">
-        <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest mb-2">Carry over from sources</div>
+        <div className="text-[13px] font-semibold text-[var(--color-text)] mb-2">Carry over from sources</div>
         <div className="space-y-1.5 text-xs">
           <label className="flex items-center gap-2 cursor-pointer">
             <input type="checkbox" checked={props.copyHolds} onChange={(e) => props.setCopyHolds(e.target.checked)} />

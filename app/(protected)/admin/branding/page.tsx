@@ -9,7 +9,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import { useOrgBranding } from "@/components/providers/OrgBrandingProvider";
 import { PALETTE_PRESETS, useTheme, type Palette } from "@/components/providers/ThemeProvider";
 import { extractLogoColors } from "@/lib/logoTheme";
-import { rolesFromLogo } from "@/lib/themeRoles";
+import { signalFromLogo } from "@/lib/brandColors";
 import PalettePicker from "@/components/branding/PalettePicker";
 import { uploadToPath, getSignedUrlForPath } from "@/lib/storage";
 import { Upload, Check, Loader2, ShieldAlert, Trash2 } from "lucide-react";
@@ -32,6 +32,20 @@ export default function AdminBrandingPage() {
   const [palette, setPaletteState] = useState<Palette>(branding?.palette ?? showing ?? PALETTE_PRESETS[0]);
   const [touched, setTouched] = useState(false);
   const [logoNote, setLogoNote] = useState<string | null>(null);
+  const [logoColors, setLogoColors] = useState<string[] | undefined>(undefined);
+  // Read the saved logo's colors so you can pick from them.
+  useEffect(() => {
+    if (!logoUrl || logoColors) return;
+    let alive = true;
+    (async () => {
+      try {
+        const blob = await (await fetch(logoUrl)).blob();
+        const colors = (await extractLogoColors(new File([blob], "logo", { type: blob.type }))).map((c) => c.hex);
+        if (alive) setLogoColors(colors);
+      } catch { /* the logo can't be read here; presets still work */ }
+    })();
+    return () => { alive = false; };
+  }, [logoUrl, logoColors]);
   // The whole app shows the colors while you pick; leaving without saving
   // puts the saved ones back.
   const setPalette = (p: Palette) => { setPaletteState(p); setTouched(true); applyOrgPalette(p); };
@@ -76,9 +90,11 @@ export default function AdminBrandingPage() {
       setLogoPreview(URL.createObjectURL(file));
       // Suggest all three colors from the logo.
       try {
-        const r = rolesFromLogo((await extractLogoColors(file)).map((c) => c.hex));
-        if (r) { setPalette({ id: "logo", name: "From your logo", base: r.base, primary: r.main, accent: r.action, secondary: r.action }); setLogoNote("Colors set from your logo. Change any of them below."); }
-        else setLogoNote("No clear brand color in the logo, so the colors stay as they are.");
+        const colors = (await extractLogoColors(file)).map((c) => c.hex);
+        setLogoColors(colors);
+        const r = signalFromLogo(colors);
+        if (r) { setPalette({ id: "logo", name: "From your logo", primary: r.signal, secondary: r.second ?? r.signal, side: palette.side ?? "light" }); setLogoNote("Brand color set from your logo. You can pick another below."); }
+        else setLogoNote("The logo has no strong color (only black, white or grey), so the colors stay as they are.");
       } catch { /* keep current palette */ }
       // Upload to durable storage.
       const ext = (file.name.split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -165,7 +181,7 @@ export default function AdminBrandingPage() {
             )}
           </div>
           <div className="mt-4">
-            <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)] mb-1.5">Logo shape</div>
+            <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Logo shape</div>
             <div className="flex gap-1.5">
               {(["full", "mark"] as const).map((s) => (
                 <button key={s} onClick={() => setLogoShape(s)}
@@ -176,12 +192,12 @@ export default function AdminBrandingPage() {
               ))}
             </div>
           </div>
-          <p className="text-[12px] text-[var(--color-text-muted)] mt-3">{logoNote ?? "Uploading a logo also sets the colors from it."}</p>
+          <p className="text-[12px] text-[var(--color-text-muted)] mt-3">{logoNote ?? "Uploading a logo also sets the brand color from it."}</p>
         </Card>
 
         {/* COLORS */}
         <Card label="Colors">
-          <PalettePicker value={palette} onChange={setPalette} logoButton={false} />
+          <PalettePicker value={palette} onChange={setPalette} logoButton={false} logoColors={logoColors} />
           <p className="text-[12px] text-[var(--color-text-muted)] mt-3">The app shows them as you pick. Save to give them to everyone.</p>
         </Card>
       </div>

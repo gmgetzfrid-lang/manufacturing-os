@@ -294,7 +294,7 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
     <Card pad={false} className="overflow-hidden">
       <div className="px-4 sm:px-5 pt-4 pb-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <BookOpenCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Quality manual</h2>
+        <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)]">Quality manual</h2>
         {company.qualityManualScore != null ? (
           <span className="text-[13px] font-bold tabular-nums" style={{ color: scoreBandColor(company.qualityManualScore) }}>
             {Math.round(company.qualityManualScore)}% coverage
@@ -412,7 +412,7 @@ function EventsPanel({ orgId, company, events, canManage, actorId, actorName, on
       <div className="px-4 sm:px-5 pt-4 pb-3 border-b border-[var(--color-border)]">
         <div className="flex items-center gap-2">
           <ShieldAlert className="w-4 h-4 text-[var(--color-text-muted)]" />
-          <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Safety and performance log · {events.length}</h2>
+          <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)]">Safety and performance log · {events.length}</h2>
         </div>
         <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">Dated, named facts that feed the safety score. Reporting a near miss costs almost nothing: it&apos;s a healthy habit.</p>
       </div>

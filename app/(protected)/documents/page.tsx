@@ -272,7 +272,7 @@ export default function DocumentsHomePage() {
   // One line per library: what it is, how many documents, who can read it.
   const libraryRows = (list: UiLibrary[]) => (
     <div>
-      <div className="grid grid-cols-[minmax(0,1fr)_auto_2rem] sm:grid-cols-[minmax(0,1fr)_auto_7.5rem_2rem] items-center gap-3 px-4 sm:px-5 pb-2 border-b border-[var(--color-border)] text-[11px] font-extrabold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+      <div className="grid grid-cols-[minmax(0,1fr)_auto_2rem] sm:grid-cols-[minmax(0,1fr)_auto_7.5rem_2rem] items-center gap-3 px-4 sm:px-5 pb-2 border-b border-[var(--color-border)] text-[13px] font-semibold text-[var(--color-text-muted)]">
         <span>Library</span><span className="text-right">Documents</span><span className="hidden sm:block">Access</span><span />
       </div>
       {list.map((lib) => {
@@ -492,7 +492,7 @@ function LibraryAdminMenu({
           <div className="fixed inset-0 z-[5]" onClick={(e) => { e.stopPropagation(); onClose(); }} />
           <div className="absolute right-0 top-full mt-1 w-52 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg overflow-hidden z-[10] animate-in fade-in zoom-in-95 duration-150 origin-top-right">
             <div className="px-3 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
-              <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Admin</div>
+              <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Admin</div>
               <div className="text-xs font-bold text-[var(--color-text)] truncate">{libName}</div>
             </div>
             <button

@@ -381,7 +381,7 @@ export default function CollectionModal({
                   )}
 
                   <div className="flex items-center justify-between mb-2 gap-2">
-                    <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest shrink-0">
+                    <div className="text-[13px] font-semibold text-[var(--color-text-muted)] shrink-0">
                       Documents ({itemsHydrated.length})
                     </div>
                     {mode === "edit" && (
@@ -556,7 +556,7 @@ export default function CollectionModal({
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">{label}</label>
+      <label className="text-[13px] font-semibold text-[var(--color-text)] ">{label}</label>
       {hint && <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">{hint}</div>}
       <div className="mt-1">{children}</div>
     </div>

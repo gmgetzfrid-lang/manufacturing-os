@@ -24,7 +24,7 @@ export default function CloseNeeds({ needs, onGo }: { needs: Need[]; onGo: (go: 
     <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5" data-close-needs>
       <div className="flex items-center gap-3 flex-wrap">
         <div className="min-w-0 flex-1 basis-56">
-          <b className="block text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">What the review needs from you</b>
+          <b className="block text-[13px] font-semibold text-[var(--color-text-muted)]">What the review needs from you</b>
           <div className="mt-1.5 flex items-center gap-2">
             <div className="h-1.5 flex-1 max-w-[220px] rounded-full bg-[var(--color-border)] overflow-hidden" aria-hidden>
               <div className={`h-full rounded-full ${all ? "bg-emerald-600" : "bg-amber-500"}`} style={{ width: `${Math.round((done / Math.max(1, needs.length)) * 100)}%` }} />

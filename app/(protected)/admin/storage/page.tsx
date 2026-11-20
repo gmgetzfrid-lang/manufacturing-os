@@ -877,7 +877,7 @@ export default function StorageBackupPage() {
           {/* ── Health watermark ─────────────────────────────────────────── */}
           <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
             <div className="flex items-baseline justify-between gap-3 flex-wrap mb-1">
-              <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Total footprint</div>
+              <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Total footprint</div>
               <div className={`text-[13px] font-bold ${health === "crit" ? "text-red-700 dark:text-red-400" : health === "warn" ? "text-amber-700 dark:text-amber-400" : "text-emerald-700 dark:text-emerald-400"}`}>
                 {health === "crit" ? "Act now" : health === "warn" ? "Plan a backup" : "Healthy"}
               </div>
@@ -922,14 +922,14 @@ export default function StorageBackupPage() {
           {/* ── DB / R2 headline ─────────────────────────────────────────── */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
-              <div className="flex items-center gap-2 text-[var(--color-text-muted)] text-xs font-bold uppercase tracking-widest mb-1">
+              <div className="flex items-center gap-2 text-[var(--color-text-muted)] text-[13px] font-semibold mb-1">
                 <Database className="w-3.5 h-3.5" /> Database (Postgres)
               </div>
               <div className="text-[15px] font-bold text-[var(--color-text)]">{fmtBytes(stats.db.totalBytes)}</div>
               <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">{tables.length} tables on disk</div>
             </div>
             <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
-              <div className="flex items-center gap-2 text-[var(--color-text-muted)] text-xs font-bold uppercase tracking-widest mb-1">
+              <div className="flex items-center gap-2 text-[var(--color-text-muted)] text-[13px] font-semibold mb-1">
                 <HardDrive className="w-3.5 h-3.5" /> Files (R2{stats.r2Real ? ", measured" : ", estimated"})
               </div>
               <div className="text-[15px] font-bold text-[var(--color-text)]">
@@ -978,7 +978,7 @@ export default function StorageBackupPage() {
               is the receipt that answers it. */}
           {stats.r2Real && (stats.r2Real.segments?.length ?? 0) > 0 && (
             <details className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
-              <summary className="cursor-pointer text-[11px] font-bold uppercase tracking-widest text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+              <summary className="cursor-pointer text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
                 Where the files are
               </summary>
               <div className="mt-2.5" />
@@ -1012,7 +1012,7 @@ export default function StorageBackupPage() {
           {/* ── Plan headroom: REAL usage vs the hosting plan's ceilings ──── */}
           {stats.freeTier && (
             <details className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5" open={stats.freeTier.dbBand !== "ok" || stats.r2Real?.band === "warn" || stats.r2Real?.band === "crit"}>
-              <summary className="cursor-pointer text-[11px] font-bold uppercase tracking-widest text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+              <summary className="cursor-pointer text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
                 Hosting plan limits
               </summary>
               <div className="space-y-3 mt-2.5">
@@ -1078,7 +1078,7 @@ export default function StorageBackupPage() {
 
           {/* ── Orphaned files: bucket objects nothing references ─────────── */}
           <details className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5" open={!!orphanScan || !!orphanMsg}>
-            <summary className="cursor-pointer text-[11px] font-bold uppercase tracking-widest text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Orphaned files</summary>
+            <summary className="cursor-pointer text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Orphaned files</summary>
             <div className="mt-2 flex items-center justify-between gap-2 flex-wrap">
               <div>
                 <p className="text-[11px] text-[var(--color-text-muted)]">
@@ -1134,7 +1134,7 @@ export default function StorageBackupPage() {
 
           {/* ── Category breakdown: purge vs keep vs reference ───────────── */}
           <details className="group/cat rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
-            <summary className="cursor-pointer mb-2 text-[11px] font-bold uppercase tracking-widest text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Database by kind: what can go, what stays</summary>
+            <summary className="cursor-pointer mb-2 text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Database by kind: what can go, what stays</summary>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {(["purge", "archive", "reference"] as DataClass[]).map((cat) => {
               const M = CATEGORY_META[cat];
@@ -1161,7 +1161,7 @@ export default function StorageBackupPage() {
           {canPurge ? (
             <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
               <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
-                <div className="flex items-center gap-2 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+                <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--color-text-muted)]">
                   <Recycle className="w-4 h-4" /> Free up space
                   <span className="text-[11px] font-medium text-[var(--color-text-muted)]">· your workspace · byproducts only</span>
                 </div>
@@ -1540,7 +1540,7 @@ export default function StorageBackupPage() {
           {/* ── Dedup opportunity ────────────────────────────────────────── */}
           {stats.dedup && stats.dedup.totalVersions > 0 && (
             <details className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
-              <summary className="cursor-pointer flex items-center gap-2 text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-xs font-bold uppercase tracking-widest mb-2">
+              <summary className="cursor-pointer flex items-center gap-2 text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-[13px] font-semibold mb-2">
                 <Copy className="w-3.5 h-3.5" /> Duplicate revision files
               </summary>
               <div className="flex items-center gap-6 flex-wrap">
@@ -1561,7 +1561,7 @@ export default function StorageBackupPage() {
 
           {/* ── AI usage ─────────────────────────────────────────────────── */}
           <details className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
-            <summary className="cursor-pointer flex items-center gap-2 text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-xs font-bold uppercase tracking-widest mb-2">
+            <summary className="cursor-pointer flex items-center gap-2 text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-[13px] font-semibold mb-2">
               <Sparkles className="w-3.5 h-3.5" /> AI usage (shared key)
             </summary>
             {stats.ai ? (
@@ -1589,7 +1589,7 @@ export default function StorageBackupPage() {
           {/* ── Tables by size ───────────────────────────────────────────── */}
           <details className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden">
             <summary className="cursor-pointer px-4 sm:px-5 py-3.5 border-b border-[var(--color-border)] flex items-center justify-between flex-wrap gap-2">
-              <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Tables by size</span>
+              <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Tables by size</span>
               <span className="text-[11px] font-medium text-[var(--color-text-faint)] inline-flex items-center gap-2">
                 <span className="inline-flex items-center gap-1"><Recycle className="w-3 h-3 text-emerald-500" /> purge</span>
                 <span className="inline-flex items-center gap-1"><Archive className="w-3 h-3 text-amber-500" /> keep</span>

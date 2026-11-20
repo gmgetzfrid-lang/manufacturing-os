@@ -722,7 +722,7 @@ function DestinationModal({
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">{label}</label>
+      <label className="text-[13px] font-semibold text-[var(--color-text)] ">{label}</label>
       {hint && <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">{hint}</div>}
       <div className="mt-1">{children}</div>
     </div>

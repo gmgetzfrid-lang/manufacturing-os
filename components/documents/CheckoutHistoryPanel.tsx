@@ -189,7 +189,7 @@ export default function CheckoutHistoryPanel({ orgId, documentId, activeEpisodeI
         onClick={() => setOpen((v) => !v)}
         className="w-full px-5 py-3 flex items-center justify-between hover:bg-[var(--color-surface-2)] transition-colors"
       >
-        <span className="text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider flex items-center gap-2">
+        <span className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center gap-2">
           <History className="w-3.5 h-3.5 text-[var(--color-text-faint)]" />
           Checkout History
         </span>
@@ -276,7 +276,7 @@ function EpisodeDetailView({ detail, loading }: { detail: EpisodeDetail | null; 
       {/* Participants */}
       {detail.sessions.length > 0 && (
         <div>
-          <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-1.5">Participants</div>
+          <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Participants</div>
           <div className="space-y-1">
             {detail.sessions.map((s) => (
               <div key={s.id} className="flex items-start gap-2 text-[11px]">
@@ -312,7 +312,7 @@ function EpisodeDetailView({ detail, loading }: { detail: EpisodeDetail | null; 
       {/* Revisions published in the window */}
       {detail.versions.length > 0 && (
         <div>
-          <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-1.5">Revisions published</div>
+          <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Revisions published</div>
           <div className="space-y-1">
             {detail.versions.map((v) => (
               <div key={v.id} className="flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
@@ -328,7 +328,7 @@ function EpisodeDetailView({ detail, loading }: { detail: EpisodeDetail | null; 
 
       {/* Conversation */}
       <div>
-        <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-1.5 flex items-center gap-1">
+        <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5 flex items-center gap-1">
           <MessageSquare className="w-3 h-3" /> Conversation ({detail.messages.length})
         </div>
         {detail.messages.length === 0 ? (

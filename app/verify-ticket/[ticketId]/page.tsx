@@ -102,7 +102,7 @@ export default function VerifyTicketPage() {
         {loading ? (
           <div className="text-white/90">
             <Loader2 className="w-14 h-14 mx-auto animate-spin mb-4" />
-            <div className="text-[11px] font-bold tracking-[0.16em] uppercase">Checking revision…</div>
+            <div className="text-[13px] font-semibold ">Checking revision…</div>
           </div>
         ) : error ? (
           <div className="text-white/90">
@@ -135,20 +135,20 @@ export default function VerifyTicketPage() {
             {/* The facts card */}
             <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl p-5 text-left space-y-3">
               <div>
-                <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Drafting ticket</div>
+                <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Drafting ticket</div>
                 <div className="text-[15px] font-bold text-[var(--color-text)] font-mono">{result.ticketNumber ?? "-"}</div>
                 {result.title && <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{result.title}</div>}
                 {result.unit && <div className="text-[12px] text-[var(--color-text-muted)] mt-0.5">Unit {result.unit}</div>}
               </div>
               <div className="grid grid-cols-2 gap-3 pt-3 border-t border-[var(--color-border)]">
                 <div>
-                  <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">This copy</div>
+                  <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">This copy</div>
                   <div className={`text-[15px] font-black ${result.verdict === "current" ? "text-emerald-700" : result.verdict === "superseded" ? "text-red-700" : "text-amber-700"}`}>
                     Rev {result.printedRev ?? "?"}
                   </div>
                 </div>
                 <div>
-                  <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+                  <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">
                     {result.inReview ? "In review now" : "Latest issue"}
                   </div>
                   <div className="text-[15px] font-black text-[var(--color-text)]">Rev {result.currentRev ?? "?"}</div>

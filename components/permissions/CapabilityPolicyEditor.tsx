@@ -119,7 +119,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
     <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden">
       <div className="px-4 sm:px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <SlidersHorizontal className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Action permissions</h2>
+        <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)]">Action permissions</h2>
         <span className="text-[13px] text-[var(--color-text-muted)]">Who may do each workflow action. Checked on the server, logged on save.</span>
         {canEdit && (
           <div className="ml-auto flex items-center gap-2">
@@ -151,7 +151,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
           <tbody>
             {areas.map((area) => (
               <React.Fragment key={area}>
-                <tr><td colSpan={TOKENS.length + 1} className="sticky left-0 bg-[var(--color-surface)] px-4 pt-3 pb-1 text-[11px] font-black uppercase tracking-wider text-[var(--color-text)]">{area}</td></tr>
+                <tr><td colSpan={TOKENS.length + 1} className="sticky left-0 bg-[var(--color-surface)] px-4 pt-3 pb-1 text-[13px] font-semibold text-[var(--color-text)]">{area}</td></tr>
                 {CAPABILITY_DEFS.filter((d) => d.area === area).map((d) => (
                   <tr key={d.id} className="border-t border-[var(--color-border)] hover:bg-[var(--color-surface-2)]/50">
                     <td className="sticky left-0 bg-[var(--color-surface)] px-4 py-1.5">

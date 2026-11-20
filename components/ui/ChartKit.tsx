@@ -200,7 +200,7 @@ export function ScoreDial({ score, size = 64, label, className = "" }: {
         <div className="font-black tabular-nums text-[var(--color-text)]" style={{ fontSize: size / 3.4 }}>
           {score == null ? "-" : Math.round(score)}
         </div>
-        {label && <div className="mt-0.5 text-[11px] font-black uppercase tracking-wider" style={{ color }}>{label}</div>}
+        {label && <div className="mt-0.5 text-[13px] font-semibold " style={{ color }}>{label}</div>}
       </div>
     </div>
   );
@@ -278,12 +278,12 @@ export function ExampleFrame({ children, note, className = "" }: {
   return (
     <div className={`relative rounded-2xl border-2 border-dashed border-[var(--color-border-strong)] overflow-hidden ${className}`}>
       <div aria-hidden className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-        <span className="rotate-[-18deg] text-4xl font-black uppercase tracking-[0.3em] text-[var(--color-text)] opacity-[0.07] select-none">
+        <span className="rotate-[-18deg] text-4xl font-semibold text-[var(--color-text)] opacity-[0.07] select-none">
           Example
         </span>
       </div>
       <div className="px-3 pt-2.5 pb-1 flex items-center gap-2">
-        <span className="text-[11px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40">
+        <span className="text-[13px] font-semibold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40">
           Example data
         </span>
         <span className="text-[11px] text-[var(--color-text-muted)]">

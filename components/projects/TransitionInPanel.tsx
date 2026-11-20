@@ -147,7 +147,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
   return (
     <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Transition in</span>
+        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Transition in</span>
         <span className="text-[13px] text-[var(--color-text-muted)]">
           {candidates.length} sheet{candidates.length === 1 ? "" : "s"} in intake ·{" "}
           <b className="text-emerald-700 dark:text-emerald-400">{cleanCount} clean</b>

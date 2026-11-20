@@ -77,14 +77,14 @@ export default function RenumberModal(props: RenumberModalProps) {
           </div>
 
           <label className="block">
-            <span className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Current number</span>
+            <span className="text-[13px] font-semibold text-[var(--color-text)] ">Current number</span>
             <div className="mt-1 px-2.5 py-1.5 text-sm font-mono bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded text-[var(--color-text)]">
               {doc.documentNumber || "(none)"}
             </div>
           </label>
 
           <label className="block">
-            <span className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">New number *</span>
+            <span className="text-[13px] font-semibold text-[var(--color-text)] ">New number *</span>
             <input
               value={newNumber}
               onChange={(e) => setNewNumber(e.target.value)}
@@ -94,7 +94,7 @@ export default function RenumberModal(props: RenumberModalProps) {
           </label>
 
           <label className="block">
-            <span className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Reason *</span>
+            <span className="text-[13px] font-semibold text-[var(--color-text)] ">Reason *</span>
             <textarea
               value={reason}
               onChange={(e) => setReason(e.target.value)}

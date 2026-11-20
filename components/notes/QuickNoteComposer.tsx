@@ -86,7 +86,7 @@ export default function QuickNoteComposer({ orgId, userId, userEmail, userName, 
 
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
-      <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest flex items-center gap-1 mb-2">
+      <div className="text-[13px] font-semibold text-[var(--color-text)] flex items-center gap-1 mb-2">
         <StickyNote className="w-3 h-3 text-[var(--color-text-muted)]" /> Notes
         {notes.length > 0 && <span className="text-[var(--color-text-faint)] font-mono">{notes.length}</span>}
       </div>

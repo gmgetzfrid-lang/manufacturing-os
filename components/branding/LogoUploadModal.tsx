@@ -90,7 +90,7 @@ export default function LogoUploadModal({ onClose }: { onClose: () => void }) {
           </div>
 
           <div>
-            <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-1.5">Display as</div>
+            <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Display as</div>
             <div className="flex bg-[var(--color-surface-2)] p-1 rounded-lg w-fit">
               {(["full", "mark"] as const).map((s) => (
                 <button key={s} onClick={() => setShape(s)}

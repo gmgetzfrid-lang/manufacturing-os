@@ -158,7 +158,7 @@ function RolePicker({
       )}
       {ROLE_GROUPS.map((group) => (
         <div key={group.title}>
-          <p className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase tracking-wider mb-1.5">{group.title}</p>
+          <p className="text-[13px] font-semibold text-[var(--color-text-faint)] mb-1.5">{group.title}</p>
           <div className="flex flex-wrap gap-1.5">
             {group.roles.map((role) => {
               const active = selected.includes(role);
@@ -327,7 +327,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
         {/* Header */}
         <div className="px-5 sm:px-8 py-4 border-b border-[var(--color-border)] flex justify-between items-center shrink-0">
           <div>
-            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Admin · Libraries</div>
+            <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Admin · Libraries</div>
             <h2 className="text-[15px] font-bold text-[var(--color-text)]">
               {initialData ? `Edit ${initialData.name || "library"}` : "New library"}
             </h2>

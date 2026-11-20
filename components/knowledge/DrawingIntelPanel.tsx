@@ -378,7 +378,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
           </button>
           {showSheets && (
             <div className="mt-1.5 rounded-xl border border-[var(--color-border)] overflow-hidden">
-              <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-2 px-3 py-1.5 bg-[var(--color-surface-2)] text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+              <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-2 px-3 py-1.5 bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text-muted)]">
                 <span>Document</span><span className="text-right">Pages</span>
                 <span className="text-right">Text</span><span className="text-right">Tags</span>
                 <span className="text-right">How read</span>

@@ -187,7 +187,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
           ? <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0" />
           : <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0" />}
         <div className="min-w-0 flex-1">
-          <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Library health</div>
+          <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Library health</div>
           <div className="text-sm font-black text-[var(--color-text)]">
             {L
               ? <>{L.counts.indexed.toLocaleString()} of {L.indexable.toLocaleString()} readable documents indexed

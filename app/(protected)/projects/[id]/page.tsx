@@ -890,7 +890,7 @@ export default function ProjectDetailPage() {
               );
             })()}
             <div className="px-6 py-5">
-              <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">
+              <label className="text-[13px] font-semibold text-[var(--color-text)] ">
                 Reason {pendingStatus === "cancelled" ? "*" : "(optional)"}
               </label>
               <textarea

@@ -112,7 +112,7 @@ export default function SignatureCeremony({
         <div className="p-5 space-y-4">
           {!lockIntent && (
             <div>
-              <label className="block text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5">Intent</label>
+              <label className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Intent</label>
               <div className="flex flex-wrap gap-1.5">
                 {INTENTS.map((it) => (
                   <button
@@ -128,7 +128,7 @@ export default function SignatureCeremony({
           )}
 
           <div className="rounded-xl bg-[var(--color-surface-2)] border border-[var(--color-border)] p-3">
-            <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">You are affirming</div>
+            <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">You are affirming</div>
             <p className="text-sm text-[var(--color-text)] leading-relaxed">{statement}</p>
           </div>
 
@@ -141,12 +141,12 @@ export default function SignatureCeremony({
 
           {mode === "draw" ? (
             <div>
-              <label className="block text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5">Sign your name</label>
+              <label className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Sign your name</label>
               <SignaturePad onChange={setDrawn} />
             </div>
           ) : (
             <div>
-              <label className="block text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5">Type your full name to sign</label>
+              <label className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Type your full name to sign</label>
               <input
                 value={typed}
                 onChange={(e) => setTyped(e.target.value)}
@@ -164,7 +164,7 @@ export default function SignatureCeremony({
           )}
           {reauth !== "loading" && reauth?.method === "password" && (
             <div>
-              <label className="block text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5">
+              <label className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">
                 <span className="inline-flex items-center gap-1"><KeyRound className="w-3 h-3" /> Confirm your password</span>
               </label>
               <input

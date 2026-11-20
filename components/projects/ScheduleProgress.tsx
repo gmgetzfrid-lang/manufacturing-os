@@ -58,7 +58,7 @@ interface Props {
   bare?: boolean;
 }
 
-const LABEL = "text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mb-2";
+const LABEL = "text-[13px] font-semibold text-[var(--color-text-muted)] mb-2";
 
 const STATUS_META: Record<MilestoneStatus, { label: string; tone: string; bar: string; Icon: React.ComponentType<{ className?: string }> }> = {
   // The same colours as the timeline and calendar dots.

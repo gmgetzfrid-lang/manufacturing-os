@@ -198,7 +198,7 @@ function CreatePlotPlanModal({
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Unit 200 Plot Plan" />
         </Field>
         <div>
-          <span className="block text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mb-1.5">Background image</span>
+          <span className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Background image</span>
           <label {...drag.bind} className={`flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-6 cursor-pointer hover:border-[var(--color-text-muted)] transition-colors ${drag.ring}`}>
             {drag.over ? (
               <span className="text-xs font-bold text-[var(--color-text)]">{drag.say}</span>

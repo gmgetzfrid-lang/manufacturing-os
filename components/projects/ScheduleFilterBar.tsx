@@ -100,7 +100,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
       {showMore && (
         <div className="pt-2.5 space-y-2 border-t border-[var(--color-border)]">
           <div role="group" aria-label="Show only" className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mr-1">Show only</span>
+            <span className="text-[13px] font-semibold text-[var(--color-text-muted)] mr-1">Show only</span>
           {classSelects}
           {quick("Critical path", <Flame className="w-3.5 h-3.5" />, !!filter.criticalOnly, () => onChange({ ...filter, criticalOnly: !filter.criticalOnly }))}
           {quick("Behind", <TrendingDown className="w-3.5 h-3.5" />, !!filter.behindOnly, () => onChange({ ...filter, behindOnly: !filter.behindOnly }))}
@@ -109,7 +109,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
           {quick("Needs attention", <PauseCircle className="w-3.5 h-3.5" />, filter.blockedOnly, () => onChange({ ...filter, blockedOnly: !filter.blockedOnly }))}
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mr-1">Status</span>
+            <span className="text-[13px] font-semibold text-[var(--color-text-muted)] mr-1">Status</span>
             {STATUS_CHIPS.map(({ s, label, dot }) => {
               const on = filter.statuses.includes(s);
               return (
@@ -121,7 +121,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
           </div>
           {groups.length > 1 && (
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mr-1">Group</span>
+              <span className="text-[13px] font-semibold text-[var(--color-text-muted)] mr-1">Group</span>
               {groups.map((g) => {
                 const on = !!g.id && filter.groupIds.includes(g.id);
                 return (
@@ -133,7 +133,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
             </div>
           )}
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mr-1">Discovery &amp; added</span>
+            <span className="text-[13px] font-semibold text-[var(--color-text-muted)] mr-1">Discovery &amp; added</span>
             {(["discovery", "added"] as const).map((k) => {
               const on = !!filter.added?.includes(k);
               return (
@@ -145,7 +145,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
             })}
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mr-1">Shift</span>
+            <span className="text-[13px] font-semibold text-[var(--color-text-muted)] mr-1">Shift</span>
             {(["day", "night", "swing"] as const).map((sh) => {
               const on = filter.shifts.includes(sh);
               const has = filter.shifts.includes(sh);

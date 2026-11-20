@@ -208,7 +208,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
             {pctStep ? (
               <div className="p-3">
                 <div className="flex items-center justify-between gap-2 mb-2">
-                  <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">How far along?</span>
+                  <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">How far along?</span>
                   <span className="inline-flex items-center gap-1">
                     <button onClick={() => setPctStep(false)} className="h-8 px-1.5 text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Back</button>
                     <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="-mr-1.5 w-8 h-8 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
@@ -236,7 +236,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
                   <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="-mr-1.5 w-8 h-8 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
                 </div>
                 <div>
-                  <div className="mb-1"><span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{askFor(reasonFor)}</span> <span className="text-[11.5px] text-[var(--color-text-muted)]">(required)</span></div>
+                  <div className="mb-1"><span className="text-[13px] font-semibold text-[var(--color-text-muted)]">{askFor(reasonFor)}</span> <span className="text-[11.5px] text-[var(--color-text-muted)]">(required)</span></div>
                   <input
                     autoFocus
                     value={reason}

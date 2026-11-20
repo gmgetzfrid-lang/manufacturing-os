@@ -73,7 +73,7 @@ function Snippet({ text }: { text: string }) {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="space-y-1.5">
-      <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">{title}</div>
+      <div className="text-[13px] font-semibold text-[var(--color-text-faint)]">{title}</div>
       {children}
     </div>
   );

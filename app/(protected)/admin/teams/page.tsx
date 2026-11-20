@@ -233,7 +233,7 @@ export default function AdminTeamsPage() {
                 {/* Department: supervisor (effective owner of owned libraries) + owned libraries */}
                 <div className="px-5 py-3 border-b border-[var(--color-border)] space-y-2">
                   <div className="flex items-center gap-2">
-                    <label htmlFor="team-supervisor" className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)] w-24 shrink-0">Supervisor</label>
+                    <label htmlFor="team-supervisor" className="text-[13px] font-semibold text-[var(--color-text-muted)] w-24 shrink-0">Supervisor</label>
                     <select id="team-supervisor" value={selected.supervisorUserId ?? ""} onChange={(e) => void setSupervisor(e.target.value || null)}
                       className="flex-1 min-w-0 h-9 text-[13px] rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] px-2 outline-none">
                       <option value="">None</option>
@@ -242,7 +242,7 @@ export default function AdminTeamsPage() {
                   </div>
                   <div className="text-[12px] text-[var(--color-text-muted)]">The supervisor owns any library this department owns, unless that library names its own owner.</div>
                   <div>
-                    <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)] mb-1.5">Owns libraries</div>
+                    <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Owns libraries</div>
                     <div className="flex flex-wrap gap-1.5">
                       {libraries.map((l) => {
                         const owned = l.owner_team_id === selected.id;

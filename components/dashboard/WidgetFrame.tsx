@@ -113,7 +113,7 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings,
   const header = (isExpanded: boolean) => (
     <div className="flex items-center gap-2 shrink-0 min-h-8">
       <Icon className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" aria-hidden />
-      <h3 title={meta.description} className="min-w-0 flex-1 truncate text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{title}</h3>
+      <h3 title={meta.description} className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[var(--color-text-muted)]">{title}</h3>
       {!editing && (
         <div className="shrink-0 flex items-center gap-0.5 opacity-70 group-hover/widget:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
           <button type="button" onClick={refresh} className={iconBtn} aria-label="Refresh"

@@ -400,7 +400,7 @@ export default function AnalyticsPage() {
                         <p className="text-xs text-[var(--color-text-muted)] italic">&ldquo;{item.commentText}&rdquo;</p>
                       </div>
                       
-                      <div className="mt-3 flex items-center text-[11px] text-[var(--color-text-faint)] uppercase tracking-wider font-medium">
+                      <div className="mt-3 flex items-center text-[13px] text-[var(--color-text-faint)] font-medium">
                         <span className="flex items-center mr-4"><UserCircle className="w-3 h-3 mr-1" /> {item.reportedBy.split('@')[0]}</span>
                         <span className="flex items-center"><Clock className="w-3 h-3 mr-1" /> {item.date}</span>
                       </div>
@@ -433,12 +433,12 @@ export default function AnalyticsPage() {
               <div className="flex flex-col items-end">
                  <div className="flex items-center space-x-4">
                     <div className="text-right">
-                      <p className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase tracking-wider">Avg Revisions</p>
+                      <p className="text-[13px] font-semibold text-[var(--color-text-faint)] ">Avg Revisions</p>
                       <p className="text-[15px] font-bold text-[var(--color-text)]">{userProfile.metric.avgRevisions.toFixed(2)}</p>
                     </div>
                     <div className="w-px h-8 bg-[var(--color-border-strong)] mx-2" />
                     <div className="text-right">
-                      <p className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase tracking-wider">Revision Rate</p>
+                      <p className="text-[13px] font-semibold text-[var(--color-text-faint)] ">Revision Rate</p>
                       <p className={`text-[15px] font-bold ${userProfile.metric.revisionRate > 0.3 ? 'text-red-600' : 'text-emerald-600'}`}>{formatPercent(userProfile.metric.revisionRate)}</p>
                     </div>
                  </div>
@@ -547,22 +547,22 @@ export default function AnalyticsPage() {
         )}
         <dl className="grid grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-4">
           <div>
-            <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)] flex items-center gap-1.5"><FileText className="w-3.5 h-3.5" /> Requests</dt>
+            <dt className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center gap-1.5"><FileText className="w-3.5 h-3.5" /> Requests</dt>
             <dd className="mt-1 text-[15px] font-bold text-[var(--color-text)]">{metrics.totalTickets.toLocaleString()}</dd>
             <dd className="text-[12px] text-[var(--color-text-muted)] flex items-center"><ArrowUpRight className="w-3 h-3 mr-0.5 text-emerald-600" /> {metrics.volumeData[metrics.volumeData.length - 1]?.count || 0} in the latest period</dd>
           </div>
           <div>
-            <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)] flex items-center gap-1.5"><Server className="w-3.5 h-3.5" /> Documents</dt>
+            <dt className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center gap-1.5"><Server className="w-3.5 h-3.5" /> Documents</dt>
             <dd className="mt-1 text-[15px] font-bold text-[var(--color-text)]">{metrics.totalDocs.toLocaleString()}</dd>
             <dd className="text-[12px] text-[var(--color-text-muted)]">{metrics.issuedDocs} issued · {metrics.supersededDocs} superseded</dd>
           </div>
           <div>
-            <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)] flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5" /> First-time quality</dt>
+            <dt className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5" /> First-time quality</dt>
             <dd className={`mt-1 text-[15px] font-bold ${metrics.globalRevisionRate > 0.3 ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text)]"}`}>{formatPercent(1 - metrics.globalRevisionRate)}</dd>
             <dd className="mt-1.5 w-full max-w-[10rem] bg-[var(--color-surface-2)] h-1.5 rounded-full overflow-hidden"><div className={`h-full rounded-full ${metrics.globalRevisionRate > 0.3 ? 'bg-amber-500' : 'bg-green-500'}`} style={{ width: `${(1 - metrics.globalRevisionRate) * 100}%` }} /></dd>
           </div>
           <div>
-            <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)] flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" /> Stalled</dt>
+            <dt className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" /> Stalled</dt>
             <dd className={`mt-1 text-[15px] font-bold ${metrics.staleTickets > 0 ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text)]"}`}>{metrics.staleTickets}</dd>
             <dd className="text-[12px] text-[var(--color-text-muted)]">Active, untouched for over 7 days</dd>
           </div>
@@ -575,7 +575,7 @@ export default function AnalyticsPage() {
         {/* CHART: DYNAMIC VOLUME */}
         <div className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] p-5 lg:col-span-2">
           <div className="flex items-center justify-between mb-6">
-            <h3 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] flex items-center"><TrendingUp className="w-3.5 h-3.5 mr-2" /> Request volume</h3>
+            <h3 className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center"><TrendingUp className="w-3.5 h-3.5 mr-2" /> Request volume</h3>
             <div className="flex bg-[var(--color-surface-2)] rounded-lg p-1 space-x-1">
               {(['1M', '3M', '6M', '1Y'] as TimeRange[]).map(r => (
                 <button 
@@ -604,7 +604,7 @@ export default function AnalyticsPage() {
                        <span className="absolute -top-6 left-1/2 -translate-x-1/2 text-xs font-bold text-[var(--color-text-muted)] opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity bg-[var(--color-surface)] px-2 py-1 rounded shadow-sm z-10 border border-[var(--color-border)]">{d.count}</span>
                     </div>
                   </div>
-                  <span className="text-[11px] font-bold text-[var(--color-text-faint)] mt-2 uppercase tracking-wider truncate w-full text-center">{d.label}</span>
+                  <span className="text-[13px] font-semibold text-[var(--color-text-faint)] mt-2 truncate w-full text-center">{d.label}</span>
                 </div>
               );
             })}
@@ -616,7 +616,7 @@ export default function AnalyticsPage() {
           <div className="mb-6">
             <div className="flex justify-between items-start">
               <div>
-                <h3 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] flex items-center"><HelpCircle className="w-3.5 h-3.5 mr-2" /> Why work came back</h3>
+                <h3 className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center"><HelpCircle className="w-3.5 h-3.5 mr-2" /> Why work came back</h3>
                 <p className="text-[13px] text-[var(--color-text-muted)] mt-1">Tap a reason to see its tickets.</p>
               </div>
             </div>
@@ -659,7 +659,7 @@ export default function AnalyticsPage() {
             )}
           </div>
           <div className="mt-6 pt-4 border-t border-[var(--color-border)]">
-             <div className="flex items-center justify-between text-[11px] text-[var(--color-text-faint)] uppercase tracking-wider font-bold">
+             <div className="flex items-center justify-between text-[13px] text-[var(--color-text-faint)] font-semibold">
                <span>Total Revisions Logged</span>
                <span>{metrics.rootCauseData.reduce((acc, curr) => acc + curr.count, 0)}</span>
              </div>
@@ -671,7 +671,7 @@ export default function AnalyticsPage() {
       <div className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex justify-between items-center gap-3 flex-wrap">
           <div>
-            <h3 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] flex items-center"><Users className="w-3.5 h-3.5 mr-2" /> {viewMode === 'drafter' ? 'Drafter performance' : 'Requester quality'}</h3>
+            <h3 className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center"><Users className="w-3.5 h-3.5 mr-2" /> {viewMode === 'drafter' ? 'Drafter performance' : 'Requester quality'}</h3>
             <p className="text-[13px] text-[var(--color-text-muted)] mt-1 flex items-center"><MousePointerClick className="w-3 h-3 mr-1" /> Tap a person to see why their work came back.</p>
           </div>
           <div className="flex bg-[var(--color-border)] rounded-lg p-1 space-x-1">
@@ -681,7 +681,7 @@ export default function AnalyticsPage() {
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left">
-            <thead className="text-[var(--color-text-muted)] uppercase font-bold text-[11px] tracking-[0.12em]">
+            <thead className="text-[var(--color-text-muted)] font-semibold text-[13px] ">
               <tr>
                 <th className="px-6 py-3">{viewMode === 'drafter' ? 'Drafter' : 'Requester'}</th>
                 <th className="px-6 py-3">Assigned Load</th>

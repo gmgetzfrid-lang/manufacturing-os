@@ -119,7 +119,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
     <div className="bg-[var(--color-surface)] rounded-2xl overflow-hidden shadow-[var(--shadow-card)]">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <GitPullRequestArrow className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Change orders</span>
+        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Change orders</span>
         {open.length > 0 && (
           <span className="text-[11px] font-black px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40">
             {open.length} awaiting decision
@@ -165,7 +165,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
         <>
           {summary.byReason.length > 0 && (
             <div className="px-4 py-3 border-b border-[var(--color-border)]">
-              <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-2">
+              <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">
                 Approved changes by reason: who owns the growth
               </div>
               <Donut
@@ -212,7 +212,7 @@ function CoRow({ co, canManage, busy, partyName, accountLabel, accounts, decide,
         <span className={`font-black tabular-nums ${co.amount < 0 ? "text-emerald-700 dark:text-emerald-300" : "text-[var(--color-text)]"}`}>
           {co.amount < 0 ? `credit ${fmtMoney(Math.abs(co.amount))}` : fmtMoney(co.amount)}
         </span>
-        <span className="text-[11px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)]"
+        <span className="text-[13px] font-semibold px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)]"
           title="Reason codes score both sides: scope gaps land on the contractor's record, design errors and owner requests on ours.">
           {CO_REASON_LABEL[co.reasonCode]}
         </span>

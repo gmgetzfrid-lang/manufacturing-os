@@ -130,7 +130,7 @@ export default function RetentionSection({ doc, orgId, canManage }: {
     <div className={`rounded-xl border p-3 space-y-2.5 bg-[var(--color-surface)] border-[var(--color-border)] ${hold.on ? "border-l-2 border-l-rose-500" : ""}`}>
       <div className="flex items-center gap-2">
         <Archive className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)]">Retention</span>
+        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Retention</span>
         <div className="ml-auto"><RetentionPill retentionUntil={until} dispositionState={state} legalHold={hold.on} /></div>
       </div>
 

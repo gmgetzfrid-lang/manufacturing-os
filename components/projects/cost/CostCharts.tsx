@@ -125,7 +125,7 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
 
 function SectionLabel({ icon, text }: { icon?: React.ReactNode; text: string }) {
   return (
-    <div className="flex items-center gap-1.5 mb-1.5 text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">
+    <div className="flex items-center gap-1.5 mb-1.5 text-[13px] font-semibold text-[var(--color-text-muted)]">
       {icon}{text}
     </div>
   );
@@ -155,7 +155,7 @@ export function CostGlossary() {
     <div className="rounded-2xl bg-[var(--color-surface)] overflow-hidden shadow-[var(--shadow-card)]">
       <button onClick={() => setOpen((v) => !v)}
         className="w-full px-4 py-2.5 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
-        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">What do these words mean?</span>
+        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">What do these words mean?</span>
         <span className="text-[11px] text-[var(--color-text-muted)]">Plain-language guide to every term on this page</span>
         <span className="ml-auto text-[11px] font-black text-[var(--color-accent-text)]">{open ? "Hide" : "Show"}</span>
       </button>

@@ -125,7 +125,7 @@ export default function ReverseConfirmModal({
 
           {/* Reason */}
           <label className="block">
-            <span className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Reason for reversal *</span>
+            <span className="text-[13px] font-semibold text-[var(--color-text)] ">Reason for reversal *</span>
             <textarea
               value={reason}
               onChange={(e) => setReason(e.target.value)}

@@ -117,7 +117,7 @@ export default function CustomizeNodeModal({
 
           {/* description */}
           <div>
-            <label className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Description</label>
+            <label className="text-[13px] font-semibold text-[var(--color-text-faint)]">Description</label>
             <textarea value={v.description ?? ""} onChange={(e) => set({ description: e.target.value })} rows={2}
               placeholder="What lives in this folder?"
               className="mt-1 w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-sm text-[var(--color-text)] resize-none" />
@@ -125,7 +125,7 @@ export default function CustomizeNodeModal({
 
           {/* color */}
           <div>
-            <label className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Color</label>
+            <label className="text-[13px] font-semibold text-[var(--color-text-faint)]">Color</label>
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
               <button onClick={() => set({ color: undefined })} title="Match theme"
                 className={`px-2.5 h-7 rounded-full text-[11px] font-bold border ${!v.color ? "border-transparent ring-2 ring-offset-2 ring-[var(--color-text-muted)] ring-offset-[var(--color-surface)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`} style={!v.color ? { background: "var(--brand-gradient)", color: "#fff" } : undefined}>Theme</button>
@@ -140,7 +140,7 @@ export default function CustomizeNodeModal({
 
           {/* icon */}
           <div>
-            <label className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Icon</label>
+            <label className="text-[13px] font-semibold text-[var(--color-text-faint)]">Icon</label>
             <div className="mt-1.5 grid grid-cols-9 gap-1.5">
               {NODE_ICON_KEYS.map((k) => {
                 const active = v.icon === k;
@@ -156,7 +156,7 @@ export default function CustomizeNodeModal({
 
           {/* cover image */}
           <div>
-            <label className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)] flex items-center gap-1.5"><ImageIcon className="w-3 h-3" /> Cover image</label>
+            <label className="text-[13px] font-semibold text-[var(--color-text-faint)] flex items-center gap-1.5"><ImageIcon className="w-3 h-3" /> Cover image</label>
             <div className="mt-1 flex gap-2">
               <input value={v.coverImageUrl ?? ""} onChange={(e) => set({ coverImageUrl: e.target.value || undefined })}
                 placeholder={storagePrefix ? "Paste a URL or upload →" : "https://…/photo.jpg"}
@@ -179,7 +179,7 @@ export default function CustomizeNodeModal({
 
           {/* page header size */}
           <div>
-            <label className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Page header banner</label>
+            <label className="text-[13px] font-semibold text-[var(--color-text-faint)]">Page header banner</label>
             <div className="mt-1.5 grid grid-cols-5 gap-1.5">
               {([["auto", "Auto"], ["compact", "Compact"], ["standard", "Standard"], ["tall", "Tall"], ["none", "Off"]] as const).map(([key, label]) => {
                 const cur = v.headerHeight ?? "auto";
@@ -196,7 +196,7 @@ export default function CustomizeNodeModal({
 
           {/* page background */}
           <div>
-            <label className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Page background</label>
+            <label className="text-[13px] font-semibold text-[var(--color-text-faint)]">Page background</label>
             <div className="mt-1.5 grid grid-cols-3 gap-1.5">
               {([["none", "None"], ["tint", "Soft tint"], ["image", "Image"]] as const).map(([key, label]) => {
                 const cur = v.bgType ?? "none";
@@ -243,7 +243,7 @@ export default function CustomizeNodeModal({
           {/* tint (only meaningful with a cover) */}
           {v.coverImageUrl && (
             <div>
-              <label className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Photo treatment</label>
+              <label className="text-[13px] font-semibold text-[var(--color-text-faint)]">Photo treatment</label>
               <div className="mt-1.5 grid grid-cols-3 gap-1.5">
                 {([["none", "Original"], ["brand", "Brand duotone"], ["mono", "Mono"]] as const).map(([key, label]) => (
                   <button key={key} onClick={() => set({ coverTint: key })}

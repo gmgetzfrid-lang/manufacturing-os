@@ -188,7 +188,7 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
               {/* TYPE SPECIFIC CONFIG */}
               {selectedType === 'select' && (
                 <div className="bg-[var(--color-surface-2)] p-4 rounded-xl border border-[var(--color-border)]">
-                  <label className="block text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider mb-3">Choices</label>
+                  <label className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-3">Choices</label>
                   <div className="space-y-2 mb-3">
                     {options.map((opt, idx) => (
                       <div key={idx} className="flex items-center gap-2">
@@ -280,7 +280,7 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
               {/* TAGS — reference kind: photos vs linked drawings */}
               {selectedType === 'tags' && (
                 <div className="bg-[var(--color-surface-2)] p-4 rounded-xl border border-[var(--color-border)]">
-                  <h4 className="text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider mb-3 flex items-center"><MousePointerClick className="w-3 h-3 mr-2" /> What does clicking a tag open?</h4>
+                  <h4 className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-3 flex items-center"><MousePointerClick className="w-3 h-3 mr-2" /> What does clicking a tag open?</h4>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     <button type="button" onClick={() => setReferenceKind("photos")} className={`text-left p-3 rounded-lg border-2 transition-all ${referenceKind === "photos" ? 'border-[var(--color-text)] bg-[var(--color-surface-2)] ring-1 ring-[var(--color-accent)]' : 'border-[var(--color-border)] hover:border-[var(--color-accent)]/40'}`}>
                       <div className="flex items-center gap-2 mb-1"><Camera className="w-4 h-4 text-[var(--color-text-muted)]" /><span className="text-sm font-bold text-[var(--color-text)]">Photos</span><span className="ml-auto text-[11px] font-bold text-[var(--color-text-faint)] uppercase">Default</span></div>
@@ -296,7 +296,7 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
 
               {/* GENERAL OPTIONS */}
               <div className="bg-[var(--color-surface-2)] p-4 rounded-xl border border-[var(--color-border)]">
-                 <h4 className="text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider mb-3 flex items-center"><Settings2 className="w-3 h-3 mr-2" /> More Options</h4>
+                 <h4 className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-3 flex items-center"><Settings2 className="w-3 h-3 mr-2" /> More Options</h4>
                  <div className="space-y-3">
                    <label className="flex items-center justify-between cursor-pointer group">
                      <span className="text-sm font-medium text-[var(--color-text)]">Require that this column contains information</span>

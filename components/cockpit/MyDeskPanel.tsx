@@ -175,7 +175,7 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
   return (
     <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden">
       <div className="px-4 sm:px-5 pt-4 pb-2 flex items-center gap-2">
-        <h2 className="inline-flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+        <h2 className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-muted)]">
           <KeyRound className="w-3.5 h-3.5" aria-hidden /> My desk
         </h2>
         <span className="text-[12px] font-bold text-[var(--color-text-muted)] ml-auto">{total} item{total === 1 ? "" : "s"}</span>
@@ -185,7 +185,7 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
         {releaseError && <p role="alert" className="border-l-2 border-red-500 pl-2 text-[11px] font-semibold text-red-700 dark:text-red-400">{releaseError}</p>}
         {checkouts.length > 0 && (
           <div className="space-y-1">
-            <div className="px-2 text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">Checked out to me</div>
+            <div className="px-2 text-[13px] font-semibold text-[var(--color-text-muted)]">Checked out to me</div>
             {checkouts.map((c) => {
               const k = clock(c);
               return (
@@ -215,7 +215,7 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
 
         {staleCopies.length > 0 && (
           <div className="space-y-1">
-            <div className="px-2 text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">My copies that went stale</div>
+            <div className="px-2 text-[13px] font-semibold text-[var(--color-text-muted)]">My copies that went stale</div>
             {staleCopies.slice(0, 5).map((s) => (
               <Link key={s.documentId} href={docHref(s.libraryId, s.documentId)} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] group">
                 <FileDown className="w-3.5 h-3.5 text-amber-600 shrink-0" />
@@ -233,7 +233,7 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
 
         {branches.length > 0 && (
           <div className="space-y-1">
-            <div className="px-2 text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">My branches awaiting reconciliation</div>
+            <div className="px-2 text-[13px] font-semibold text-[var(--color-text-muted)]">My branches awaiting reconciliation</div>
             {branches.map((b) => (
               <Link key={b.id} href={docHref(b.libraryId, b.documentId)} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] group">
                 <GitBranch className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />

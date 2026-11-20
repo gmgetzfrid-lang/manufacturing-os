@@ -157,7 +157,7 @@ export default function RebaseScheduleModal({
           {/* Preview */}
           {currentAnchorIso ? (
             <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 text-xs">
-              <div className="font-black text-[var(--color-text)] mb-1 uppercase tracking-widest text-[11px]">Preview</div>
+              <div className="font-semibold text-[var(--color-text)] mb-1 text-[13px]">Preview</div>
               <div className="flex items-center gap-2 text-[var(--color-text)]">
                 <span className="font-mono">{fmtInTz(currentAnchorIso, tz, { dateStyle: "medium", timeStyle: "short" })}</span>
                 <ArrowRight className="w-3 h-3 text-[var(--color-text-muted)]" />

@@ -127,7 +127,7 @@ export function ProgressSlider({ percent, onPick, disabled, busy, commitSame, co
   return (
     <div className="w-full">
       <div className="flex items-center justify-between mb-1.5">
-        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Progress</span>
+        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Progress</span>
         <span className="text-sm font-black text-[var(--color-text)] tabular-nums">{val}%</span>
       </div>
       <input
@@ -240,7 +240,7 @@ export function ProgressNoteForm({ percent, start, onSave, onCancel, busy }: {
           by a Save that does nothing. */}
       <div className="space-y-0.5">
         <div className="flex items-baseline gap-1.5">
-          <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">What got done</span>
+          <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">What got done</span>
           {wantsNote
             ? <span className="text-[11.5px] text-[var(--color-text-muted)]">(required)</span>
             : <span className="text-[11.5px] text-[var(--color-text-faint)]">(optional)</span>}
@@ -336,7 +336,7 @@ export default function ProgressControl({ percent, onPick, disabled, onDisabledC
           >
             {onSaveWithNote && (
               <div className="-mt-1 mb-1 flex items-center justify-between gap-2">
-                <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Progress</span>
+                <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Progress</span>
                 <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="-mr-1.5 w-8 h-8 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
               </div>
             )}

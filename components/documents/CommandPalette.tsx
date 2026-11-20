@@ -306,7 +306,7 @@ export default function CommandPalette({
                     )}
                   </div>
                   <div className="shrink-0 flex items-center gap-2">
-                    <span className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase tracking-wider">{kindLabel}</span>
+                    <span className="text-[13px] font-semibold text-[var(--color-text-faint)] ">{kindLabel}</span>
                     {active && <CornerDownLeft className="w-3 h-3 text-[var(--color-text-muted)]" />}
                   </div>
                 </button>

@@ -471,7 +471,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
           <div className="divide-y divide-[var(--color-border)]">
             <div className="flex items-center gap-x-3 gap-y-2 flex-wrap pb-3 first:pt-0">
               <div className="min-w-0 flex-1 basis-56">
-                <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Schedule</div>
+                <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Schedule</div>
                 <div className="mt-0.5 text-[13px] text-[var(--color-text-muted)]">
                   {`${milestones.length} task${milestones.length === 1 ? "" : "s"}: phases, tasks, steps. `}
                   {/* Which clock the schedule runs on. Every date and time below is the
@@ -614,7 +614,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       {!loading && milestones.length > 0 && view === "planning" && (
         <Card pad={false}>
           <div className="px-4 sm:px-5 pt-4 pb-3 flex items-center gap-2">
-            <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Tasks</h2>
+            <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)]">Tasks</h2>
             <span className="text-[12px] text-[var(--color-text-muted)] tabular-nums">{visible.length}</span>
             <span className="flex-1" />
             <HelpTooltip>
@@ -1028,7 +1028,7 @@ function AddMilestoneForm({
   };
 
   const inp = "h-9 text-[13px] border border-[var(--color-border-strong)] rounded-lg px-2.5 bg-[var(--color-surface)]";
-  const lbl = "block text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mb-1";
+  const lbl = "block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1";
 
   return (
     <form onSubmit={submit} className="px-4 sm:px-5 py-4 bg-[var(--color-surface-2)]/60 border-b border-[var(--color-border)] space-y-3">

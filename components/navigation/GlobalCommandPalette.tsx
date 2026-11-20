@@ -436,7 +436,7 @@ export default function GlobalCommandPalette() {
 function Shortcuts() {
   return (
     <div className="p-4 max-h-[60vh] overflow-y-auto">
-      <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-2">Quick Navigation</div>
+      <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">Quick Navigation</div>
       <ul className="space-y-1 text-xs mb-4">
         {QUICK_NAV.map((n) => (
           <li key={n.href} className="flex items-center gap-2">
@@ -445,7 +445,7 @@ function Shortcuts() {
           </li>
         ))}
       </ul>
-      <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-2">Global</div>
+      <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">Global</div>
       <ul className="space-y-1 text-xs">
         <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] font-mono text-[11px]">⌘ K</kbd><span>Open this palette</span></li>
         <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] font-mono text-[11px]">/</kbd><span>Open this palette (when not typing)</span></li>

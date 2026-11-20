@@ -118,7 +118,7 @@ export default function SkillLibraryPage() {
   // skills in a hairline grid (no boxes inside the box).
   const shelfHeading = (icon: React.ReactNode, title: string, blurb: string) => (
     <div className="px-4 sm:px-5 pt-4 pb-3">
-      <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">{icon}{title}</h2>
+      <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)] inline-flex items-center gap-1.5">{icon}{title}</h2>
       <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">{blurb}</p>
     </div>
   );
@@ -255,7 +255,7 @@ export default function SkillLibraryPage() {
                       {/* The pack itself, on demand — the description sells it,
                           the details prove it. */}
                       <details className="group">
-                        <summary className="cursor-pointer text-[11px] font-black uppercase tracking-wider text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] list-none">
+                        <summary className="cursor-pointer text-[13px] font-semibold text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] list-none">
                           View the discipline ▸
                         </summary>
                         <pre className="mt-1.5 whitespace-pre-wrap text-[12.5px] leading-relaxed text-[var(--color-text-muted)] bg-[var(--color-surface-2)]/60 rounded-lg p-2.5 max-h-48 overflow-y-auto font-sans">{r.instructions}</pre>

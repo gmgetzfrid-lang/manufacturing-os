@@ -148,7 +148,7 @@ function TimelineRow({ event, showScope, onReverseRequest }: { event: TimelineEv
                   <span>{event.userName || event.userEmail}</span>
                 </>
               )}
-              <span className="text-[11px] font-bold uppercase tracking-widest text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded border border-[var(--color-border)]">
+              <span className="text-[13px] font-semibold text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded border border-[var(--color-border)]">
                 {event.kind === "version" ? "Rev" : event.kind === "audit" ? "Audit" : event.kind === "hold" ? "Hold" : "Activity"}
               </span>
             </div>

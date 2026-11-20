@@ -59,7 +59,7 @@ export default function OriginSection({ doc, orgId, canManage }: {
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 space-y-2">
       <div className="flex items-center gap-2">
         <Globe className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)]">Origin</span>
+        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Origin</span>
         {!loading && !editing && (
           <div className="ml-auto flex items-center gap-2">
             {origin === "external" ? <OriginBadge origin="external" source={source} reference={reference} edition={edition} /> : <span className="text-[11px] text-[var(--color-text-muted)]">Internal</span>}

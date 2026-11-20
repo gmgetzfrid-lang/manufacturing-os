@@ -189,7 +189,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
         onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between sticky top-0 bg-[var(--color-surface)] rounded-t-2xl z-10">
           <div>
-            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5" /> Generate documents</div>
+            <div className="text-[13px] font-semibold text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5" /> Generate documents</div>
             <h2 className="mt-1 text-[24px] leading-tight font-black tracking-[-0.02em] text-[var(--color-text)]">{template.name}</h2>
           </div>
           <button onClick={onClose} aria-label="Close" className="w-9 h-9 grid place-items-center rounded-[10px] bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
@@ -199,7 +199,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
           <StepPath steps={["Add your data", "Check the wording", "Make the files"]} current={docs.length === 0 ? 0 : 1} />
           {/* ── 1. Data ─────────────────────────────────────────────────── */}
           <div {...dataDrag.bind} className={`rounded-xl border border-[var(--color-border)] p-3.5 ${dataDrag.ring}`}>
-            <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-2">
+            <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">
               1 · Data {dataDrag.over && <span className="normal-case tracking-normal font-bold text-[var(--color-text)]"> · {dataDrag.say}</span>}
             </div>
             <div className="flex items-center gap-2 flex-wrap">
@@ -239,7 +239,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
             )}
             {sheetNames.length > 1 && (
               <label className="block mt-2">
-                <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Sheet</span>
+                <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Sheet</span>
                 <Select value={sheet} onChange={(e) => setSheet(e.target.value)}>
                   {sheetNames.map((s) => <option key={s} value={s}>{s}</option>)}
                 </Select>
@@ -303,7 +303,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
           {docs.length > 0 && (
             <div className="rounded-xl border border-[var(--color-border)] p-3.5">
               <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
-                <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+                <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">
                   2 · Check: {docs.length} document{docs.length === 1 ? "" : "s"} drafted
                 </div>
                 {cost > 0 && (
@@ -327,12 +327,12 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
                     {expanded === i && (
                       <div className="px-3 pb-3 space-y-2 border-t border-[var(--color-border)] pt-2">
                         <label className="block">
-                          <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">File name</span>
+                          <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">File name</span>
                           <Input value={d.filename} onChange={(e) => updateFilename(i, e.target.value)} className="text-xs font-mono" />
                         </label>
                         {Object.entries(d.values).map(([tag, value]) => (
                           <label key={tag} className="block">
-                            <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
+                            <span className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center gap-1.5">
                               {tag}
                               {aiTags.has(tag) && (
                                 <span className="inline-flex items-center gap-0.5 text-[11px] px-1 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)]">
@@ -366,7 +366,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
           {/* ── 3. Generate ────────────────────────────────────────────── */}
           {docs.length > 0 && (
             <div className="rounded-xl border border-[var(--color-border)] p-3.5 space-y-2.5">
-              <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+              <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">
                 3 · Generate
               </div>
               <p className="text-[11px] text-[var(--color-text-muted)]">

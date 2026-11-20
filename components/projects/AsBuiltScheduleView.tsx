@@ -770,7 +770,7 @@ function Taught(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBui
             <><b>Not checked yet.</b> The check runs this year back through these rules once every step is done, and holds it against the real finish. Until then the finish below is not a promise.</>
           )}
         </div>
-        <div className="mt-3 text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">What this job taught, put in</div>
+        <div className="mt-3 text-[13px] font-semibold text-[var(--color-text-muted)]">What this job taught, put in</div>
         {trusted && target != null && lateH != null && (
           lateH <= 0.5 ? (
             <p className="mt-1 text-[15px] font-bold leading-snug text-[var(--color-text)]">{lateH < -0.5 ? `Makes this year's target: finishes ${p.at(plan.finish)}, ${r1(-lateH)} h before the plan's ${p.at(target)}.` : `Makes this year's target: ${p.at(target)}.`} <span className="font-semibold text-[var(--color-text-muted)]">This year it {built.finish != null ? `finished ${p.at(built.finish)}` : "is not finished"}.</span></p>
@@ -815,7 +815,7 @@ function Taught(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBui
       )}
       {risks.length > 0 && (
         <div data-risks>
-          <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Risks: not planned, what each does if it happens again</div>
+          <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Risks: not planned, what each does if it happens again</div>
           <ul className="mt-1 divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
             {[...moving, ...(allRisks ? still : [])].map((r) => (
               <li key={r.id} className="py-2" data-risk={r.id}>

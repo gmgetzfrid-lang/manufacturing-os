@@ -109,7 +109,7 @@ export default function BulkEditModal({
 
         <div className="px-5 py-4 space-y-4">
           <div>
-            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest mb-1.5 block">Field to change</label>
+            <label className="text-[13px] font-semibold text-[var(--color-text)] mb-1.5 block">Field to change</label>
             <select
               value={target.kind === "custom" ? `custom:${target.def.key}` : target.kind}
               onChange={(e) => {
@@ -139,7 +139,7 @@ export default function BulkEditModal({
           </div>
 
           <div>
-            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest mb-1.5 block">New value</label>
+            <label className="text-[13px] font-semibold text-[var(--color-text)] mb-1.5 block">New value</label>
             {target.kind === "status" ? (
               <select
                 value={newValue} onChange={(e) => setNewValue(e.target.value)}

@@ -68,7 +68,7 @@ export default function VerifyPage() {
         {loading ? (
           <div className="text-white/90">
             <Loader2 className="w-14 h-14 mx-auto animate-spin mb-4" />
-            <div className="text-[11px] font-bold tracking-[0.16em] uppercase">Checking revision…</div>
+            <div className="text-[13px] font-semibold ">Checking revision…</div>
           </div>
         ) : error ? (
           <div className="text-white/90">
@@ -111,20 +111,20 @@ export default function VerifyPage() {
             {/* The facts card */}
             <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl p-5 text-left space-y-3">
               <div>
-                <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Document</div>
+                <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Document</div>
                 <div className="text-[15px] font-bold text-[var(--color-text)]">{result.docNumber ?? "-"}</div>
                 {result.title && <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{result.title}</div>}
               </div>
               <div className="grid grid-cols-2 gap-3 pt-2 border-t border-[var(--color-border)]">
                 <div>
-                  <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">This print</div>
+                  <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">This print</div>
                   <div className={`text-[15px] font-black ${result.isCurrent ? "text-emerald-600" : "text-red-600"}`}>
                     Rev {result.printedRev ?? "?"}
                   </div>
                   <div className="text-[12px] text-[var(--color-text-muted)]">issued {fmt(result.printedAt)}</div>
                 </div>
                 <div>
-                  <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Current</div>
+                  <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Current</div>
                   <div className="text-[15px] font-black text-[var(--color-text)]">Rev {result.currentRev ?? "?"}</div>
                   <div className="text-[12px] text-[var(--color-text-muted)]">issued {fmt(result.currentIssuedAt)}</div>
                 </div>

@@ -163,7 +163,7 @@ export default function ConnectorChecksPage() {
         <div className="space-y-4" data-connector-checks>
           <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden">
             <div className="px-4 sm:px-5 pt-4 pb-3 border-b border-[var(--color-border)]">
-              <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{cur.label}</h2>
+              <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)]">{cur.label}</h2>
               <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">{cur.what}</p>
             </div>
             {cur.n === 0 ? <div className="px-4 py-8 text-center text-[13px] text-[var(--color-text-muted)]">Nothing found{drawing ? ` on ${drawing}` : ""}.</div> : (

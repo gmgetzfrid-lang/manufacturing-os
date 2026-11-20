@@ -134,7 +134,7 @@ function CenterPanel({
         <div className="px-5 sm:px-6 pt-5 pb-4 shrink-0">
           <div className="flex items-center gap-2">
             <BellRing className="w-3.5 h-3.5 text-[var(--color-text-muted)]" aria-hidden />
-            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Notifications</div>
+            <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Notifications</div>
             <div className="flex-1" />
             <button
               onClick={onClose}

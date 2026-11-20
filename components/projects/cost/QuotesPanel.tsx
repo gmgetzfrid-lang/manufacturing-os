@@ -124,7 +124,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
       {section !== "invoices" && (<>
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <ScanSearch className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Quotes &amp; bid tabulation</span>
+        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Quotes &amp; bid tabulation</span>
         {canManage && (
           <button onClick={() => setShowLinks((v) => !v)}
             className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
@@ -260,7 +260,7 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
     <div className={framed ? "border-t border-[var(--color-border)]" : undefined}>
       <div className="px-4 py-2.5 flex items-center gap-2 flex-wrap">
         <Receipt className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Invoices</span>
+        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Invoices</span>
         {canManage && ready.length > 0 && (
           <button onClick={() => void postReady()} disabled={!!batch}
             className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors"
@@ -294,7 +294,7 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
                   {doc.totalAmount != null && <span className="font-black tabular-nums text-[var(--color-text)]">{fmtMoney(doc.totalAmount, doc.currency ?? "USD")}</span>}
                   <StatusChip status={doc.status} />
                   {duplicate && (doc.status === "draft" || doc.status === "parsed") && (
-                    <span className="inline-flex items-center gap-1 text-[11px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border border-rose-500/50 bg-rose-500/10 text-rose-700 dark:text-rose-300"
+                    <span className="inline-flex items-center gap-1 text-[13px] font-semibold px-1.5 py-0.5 rounded border border-rose-500/50 bg-rose-500/10 text-rose-700 dark:text-rose-300"
                       title={`Same vendor and ${duplicate.docNumber ? "invoice number" : "amount and date"} as ${duplicate.fileName ?? "another invoice"} (${COST_DOC_STATUS_LABEL[duplicate.status as CostDocument["status"]]?.toLowerCase() ?? duplicate.status}).`}>
                       <CopyIcon className="w-2.5 h-2.5" /> possible duplicate
                     </span>
@@ -598,7 +598,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
             <div className="overflow-x-auto rounded-xl border border-[var(--color-border)]">
               <table className="w-full text-xs">
                 <thead>
-                  <tr className="text-left text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] border-b border-[var(--color-border)]">
+                  <tr className="text-left text-[13px] font-semibold text-[var(--color-text-muted)] border-b border-[var(--color-border)]">
                     <th className="px-3 py-2">Bidder</th>
                     <th className="px-3 py-2 text-right">Price</th>
                     <th className="px-3 py-2 text-right" title="Labor hours the bid offers">Labor hrs</th>
@@ -630,7 +630,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
                               </Link>
                             )}
                             {known?.status === "do_not_use" && (
-                              <span className="ml-1.5 text-[11px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border border-rose-500/50 bg-rose-500/10 text-rose-700 dark:text-rose-300">do not use</span>
+                              <span className="ml-1.5 text-[13px] font-semibold px-1.5 py-0.5 rounded border border-rose-500/50 bg-rose-500/10 text-rose-700 dark:text-rose-300">do not use</span>
                             )}
                             {s?.best && !awarded && (
                               <span className="ml-1.5 text-[11px] font-black uppercase text-[var(--color-text)]" title="Highest weighted value score - not automatically the winner; you decide.">best value</span>
@@ -742,7 +742,7 @@ function StatusChip({ status }: { status: CostDocument["status"] }) {
     : status === "declined" || status === "void" ? "border-[var(--color-border)] text-[var(--color-text-faint)]"
     : "border-amber-500/40 bg-amber-500/[0.07] text-amber-700 dark:text-amber-300";
   return (
-    <span className={`text-[11px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${tone}`}>
+    <span className={`text-[13px] font-semibold px-1.5 py-0.5 rounded border ${tone}`}>
       {COST_DOC_STATUS_LABEL[status]}
     </span>
   );
@@ -848,18 +848,18 @@ function CorrectForm({ doc, actor, groups, onDone, onCancel, setErr }: {
   return (
     <div className="mt-1.5 rounded-lg border border-[var(--color-accent-ring)]/50 bg-[var(--color-surface-2)] px-2.5 py-2 flex items-end gap-2 flex-wrap text-xs">
       <label className="block">
-        <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Total</span>
+        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Total</span>
         <input value={total} onChange={(e) => setTotal(e.target.value)} inputMode="decimal" placeholder="e.g. 182,000"
           className="mt-0.5 block h-8 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-mono tabular-nums" />
       </label>
       <label className="block">
-        <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Vendor</span>
+        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Vendor</span>
         <input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Company name"
           className="mt-0.5 block h-8 w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
       </label>
       {doc.kind === "quote" && (
         <label className="block">
-          <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">RFQ group</span>
+          <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">RFQ group</span>
           <input value={group} onChange={(e) => setGroup(e.target.value)} list={listId} placeholder="The scope being bid"
             title="Quotes with the same group name are compared side by side."
             className="mt-0.5 block h-8 w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />

@@ -101,7 +101,7 @@ export default function CollectionsStrip({
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2 min-w-0">
           <FolderKanban className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
-          <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] shrink-0">
+          <span className="text-[13px] font-semibold text-[var(--color-text-muted)] shrink-0">
             Collections
           </span>
           {/* Scope chip — makes it obvious these books belong to THIS folder. */}
@@ -204,9 +204,9 @@ function CollectionCard({
           </div>
           <div className="mt-1.5">
             {isOrg ? (
-              <span className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded border border-[var(--color-border)]">Pinned</span>
+              <span className="text-[13px] font-semibold text-[var(--color-text)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded border border-[var(--color-border)]">Pinned</span>
             ) : (
-              <span className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded border border-[var(--color-border)] inline-flex items-center gap-0.5">
+              <span className="text-[13px] font-semibold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded border border-[var(--color-border)] inline-flex items-center gap-0.5">
                 <UserIcon className="w-2.5 h-2.5" /> Personal
               </span>
             )}

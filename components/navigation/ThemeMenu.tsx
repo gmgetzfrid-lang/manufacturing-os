@@ -51,7 +51,7 @@ export default function ThemeMenu() {
             style={{ top: pos.top, right: pos.right }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mb-2">Appearance</div>
+            <div className="text-[13px] font-semibold text-[var(--color-text-faint)] mb-2">Appearance</div>
 
             {/* Light / Dark segmented toggle */}
             <div className="grid grid-cols-2 gap-1 p-0.5 rounded-xl bg-[var(--color-surface-2)] border border-[var(--color-border)]">
@@ -70,7 +70,7 @@ export default function ThemeMenu() {
             </div>
 
             <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
-              <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mb-2">Colors</div>
+              <div className="text-[13px] font-semibold text-[var(--color-text-faint)] mb-2">Colors</div>
               <PalettePicker value={palette} onChange={setPalette}
                 lockedNote={paletteLocked ? "Your workspace sets these colors. An admin can change them in Branding." : undefined} />
             </div>

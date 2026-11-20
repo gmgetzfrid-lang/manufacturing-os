@@ -144,7 +144,7 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
         <div className={`${isHeader ? "absolute right-0 top-full mt-2 origin-top-right" : "absolute left-full ml-2 bottom-0"} w-96 max-w-[calc(100vw-1.5rem)] max-h-[70vh] bg-[var(--color-surface)] text-[var(--color-text)] rounded-2xl shadow-[0_30px_60px_-24px_rgb(11_18_32/0.55)] z-[90] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150`}>
             <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Notifications</div>
+                <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Notifications</div>
                 <div className="text-[14px] font-bold text-[var(--color-text)]">
                   {decisions > 0 ? `${decisions} waiting on you` : ""}{decisions > 0 && unread > decisions ? ` · ${unread - decisions} new` : decisions === 0 && unread > 0 ? `${unread} new` : ""}{unread === 0 ? "All caught up" : ""}
                 </div>
@@ -194,7 +194,7 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
                               <div className={`text-[14px] text-[var(--color-text)] truncate ${item.actionRequired ? "font-bold" : "font-semibold"}`}>{item.title}</div>
                               {item.subtitle && <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5 line-clamp-2">{item.subtitle}</div>}
                               <div className="text-[12px] text-[var(--color-text-muted)] mt-1 flex items-center gap-2">
-                                {item.actionRequired && <span className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-[var(--color-text)]">Your turn</span>}
+                                {item.actionRequired && <span className="text-[13px] font-semibold text-[var(--color-text)]">Your turn</span>}
                                 <time dateTime={item.when}>{formatTime(item.when)}</time>
                               </div>
                             </div>

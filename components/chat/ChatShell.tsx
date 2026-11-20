@@ -721,7 +721,7 @@ export default function ChatShell() {
             </button>
           )}
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--color-ink-muted)] truncate">
+            <div className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-ink-muted)] truncate">
               <ScopeIcon className="w-3.5 h-3.5 shrink-0" aria-hidden />
               <span className="truncate">Ask · {scope === "library" ? (libraries.find((l) => l.id === libraryId)?.name ?? SCOPE_META[scope].label) : SCOPE_META[scope].label}</span>
             </div>

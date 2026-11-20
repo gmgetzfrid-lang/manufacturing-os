@@ -413,7 +413,7 @@ function NewScopeRowForm({
 
   return (
     <form onSubmit={onSubmit} className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] p-4 space-y-2.5">
-      <div className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.14em]">{title}</div>
+      <div className="text-[13px] font-semibold text-[var(--color-text-muted)] ">{title}</div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         {fields.map((f) => {
           if (f === "code" && codeCheck) {
@@ -515,7 +515,7 @@ function EditScopeRowModal({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-wider">{label}</span>
+      <span className="text-[13px] font-semibold text-[var(--color-text-muted)] ">{label}</span>
       <div className="mt-1">{children}</div>
     </label>
   );

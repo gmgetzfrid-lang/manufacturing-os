@@ -156,7 +156,7 @@ function MiniBand({ kicker, answer, sub, action, children }: {
 }) {
   return (
     <div className="rounded-xl bg-[var(--color-band)] text-white px-4 sm:px-5 pt-3.5 pb-12">
-      <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-ink-muted)] truncate">{kicker}</div>
+      <div className="text-[13px] font-semibold text-[var(--color-ink-muted)] truncate">{kicker}</div>
       <div className="mt-2 flex flex-wrap items-end gap-x-4 gap-y-2">
         <div className="min-w-0 flex-1 basis-[220px]">
           <div className="text-[22px] sm:text-[26px] font-black tracking-[-0.02em] leading-[1.08]">{answer}</div>
@@ -180,7 +180,7 @@ function MiniBody({ children }: { children: React.ReactNode }) {
 function MiniCard({ label, children, className = "" }: { label?: string; children: React.ReactNode; className?: string }) {
   return (
     <div className={`rounded-xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-3 sm:p-4 ${className}`}>
-      {label && <div className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{label}</div>}
+      {label && <div className="mb-2 text-[13px] font-semibold text-[var(--color-text-muted)]">{label}</div>}
       {children}
     </div>
   );
@@ -312,7 +312,7 @@ function AskMockup() {
 function Person({ label, name, note, warn }: { label: string; name: string; note: string; warn?: boolean }) {
   return (
     <div className="min-w-0">
-      <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mb-1">{label}</div>
+      <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">{label}</div>
       <div className="flex items-center gap-2 min-w-0">
         <Avatar initials={name.split(" ").map((w) => w[0]).join("")} />
         <div className="min-w-0">
@@ -338,13 +338,13 @@ function TicketMockup() {
             <Person label="Engineer" name="Sarah Mitchell" note="Awaiting sign-off" warn />
             <Person label="Drafter" name="Tom Reyes" note="Drafter" />
             <div>
-              <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mb-1">Target</div>
+              <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">Target</div>
               <div className="text-[13px] font-bold text-[var(--color-text)]">Jun 10</div>
               <div className="text-[12px] font-bold text-amber-800 dark:text-amber-300">Due soon</div>
             </div>
           </div>
           <div className="mt-4 pt-3 border-t border-[var(--color-border)]">
-            <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mb-2">Latest comment</div>
+            <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">Latest comment</div>
             <div className="flex items-start gap-2.5">
               <Avatar initials="JD" />
               <p className="text-[13px] text-[var(--color-text)] leading-relaxed">

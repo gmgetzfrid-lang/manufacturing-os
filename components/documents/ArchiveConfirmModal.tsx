@@ -96,7 +96,7 @@ export default function ArchiveConfirmModal({
           </div>
 
           <div>
-            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">
+            <label className="text-[13px] font-semibold text-[var(--color-text)] ">
               {isArchive ? "Reason *" : "Note"}
             </label>
             <textarea

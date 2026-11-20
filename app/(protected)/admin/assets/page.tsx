@@ -925,7 +925,7 @@ function LinkResourceModal({ orgId, onClose, onSave }: {
       <ModalHeader icon={Link2} title="Pin a library to this unit" subtitle="A whole library, or one folder of it, named for what it means here." onClose={busy ? undefined : onClose} />
       <ModalBody className="space-y-3">
         <div>
-          <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Library</label>
+          <label className="text-[13px] font-semibold text-[var(--color-text)] ">Library</label>
           <select value={libraryId} disabled={libs === null}
             onChange={(e) => { setLibraryId(e.target.value); setFolders([]); setFolderId(""); }}
             className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]">
@@ -935,7 +935,7 @@ function LinkResourceModal({ orgId, onClose, onSave }: {
         </div>
         {folders.length > 0 && (
           <div>
-            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Folder (optional)</label>
+            <label className="text-[13px] font-semibold text-[var(--color-text)] ">Folder (optional)</label>
             <select value={folderId} onChange={(e) => setFolderId(e.target.value)}
               className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]">
               <option value="">Whole library</option>
@@ -946,7 +946,7 @@ function LinkResourceModal({ orgId, onClose, onSave }: {
           </div>
         )}
         <div>
-          <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Label on the unit page</label>
+          <label className="text-[13px] font-semibold text-[var(--color-text)] ">Label on the unit page</label>
           <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={effectiveLabel || "e.g. P&IDs, Operating manuals, Unit data"}
             className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
         </div>
@@ -1210,7 +1210,7 @@ function AssetCard({
             {asset.tag}
           </button>
           {type && (
-            <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)] shrink-0">
+            <span className="text-[13px] font-semibold text-[var(--color-text-muted)] shrink-0">
               {type.name}
             </span>
           )}
@@ -1448,7 +1448,7 @@ function AssetEditDrawer({
       <div onClick={(e) => e.stopPropagation()} className="relative ml-auto w-full max-w-xl bg-[var(--color-surface)] shadow-2xl sm:rounded-l-[20px] flex flex-col h-dvh">
         <div className="px-5 sm:px-6 pt-5 pb-4 border-b border-[var(--color-border)] shrink-0">
           <div className="flex items-center gap-2">
-            <div className="min-w-0 truncate text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+            <div className="min-w-0 truncate text-[13px] font-semibold text-[var(--color-text-muted)]">
               Operating areas{(asset?.unit_code ?? preset?.unitCode) ? ` · Unit ${asset?.unit_code ?? preset?.unitCode}` : ""}{isCreate ? " · New asset" : ""}
             </div>
             <div className="flex-1" />
@@ -1477,7 +1477,7 @@ function AssetEditDrawer({
           {/* Form */}
           <div className="space-y-3">
             <div>
-              <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Tag *</label>
+              <label className="text-[13px] font-semibold text-[var(--color-text)] ">Tag *</label>
               <DuplicateAwareInput
                 value={tag}
                 onChange={setTag}
@@ -1499,24 +1499,24 @@ function AssetEditDrawer({
               )}
             </div>
             <div>
-              <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Type</label>
+              <label className="text-[13px] font-semibold text-[var(--color-text)] ">Type</label>
               <select value={typeId} onChange={(e) => setTypeId(e.target.value)} disabled={!canEdit || busy} className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]">
                 <option value="">No type</option>
                 {types.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
             </div>
             <div>
-              <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Description</label>
+              <label className="text-[13px] font-semibold text-[var(--color-text)] ">Description</label>
               <textarea value={description} onChange={(e) => setDescription(e.target.value)} disabled={!canEdit || busy} rows={2} placeholder="What it is" className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y bg-[var(--color-surface)] text-[var(--color-text)]" />
             </div>
             <div>
-              <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Location</label>
+              <label className="text-[13px] font-semibold text-[var(--color-text)] ">Location</label>
               <input value={location} onChange={(e) => setLocation(e.target.value)} disabled={!canEdit || busy} placeholder="e.g. Unit 200 cold side" className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
             </div>
             {book.units.length > 0 && (
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Operating unit</label>
+                  <label className="text-[13px] font-semibold text-[var(--color-text)] ">Operating unit</label>
                   <select value={unitCode} onChange={(e) => setUnitCode(e.target.value)} disabled={!canEdit || busy}
                     className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]">
                     <option value="">None</option>
@@ -1524,7 +1524,7 @@ function AssetEditDrawer({
                   </select>
                 </div>
                 <div>
-                  <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Site code</label>
+                  <label className="text-[13px] font-semibold text-[var(--color-text)] ">Site code</label>
                   <input value={siteCode} onChange={(e) => setSiteCode(e.target.value)} disabled={!canEdit || busy}
                     placeholder="Auto, e.g. 2030.22" className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm font-mono bg-[var(--color-surface)] text-[var(--color-text)]" />
                 </div>
@@ -1536,7 +1536,7 @@ function AssetEditDrawer({
           {!isCreate && asset && (
             <div>
               <div className="flex items-center justify-between mb-2">
-                <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">
+                <div className="text-[13px] font-semibold text-[var(--color-text)] ">
                   Photos ({photos.length})
                 </div>
                 <div className="flex items-center gap-1.5">
@@ -1611,7 +1611,7 @@ function AssetEditDrawer({
           {/* Linked documents (edit mode only) */}
           {!isCreate && asset && (
             <div>
-              <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest mb-2 flex items-center gap-1.5">
+              <div className="text-[13px] font-semibold text-[var(--color-text)] mb-2 flex items-center gap-1.5">
                 <FileText className="w-3 h-3" /> Linked documents
                 {linkedDocs && <span className="text-[var(--color-text-faint)] font-bold">({linkedDocs.length})</span>}
                 <span className="flex-1" />
@@ -1672,7 +1672,7 @@ function AssetEditDrawer({
           {/* Quick notes (edit mode only) */}
           {!isCreate && asset && userId && (
             <div>
-              <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest mb-2">Quick notes</div>
+              <div className="text-[13px] font-semibold text-[var(--color-text)] mb-2">Quick notes</div>
               <QuickNoteComposer
                 orgId={orgId}
                 userId={userId}

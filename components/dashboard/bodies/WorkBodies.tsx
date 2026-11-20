@@ -438,7 +438,7 @@ export function EquipmentBody() {
         <Empty>{dq ? `No assets match “${dq}”.` : "No assets in the registry yet."}</Empty>
       ) : (
         <div className={`mt-2 space-y-0.5 ${SCROLL}`}>
-          {!dq && <div className="px-2 text-[11px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">Newest in the registry</div>}
+          {!dq && <div className="px-2 text-[13px] font-semibold text-[var(--color-text-faint)]">Newest in the registry</div>}
           {rows.map((a) => (
             <Link key={a.id} href={`/assets/${encodeURIComponent(a.tag)}`}
               className="group flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)]">

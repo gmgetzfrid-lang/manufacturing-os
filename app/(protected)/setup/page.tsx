@@ -240,7 +240,7 @@ export default function SetupPage() {
                         <Icon className="w-4 h-4 text-[var(--color-text-muted)]" />
                         <span className="text-[14px] font-bold text-[var(--color-text)]">{s.title}</span>
                         {active && (
-                          <span className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-[var(--color-text)] whitespace-nowrap">Continue here</span>
+                          <span className="text-[13px] font-semibold text-[var(--color-text)] whitespace-nowrap">Continue here</span>
                         )}
                       </div>
                       <p className="text-[13px] text-[var(--color-text-muted)] leading-relaxed mt-1">{s.blurb}</p>

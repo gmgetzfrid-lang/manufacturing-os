@@ -105,7 +105,7 @@ export default function ShareLinkModal({
           )}
 
           <div className="rounded-xl border border-[var(--color-border)] p-3 space-y-2">
-            <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Create new</div>
+            <div className="text-[13px] font-semibold text-[var(--color-text)] ">Create new</div>
             <input
               value={note}
               onChange={(e) => setNote(e.target.value)}
@@ -139,7 +139,7 @@ export default function ShareLinkModal({
           </div>
 
           <div>
-            <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest mb-2">Existing links ({shares.length})</div>
+            <div className="text-[13px] font-semibold text-[var(--color-text)] mb-2">Existing links ({shares.length})</div>
             {loading ? (
               <div className="text-xs text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" /> Loading…</div>
             ) : shares.length === 0 ? (

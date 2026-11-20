@@ -102,7 +102,7 @@ export default function ProtectionRecord({ orgId }: { orgId: string }) {
     <div className="mb-4">
       <div className="flex items-center gap-1.5 mb-1.5">
         <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-        <span className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">
+        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">
           Protection record - last {WINDOW_DAYS} days
         </span>
       </div>

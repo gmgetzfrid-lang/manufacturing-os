@@ -147,7 +147,7 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
   const header = (
     <div className="px-4 pt-3 pb-2.5 border-b border-[var(--color-border)]">
       <div className="flex items-start gap-2">
-        <span className="pt-0.5 text-[11px] leading-snug font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] flex-1 min-w-0">{dayLabel}{all.length > 1 ? ` · ${onDay.length} of ${all.length} steps ${band ? "this shift" : "this day"}` : ""}</span>
+        <span className="pt-0.5 text-[13px] leading-snug font-semibold text-[var(--color-text-muted)] flex-1 min-w-0">{dayLabel}{all.length > 1 ? ` · ${onDay.length} of ${all.length} steps ${band ? "this shift" : "this day"}` : ""}</span>
         {wos.length > 0 && <span className="pt-0.5 font-mono text-[11.5px] font-semibold text-[var(--color-text-muted)] shrink-0">WO {wos.join(", ")}</span>}
         {onClose && <button type="button" onClick={onClose} aria-label="Close" className="-mr-1.5 w-8 h-8 shrink-0 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>}
       </div>

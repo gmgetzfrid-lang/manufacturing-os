@@ -241,7 +241,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
           <BrainCircuit className="w-4 h-4 text-[var(--color-text-muted)]" />
         </span>
         <div className="flex-1 min-w-0">
-          <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">This area&apos;s knowledge</h2>
+          <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)]">This area&apos;s knowledge</h2>
           <div className="text-[13px] text-[var(--color-text-muted)]">
             {status?.boundLibrary ? (
               <>
@@ -537,7 +537,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
         <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
           {/* The area's library */}
           <div>
-            <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1.5">
+            <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">
               This area&apos;s knowledge library
             </div>
             <div className="space-y-1">
@@ -564,7 +564,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
           {/* Already watched (review mode) */}
           {status.sources.length > 0 && (
             <div>
-              <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1.5">
+              <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">
                 Already watched
               </div>
               <div className="space-y-1">
@@ -581,7 +581,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
 
           {/* Folder picker, grouped by DC library, suggestions pre-checked */}
           <div>
-            <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1.5">
+            <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">
               Watch these document-control folders
             </div>
             {browse === null ? (

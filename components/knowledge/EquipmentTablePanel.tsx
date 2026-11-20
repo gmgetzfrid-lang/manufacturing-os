@@ -73,7 +73,7 @@ export default function EquipmentTablePanel({ table, onOpenTag }: {
               <div className="overflow-x-auto">
                 <table className="w-full text-[11px]">
                   <thead>
-                    <tr className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] bg-[var(--color-surface-2)]">
+                    <tr className="text-[13px] font-semibold text-[var(--color-text-muted)] bg-[var(--color-surface-2)]">
                       <th className="text-left px-4 py-1 w-28">Tag</th>
                       <th className="text-left px-2 py-1">Context</th>
                       <th className="text-left px-2 py-1 w-64">On sheets - click to view ringed</th>

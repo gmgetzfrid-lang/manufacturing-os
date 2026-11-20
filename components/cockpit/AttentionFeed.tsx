@@ -94,7 +94,7 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
     <div className={plain ? "" : "rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden"}>
       <div className={`${plain ? "pb-3" : "px-4 sm:px-5 py-3"} border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap`}>
         {!plain && (
-          <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
+          <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
             <ClipboardList className="w-3.5 h-3.5" aria-hidden />
             Needs your attention{counts.all > 0 ? ` · ${counts.all}` : ""}
           </h2>
@@ -209,7 +209,7 @@ function AttentionRow({ item, onMarkRead, plain }: { item: AttentionItem; onMark
           </div>
         </div>
         {item.actionRequired && (
-          <span className="max-sm:hidden text-[11px] font-extrabold uppercase tracking-[0.12em] text-[var(--color-text)] shrink-0">Your turn</span>
+          <span className="max-sm:hidden text-[13px] font-semibold text-[var(--color-text)] shrink-0">Your turn</span>
         )}
         <span className="text-[12px] text-[var(--color-text-muted)] shrink-0 tabular-nums">{formatAgo(item.when || undefined)}</span>
         {item.notificationId ? (

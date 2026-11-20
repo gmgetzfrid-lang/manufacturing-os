@@ -156,7 +156,7 @@ function ChecklistsSection({ orgId, projectId, canManage, actor, checklists, onC
     <div className="bg-[var(--color-surface)] rounded-2xl overflow-hidden shadow-[var(--shadow-card)]">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
         <ClipboardCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Checklists: PSSR, MI, QA/QC</span>
+        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Checklists: PSSR, MI, QA/QC</span>
         {canManage && (
           // Orange only while there's none yet and the form isn't open.
           <button onClick={() => setShowNew((v) => !v)} aria-expanded={showNew}
@@ -374,7 +374,7 @@ export function NewChecklistFlow({ orgId, projectId, projectName, actor, onDone,
           <ul className="max-h-72 overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
             {proposed.map((p, i) => (
               <li key={i} className="px-3 py-1.5 flex items-start gap-2 text-xs">
-                {p.section && <span className="shrink-0 text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-faint)] mt-0.5">{p.section}</span>}
+                {p.section && <span className="shrink-0 text-[13px] font-semibold text-[var(--color-text-faint)] mt-0.5">{p.section}</span>}
                 <span className="flex-1 text-[var(--color-text)]">{p.text}</span>
                 <button onClick={() => setProposed(proposed.filter((_, j) => j !== i))}
                   className="shrink-0 text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3 h-3" /></button>
@@ -500,7 +500,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
       <button onClick={() => setOpen((v) => !v)} className="w-full px-4 py-3 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
         {open ? <ChevronDown className="w-4 h-4 text-[var(--color-text-faint)]" /> : <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)]" />}
         <span className="text-xs font-black text-[var(--color-text)]">{checklist.title}</span>
-        <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">{CHECKLIST_KIND_LABEL[checklist.kind]}</span>
+        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">{CHECKLIST_KIND_LABEL[checklist.kind]}</span>
         {checklist.status === "complete" && (
           <span className="inline-flex items-center gap-0.5 text-[11px] font-black uppercase text-emerald-700 dark:text-emerald-300"><ShieldCheck className="w-3 h-3" /> complete</span>
         )}
@@ -556,7 +556,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
               {sections.map(([section, secItems]) => (
                 <div key={section || "_"}>
                   {section && (
-                    <div className="px-3 py-1.5 bg-[var(--color-surface-2)]/60 text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">
+                    <div className="px-3 py-1.5 bg-[var(--color-surface-2)]/60 text-[13px] font-semibold text-[var(--color-text-muted)]">
                       {section}
                     </div>
                   )}
@@ -749,7 +749,7 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, p
     <div className="bg-[var(--color-surface)] rounded-2xl overflow-hidden shadow-[var(--shadow-card)]">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <PackageCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Turnover package: QA/QC sign-off</span>
+        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Turnover package: QA/QC sign-off</span>
         {progress.required > 0 && (
           <span className="text-[11px] font-bold tabular-nums text-[var(--color-text-muted)]">
             {progress.accepted}/{progress.required} accepted{progress.received > 0 ? ` · ${progress.received} awaiting review` : ""}
@@ -857,7 +857,7 @@ function TurnoverChip({ status }: { status: TurnoverItem["status"] }) {
     : status === "waived" ? "border-[var(--color-border)] text-[var(--color-text-faint)]"
     : "border-amber-500/40 bg-amber-500/[0.07] text-amber-700 dark:text-amber-300";
   return (
-    <span className={`text-[11px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${tone}`}>
+    <span className={`text-[13px] font-semibold px-1.5 py-0.5 rounded border ${tone}`}>
       {TURNOVER_STATUS_LABEL[status]}
     </span>
   );
@@ -1023,7 +1023,7 @@ function PunchSection({ orgId, projectId, canManage, actor, items, parties, peop
     <div className="bg-[var(--color-surface)] rounded-2xl overflow-hidden shadow-[var(--shadow-card)]">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
         <ListChecks className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Punch list</span>
+        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Punch list</span>
         {open.length > 0 && (
           <span className="ml-auto text-[11px] font-black px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40">{open.length} open</span>
         )}

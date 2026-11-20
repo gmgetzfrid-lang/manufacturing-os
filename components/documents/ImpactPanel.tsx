@@ -120,7 +120,7 @@ export default function ImpactPanel({ documentId, orgId }: ImpactPanelProps) {
         <div className="px-3.5 pb-3 space-y-3 border-t border-[var(--color-border)] pt-3 animate-in fade-in slide-in-from-top-1 duration-150">
           {connected.length > 0 && (
             <div>
-              <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mb-1.5">
+              <div className="text-[13px] font-semibold text-[var(--color-text-faint)] mb-1.5">
                 Downstream of a revision
               </div>
               <div className="space-y-1">
@@ -142,7 +142,7 @@ export default function ImpactPanel({ documentId, orgId }: ImpactPanelProps) {
           )}
           {impact.siblingDocs.length > 0 && (
             <div>
-              <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mb-1.5">
+              <div className="text-[13px] font-semibold text-[var(--color-text-faint)] mb-1.5">
                 Same equipment appears on
               </div>
               <div className="space-y-1">
@@ -172,7 +172,7 @@ export default function ImpactPanel({ documentId, orgId }: ImpactPanelProps) {
 
           {impact.openTickets.length > 0 && (
             <div>
-              <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mb-1.5">
+              <div className="text-[13px] font-semibold text-[var(--color-text-faint)] mb-1.5">
                 Open drafting work on this document
               </div>
               {impact.openTickets.map((t) => (

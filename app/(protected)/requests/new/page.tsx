@@ -493,7 +493,7 @@ export default function NewTicketPage() {
             <Card className="flex items-start gap-3">
               <FileText className="w-5 h-5 text-[var(--color-text-muted)] mt-0.5 shrink-0" />
               <div className="flex-1 min-w-0">
-                <div className="text-[11px] font-extrabold text-[var(--color-text-muted)] uppercase tracking-[0.14em]">Source document</div>
+                <div className="text-[13px] font-semibold text-[var(--color-text-muted)] ">Source document</div>
                 <div className="text-[14px] font-bold text-[var(--color-text)] truncate mt-1">
                   {sourceDocNum || sourceDocTitle || sourceFileName || 'Document'} {sourceDocRev ? `· Rev ${sourceDocRev}` : ''}
                 </div>
@@ -772,7 +772,7 @@ function CustomCategoryCard({
   const setField = (key: string, value: unknown) => onChange({ ...values, [key]: value });
   return (
     <div className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] p-4 sm:p-5">
-      <h2 className="text-[11px] font-extrabold text-[var(--color-text-muted)] uppercase tracking-[0.14em] mb-1 flex items-center">
+      <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1 flex items-center">
         <Info className="w-3.5 h-3.5 mr-1.5" />
         {category.label}
       </h2>

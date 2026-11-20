@@ -230,7 +230,7 @@ export default function DistributionAcks({
               {showPicker && (
                 <div className="rounded-lg border border-[var(--color-border)] p-2 space-y-1.5">
                   <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">
+                    <span className="text-[13px] font-semibold text-[var(--color-text-faint)]">
                       Who must confirm Rev {currentRev ?? "?"}?
                     </span>
                     <button onClick={() => setShowPicker(false)} className="p-0.5 rounded hover:bg-[var(--color-surface-2)]">

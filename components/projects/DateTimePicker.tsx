@@ -85,7 +85,7 @@ export default function DateTimePicker({ label, value, onChange, tz, times, plan
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between gap-2">
-        <span><span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{label}</span>{hint && <span className="ml-1 text-[11.5px] text-[var(--color-text-muted)]">{hint}</span>}</span>
+        <span><span className="text-[13px] font-semibold text-[var(--color-text-muted)]">{label}</span>{hint && <span className="ml-1 text-[11.5px] text-[var(--color-text-muted)]">{hint}</span>}</span>
         <span className="flex gap-1">
           {shortcuts.filter((x) => Number.isFinite(x.at)).map((x) => <button key={x.label} type="button" disabled={disabled} onClick={() => take(x.at)} className={small}>{x.label}</button>)}
           {showNow && <button type="button" disabled={disabled} onClick={now} className={small}>Now</button>}

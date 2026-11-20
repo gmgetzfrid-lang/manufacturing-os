@@ -63,7 +63,7 @@ export default function VerifyPackagePage() {
         {loading ? (
           <div className="text-white/90">
             <Loader2 className="w-14 h-14 mx-auto animate-spin mb-4" />
-            <div className="text-[11px] font-bold tracking-[0.16em] uppercase">Checking pack…</div>
+            <div className="text-[13px] font-semibold ">Checking pack…</div>
           </div>
         ) : error ? (
           <div className="text-white/90">
@@ -99,7 +99,7 @@ export default function VerifyPackagePage() {
 
             <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl p-5 text-left space-y-3">
               <div>
-                <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Work package</div>
+                <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Work package</div>
                 <div className="text-[15px] font-bold text-[var(--color-text)]">{result.name}</div>
               </div>
               <div className="pt-2 border-t border-[var(--color-border)] max-h-72 overflow-y-auto space-y-1.5">

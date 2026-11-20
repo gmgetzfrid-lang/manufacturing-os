@@ -1090,7 +1090,7 @@ export default function OrgGraph3D({
         <div className="absolute z-20 w-72 rounded-lg border border-white/15 bg-slate-950/95 p-2.5 text-[11px] text-slate-200 shadow-2xl"
           style={{ left: Math.min(linkCard.x + 10, (mountRef.current?.clientWidth ?? 9999) - 300), top: Math.min(linkCard.y + 10, (mountRef.current?.clientHeight ?? 9999) - 140) }}>
           <div className="flex items-start justify-between gap-2">
-            <div className="text-[11px] font-black uppercase tracking-wider text-amber-300">Why these are linked</div>
+            <div className="text-[13px] font-semibold text-amber-300">Why these are linked</div>
             <button onClick={() => setLinkCard(null)} className="text-slate-400 hover:text-white">✕</button>
           </div>
           <div className="mt-1 leading-snug text-slate-100">{linkCard.why}</div>
@@ -1138,7 +1138,7 @@ function GlobeLegend({ info, nodes, gapIds, onGaps, onPick }: {
         ))}
       </div>
       <div className="border-t border-white/10 pt-1.5 space-y-1">
-        <div className="text-[11px] font-black uppercase tracking-wider text-slate-400">Gaps</div>
+        <div className="text-[13px] font-semibold text-slate-400">Gaps</div>
         <button disabled={!bare.length} onClick={() => onGaps(gapIds.size ? new Set() : new Set(bare))}
           className={`w-full text-left rounded-md px-1.5 py-1 ${gapIds.size ? "bg-amber-400/20 text-amber-200" : "hover:bg-white/10"} disabled:opacity-40`}>
           {gapIds.size ? "Showing" : "Show"} equipment with no documents ({bare.length})

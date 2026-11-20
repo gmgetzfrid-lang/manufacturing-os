@@ -146,7 +146,7 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
         <div className="p-5 space-y-4">
           {/* Shared metadata */}
           <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-3 space-y-2">
-            <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Shared across all sheets</div>
+            <div className="text-[13px] font-semibold text-[var(--color-text)] ">Shared across all sheets</div>
             <div className="grid grid-cols-2 gap-2">
               <select value={issueType ?? ""} onChange={(e) => setIssueType(e.target.value as DocumentVersion["issueType"])} className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5 bg-[var(--color-surface)]">
                 {ISSUE_TYPES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -167,7 +167,7 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
 
           {/* Sheets */}
           <div>
-            <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest mb-1">Sheets ({sheets.length})</div>
+            <div className="text-[13px] font-semibold text-[var(--color-text)] mb-1">Sheets ({sheets.length})</div>
             {loading ? (
               <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)] py-4 justify-center">
                 <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading sheets…

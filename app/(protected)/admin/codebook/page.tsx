@@ -241,7 +241,7 @@ function EntryTable({ kind, title, entries, canWrite, codeHint, labelHint, withP
     <Card pad={false} className="overflow-hidden" label={<>{title} · {entries.length}</>}>
       <div className="overflow-x-auto border-t border-[var(--color-border)]">
         <table className="w-full text-[13px]">
-          <thead className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-[var(--color-text-muted)] border-b border-[var(--color-border)]">
+          <thead className="text-[13px] font-semibold text-[var(--color-text-muted)] border-b border-[var(--color-border)]">
             <tr>
               <th className="text-left px-4 py-1.5 w-24">Code</th>
               <th className="text-left px-2 py-1.5">Label</th>
@@ -314,7 +314,7 @@ function EntryRow({ entry, withPrefixes, canWrite, orgId, uid, onChanged, onErro
         </td>
       )}
       <td className="px-2 py-1.5">
-        {entry.origin === "import" && <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded px-1 py-0.5">imported</span>}
+        {entry.origin === "import" && <span className="text-[13px] font-semibold text-[var(--color-text)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded px-1 py-0.5">imported</span>}
       </td>
       {canWrite && (
         <td className="px-2 py-1.5">
@@ -376,7 +376,7 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
   return (
     <div className="space-y-4">
       <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
-        <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mb-1">Drawing number segments, in order</h2>
+        <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">Drawing number segments, in order</h2>
         <p className="text-[13px] text-[var(--color-text-muted)] mb-3">
           Separators (dashes, dots, “SHT”) are handled for you. Unit (2), Drawing type (2), Paper size (1), Number, Sheet reads <span className="font-mono">2002-D-10001 SHT.4</span>.
         </p>
@@ -421,7 +421,7 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
       </div>
 
       <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
-        <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mb-2">Preview: paste one of your real drawing numbers</h2>
+        <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">Preview: paste one of your real drawing numbers</h2>
         <Input value={sample} onChange={(e) => setSample(e.target.value)} aria-label="Sample drawing number" className="font-mono max-w-md" placeholder="2002-D-10001 SHT.4" />
         <div className="mt-2.5 flex flex-wrap gap-1.5 text-[11px]">
           {segments.length === 0 ? (
@@ -442,7 +442,7 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
 
       <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 flex items-center gap-4 flex-wrap">
         <div>
-          <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">The number after the point</h2>
+          <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)]">The number after the point</h2>
           <p className="text-[11px] text-[var(--color-text-muted)]">Is it the tag&apos;s number (E-5 is 2030.05)? If not, equipment IDs are never worked out from the name: they come from the schedule or are typed in.</p>
         </div>
         <label className="text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
@@ -466,7 +466,7 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
 function PreviewChip({ label, value, extra }: { label: string; value: string | null; extra?: string | null }) {
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border font-bold ${value ? "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300" : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"}`}>
-      <span className="text-[11px] uppercase tracking-wider opacity-70">{label}</span>
+      <span className="text-[13px] opacity-70">{label}</span>
       <span className="font-mono">{value ?? "-"}</span>
       {extra && <span className="opacity-80">· {extra}</span>}
     </span>
@@ -508,7 +508,7 @@ function LegendTab({ book, canWrite, orgId, uid, onChanged, onError }: {
 
   return (
     <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
-      <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mb-1">Symbols legend and decoder sheets · {book.legendDocIds.length} of 3</h2>
+      <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">Symbols legend and decoder sheets · {book.legendDocIds.length} of 3</h2>
       <p className="text-[13px] text-[var(--color-text-muted)] mb-3">
         Attach your P&ID legend sheets (indexed in any knowledge library). Every knowledge library inherits them automatically, so the AI can read your symbols when it answers.
       </p>
@@ -797,7 +797,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
                   </button>
                 )}
               </div>
-              <div className="text-center text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">or</div>
+              <div className="text-center text-[13px] font-semibold text-[var(--color-text-faint)]">or</div>
               <div>
                 <div className="text-[11px] font-black text-[var(--color-text)] mb-1">Paste your standard</div>
                 {pasteDraft.restored && text.trim() && <p className="text-[11px] text-[var(--color-text-muted)] mb-1">Brought back what you pasted last time.</p>}
@@ -805,7 +805,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
                   placeholder={"Paste the unit list / identifier tables / numbering convention…\n\ne.g.  20  Crude Unit\n      25  DHT\n      Equipment: 30 Exchangers (E-), 10 Vessels (V-) …"}
                   className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 text-[var(--color-text)] px-3 py-2 text-xs font-mono resize-y" />
               </div>
-              <div className="text-center text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">or</div>
+              <div className="text-center text-[13px] font-semibold text-[var(--color-text-faint)]">or</div>
               <div>
                 <div className="text-[11px] font-black text-[var(--color-text)] mb-1">Pick an indexed document</div>
                 {pickedDoc ? (
@@ -862,7 +862,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
                   return (
                     <label key={k} className="flex items-center gap-2.5 px-3 py-2 text-xs cursor-pointer hover:bg-[var(--color-surface-2)]/60">
                       <input type="checkbox" checked={accepted.has(k)} onChange={() => toggle(k)} className="w-3.5 h-3.5 accent-[var(--color-text)]" />
-                      <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-faint)] w-16">{KIND_LABEL[p.kind]}</span>
+                      <span className="text-[13px] font-semibold text-[var(--color-text-faint)] w-16">{KIND_LABEL[p.kind]}</span>
                       <span className="font-mono font-black text-[var(--color-text)] w-14">{p.code}</span>
                       <span className="font-bold text-[var(--color-text)] flex-1">{p.label}</span>
                       {p.tagPrefixes && p.tagPrefixes.length > 0 && <span className="font-mono text-[var(--color-text-muted)]">{p.tagPrefixes.join(", ")}-</span>}

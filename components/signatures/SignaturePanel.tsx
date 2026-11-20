@@ -44,7 +44,7 @@ export default function SignaturePanel({
     <div className={`rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] ${className}`}>
       <div className="flex items-center gap-2 px-4 sm:px-5 py-3 border-b border-[var(--color-border)]">
         <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] flex-1">Signatures{sigs && sigs.length > 0 && <> · {sigs.length}</>}</span>
+        <span className="text-[13px] font-semibold text-[var(--color-text-muted)] flex-1">Signatures{sigs && sigs.length > 0 && <> · {sigs.length}</>}</span>
         {canSign && (
           <button
             type="button"

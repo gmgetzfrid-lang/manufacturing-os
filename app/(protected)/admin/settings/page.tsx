@@ -181,7 +181,7 @@ export default function WorkspaceSettingsPage() {
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <label className="block">
-              <span className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em]">Workspace code</span>
+              <span className="text-[13px] font-semibold text-[var(--color-text-muted)] ">Workspace code</span>
               <input
                 value={numbering.prefix}
                 onChange={(e) => { setNumbering((n) => ({ ...n, prefix: e.target.value.toUpperCase() })); setNumSaved(false); }}
@@ -191,7 +191,7 @@ export default function WorkspaceSettingsPage() {
               />
             </label>
             <label className="block">
-              <span className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em]">Record code</span>
+              <span className="text-[13px] font-semibold text-[var(--color-text-muted)] ">Record code</span>
               <input
                 value={numbering.recordCode}
                 onChange={(e) => { setNumbering((n) => ({ ...n, recordCode: e.target.value.toUpperCase() })); setNumSaved(false); }}
@@ -201,7 +201,7 @@ export default function WorkspaceSettingsPage() {
               />
             </label>
             <label className="block">
-              <span className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em]">Number digits</span>
+              <span className="text-[13px] font-semibold text-[var(--color-text-muted)] ">Number digits</span>
               <input
                 type="number" min={1} max={9}
                 value={numbering.pad}
@@ -391,7 +391,7 @@ function Row({ icon: Icon, label, value }: { icon: React.ComponentType<{ classNa
   return (
     <div className="flex items-center gap-3 py-1.5">
       <Icon className="w-4 h-4 text-[var(--color-text-faint)]" />
-      <span className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] w-24">{label}</span>
+      <span className="text-[13px] font-semibold text-[var(--color-text-muted)] w-24">{label}</span>
       <span className="text-[14px] text-[var(--color-text)]">{value}</span>
     </div>
   );

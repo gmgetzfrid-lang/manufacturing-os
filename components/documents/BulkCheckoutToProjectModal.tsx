@@ -192,7 +192,7 @@ export default function BulkCheckoutToProjectModal({
         <div className="px-6 py-5 space-y-4 max-h-[70vh] overflow-y-auto">
           {/* Docs being checked out */}
           <div>
-            <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest mb-2">
+            <div className="text-[13px] font-semibold text-[var(--color-text)] mb-2">
               Documents ({docs.length})
             </div>
             <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg max-h-40 overflow-y-auto divide-y divide-[var(--color-border)]">
@@ -222,7 +222,7 @@ export default function BulkCheckoutToProjectModal({
           {/* Project tabs — only when kind === project */}
           {kind === "project" && (
           <div>
-            <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest mb-1.5">Project</div>
+            <div className="text-[13px] font-semibold text-[var(--color-text)] mb-1.5">Project</div>
             <div className="flex bg-[var(--color-surface-2)] p-1 rounded-lg mb-3">
               <button
                 onClick={() => setChoice("new")}
@@ -292,7 +292,7 @@ export default function BulkCheckoutToProjectModal({
 
           {/* Shared checkout details */}
           <div>
-            <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest mb-1.5">Mode (applied to all)</div>
+            <div className="text-[13px] font-semibold text-[var(--color-text)] mb-1.5">Mode (applied to all)</div>
             <div className="flex bg-[var(--color-surface-2)] p-1 rounded-lg">
               {(["view", "markup", "edit"] as const).map((m) => (
                 <button
@@ -305,7 +305,7 @@ export default function BulkCheckoutToProjectModal({
           </div>
 
           <div>
-            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest inline-flex items-center gap-1">
+            <label className="text-[13px] font-semibold text-[var(--color-text)] inline-flex items-center gap-1">
               Purpose *
               <IsoGuidance topic="checkout_purpose" />
             </label>
@@ -318,7 +318,7 @@ export default function BulkCheckoutToProjectModal({
           </div>
 
           <div>
-            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Expected release (optional)</label>
+            <label className="text-[13px] font-semibold text-[var(--color-text)] ">Expected release (optional)</label>
             <input
               type="date"
               value={expectedReleaseAt ? expectedReleaseAt.slice(0, 10) : ""}

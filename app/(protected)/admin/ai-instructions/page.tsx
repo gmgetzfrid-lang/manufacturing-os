@@ -218,7 +218,7 @@ function AiInstructionsInner() {
             onClose={busy ? undefined : closeEditor} />
           <ModalBody className="space-y-3">
             <div>
-              <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Applies to</label>
+              <label className="text-[13px] font-semibold text-[var(--color-text)] ">Applies to</label>
               <select value={editing.scope ?? "global"}
                 onChange={(e) => setEditing({ ...editing, scope: e.target.value as AiInstructionScope })}
                 className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]">
@@ -226,13 +226,13 @@ function AiInstructionsInner() {
               </select>
             </div>
             <div>
-              <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Short title</label>
+              <label className="text-[13px] font-semibold text-[var(--color-text)] ">Short title</label>
               <input value={editing.title ?? ""} onChange={(e) => setEditing({ ...editing, title: e.target.value })}
                 placeholder='e.g. "Transmittal numbering"' maxLength={80} autoFocus
                 className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
             </div>
             <div>
-              <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">The rule, in plain language</label>
+              <label className="text-[13px] font-semibold text-[var(--color-text)] ">The rule, in plain language</label>
               <textarea value={editing.body ?? ""} onChange={(e) => setEditing({ ...editing, body: e.target.value })}
                 rows={5} maxLength={1500}
                 placeholder={'e.g. "Our equipment descriptions always use the P&ID service name, never the vendor model name."'}

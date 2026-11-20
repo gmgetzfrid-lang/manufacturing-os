@@ -18,7 +18,7 @@ import { tryUpload } from "@/lib/uploadRetry";
 import FileThumb from "@/components/ui/FileThumb";
 
 const field = "h-9 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px] text-[var(--color-text)]";
-const label = "block text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1";
+const label = "block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1";
 const primary = "inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50";
 const quiet = "inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
 
@@ -243,7 +243,7 @@ export function BudgetHistory({ changes, cur }: { changes: BudgetChange[]; cur: 
   if (!changes.length) return null;
   return (
     <div className="text-[11.5px]">
-      <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-0.5">Budget changes</div>
+      <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-0.5">Budget changes</div>
       <ol className="space-y-0.5">
         {changes.map((c, i) => (
           <li key={i} className="text-[var(--color-text)]">

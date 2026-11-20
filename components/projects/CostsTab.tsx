@@ -374,7 +374,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       {/* ── Parties ── */}
       <Card pad={false} className="overflow-hidden">
         <button onClick={() => setShowParties((v) => !v)} aria-expanded={showParties} className="w-full px-4 sm:px-5 py-3.5 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
-          <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Contractors &amp; vendors · {parties.length}</span>
+          <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Contractors &amp; vendors · {parties.length}</span>
           <span className="flex-1" />
           {showParties ? <ChevronDown className="w-4 h-4 text-[var(--color-text-faint)]" /> : <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)]" />}
         </button>
@@ -526,7 +526,7 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
       {canManage && (
         <div className="flex items-end gap-3 flex-wrap pt-2">
           <label className="block">
-            <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]" title="Earned value = budget × the pinned task's % complete">Pin to schedule task (for EV)</span>
+            <span className="text-[13px] font-semibold text-[var(--color-text-muted)]" title="Earned value = budget × the pinned task's % complete">Pin to schedule task (for EV)</span>
             <select value={pinDraft} onChange={(e) => void savePin(e.target.value)}
               className="mt-0.5 h-8 w-64 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
               <option value="">Not pinned</option>
@@ -719,7 +719,7 @@ function PartiesPanel({ orgId, projectId, actor, parties, canManage, onChanged }
             <li key={p.id} className={`rounded-xl border border-[var(--color-border)] px-3 py-2 ${p.status === "inactive" ? "opacity-60" : ""}`}>
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold text-[var(--color-text)] truncate">{p.name}</span>
-                {p.kind && <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">{p.kind}</span>}
+                {p.kind && <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">{p.kind}</span>}
                 {p.status === "inactive" && <span className="text-[11px] font-bold text-[var(--color-text-faint)]">inactive</span>}
                 {canManage && (
                   <span className="ml-auto flex items-center gap-1 shrink-0">
@@ -777,7 +777,7 @@ function PartyEditor({ orgId, projectId, actor, party, onCancel, onSaved }: {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const field = "h-8 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs";
-  const label = "text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]";
+  const label = "text-[13px] font-semibold text-[var(--color-text-muted)]";
 
   const save = async () => {
     if (!name.trim()) { setError("Name is required."); return; }

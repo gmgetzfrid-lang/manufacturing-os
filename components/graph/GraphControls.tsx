@@ -38,7 +38,7 @@ function Section({ icon: Icon, title, children, defaultOpen = false }: {
       <button onClick={() => setOpen((v) => !v)}
         className="w-full flex items-center gap-2 px-3 py-2 hover:bg-[var(--color-surface-2)]">
         <Icon className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-        <span className="flex-1 text-left text-[11px] font-black uppercase tracking-widest text-[var(--color-text)]">{title}</span>
+        <span className="flex-1 text-left text-[13px] font-semibold text-[var(--color-text)]">{title}</span>
         <ChevronDown className={`w-3.5 h-3.5 text-[var(--color-text-faint)] transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
       {open && <div className="px-3 pb-3 space-y-2.5">{children}</div>}

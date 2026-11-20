@@ -352,7 +352,7 @@ export default function ScheduleImportModal({
                 <span>Importing into</span>
                 <span className="font-bold text-[var(--color-text)] truncate max-w-[200px]">{projectName ?? `Project ${projectId.slice(0,8)}`}</span>
                 {projectStatus && projectStatus !== "active" && (
-                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] font-black uppercase tracking-wider bg-rose-100 dark:bg-rose-900/40 text-rose-800 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[13px] font-semibold bg-rose-100 dark:bg-rose-900/40 text-rose-800 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
                     <AlertTriangle className="w-2.5 h-2.5" /> {projectStatus}
                   </span>
                 )}
@@ -785,7 +785,7 @@ function StatCell({ label, value, tone }: { label: string; value: string; tone: 
                        "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text)]";
   return (
     <div className={`rounded-md border px-2 py-1 ${cls}`}>
-      <div className="text-[11px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">{label}</div>
+      <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">{label}</div>
       <div className="font-mono font-bold text-[12px]">{value}</div>
     </div>
   );

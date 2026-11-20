@@ -285,7 +285,7 @@ export default function DocBrowserBody() {
           )}
           {here.docs.length > 0 && (
             <div>
-              <div className="px-1 pb-1 text-[11px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">
+              <div className="px-1 pb-1 text-[13px] font-semibold text-[var(--color-text-faint)]">
                 {here.docCount.toLocaleString()} document{here.docCount === 1 ? "" : "s"} here{here.docCount > here.docs.length ? ` · newest ${here.docs.length}` : ""}
               </div>
               <div className="space-y-0.5">

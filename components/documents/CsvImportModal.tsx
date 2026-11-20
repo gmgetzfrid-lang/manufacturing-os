@@ -226,7 +226,7 @@ export default function CsvImportModal({
 
           {step === "paste" && (
             <div className="space-y-2">
-              <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Paste CSV</label>
+              <label className="text-[13px] font-semibold text-[var(--color-text)] ">Paste CSV</label>
               <textarea
                 value={raw}
                 onChange={(e) => setRaw(e.target.value)}
@@ -240,7 +240,7 @@ export default function CsvImportModal({
 
           {step === "map" && (
             <div className="space-y-3">
-              <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Map columns</div>
+              <div className="text-[13px] font-semibold text-[var(--color-text)] ">Map columns</div>
               <div className="text-[11px] text-[var(--color-text-muted)]">Detected {rows.length} data row{rows.length === 1 ? "" : "s"} across {headers.length} columns.</div>
               <div className="space-y-2">
                 {allFields.map((f) => (
@@ -262,13 +262,13 @@ export default function CsvImportModal({
 
           {step === "preview" && (
             <div>
-              <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest mb-2">Preview (first 10)</div>
+              <div className="text-[13px] font-semibold text-[var(--color-text)] mb-2">Preview (first 10)</div>
               <div className="rounded-lg border border-[var(--color-border)] overflow-auto">
                 <table className="w-full text-[11px]">
                   <thead className="bg-[var(--color-surface-2)] border-b border-[var(--color-border)]">
                     <tr>
                       {allFields.filter((f) => mapping[f.key]).map((f) => (
-                        <th key={f.key} className="text-left px-2 py-1.5 font-black text-[var(--color-text)] uppercase tracking-wider text-[11px]">
+                        <th key={f.key} className="text-left px-2 py-1.5 font-semibold text-[var(--color-text)] text-[13px]">
                           {f.label.replace(/\*/g, "").trim()}
                         </th>
                       ))}

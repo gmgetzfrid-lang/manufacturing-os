@@ -37,7 +37,7 @@ export default function AddWidgetModal({ open, onClose, existingTypes, isAdmin, 
       <div className="relative w-full max-w-3xl bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden max-h-[85vh] flex flex-col">
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="min-w-0 flex-1">
-            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Home</div>
+            <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Home</div>
             <h2 className="mt-1 text-[24px] leading-tight font-black tracking-[-0.02em] text-[var(--color-text)]">Add a widget.</h2>
             <p className="mt-0.5 text-[13px] text-[var(--color-text-muted)]">Tap one to add it to your Home.</p>
           </div>
@@ -57,7 +57,7 @@ export default function AddWidgetModal({ open, onClose, existingTypes, isAdmin, 
             if (list.length === 0) return null;
             return (
               <section key={cat}>
-                <h3 className="px-1 mb-1.5 text-[11px] font-black uppercase tracking-[0.14em] text-[var(--color-text-faint)]">{cat}</h3>
+                <h3 className="px-1 mb-1.5 text-[13px] font-semibold text-[var(--color-text-faint)]">{cat}</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {list.map((m) => {
                     const n = count(m.type);
@@ -70,7 +70,7 @@ export default function AddWidgetModal({ open, onClose, existingTypes, isAdmin, 
                           blocked ? "border-[var(--color-border)] opacity-60 cursor-default" : "border-[var(--color-border)] hover:border-[var(--color-accent)] hover:bg-[var(--color-surface-2)]"}`}>
                         <span className={`inline-flex items-center justify-center w-10 h-10 rounded-xl ${toneChip(m.tone)} shrink-0`}><Icon className="w-5 h-5" /></span>
                         <div className="min-w-0 flex-1">
-                          <div className="text-sm font-bold text-[var(--color-text)]">{m.title}{m.isNew && <span className="ml-1.5 align-middle text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">New</span>}</div>
+                          <div className="text-sm font-bold text-[var(--color-text)]">{m.title}{m.isNew && <span className="ml-1.5 align-middle text-[13px] font-semibold text-[var(--color-text-muted)]">New</span>}</div>
                           <div className="text-xs text-[var(--color-text-muted)] line-clamp-2">{m.description}</div>
                           {n > 0 && m.multi && <div className="text-[11px] font-bold text-emerald-600 mt-0.5">{n} on your Home. Tap to add another</div>}
                         </div>

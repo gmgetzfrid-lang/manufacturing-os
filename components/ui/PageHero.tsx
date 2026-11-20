@@ -1,26 +1,26 @@
 "use client";
 
-// The page frame every screen shares. Three layers, so a page has depth:
-//   back   the dark band: a small label, the page's ANSWER in big type
-//          (what matters right now, e.g. "1 thing needs you."), one line
-//          under it, and anything that steers the page (tabs, search, a
-//          path of steps)
-//   middle white cards that overlap the band's bottom edge (PageBody)
-//   top    the one orange action, raised above both. On a phone it rides
-//          in a bar at the bottom of the screen so a thumb can reach it.
-// One thing is huge, everything else is small: there are no middle sizes.
+// The page frame every screen shares, drawn like the title block of an
+// engineering drawing: the page's answer in big condensed type on the left
+// (what matters right now, e.g. "43 things need you"), the few facts that
+// back it up in ruled cells beside it, and the one main action at the end.
+// It sits on the grey panel; there is no colored block. Below it, sections
+// are a heading and their content on a white sheet, full width.
 
 import React from "react";
 import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
 
-/** Quiet button on the dark band (menus, filters, secondary actions). */
+/** A secondary button: white, ruled, graphite text. */
 export const heroQuiet =
-  "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-[10px] border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] text-[13px] font-semibold text-[var(--color-ink-fg)] hover:bg-[var(--color-ink-line)] disabled:opacity-50 transition-colors";
+  "inline-flex items-center justify-center gap-1.5 h-9 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-text-faint)] disabled:opacity-50 transition-colors";
 
-/** The one orange action, raised. */
+/** The page's one main action: filled with the signal color. */
 export const heroPrimary =
-  "inline-flex items-center justify-center gap-2 h-11 px-5 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-extrabold hover:bg-[var(--color-accent-hover)] shadow-[0_12px_24px_-12px_var(--color-accent)] disabled:opacity-50 transition-colors";
+  "inline-flex items-center justify-center gap-2 h-10 px-4 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[15px] font-semibold hover:bg-[var(--color-accent-hover)] shadow-[0_1px_0_rgb(0_0_0/0.12)] disabled:opacity-50 transition-colors";
+
+/** One ruled cell in the title block: a fact that backs up the answer. */
+export interface HeroFact { label: React.ReactNode; value: React.ReactNode; tone?: "bad" | "warn" | "good" }
 
 export function PageHero({
   kicker,
@@ -29,12 +29,12 @@ export function PageHero({
   back,
   tools,
   primary,
+  facts,
   children,
   size = "lg",
-  overlap = true,
   className = "",
 }: {
-  /** Small all-caps label: where you are (e.g. "Document control · Drawings"). */
+  /** Where you are (e.g. "Documents / Drawings"). */
   kicker?: React.ReactNode;
   /** The answer: what matters on this page right now. Shown big. */
   title: React.ReactNode;
@@ -42,56 +42,63 @@ export function PageHero({
   sub?: React.ReactNode;
   /** A left arrow back one screen. */
   back?: { href?: string; onClick?: () => void; label: string };
-  /** Small controls top right (menus, refresh, filters): use heroQuiet. */
+  /** Secondary controls (menus, filters): use heroQuiet. */
   tools?: React.ReactNode;
-  /** The one orange action (use heroPrimary). Raised on desktop; a bottom
-   *  bar on a phone. */
+  /** The one main action (use heroPrimary). On a phone it rides in a bar
+   *  at the bottom of the screen, where a thumb reaches it. */
   primary?: React.ReactNode;
-  /** Things that steer the page and belong in the band: tabs, search,
-   *  a path of steps. */
+  /** Up to four facts beside the answer, in ruled cells. */
+  facts?: HeroFact[];
+  /** Things that steer the page: tabs, search, a path of steps. */
   children?: React.ReactNode;
   /** "md" for detail pages whose answer is long. */
   size?: "lg" | "md";
-  /** true (default): a PageBody follows and its cards overlap the band.
-   *  false: the band ends on its own and content starts below it. */
+  /** Kept for older callers; the header never overlaps content now. */
   overlap?: boolean;
   className?: string;
 }) {
-  const big = size === "lg"
-    ? "text-[34px] sm:text-[46px] lg:text-[56px]"
-    : "text-[28px] sm:text-[38px] lg:text-[44px]";
+  const big = size === "lg" ? "text-[30px] sm:text-[38px]" : "text-[26px] sm:text-[32px]";
+  const tone = (t?: HeroFact["tone"]) => t === "bad" ? "text-[var(--state-overdue)]" : t === "warn" ? "text-[var(--state-held)]" : t === "good" ? "text-[var(--state-released)]" : "text-[var(--color-text)]";
   return (
     <>
-      <section
-        className={`relative rounded-[20px] bg-[var(--color-band)] text-white px-5 sm:px-8 lg:px-10 pt-4 sm:pt-6 ${overlap ? "pb-20 sm:pb-24" : "pb-7 sm:pb-8 mb-5"} ${className}`}
-      >
-        <div className="flex items-center gap-2 min-h-9">
-          {back && (back.href ? (
-            <Link href={back.href} aria-label={back.label}
-              className="-ml-2 w-9 h-9 rounded-[10px] grid place-items-center text-[var(--color-ink-fg)] hover:bg-[var(--color-ink-2)]">
-              <ChevronLeft className="w-5 h-5" />
-            </Link>
-          ) : (
-            <button type="button" onClick={back.onClick} aria-label={back.label}
-              className="-ml-2 w-9 h-9 rounded-[10px] grid place-items-center text-[var(--color-ink-fg)] hover:bg-[var(--color-ink-2)]">
-              <ChevronLeft className="w-5 h-5" />
-            </button>
-          ))}
-          {kicker && (
-            <div className="min-w-0 truncate text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--color-ink-muted)]">{kicker}</div>
-          )}
-          <div className="flex-1" />
-          {tools && <div className="flex items-center gap-2 shrink-0">{tools}</div>}
-        </div>
-        <div className="mt-5 sm:mt-7 flex flex-wrap items-end gap-x-8 gap-y-4">
-          <div className="min-w-0 flex-1 basis-[420px]">
-            <h1 className={`${big} leading-[1.03] font-black tracking-[-0.03em] text-white`}>{title}</h1>
-            {sub && <p className="mt-3 text-[14px] sm:text-[15px] text-[var(--color-ink-text)] max-w-3xl">{sub}</p>}
+      <header className={`page-head ${children ? "" : "pb-5 border-b border-[var(--color-border-strong)]"} ${className}`}>
+        {(back || kicker || tools) && (
+          <div className="flex items-center gap-2 min-h-9 mb-1">
+            {back && (back.href ? (
+              <Link href={back.href} aria-label={back.label}
+                className="-ml-2 w-8 h-8 rounded-md grid place-items-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]">
+                <ChevronLeft className="w-5 h-5" />
+              </Link>
+            ) : (
+              <button type="button" onClick={back.onClick} aria-label={back.label}
+                className="-ml-2 w-8 h-8 rounded-md grid place-items-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]">
+                <ChevronLeft className="w-5 h-5" />
+              </button>
+            ))}
+            {kicker && <div className="min-w-0 truncate text-[14px] font-medium text-[var(--color-text-muted)]">{kicker}</div>}
+            <div className="flex-1" />
+            {tools && <div className="flex items-center gap-2 shrink-0">{tools}</div>}
           </div>
-          {primary && <div className="max-sm:hidden shrink-0">{primary}</div>}
+        )}
+        <div className="flex flex-wrap items-stretch gap-x-0 gap-y-4">
+          <div className="min-w-0 flex-1 basis-[360px] pr-6 self-center">
+            <h1 className={`font-display ${big} leading-[1.05] font-semibold tracking-[-0.01em] text-[var(--color-text)]`}>{title}</h1>
+            {sub && <p className="mt-2 text-[15px] leading-snug text-[var(--color-text-muted)] max-w-[70ch]">{sub}</p>}
+          </div>
+          {facts && facts.length > 0 && (
+            <dl className="flex max-sm:w-full max-sm:border-t max-sm:border-[var(--color-border-strong)] max-sm:pt-3">
+              {facts.slice(0, 4).map((f, i) => (
+                <div key={i} className="px-5 max-sm:first:pl-0 sm:border-l border-[var(--color-border-strong)] max-sm:[&+&]:border-l flex flex-col justify-center min-w-[96px]">
+                  <dt className="text-[13px] text-[var(--color-text-muted)] whitespace-nowrap">{f.label}</dt>
+                  <dd className={`font-display text-[28px] leading-none mt-1 font-semibold tabular-nums ${tone(f.tone)}`}>{f.value}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
+          {primary && <div className={`max-sm:hidden shrink-0 self-center ${facts?.length ? "pl-5 border-l border-[var(--color-border-strong)]" : ""}`}>{primary}</div>}
         </div>
-        {children && <div className="mt-6">{children}</div>}
-      </section>
+        {children && <div className="mt-5">{children}</div>}
+      </header>
       {primary && (
         // On a phone the one action sits where a thumb reaches it.
         <div className="sm:hidden fixed inset-x-0 bottom-0 z-40 px-3.5 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))] bg-[color-mix(in_srgb,var(--color-canvas)_94%,transparent)] border-t border-[var(--color-border)] [&>*]:w-full">
@@ -102,14 +109,17 @@ export function PageHero({
   );
 }
 
-/** The middle layer: cards that overlap the band's bottom edge. Its first
- *  child should be a Card (white), never bare text. */
+/** The page's content under the header. */
 export function PageBody({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <div className={`relative -mt-14 sm:-mt-16 px-2 sm:px-5 space-y-4 ${className}`}>{children}</div>;
+  return <div className={`mt-6 space-y-8 ${className}`}>{children}</div>;
 }
 
-/** A white card on the paper: soft depth, no outline. `label` is the
- *  small all-caps name; `action` sits on its right. */
+// Classes that place a section in a grid stay on the outer element; the
+// rest style the sheet.
+const PLACE = /^(?:[a-z]+:)*(?:col-span|row-span|order|sticky|top-|self-|min-w-0|basis)/;
+
+/** A section: its heading on the panel, its content on a white sheet.
+ *  `label` names it; `action` sits on the heading's right. */
 export function Card({
   label,
   action,
@@ -125,26 +135,28 @@ export function Card({
   pad?: boolean;
   as?: "section" | "article" | "div";
 }) {
+  const sheet = `rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] ${pad ? "p-4 sm:p-5" : ""}`;
+  if (!label && !action) return <Tag className={`${sheet} ${className}`}>{children}</Tag>;
+  const parts = className.split(/\s+/).filter(Boolean);
+  const place = parts.filter((c) => PLACE.test(c)).join(" ");
+  const rest = parts.filter((c) => !PLACE.test(c)).join(" ");
   return (
-    <Tag className={`rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] ${pad ? "p-4 sm:p-5" : ""} ${className}`}>
-      {(label || action) && (
-        <div className={`flex items-center gap-3 ${pad ? "mb-3" : "px-4 sm:px-5 pt-4 pb-3"}`}>
-          {label && <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{label}</h2>}
-          <div className="flex-1" />
-          {action}
-        </div>
-      )}
-      {children}
+    <Tag className={`min-w-0 ${place}`}>
+      <div className="flex items-end gap-3 mb-2.5 min-h-8">
+        {label && <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)] [&_svg]:inline [&_svg]:align-[-2px]">{label}</h2>}
+        <div className="flex-1" />
+        {action}
+      </div>
+      <div className={`${sheet} ${rest}`}>{children}</div>
     </Tag>
   );
 }
 
-/** A row of cards that keeps going sideways: the last one is cut off at
+/** A row of items that keeps going sideways: the last one is cut off at
  *  the edge, so it's plain there's more (it scrolls). */
 export function CardStrip({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
-    // Room above and below so the cards' shadows aren't cut by the scroller.
-    <div className={`-mr-2 sm:-mr-5 flex gap-3 sm:gap-4 overflow-x-auto overscroll-x-contain pt-1 pb-7 -mb-5 pr-10 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${className}`}>
+    <div className={`-mr-4 sm:-mr-6 flex gap-3 overflow-x-auto overscroll-x-contain pb-1 pr-10 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${className}`}>
       {children}
     </div>
   );
@@ -155,8 +167,9 @@ export function StepLine({ steps, onDark = false }: {
   steps: Array<{ label: React.ReactNode; note?: React.ReactNode; tone?: "bad" | "ok" | "muted"; state: "done" | "now" | "next" }>;
   onDark?: boolean;
 }) {
-  const fg = onDark ? "#ffffff" : "var(--color-text)";
-  const line = onDark ? "var(--color-ink-line)" : "var(--color-border-strong)";
+  void onDark; // the header is on the light panel now
+  const fg = "var(--color-text)";
+  const line = "var(--color-border-strong)";
   return (
     <ol className="flex items-start" aria-label="Steps">
       {steps.map((s, i) => {
@@ -169,9 +182,9 @@ export function StepLine({ steps, onDark = false }: {
                 style={filled ? { background: fg } : { border: `2px solid ${s.state === "now" ? fg : line}` }} />
               {!last && <span className="flex-1 h-0.5" style={{ background: filled && steps[i + 1]?.state !== "next" ? fg : line }} />}
             </div>
-            <div className={`mt-2.5 pr-3 text-[13px] sm:text-[14px] font-bold truncate ${onDark ? "text-white" : "text-[var(--color-text)]"}`}>{s.label}</div>
+            <div className="mt-2.5 pr-3 text-[14px] font-semibold truncate text-[var(--color-text)]">{s.label}</div>
             {s.note && (
-              <div className={`pr-3 text-[12px] mt-0.5 ${s.tone === "bad" ? (onDark ? "text-rose-200 font-semibold" : "text-rose-700 font-semibold") : onDark ? "text-[var(--color-ink-muted)]" : "text-[var(--color-text-muted)]"}`}>{s.note}</div>
+              <div className={`pr-3 text-[13px] mt-0.5 ${s.tone === "bad" ? "text-[var(--state-overdue)] font-semibold" : "text-[var(--color-text-muted)]"}`}>{s.note}</div>
             )}
           </li>
         );

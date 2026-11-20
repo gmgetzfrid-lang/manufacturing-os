@@ -106,11 +106,9 @@ const TONE_ICON: Record<Tone, string> = {
   purple:  'text-[var(--color-text-muted)]',
   cyan:    'text-[var(--color-text-muted)]',
 };
-// The page you're on: dark ink on a neutral wash. Orange is for things you
-// tap, never for where you are.
-const ACCENT_ICON_STYLE: React.CSSProperties = { color: '#ffffff' };
-// Where you are: an ink pill on the paper.
-const ACTIVE_BG_STYLE: React.CSSProperties = { backgroundColor: 'var(--color-band)' };
+// Where you are: a soft tint of the signal color with a bar on its edge.
+const ACCENT_ICON_STYLE: React.CSSProperties = { color: 'var(--color-accent-text)' };
+const ACTIVE_BG_STYLE: React.CSSProperties = { backgroundColor: 'var(--color-accent-soft)' };
 
 export default function Sidebar({
   mobileOpen = false,
@@ -134,7 +132,7 @@ export default function Sidebar({
       ? { badge: s.actionRequired, badgeTone: 'red' }
       : { badge: s.total, badgeTone: 'blue' };
   }, []);
-  const { logoUrl, branding, canEdit: canEditBranding } = useOrgBranding();
+  const { logoUrl, canEdit: canEditBranding } = useOrgBranding();
   const [logoModalOpen, setLogoModalOpen] = useState(false);
   const isMobile = useIsMobile();
 
@@ -304,18 +302,15 @@ export default function Sidebar({
       {/* Off-canvas backdrop (mobile only). */}
       {mobileOpen && (
         <div
-          className="fixed inset-0 z-[60] bg-slate-950/60 backdrop-blur-sm md:hidden"
+          className="fixed inset-0 z-[60] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] md:hidden"
           onClick={onMobileClose}
           aria-hidden
         />
       )}
       <aside
         aria-hidden={isMobile && !mobileOpen}
-        className={`${collapsed ? 'w-16' : 'w-64'}    surface-side h-full flex flex-col text-[var(--color-text-muted)] shrink-0 fixed inset-y-0 left-0 z-[70] md:relative md:inset-auto md:z-auto transition-[transform,width] duration-200 ease-out bg-[var(--color-canvas)] ${mobileOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'} md:translate-x-0`}
+        className={`${collapsed ? 'w-16' : 'w-64'} surface-side h-full flex flex-col text-[var(--color-text-muted)] shrink-0 fixed inset-y-0 left-0 z-[70] md:relative md:inset-auto md:z-auto transition-[transform,width] duration-200 ease-out bg-[var(--color-canvas)] border-r border-[var(--color-border)] ${mobileOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'} md:translate-x-0`}
       >
-        {/* Warm brand seam down the trailing edge — a quiet accent that ties
-            the rail to the brand in either theme. */}
-        <div className="absolute inset-y-0 right-0 w-px pointer-events-none bg-[var(--color-surface-2)]" />
 
       {/* BRAND */}
       <div className={`h-16 flex items-center border-b border-[var(--color-border)] shrink-0 ${collapsed ? 'justify-center px-2' : 'px-4 gap-3'}`}>
@@ -335,13 +330,23 @@ export default function Sidebar({
           </button>
         ) : (
           <>
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center shadow-lg ring-1 ring-[var(--color-border-strong)] shrink-0 bg-[var(--color-text)]">
-              <LayoutDashboard className="w-5 h-5 text-[var(--color-surface)]" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="font-black text-[var(--color-text)] tracking-tight text-base leading-none truncate">Manufacturing<span className="text-[var(--color-text-muted)]">OS</span></div>
-              <div className="text-[11px] text-[var(--color-text-faint)] font-bold uppercase tracking-widest mt-1">Enterprise Platform</div>
-            </div>
+            {logoUrl ? (
+              // The workspace's own logo is the header. On the graphite menu
+              // it sits on a white plate so a dark logo still reads.
+              <div className="flex-1 min-w-0 h-11 flex items-center">
+                <span className="max-w-full h-full inline-flex items-center rounded-md px-2 -ml-2" style={{ background: 'var(--side-logo-plate, transparent)' }}>
+                  {/* eslint-disable-next-line @next/next/no-img-element -- org logo is a signed storage URL */}
+                  <img src={logoUrl} alt="Workspace logo" className="max-h-10 w-auto max-w-full object-contain" draggable={false} />
+                </span>
+              </div>
+            ) : (
+              <>
+                <div className="w-8 h-8 rounded-md flex items-center justify-center shrink-0 bg-[var(--color-text)]">
+                  <LayoutDashboard className="w-4 h-4 text-[var(--color-canvas)]" />
+                </div>
+                <div className="flex-1 min-w-0 font-display text-[18px] font-semibold text-[var(--color-text)] leading-none truncate">Manufacturing OS</div>
+              </>
+            )}
             <button
               onClick={() => (isMobile ? onMobileClose?.() : setRailCollapsed((v) => !v))}
               title={isMobile ? 'Close menu' : 'Collapse (⌘B)'}
@@ -354,41 +359,32 @@ export default function Sidebar({
         )}
       </div>
 
-      {/* WORKSPACE SWITCHER — the logo stands in for the org name once set. */}
-      {orgOptions.length > 0 && !collapsed && (
+      {/* WORKSPACE: switch between workspaces; an admin can set the logo. */}
+      {orgOptions.length > 0 && !collapsed && (orgOptions.length > 1 || !logoUrl || canEditBranding) && (
         <div className="px-3 pt-3 shrink-0">
-          <div className="relative bg-[var(--color-surface-2)] rounded-lg border border-[var(--color-border)] px-3 py-2">
-            <div className="flex items-center justify-between gap-2 mb-1">
-              <div className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase tracking-widest">Workspace</div>
-              {canEditBranding && (
-                <button
-                  onClick={() => setLogoModalOpen(true)}
-                  title={logoUrl ? 'Change workspace logo' : 'Add a workspace logo'}
-                  className="shrink-0 w-5 h-5 grid place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-accent)] transition-colors"
-                >
-                  {logoUrl ? <Pencil className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
-                </button>
-              )}
-            </div>
-
-            {logoUrl ? (
-              <div className="py-1.5 flex items-center justify-center">
-                {/* eslint-disable-next-line @next/next/no-img-element -- org logo is a signed storage URL */}
-                <img src={logoUrl} alt="Organization logo" className={`${branding?.logoShape === 'full' ? 'max-h-12' : 'max-h-14'} w-auto max-w-full object-contain`} draggable={false} />
-              </div>
-            ) : orgOptions.length === 1 ? (
-              <div className="text-sm font-bold text-[var(--color-text)] truncate">{orgOptions[0].name}</div>
-            ) : null}
-
-            {orgOptions.length > 1 && (
+          <div className="flex items-center gap-2 h-9 px-2.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]">
+            {orgOptions.length > 1 ? (
               <select
                 value={activeOrgId ?? ''}
                 onChange={(e) => setActiveOrgId(e.target.value || null)}
                 disabled={orgLoading}
-                className={`w-full bg-transparent text-[var(--color-text)] outline-none cursor-pointer truncate ${logoUrl ? 'mt-1.5 text-[11px] font-semibold text-[var(--color-text-muted)]' : 'text-sm font-bold'}`}
+                aria-label="Workspace"
+                className="flex-1 min-w-0 bg-transparent text-[14px] font-semibold text-[var(--color-text)] outline-none cursor-pointer truncate"
               >
                 {orgOptions.map((org) => <option key={org.id} value={org.id} className="bg-[var(--color-surface)] text-[var(--color-text)]">{org.name}</option>)}
               </select>
+            ) : (
+              <span className="flex-1 min-w-0 text-[14px] font-semibold text-[var(--color-text)] truncate">{orgOptions[0].name}</span>
+            )}
+            {canEditBranding && (
+              <button
+                onClick={() => setLogoModalOpen(true)}
+                title={logoUrl ? 'Change workspace logo' : 'Add a workspace logo'}
+                aria-label={logoUrl ? 'Change workspace logo' : 'Add a workspace logo'}
+                className="shrink-0 w-6 h-6 grid place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
+              >
+                {logoUrl ? <Pencil className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+              </button>
             )}
           </div>
         </div>
@@ -439,12 +435,12 @@ export default function Sidebar({
             </button>
           </div>
         ) : (
-          <div className="bg-[var(--color-surface-2)] hover:bg-[var(--color-border)] rounded-xl border border-[var(--color-border)] hover:border-[var(--color-border-strong)] p-2 transition-colors flex items-center gap-2">
+          <div className="rounded-md hover:bg-[var(--color-surface)] p-1.5 transition-colors flex items-center gap-2">
             <Link href="/profile" className="flex items-center min-w-0 flex-1 group" title="Open profile">
               <UserAvatar uid={uid} email={userEmail} size={36} rounded="lg" />
               <div className="ml-2.5 overflow-hidden">
-                <div className="text-xs font-bold text-[var(--color-text)] truncate group-hover:text-[var(--color-text)] transition-colors">{userEmail?.split('@')[0] ?? '-'}</div>
-                <div className="text-[11px] text-[var(--color-text)] truncate font-mono uppercase tracking-widest font-bold">{activeOrgId ? (activeRole ?? '…') : 'No workspace'}</div>
+                <div className="text-[14px] font-semibold text-[var(--color-text)] truncate">{userEmail?.split('@')[0] ?? '-'}</div>
+                <div className="text-[13px] text-[var(--color-text-muted)] truncate">{activeOrgId ? (activeRole ?? '…') : 'No workspace'}</div>
               </div>
             </Link>
             <button
@@ -480,7 +476,7 @@ function SectionHeader({
       className="group/sec w-full flex items-center gap-2 px-1.5 h-7 rounded-md hover:bg-[var(--color-surface-2)] transition-colors select-none"
     >
       <Icon className={`w-3.5 h-3.5 shrink-0 ${TONE_ICON[section.tone]}`} />
-      <span className={`text-[11px] font-black uppercase tracking-[0.16em] truncate ${active ? 'text-[var(--color-text)]' : 'text-[var(--color-text-muted)]'}`}>
+      <span className={`text-[13px] font-semibold truncate ${active ? 'text-[var(--color-text)]' : 'text-[var(--color-text-muted)]'}`}>
         {section.title}
       </span>
       <span className="flex-1 h-px bg-[var(--color-border)] group-hover/sec:bg-[var(--color-border-strong)] transition-colors" aria-hidden />
@@ -516,17 +512,18 @@ function SidebarLeaf({
     <Link href={leaf.href}
       title={collapsed ? `${leaf.label}${leaf.hint ? ` - ${leaf.hint}` : ''}` : (leaf.hint ?? leaf.label)}
       style={active ? ACTIVE_BG_STYLE : undefined}
-      className={`relative flex items-center gap-2.5 rounded-lg transition-colors ${
+      aria-current={active ? 'page' : undefined}
+      className={`relative flex items-center gap-2.5 rounded-md transition-colors ${
         collapsed ? 'h-10 justify-center' : 'h-9 px-2.5'
       } ${
         active
-          ? 'text-white font-semibold'
+          ? 'text-[var(--color-accent-text)] font-semibold before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-[3px] before:rounded-full before:bg-[var(--color-accent)]'
           : 'text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)]'
       }`}
     >
       <Icon className={`w-[17px] h-[17px] shrink-0 ${active ? '' : TONE_ICON[leaf.tone]}`} style={active ? ACCENT_ICON_STYLE : undefined} />
       {!collapsed && (
-        <span className="text-[13px] truncate flex-1 leading-none">{leaf.label}</span>
+        <span className="text-[15px] truncate flex-1 leading-none">{leaf.label}</span>
       )}
       {leaf.badge && leaf.badge > 0 && (
         // The count is a DOORWAY, not a scoreboard: clicking it opens the

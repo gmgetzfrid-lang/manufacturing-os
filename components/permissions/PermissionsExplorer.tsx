@@ -107,7 +107,7 @@ export default function PermissionsExplorer() {
     <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">App-wide permissions</h2>
+        <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)]">App-wide permissions</h2>
         <span className="text-[12px] text-[var(--color-text-muted)]">✓ can do · ◐ conditional (hover for why) · - cannot · ⚠ known gap</span>
         <div className="ml-auto flex items-center gap-2 flex-wrap">
           <div className="relative">
@@ -139,7 +139,7 @@ export default function PermissionsExplorer() {
               return (
                 <React.Fragment key={`${r.area}:${r.cap}`}>
                   {r.first && (
-                    <tr><td colSpan={ROLES.length + 1} className="sticky left-0 bg-[var(--color-surface)] px-3 pt-3 pb-1 text-[11px] font-black uppercase tracking-wider text-[var(--color-text)]">{r.area}</td></tr>
+                    <tr><td colSpan={ROLES.length + 1} className="sticky left-0 bg-[var(--color-surface)] px-3 pt-3 pb-1 text-[13px] font-semibold text-[var(--color-text)]">{r.area}</td></tr>
                   )}
                   <tr className="border-t border-[var(--color-border)] hover:bg-[var(--color-surface-2)]/50">
                     <td className="sticky left-0 bg-[var(--color-surface)] px-3 py-1.5 font-medium text-[var(--color-text)]">

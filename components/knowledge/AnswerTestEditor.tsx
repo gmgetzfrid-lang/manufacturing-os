@@ -26,7 +26,7 @@ export interface AnswerTestDraft {
 }
 
 const field = "w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-xs text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]";
-const label = "text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]";
+const label = "text-[13px] font-semibold text-[var(--color-text-muted)]";
 
 /** Strip a document name down to what people call it ("EP 5-2-3"). */
 const shortName = (name: string) => name.replace(/\.pdf$/i, "").split(/\s+[-–—]\s+/)[0].trim();

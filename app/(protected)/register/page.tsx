@@ -182,7 +182,7 @@ export default function RegisterPage() {
         <div className="overflow-x-auto">
           <table className="w-full text-[14px]">
             <thead>
-              <tr className="text-[11px] uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+              <tr className="text-[13px] text-[var(--color-text-muted)]">
                 <th className="text-left font-extrabold px-3 py-3">Document</th>
                 <th className="text-left font-extrabold px-3 py-3 hidden md:table-cell">Library</th>
                 <th className="text-left font-extrabold px-3 py-3">Owner</th>

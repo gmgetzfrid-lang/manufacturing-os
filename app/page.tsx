@@ -235,7 +235,7 @@ export default function LoginPage() {
   // The front door wears the app's identity: the blue band holds the
   // answer, a white card overlaps it, and the one orange button signs in.
   const input = "w-full h-12 pl-11 pr-4 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-xl text-[15px] text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:border-transparent outline-none transition-all placeholder:text-[var(--color-text-faint)]";
-  const fieldLabel = "block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-1.5";
+  const fieldLabel = "block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5";
   const primaryBtn = "w-full h-12 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[15px] font-extrabold rounded-xl shadow-[0_12px_24px_-12px_var(--color-accent)] transition-colors flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed";
   const quietBtn = "w-full h-12 bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[15px] font-bold rounded-xl border border-[var(--color-border-strong)] transition-colors flex items-center justify-center gap-3 disabled:opacity-70 disabled:cursor-not-allowed";
   const kicker = <span className="inline-flex items-center gap-2"><Layout className="w-3.5 h-3.5" /> Manufacturing OS</span>;
@@ -348,7 +348,7 @@ export default function LoginPage() {
 
             <div className="flex items-center gap-3 my-5">
               <div className="h-px bg-[var(--color-border)] flex-1" />
-              <span className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase tracking-[0.12em]">or</span>
+              <span className="text-[13px] font-semibold text-[var(--color-text-faint)] ">or</span>
               <div className="h-px bg-[var(--color-border)] flex-1" />
             </div>
 

@@ -22,7 +22,7 @@ interface ProjCard {
   due: string | null; late: boolean;
 }
 
-const label = "text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]";
+const label = "text-[13px] font-semibold text-[var(--color-text-muted)]";
 const card = "shrink-0 w-[236px] sm:w-[280px] rounded-2xl bg-[var(--color-surface)] shadow-[0_1px_2px_rgb(11_18_32/0.06)] px-4 sm:px-5 py-4 text-[var(--color-text)] hover:shadow-[var(--shadow-card)] transition-shadow";
 
 async function headCount(build: () => PromiseLike<{ count: number | null; error: unknown }>): Promise<number | null> {

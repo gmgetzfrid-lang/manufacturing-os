@@ -165,7 +165,7 @@ export default function SignupPage() {
                 )}
                 <form onSubmit={handleSignup} className="space-y-4">
                   <div>
-                    <label htmlFor="su-company" className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-1.5">Company or organization</label>
+                    <label htmlFor="su-company" className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Company or organization</label>
                     <div className="relative">
                       <Building2 className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)] pointer-events-none" />
                       <input id="su-company" type="text" value={formData.companyName} onChange={(e) => setFormData({...formData, companyName: e.target.value})}
@@ -177,7 +177,7 @@ export default function SignupPage() {
                   <div className="h-px bg-[var(--color-border)]" />
 
                   <div>
-                    <label htmlFor="su-name" className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-1.5">Your full name</label>
+                    <label htmlFor="su-name" className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Your full name</label>
                     <div className="relative">
                       <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)] pointer-events-none" />
                       <input id="su-name" type="text" value={formData.displayName} onChange={(e) => setFormData({...formData, displayName: e.target.value})}
@@ -186,7 +186,7 @@ export default function SignupPage() {
                     </div>
                   </div>
                   <div>
-                    <label htmlFor="su-email" className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-1.5">Work email</label>
+                    <label htmlFor="su-email" className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Work email</label>
                     <div className="relative">
                       <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)] pointer-events-none" />
                       <input id="su-email" type="email" value={formData.email} onChange={(e) => setFormData({...formData, email: e.target.value})}
@@ -195,7 +195,7 @@ export default function SignupPage() {
                     </div>
                   </div>
                   <div>
-                    <label htmlFor="su-password" className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-1.5">Password</label>
+                    <label htmlFor="su-password" className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Password</label>
                     <div className="relative">
                       <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)] pointer-events-none" />
                       <input id="su-password" type="password" value={formData.password} onChange={(e) => setFormData({...formData, password: e.target.value})}
@@ -204,7 +204,7 @@ export default function SignupPage() {
                     </div>
                   </div>
                   <div>
-                    <label htmlFor="su-confirm" className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-1.5">Confirm password</label>
+                    <label htmlFor="su-confirm" className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Confirm password</label>
                     <div className="relative">
                       <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)] pointer-events-none" />
                       <input id="su-confirm" type="password" value={formData.confirmPassword} onChange={(e) => setFormData({...formData, confirmPassword: e.target.value})}
@@ -249,7 +249,7 @@ export default function SignupPage() {
                     <p className="mb-5 text-[14px] text-[var(--color-text-muted)]">This tells your organization&rsquo;s Admin, who creates your account.</p>
                     <form onSubmit={handleRequestAccess} className="space-y-4">
                   <div>
-                    <label htmlFor="ra-name" className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-1.5">Your full name</label>
+                    <label htmlFor="ra-name" className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Your full name</label>
                     <div className="relative">
                       <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)] pointer-events-none" />
                       <input id="ra-name" type="text" value={requestData.displayName} onChange={(e) => setRequestData({...requestData, displayName: e.target.value})}
@@ -258,7 +258,7 @@ export default function SignupPage() {
                     </div>
                   </div>
                   <div>
-                    <label htmlFor="ra-email" className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-1.5">Your work email</label>
+                    <label htmlFor="ra-email" className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Your work email</label>
                     <div className="relative">
                       <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)] pointer-events-none" />
                       <input id="ra-email" type="email" value={requestData.email} onChange={(e) => setRequestData({...requestData, email: e.target.value})}
@@ -267,7 +267,7 @@ export default function SignupPage() {
                     </div>
                   </div>
                   <div>
-                    <label htmlFor="ra-org" className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-1.5">Organization name</label>
+                    <label htmlFor="ra-org" className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Organization name</label>
                     <div className="relative">
                       <Building2 className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)] pointer-events-none" />
                       <input id="ra-org" type="text" value={requestData.orgName} onChange={(e) => setRequestData({...requestData, orgName: e.target.value})}

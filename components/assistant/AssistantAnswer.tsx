@@ -74,7 +74,7 @@ export default function AssistantAnswer({ answer, mentionedDocs }: {
         if (b.type === "label") {
           return (
             <div key={i} className="flex items-center gap-3 pt-4 first:pt-0">
-              <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{b.text}</span>
+              <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">{b.text}</span>
               <span className="flex-1 h-px bg-[var(--color-border)]" />
             </div>
           );

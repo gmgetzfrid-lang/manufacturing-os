@@ -180,7 +180,7 @@ export default function RoleModelTree({ orgId }: { orgId: string }) {
     <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 mt-3">
       <div className="flex items-center gap-2 mb-1">
         <GitBranch className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Role model: who can do what</h2>
+        <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)]">Role model: who can do what</h2>
       </div>
       <p className="text-xs text-[var(--color-text-muted)] mb-3">
         Generated from a code audit of every enforcement point. Two kinds of authority exist: <b>base roles</b> (set in Users) and <b>situational authority</b> (ownership, per-library grants, review rosters) that applies regardless of role.

@@ -906,7 +906,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   };
 
   const MENU_BOX = "absolute top-full right-0 mt-1 z-50 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl shadow-black/50 py-1.5";
-  const MENU_HEAD = "px-3 pt-1 pb-1 text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]";
+  const MENU_HEAD = "px-3 pt-1 pb-1 text-[13px] font-semibold text-[var(--color-text-muted)]";
   const MENU_ITEM = "w-full px-3 min-h-10 text-left text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-ink-2)] flex items-center gap-2.5 disabled:opacity-40 disabled:pointer-events-none";
   const MENU_ICON = "w-4 h-4 shrink-0 text-[var(--color-text-muted)]";
 

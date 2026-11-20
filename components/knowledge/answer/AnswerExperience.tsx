@@ -39,7 +39,7 @@ export type DocLink = NonNullable<KnowledgeAnswer["mentionedDocs"]>[number];
 
 // ── The look, in one place ────────────────────────────────────────────────
 /** 11 px all-caps label: the name of a part of the answer. */
-const LABEL = "text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]";
+const LABEL = "text-[13px] font-semibold text-[var(--color-text-muted)]";
 /** The direct answer: the one big line. */
 const HERO = "text-[20px] sm:text-[24px] leading-[1.3] font-extrabold tracking-[-0.015em] text-[var(--color-text)]";
 /** Body text of the answer. */
@@ -154,7 +154,7 @@ const VERDICT_STYLE: Record<Verdict, { label: string; cls: string; dot: string }
 function VerdictBadge({ verdict }: { verdict: Verdict }) {
   const v = VERDICT_STYLE[verdict];
   return (
-    <span className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full text-[12px] font-extrabold uppercase tracking-[0.08em] ${v.cls}`}>
+    <span className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full text-[13px] font-semibold ${v.cls}`}>
       <span className={`w-2 h-2 rounded-full ${v.dot}`} aria-hidden />{v.label}
     </span>
   );
@@ -646,7 +646,7 @@ export function ClarifyCard({ prompt, options, onAnswer }: {
   };
   return (
     <section className="mt-2 space-y-3 animate-rise" aria-label="One thing before I answer">
-      <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-amber-700 dark:text-amber-400">One thing before I answer</div>
+      <div className="text-[13px] font-semibold text-amber-700 dark:text-amber-400">One thing before I answer</div>
       <p className="text-[16px] font-bold leading-snug text-[var(--color-text)]">{prompt}</p>
       <div className="flex flex-wrap gap-1.5">
         {options.map((o) => (
@@ -680,7 +680,7 @@ export function NeedCard({ prompt, onProvide }: {
   const provide = (v: string) => { valueDraft.clear(); onProvide(v); };
   return (
     <section className="mt-2 space-y-3 animate-rise" aria-label="A value is needed">
-      <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-amber-700 dark:text-amber-400">I need a value from you to run this calculation</div>
+      <div className="text-[13px] font-semibold text-amber-700 dark:text-amber-400">I need a value from you to run this calculation</div>
       <p className="text-[15px] font-semibold leading-relaxed text-[var(--color-text)] whitespace-pre-wrap">{prompt}</p>
       <div className="flex items-end gap-2">
         <Textarea value={value} onChange={(e) => setValue(e.target.value)} rows={1}
@@ -929,7 +929,7 @@ function OneQuestion({ followup, onAnswer, primary }: {
   const [value, setValue] = useState("");
   return (
     <section className="space-y-2.5">
-      <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-amber-700 dark:text-amber-400">One thing would finish this</div>
+      <div className="text-[13px] font-semibold text-amber-700 dark:text-amber-400">One thing would finish this</div>
       <p className="text-[15px] font-bold leading-snug text-[var(--color-text)]">{followup.question}</p>
       {onAnswer && (
         <form className="flex flex-wrap items-center gap-1.5"
@@ -1066,7 +1066,7 @@ function SettleBox({ items, inline, onAttach, onRethink, primary }: {
   if (needs.length === 0 && best.length === 0) return null;
   return (
     <section className="space-y-3">
-      {needs.length > 0 && <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-amber-700 dark:text-amber-400">I can settle this if you give me</div>}
+      {needs.length > 0 && <div className="text-[13px] font-semibold text-amber-700 dark:text-amber-400">I can settle this if you give me</div>}
       <ul className={needs.length ? "space-y-1.5" : "hidden"}>
         {needs.map((b, i) => (
           <li key={i} className={`grid grid-cols-[1rem_minmax(0,1fr)] gap-2 items-start ${BODY}`}>
@@ -1179,7 +1179,7 @@ function HelperBand({ answer, mode, onRethink, onOpenDoc, onFill, primary }: {
             <li key={d.documentId} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-2.5">
               <FileText className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
               <span className="min-w-0 flex-1 basis-48">
-                <span className="block text-[11px] font-extrabold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">{DOC_TYPE_WORD[d.type] ?? "Document"}</span>
+                <span className="block text-[13px] font-semibold text-[var(--color-text-muted)]">{DOC_TYPE_WORD[d.type] ?? "Document"}</span>
                 <span className="block text-[14px] font-bold text-[var(--color-text)] truncate">{d.name.replace(/\.pdf$/i, "")}</span>
                 {d.why && <span className="block text-[12.5px] text-[var(--color-text-muted)] truncate">{d.why}</span>}
               </span>
@@ -1512,7 +1512,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
 
           {heroV && parts.dontMiss.length > 0 && (
             <section>
-              <div className="mb-3 flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-[0.14em] text-rose-700 dark:text-rose-400">
+              <div className="mb-3 flex items-center gap-1.5 text-[13px] font-semibold text-rose-700 dark:text-rose-400">
                 <AlertTriangle className="w-3.5 h-3.5" /> Don&apos;t miss
               </div>
               <div className="space-y-2">
@@ -1653,7 +1653,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
           problem with this answer, so it sits right under it. */}
       {(answer.missingDocs ?? []).length > 0 && (
         <section className="pt-4 border-t border-[var(--color-border)] space-y-2.5 animate-rise">
-          <div className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-[0.14em] text-rose-700 dark:text-rose-400">
+          <div className="flex items-center gap-1.5 text-[13px] font-semibold text-rose-700 dark:text-rose-400">
             <BookOpen className="w-3.5 h-3.5" /> You need {answer.missingDocs!.length === 1 ? "this document" : "these documents"}
           </div>
           <div className="flex flex-wrap gap-1.5">

@@ -78,7 +78,7 @@ export default function WorkflowDiagramModal({
       >
         <div className="flex items-start gap-2 px-5 sm:px-6 pt-5 pb-4 border-b border-[var(--color-border)]">
           <div className="flex-1 min-w-0">
-            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">How a drafting request flows</div>
+            <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">How a drafting request flows</div>
             <h2 className="mt-1.5 text-[24px] leading-tight font-black tracking-[-0.02em] text-[var(--color-text)]">
               {currentIdx >= 0 ? `Step ${currentIdx + 1} of ${MAIN_FLOW.length}: ${MAIN_FLOW[currentIdx].label}.` : BRANCHES.find((b) => b.status === current)?.label ?? "Seven steps, start to close."}
             </h2>
@@ -102,7 +102,7 @@ export default function WorkflowDiagramModal({
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className={`text-[14px] font-bold ${tone === "upcoming" ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}>{stage.label}</span>
-                      {stage.status === current && <span className="ml-auto text-[11px] font-extrabold uppercase tracking-[0.12em] text-[var(--color-text)]">You are here</span>}
+                      {stage.status === current && <span className="ml-auto text-[13px] font-semibold text-[var(--color-text)]">You are here</span>}
                     </div>
                     <p className="text-[13px] text-[var(--color-text-muted)] mt-0.5 leading-relaxed">{stage.blurb}</p>
                   </div>
@@ -114,14 +114,14 @@ export default function WorkflowDiagramModal({
           <div className="mt-5 pt-4 border-t border-[var(--color-border)]">
             <div className="flex items-center gap-1.5 mb-2">
               <RotateCcw className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-              <h3 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Branches and exits</h3>
+              <h3 className="text-[13px] font-semibold text-[var(--color-text-muted)]">Branches and exits</h3>
             </div>
             <div className="divide-y divide-[var(--color-border)]">
               {BRANCHES.map((b) => (
                 <div key={b.status} className="py-2.5">
                   <div className="flex items-center gap-2">
                     <span className="text-[14px] font-bold text-[var(--color-text)]">{b.label}</span>
-                    {b.status === current && <span className="ml-auto text-[11px] font-extrabold uppercase tracking-[0.12em] text-[var(--color-text)]">You are here</span>}
+                    {b.status === current && <span className="ml-auto text-[13px] font-semibold text-[var(--color-text)]">You are here</span>}
                   </div>
                   <p className="text-[13px] text-[var(--color-text-muted)] mt-0.5 leading-relaxed">{b.blurb}</p>
                 </div>

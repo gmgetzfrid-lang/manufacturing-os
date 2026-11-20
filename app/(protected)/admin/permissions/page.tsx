@@ -168,7 +168,7 @@ export default function PermissionsConsolePage() {
       <Card pad={false} className="overflow-hidden">
         <div className="px-4 sm:px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
           <KeyRound className="w-4 h-4 text-[var(--color-text-muted)]" />
-          <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Content permissions</h2>
+          <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)]">Content permissions</h2>
           <span className="text-[13px] text-[var(--color-text-muted)]">Library, then folder, then document.</span>
         </div>
         {loading && libs.length === 0 ? (

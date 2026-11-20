@@ -547,7 +547,7 @@ export default function PdfRevisionDiff({
           <button type="button" onClick={() => setAutoAlign((v) => !v)} aria-pressed={autoAlign} className={toggleBtn(autoAlign)} title="Register the two revisions (scale + shift from ink profiles) before diffing">
             <Crosshair className="w-4 h-4" />Auto-align
           </button>
-          <label className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+          <label className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-muted)]">
             Precision
             <select
               value={tolerance}

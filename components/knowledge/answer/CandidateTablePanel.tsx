@@ -20,7 +20,7 @@ export default function CandidateTablePanel({ table, onOpen }: {
     <section className="pt-4 border-t border-[var(--color-border)]">
       <div className="flex items-center gap-2 flex-wrap pb-1">
         <ListFilter className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Shortlist</span>
+        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Shortlist</span>
         <span className="text-[14px] font-bold text-[var(--color-text)]">{table.rows.length} {table.rows.length === 1 ? "entry" : "entries"}{table.catalog ? ` from ${table.catalog}` : ""}</span>
       </div>
       <p className="pb-2 text-[12.5px] text-[var(--color-text-muted)]">{table.basis}</p>
@@ -28,7 +28,7 @@ export default function CandidateTablePanel({ table, onOpen }: {
       <div className="overflow-x-auto [mask-image:linear-gradient(to_right,black_calc(100%-24px),transparent)] pr-6">
         <table className="w-full text-[13px]">
           <thead>
-            <tr className="border-y border-[var(--color-border)] text-left text-[11px] font-extrabold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+            <tr className="border-y border-[var(--color-border)] text-left text-[13px] font-semibold text-[var(--color-text-muted)]">
               <th className="px-3 py-1.5">Code</th>
               {hasRating && <th className="px-3 py-1.5">Rating</th>}
               <th className="px-3 py-1.5">For</th>
