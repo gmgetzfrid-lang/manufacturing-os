@@ -13,7 +13,7 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowUp, ChevronRight, Folder, Loader2 } from "lucide-react";
+import { ArrowUp, ChevronRight, Folder, Library, Loader2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import { isControllerRole } from "@/lib/permissions";
@@ -47,8 +47,8 @@ function DocLine({ d, folderName }: { d: DocRow; folderName?: string | null }) {
     <Link href={href} className="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors">
       <span className="min-w-0 flex-1">
         <span className="flex items-baseline gap-2 min-w-0">
-          <span className="font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)] truncate">{d.document_number || d.name || "Document"}</span>
-          {d.rev && <span className="shrink-0 text-[13px] text-[var(--color-text-muted)]">Rev <span className="font-display tabular-nums">{d.rev}</span></span>}
+          <span className="ui-id text-[15px] truncate">{d.document_number || d.name || "Document"}</span>
+          {d.rev && <span className="shrink-0 inline-flex items-center gap-1 text-[13px] text-[var(--color-text-muted)]">Rev <span className="ui-count is-solid">{d.rev}</span></span>}
         </span>
         <span className="block text-[13px] text-[var(--color-text-muted)] truncate">
           {d.title && d.title !== d.document_number ? d.title : (d.name ?? "")}
@@ -202,7 +202,7 @@ export default function DocBrowserBody() {
     const head = (
       <div className="mb-3 flex items-end justify-between gap-4 shrink-0">
         <span className="text-[14px] text-[var(--color-text-muted)]">
-          <span className="font-display text-[18px] font-semibold text-[var(--color-text)] tabular-nums">{(top?.totalDocs ?? 0).toLocaleString()}</span> controlled documents
+          <span className="font-display text-[26px] leading-none font-semibold text-[var(--color-heading)] tabular-nums">{(top?.totalDocs ?? 0).toLocaleString()}</span> controlled documents
         </span>
         <div className="flex items-center gap-3 min-w-0">
           <TrendChip current={wk.cur} previous={wk.prev} what="new" />
@@ -216,10 +216,12 @@ export default function DocBrowserBody() {
           <li key={l.id}>
             <button type="button" onClick={() => go(l.id)} data-widget-lib={l.id}
               className="w-full text-left flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors">
-              <NodeCover appearance={{ color: l.color, icon: l.icon, coverImageUrl: l.cover_image_url, coverTint: l.cover_tint }}
-                className="w-7 h-7 shrink-0" rounded="rounded-md" iconSize="w-3.5 h-3.5" />
+              {l.cover_image_url || l.color
+                ? <NodeCover appearance={{ color: l.color, icon: l.icon, coverImageUrl: l.cover_image_url, coverTint: l.cover_tint }}
+                    className="w-9 h-9 shrink-0" rounded="rounded-lg" iconSize="w-4 h-4" />
+                : <span className="ui-icon-tile is-solid"><Library className="w-[18px] h-[18px]" /></span>}
               <span className="min-w-0 flex-1 text-[15px] font-semibold text-[var(--color-text)] truncate">{l.name}</span>
-              <span className="shrink-0 text-[14px] text-[var(--color-text-muted)]">{l.count != null ? <><span className="font-display tabular-nums text-[var(--color-text)]">{l.count.toLocaleString()}</span> doc{l.count === 1 ? "" : "s"}</> : ""}</span>
+              {l.count != null && <span className="shrink-0 inline-flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]"><span className="ui-count">{l.count.toLocaleString()}</span> doc{l.count === 1 ? "" : "s"}</span>}
               <ChevronRight className="w-4 h-4 shrink-0 text-[var(--color-text-faint)]" />
             </button>
           </li>
@@ -267,7 +269,7 @@ export default function DocBrowserBody() {
                 <li key={f.id}>
                   <button type="button" onClick={() => { setPath((p) => [...p, f]); setQ(""); }} data-widget-folder={f.id}
                     className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-[var(--color-surface-2)] transition-colors">
-                    <Folder className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" fill="currentColor" fillOpacity={0.2} />
+                    <span className="ui-icon-tile is-sm"><Folder className="w-4 h-4" fill="currentColor" fillOpacity={0.2} /></span>
                     <span className="min-w-0 flex-1 truncate text-[15px] font-semibold text-[var(--color-text)]">{f.name}</span>
                     <ChevronRight className="w-4 h-4 shrink-0 text-[var(--color-text-faint)]" />
                   </button>

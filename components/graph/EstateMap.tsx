@@ -7,6 +7,7 @@
 // to go in, Esc to climb out. A document's other ties are drawn only when
 // it is picked, never as a web over the whole view.
 
+import { themeColor } from "@/components/graph/graphTheme";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import FileGraph, { type FileGraphNode, type FileGraphHandle, type FileGraphLight } from "@/components/documents/FileGraph";
 import { CONTAINER_TYPES, fileTypeOf, type FileTypeInfo } from "@/lib/fileFinder/fileTypes";
@@ -48,7 +49,8 @@ const PROJECT: FileTypeInfo = { ...CONTAINER_TYPES.project, color: "#525d6c" };
 
 function typeOf(t: TreeNode): { kind: FileGraphNode["kind"]; type: FileTypeInfo } {
   switch (t.kind) {
-    case "area": return { kind: "library", type: CONTAINER_TYPES.unit };
+    // Operating areas carry the brand color: the places you go in.
+    case "area": return { kind: "library", type: { ...CONTAINER_TYPES.unit, color: themeColor("--color-main", "#2262e6") } };
     case "group": return { kind: "library", type: GROUP };
     case "category": return { kind: "folder", type: CATEGORY };
     case "asset": return { kind: "folder", type: EQUIPMENT };

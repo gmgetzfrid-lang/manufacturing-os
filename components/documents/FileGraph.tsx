@@ -285,7 +285,7 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
       ctx.scale(cam.scale, cam.scale);
       const s = cam.scale;
       // What you pick or point at is in the signal color; the rest is graphite.
-      const focus = themeColor("--color-accent", "#2e6be7");
+      const focus = themeColor("--color-main", "#2262e6");
 
       // The way up: a dim node above the root.
       const up = upRef.current, upP = upPosRef.current;
@@ -479,9 +479,10 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
           ctx.font = `600 ${Math.max(8, br * 1.1)}px Barlow, system-ui, sans-serif`;
           const bw = Math.max(br * 2, ctx.measureText(t).width + br);
           ctx.beginPath(); ctx.roundRect(bx - bw / 2, by - br, bw, br * 2, br);
-          ctx.fillStyle = "#1f2733"; ctx.fill();
+          // The count is the accent, so what's inside catches the eye.
+          ctx.fillStyle = themeColor("--color-accent", "#e46916"); ctx.fill();
           ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.2; ctx.stroke();
-          ctx.fillStyle = "#fff";
+          ctx.fillStyle = themeColor("--color-accent-fg", "#ffffff");
           ctx.textBaseline = "middle";
           ctx.fillText(t, bx, by);
           ctx.textBaseline = "top";
