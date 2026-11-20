@@ -33,7 +33,7 @@ export default function MoreMenu({ items, label = "More", triggerClass, iconOnly
         <MoreHorizontal className="w-4 h-4" />{!iconOnly && <span>{label}</span>}
       </button>
       {open && (
-        <div role="menu" className={`absolute ${toLeft ? "right-0" : "left-0"} top-full mt-1 z-50 w-56 max-w-[calc(100vw-2rem)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl py-1`}>
+        <div role="menu" className={`on-sheet absolute ${toLeft ? "right-0" : "left-0"} top-full mt-1 z-50 w-56 max-w-[calc(100vw-2rem)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl py-1`}>
           {items.map((it, i) => (
             <React.Fragment key={it.label}>
               {it.line && i > 0 && <div className="my-1 h-px bg-[var(--color-border)]" />}

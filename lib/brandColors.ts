@@ -147,3 +147,61 @@ export function chartColor(hex: string): string {
   const { h, c } = signalHue(hex);
   return fromOklch(0.62, c, h);
 }
+
+// ── The pair and the accent ──────────────────────────────────────
+// Two main colors set the mood and cover the big areas: the DEEP shade of
+// the brand (side menu) and the brand at full strength (the header band,
+// plus links, tabs, the current menu item, progress). The ACCENT is the
+// surprise, kept small so it draws the eye: the one main button per screen.
+
+/** The deep shade of the brand: a big, quiet, dark area. */
+export function deepFor(hex: string, mode: "light" | "dark" = "light"): string {
+  const sc = signalScale(hex);
+  const [, c, h] = toOklch(sc[600]);
+  return fromOklch(mode === "dark" ? 0.19 : 0.245, Math.min(0.085, c * 0.45), h);
+}
+
+export interface AccentColor { fill: string; hover: string; fg: string; text: string }
+
+/** The accent: the logo's second color when it stands apart from the
+ *  brand, otherwise the brand's opposite on the color wheel. Tuned to be
+ *  bright enough to pop and still carry its text (white, or graphite on
+ *  light colors like gold). */
+export function accentFor(primary: string, secondary?: string | null): AccentColor {
+  const sc = signalScale(primary);
+  const h0 = toOklch(sc[600])[2];
+  let h: number;
+  let c: number;
+  if (secondary && isHex(secondary) && isColorful(secondary) && hueGap(toOklch(secondary)[2], h0) >= 50) {
+    [, c, h] = toOklch(secondary);
+  } else {
+    h = (h0 + 165) % 360;
+    c = 0.19;
+  }
+  c = Math.min(0.2, Math.max(0.15, c));
+  const yellow = h >= 75 && h < 112;
+  const L = yellow ? 0.8 : h >= 112 && h < 200 ? 0.6 : 0.66;
+  const fill = fromOklch(L, c, h);
+  const hover = fromOklch(L - 0.06, c, h);
+  const fg = contrast(fill, "#ffffff") >= 3 ? "#ffffff" : "#1f2733";
+  // The accent as text on white (rarely used): dark enough to read.
+  let tl = Math.min(L, 0.5), text = fromOklch(tl, c, h);
+  while (contrast(text, "#ffffff") < 4.5 && tl > 0.25) { tl -= 0.02; text = fromOklch(tl, c, h); }
+  return { fill, hover, fg, text };
+}
+
+/** Greys with a breath of the brand hue, so the page feels like one family. */
+export function tintedNeutrals(hex: string, mode: "light" | "dark") {
+  const sc = signalScale(hex);
+  const h = toOklch(sc[600])[2];
+  if (mode === "dark") {
+    return {
+      canvas: fromOklch(0.2, 0.012, h), surface: fromOklch(0.235, 0.014, h), surface2: fromOklch(0.27, 0.016, h),
+      border: fromOklch(0.31, 0.016, h), borderStrong: fromOklch(0.38, 0.018, h),
+    };
+  }
+  return {
+    canvas: fromOklch(0.952, 0.013, h), surface: "#ffffff", surface2: fromOklch(0.967, 0.022, h),
+    border: fromOklch(0.91, 0.013, h), borderStrong: fromOklch(0.84, 0.018, h),
+  };
+}

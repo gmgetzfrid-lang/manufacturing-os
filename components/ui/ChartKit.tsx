@@ -67,7 +67,7 @@ export function SCurveChart({ points, fmt, todayIso, className = "" }: {
         ))}
         {/* Actual: filled area + line (the money that really left). */}
         <path d={`${path((p) => p.actual)} L${px(n - 1).toFixed(1)},${py(0).toFixed(1)} L${px(0).toFixed(1)},${py(0).toFixed(1)} Z`}
-          fill="var(--color-accent)" opacity="0.08" />
+          fill="var(--color-main)" opacity="0.08" />
         {/* Committed: promised money. */}
         <path d={path((p) => p.committed)} fill="none" stroke={vizCat(1)} strokeWidth="2"
           strokeLinecap="round" strokeLinejoin="round" />
@@ -76,7 +76,7 @@ export function SCurveChart({ points, fmt, todayIso, className = "" }: {
           <path d={path((p) => p.planned)} fill="none" stroke="var(--color-text-faint)"
             strokeWidth="1.5" strokeDasharray="5 4" strokeLinecap="round" />
         )}
-        <path d={path((p) => p.actual)} fill="none" stroke="var(--color-accent)" strokeWidth="2.5"
+        <path d={path((p) => p.actual)} fill="none" stroke="var(--color-main)" strokeWidth="2.5"
           strokeLinecap="round" strokeLinejoin="round" />
         {/* Today marker. */}
         {todayIdx > 0 && todayIdx < n && (
@@ -84,7 +84,7 @@ export function SCurveChart({ points, fmt, todayIso, className = "" }: {
             stroke="var(--color-text-faint)" strokeWidth="1" strokeDasharray="2 3" />
         )}
         {/* Endpoint dots. */}
-        <circle cx={px(n - 1)} cy={py(last.actual)} r="3.5" fill="var(--color-accent)" />
+        <circle cx={px(n - 1)} cy={py(last.actual)} r="3.5" fill="var(--color-main)" />
         <circle cx={px(n - 1)} cy={py(last.committed)} r="3" fill={vizCat(1)} />
         {/* Per-point hover columns. */}
         {points.map((p, i) => (
@@ -99,7 +99,7 @@ export function SCurveChart({ points, fmt, todayIso, className = "" }: {
       </svg>
       <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-[var(--color-text-muted)]">
         <span className="inline-flex items-center gap-1.5">
-          <span aria-hidden className="w-4 h-0.5 rounded-full" style={{ background: "var(--color-accent)" }} />
+          <span aria-hidden className="w-4 h-0.5 rounded-full" style={{ background: "var(--color-main)" }} />
           Spent <b className="text-[var(--color-text)] tabular-nums">{fmt(last.actual)}</b>
         </span>
         <span className="inline-flex items-center gap-1.5">
@@ -150,7 +150,7 @@ export function BarList({ items, fmt, className = "" }: {
             <div className="h-full rounded-full transition-[width] duration-500"
               style={{
                 width: `${Math.max(2, (it.value / max) * 100)}%`,
-                background: it.slot != null ? vizCat(it.slot) : "var(--color-accent)",
+                background: it.slot != null ? vizCat(it.slot) : "var(--color-main)",
                 opacity: it.highlight ? 1 : 0.75,
               }} />
           </div>
@@ -166,7 +166,7 @@ export function BarList({ items, fmt, className = "" }: {
 export function scoreBandColor(score: number | null): string {
   if (score == null) return "var(--color-text-faint)";
   if (score >= 85) return "var(--viz-up)";
-  if (score >= 70) return "var(--color-accent)";
+  if (score >= 70) return "var(--color-main)";
   if (score >= 50) return "#d97706"; // amber-600 — reads in both themes
   return "var(--viz-down)";
 }

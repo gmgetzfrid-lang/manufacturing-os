@@ -4292,7 +4292,7 @@ export default function LibraryExplorerPage() {
                     placeholder="Filter this folder"
                     aria-label="Filter this folder by number, title, sheet or any field"
                     title="Number, title, sheet or any field"
-                    className="w-full h-9 pl-9 pr-8 text-base sm:text-[14px] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
+                    className="w-full h-9 pl-9 pr-8 text-base sm:text-[14px] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
                   />
                   {search && (
                     <button
@@ -5589,7 +5589,7 @@ function LibraryNumberingModal({ orgId, libraryId, onClose }: {
             <label className="flex items-center gap-2 text-sm font-bold text-[var(--color-text)] cursor-pointer">
               <input type="checkbox" checked={cfg.enabled}
                 onChange={(e) => setCfg({ ...cfg, enabled: e.target.checked })}
-                className="w-4 h-4 accent-[var(--color-accent)]" />
+                className="w-4 h-4 accent-[var(--color-main)]" />
               Issue numbers automatically in this library
             </label>
             <div className="grid grid-cols-3 gap-2">

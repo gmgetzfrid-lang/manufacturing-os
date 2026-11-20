@@ -487,7 +487,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
               <button
                 onClick={addField}
                 type="button"
-                className="flex items-center gap-2 px-4 py-3 border-2 border-dashed border-[var(--color-border-strong)] rounded-lg text-sm font-semibold text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-all w-full justify-center"
+                className="flex items-center gap-2 px-4 py-3 border-2 border-dashed border-[var(--color-border-strong)] rounded-lg text-sm font-semibold text-[var(--color-text-muted)] hover:border-[var(--color-main)] hover:text-[var(--color-accent-hover)] transition-all w-full justify-center"
               >
                 <Plus className="w-4 h-4" />
                 Add Field

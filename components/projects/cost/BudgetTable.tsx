@@ -313,7 +313,7 @@ function Cell({ value, display, onSave, disabled, numeric, aria, className = "" 
   return (
     <input autoFocus value={edit} inputMode={numeric ? "decimal" : undefined} aria-label={aria} onChange={(e) => setEdit(e.target.value)}
       onKeyDown={(e) => { if (e.key === "Enter") done(true); if (e.key === "Escape") done(false); }} onBlur={() => done(true)}
-      className={`h-8 ${numeric ? "w-28 text-right" : "w-full"} rounded-md border border-[var(--color-accent)] bg-[var(--color-surface)] px-1.5 ${className}`} />
+      className={`h-8 ${numeric ? "w-28 text-right" : "w-full"} rounded-md border border-[var(--color-main)] bg-[var(--color-surface)] px-1.5 ${className}`} />
   );
 }
 

@@ -934,7 +934,7 @@ export default function ProjectDetailPage() {
                 onChange={(e) => setStatusReason(e.target.value)}
                 autoFocus
                 rows={3}
-                className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-md text-[15px] bg-[var(--color-surface)] resize-y focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none"
+                className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-md text-[15px] bg-[var(--color-surface)] resize-y focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none"
                 placeholder={pendingStatus === "cancelled" ? "Why is this project being cancelled?" : "Optional note for the audit log"}
               />
               {actionError && <div className="mt-2 text-[14px] font-semibold text-[var(--state-overdue)]">{actionError}</div>}
@@ -1016,7 +1016,7 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
       onClick={onClick}
       aria-current={active ? "page" : undefined}
       className={`shrink-0 h-11 text-[15px] font-semibold inline-flex items-center gap-1.5 border-b-[3px] whitespace-nowrap transition-colors ${
-        active ? "border-[var(--color-accent)] text-[var(--color-text)]" : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)]"
+        active ? "border-[var(--color-main)] text-[var(--color-text)]" : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)]"
       }`}
     >
       {children}
@@ -1113,7 +1113,7 @@ function ActivityTab({
             placeholder="Share an update or ask a question…"
             aria-label="Comment"
             rows={2}
-            className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-md text-[15px] bg-[var(--color-surface)] resize-y focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none"
+            className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-md text-[15px] bg-[var(--color-surface)] resize-y focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none"
           />
           <div className="mt-2 flex items-center justify-end">
             {/* Orange once there's something to post. */}
@@ -1230,13 +1230,13 @@ function MembersTab({
     <Card label="Add member">
       <div className="flex flex-col sm:flex-row gap-2">
         <input value={addEmail} onChange={(e) => setAddEmail(e.target.value)} placeholder="user@example.com" aria-label="Email"
-          className="flex-1 h-10 px-3 border border-[var(--color-border-strong)] rounded-md text-[15px] bg-[var(--color-surface)] focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none" />
+          className="flex-1 h-10 px-3 border border-[var(--color-border-strong)] rounded-md text-[15px] bg-[var(--color-surface)] focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none" />
         <Select value={addRole} onChange={(e) => setAddRole(e.target.value as ProjectMemberRole)} aria-label="Permission">
           {MEMBER_ROLES.map((r) => <option key={r.role} value={r.role}>{r.label}</option>)}
         </Select>
       </div>
       <input value={addResp} onChange={(e) => setAddResp(e.target.value)} placeholder="What they're responsible for (optional)" aria-label="Responsibility"
-        className="mt-2 w-full h-10 px-3 border border-[var(--color-border-strong)] rounded-md text-[15px] bg-[var(--color-surface)] focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none" />
+        className="mt-2 w-full h-10 px-3 border border-[var(--color-border-strong)] rounded-md text-[15px] bg-[var(--color-surface)] focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none" />
       <div className="mt-2 flex justify-end">
         {/* Orange once there's someone to add: the event organization's Save may be the orange one until then. */}
         <button onClick={addByEmail} disabled={busy || !addEmail.trim()} className={`inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md text-[14px] font-semibold disabled:opacity-50 ${addEmail.trim() ? "text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)]"}`}>
@@ -1286,7 +1286,7 @@ function MembersTab({
                       onChange={(e) => setEditingResp((p) => ({ ...p, [m.userId]: e.target.value }))}
                       onKeyDown={(e) => { if (e.key === "Enter") void saveResp(m); if (e.key === "Escape") setEditingResp((p) => { const n = { ...p }; delete n[m.userId]; return n; }); }}
                       placeholder="What is this member responsible for?"
-                      className="flex-1 min-w-0 h-9 px-3 border border-[var(--color-border-strong)] rounded-md text-[14px] bg-[var(--color-surface)] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40" />
+                      className="flex-1 min-w-0 h-9 px-3 border border-[var(--color-border-strong)] rounded-md text-[14px] bg-[var(--color-surface)] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40" />
                     <button type="button" onClick={() => void saveResp(m)} className="h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Save</button>
                   </div>
                 ) : (

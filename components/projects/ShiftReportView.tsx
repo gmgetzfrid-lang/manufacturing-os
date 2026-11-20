@@ -1064,7 +1064,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
             </div>
             <input type="date" value={shift.dayKey} onChange={(e) => { if (e.target.value) setSel({ dayKey: e.target.value, kind: shift.kind }); }}
               aria-label="Which day's shift"
-              className="h-9 min-w-0 w-[142px] max-md:flex-1 max-md:w-auto text-[14px] font-semibold rounded-md px-2.5 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border-strong)] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40" title="Which day's shift to close" />
+              className="h-9 min-w-0 w-[142px] max-md:flex-1 max-md:w-auto text-[14px] font-semibold rounded-md px-2.5 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border-strong)] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40" title="Which day's shift to close" />
             <button onClick={() => pick(nextShift(shift, tz, times))} className="w-9 h-9 shrink-0 inline-flex items-center justify-center rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]" title="Next shift" aria-label="Next shift"><ChevronRight className="w-4 h-4" /></button>
             {/* Back to the shift on now: only once another one is picked. */}
             {/* (On a phone it's in More, so the row stays one row.) */}
@@ -1565,7 +1565,7 @@ function CopyUpdate({ doc, meeting, lh, stamps, primary }: { primary?: boolean; 
                   <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Header</span>
                   {parts.map((p) => (
                     <label key={p.id} className="inline-flex items-center gap-1.5 cursor-pointer select-none">
-                      <input type="checkbox" className="accent-[var(--color-accent)]" checked={!headerOff.has(p.id)} onChange={() => flip(setHeaderOff, HEADER_OFF_KEY, p.id)} />
+                      <input type="checkbox" className="accent-[var(--color-main)]" checked={!headerOff.has(p.id)} onChange={() => flip(setHeaderOff, HEADER_OFF_KEY, p.id)} />
                       <span className="font-semibold text-[var(--color-text)]">{p.word}</span>
                     </label>
                   ))}
@@ -1574,7 +1574,7 @@ function CopyUpdate({ doc, meeting, lh, stamps, primary }: { primary?: boolean; 
                   <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Table</span>
                   {FORM_ROWS.map((r) => (
                     <label key={r.id} className="inline-flex items-center gap-1.5 cursor-pointer select-none">
-                      <input type="checkbox" className="accent-[var(--color-accent)]" checked={!formOff.has(r.id)} onChange={() => flip(setFormOff, FORM_OFF_KEY, r.id)} />
+                      <input type="checkbox" className="accent-[var(--color-main)]" checked={!formOff.has(r.id)} onChange={() => flip(setFormOff, FORM_OFF_KEY, r.id)} />
                       <span className="font-semibold text-[var(--color-text)]">{r.word}</span>
                     </label>
                   ))}
@@ -1590,13 +1590,13 @@ function CopyUpdate({ doc, meeting, lh, stamps, primary }: { primary?: boolean; 
               <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Include</span>
               {d.sections.map((s) => (
                 <label key={idOf(s)} className="inline-flex items-center gap-1.5 cursor-pointer select-none">
-                  <input type="checkbox" className="accent-[var(--color-accent)]" checked={!off.has(idOf(s))} onChange={() => toggle(idOf(s))} />
+                  <input type="checkbox" className="accent-[var(--color-main)]" checked={!off.has(idOf(s))} onChange={() => toggle(idOf(s))} />
                   <span className="font-semibold text-[var(--color-text)]">{s.title.split(" - ")[0]}</span>
                 </label>
               ))}
               {stamps && (
                 <label className="inline-flex items-center gap-1.5 cursor-pointer select-none border-l border-[var(--color-border)] pl-3" title="The time each step was done, in Done - the time log has them all">
-                  <input type="checkbox" className="accent-[var(--color-accent)]" checked={stamps.on} onChange={() => stamps.set(!stamps.on)} />
+                  <input type="checkbox" className="accent-[var(--color-main)]" checked={stamps.on} onChange={() => stamps.set(!stamps.on)} />
                   <span className="font-semibold text-[var(--color-text)]">Times in Done</span>
                 </label>
               )}

@@ -696,7 +696,7 @@ export default function KnowledgeLibraryPage() {
                 <input id="kdoc-search" value={docQuery} onChange={(e) => { setDocQuery(e.target.value); setDocLimit(200); }}
                   aria-label="Search documents"
                   placeholder={`Search ${docs.length.toLocaleString()} documents: "EP 5-2-3", "piping specs"…`}
-                  className="w-full h-9 pl-9 pr-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40" />
+                  className="w-full h-9 pl-9 pr-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40" />
               </div>
               <div className={bandSeg} role="group" aria-label="Show">
                 {([
@@ -942,7 +942,7 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
       {/* Ask right here — the question opens in the chat already running,
           instead of a door you have to walk through first. */}
-      <form onSubmit={ask} className="rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] focus-within:border-[var(--color-accent)] focus-within:ring-2 focus-within:ring-[var(--color-accent-ring)]/30">
+      <form onSubmit={ask} className="rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] focus-within:border-[var(--color-main)] focus-within:ring-2 focus-within:ring-[var(--color-accent-ring)]/30">
         <textarea id="library-ask" value={q} onChange={(e) => setQ(e.target.value)} disabled={readyDocs === 0} rows={2}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } }}
           placeholder={readyDocs === 0 ? "Asking unlocks when the first document is indexed" : "Ask this library, e.g. \"What piping spec should I use for 150 class sour gas?\""}

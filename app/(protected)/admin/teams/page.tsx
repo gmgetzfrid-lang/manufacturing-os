@@ -260,7 +260,7 @@ export default function AdminTeamsPage() {
               <div className="flex flex-wrap items-center gap-3 mb-2.5">
                 <span aria-hidden className="w-3 h-3 rounded-sm shrink-0" style={{ backgroundColor: selected.color ?? "#64748b" }} />
                 <input key={selected.id} defaultValue={selected.name} aria-label="Team name" onBlur={(e) => { if (e.target.value.trim() && e.target.value !== selected.name) { void rename(selected, e.target.value.trim()); } }}
-                  className="font-display text-[22px] font-semibold text-[var(--color-text)] bg-transparent min-w-0 flex-1 rounded-md px-1.5 -ml-1.5 border border-transparent hover:border-[var(--color-border-strong)] focus:border-[var(--color-accent)] focus:bg-[var(--color-surface)] outline-none" />
+                  className="font-display text-[22px] font-semibold text-[var(--color-text)] bg-transparent min-w-0 flex-1 rounded-md px-1.5 -ml-1.5 border border-transparent hover:border-[var(--color-border-strong)] focus:border-[var(--color-main)] focus:bg-[var(--color-surface)] outline-none" />
                 <span className="text-[14px] text-[var(--color-text-muted)]">{plural(teamMemberIds.length, "person", "people")} in this team</span>
               </div>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">

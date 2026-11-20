@@ -65,7 +65,7 @@ export default function ThreadRail(p: RailProps) {
               value={q} onChange={(e) => setQ(e.target.value)}
               placeholder="Search conversations"
               aria-label="Search conversations"
-              className="w-full h-9 pl-8 pr-2 text-[14px] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
+              className="w-full h-9 pl-8 pr-2 text-[14px] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
             />
           </div>
           <button onClick={p.onNew} title="New conversation" aria-label="New conversation"
@@ -171,7 +171,7 @@ function Row({ t, p }: { t: ChatThread; p: RailProps }) {
     // edge, the same mark as the side menu.
     <div ref={ref} style={active ? { backgroundColor: "var(--color-accent-soft)" } : undefined}
       className={`group relative transition-colors ${active ? "" : "hover:bg-[var(--color-surface-2)]"}`}>
-      {active && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--color-accent)]" />}
+      {active && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--color-main)]" />}
       {renaming ? (
         <div className="px-3 py-2">
           <input
@@ -179,7 +179,7 @@ function Row({ t, p }: { t: ChatThread; p: RailProps }) {
             onBlur={commitRename}
             onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") { setTitle(t.title); setRenaming(false); } }}
             aria-label="Conversation name"
-            className="w-full h-9 px-2 text-[14px] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
+            className="w-full h-9 px-2 text-[14px] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] focus:outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
           />
         </div>
       ) : (

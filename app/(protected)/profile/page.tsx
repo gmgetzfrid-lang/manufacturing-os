@@ -215,7 +215,7 @@ export default function ProfilePage() {
                     onChange={(e) => setDisplayName(e.target.value)}
                     placeholder={userEmail ? userEmail.split("@")[0] : "Your name"}
                     aria-describedby="profile-name-hint"
-                    className="w-full h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[15px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
+                    className="w-full h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[15px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
                   />
                   <p id="profile-name-hint" className="mt-1 text-[13px] text-[var(--color-text-muted)]">Blank uses the first part of your email.</p>
                 </div>

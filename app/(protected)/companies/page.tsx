@@ -333,7 +333,7 @@ function AddCompanyModal({ orgId, actorId, onClose, onCreated }: {
     } finally { setBusy(false); }
   };
 
-  const field = "w-full h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[15px] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40";
+  const field = "w-full h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[15px] text-[var(--color-text)] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40";
   const label = "block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5";
   return (
     <Modal onClose={onClose} dismissable={!busy} size="lg">

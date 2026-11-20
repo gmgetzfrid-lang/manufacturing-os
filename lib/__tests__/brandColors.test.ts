@@ -39,3 +39,28 @@ describe("signal colors", () => {
     expect(signalFromLogo(["#ffffff", "#000000", "#808080"])).toBeNull();
   });
 });
+
+describe("the pair and the accent", () => {
+  it("uses the logo's second color as the accent when it stands apart", async () => {
+    const { accentFor, toOklch } = await import("@/lib/brandColors");
+    const a = accentFor("#0b1f6b", "#d4a017");
+    const h = toOklch(a.fill)[2];
+    expect(h).toBeGreaterThan(60);
+    expect(h).toBeLessThan(115);
+    expect(a.fg).toBe("#1f2733"); // gold carries graphite text
+  });
+
+  it("falls back to the brand's opposite, and its text always reads", async () => {
+    const { accentFor, contrast } = await import("@/lib/brandColors");
+    for (const c of ["#1f5bd6", "#0f766e", "#b91c1c", "#6d28d9", "#15803d"]) {
+      const a = accentFor(c, c);
+      expect(contrast(a.fill, a.fg)).toBeGreaterThanOrEqual(3);
+      expect(contrast(a.text, "#ffffff")).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("gives a deep shade for the side menu that white text reads on", async () => {
+    const { deepFor, contrast } = await import("@/lib/brandColors");
+    for (const c of ["#0b1f6b", "#1f5bd6", "#0f766e", "#f5b700"]) expect(contrast(deepFor(c), "#ffffff")).toBeGreaterThan(10);
+  });
+});

@@ -4,7 +4,7 @@
 
 /** A search box on the band (leave room on the left for an icon). */
 export const bandInput =
-  "w-full h-10 pl-10 pr-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[15px] placeholder:text-[var(--color-text-faint)] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40";
+  "w-full h-10 pl-10 pr-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[15px] placeholder:text-[var(--color-text-faint)] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40";
 
 /** The icon inside a band search box. */
 export const bandInputIcon =
@@ -12,7 +12,7 @@ export const bandInputIcon =
 
 /** A select on the band. */
 export const bandSelect =
-  "h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[14px] font-semibold outline-none focus:border-[var(--color-accent)] [&_option]:bg-[var(--color-surface)] [&_option]:text-[var(--color-text)]";
+  "h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[14px] font-semibold outline-none focus:border-[var(--color-main)] [&_option]:bg-[var(--color-surface)] [&_option]:text-[var(--color-text)]";
 
 /** A row of toggles on the band (wrapper). */
 export const bandSeg =

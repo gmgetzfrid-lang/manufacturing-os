@@ -1844,7 +1844,7 @@ export default function TicketDetailView() {
           <div role="tablist" aria-label="Discussion and history" className="flex items-end gap-5 mb-2.5 min-h-8">
             {([['discussion', `Discussion${(ticket.comments?.length ?? 0) > 0 ? ` (${ticket.comments?.length})` : ''}`], ['audit', 'History']] as const).map(([key, label]) => (
               <button key={key} type="button" role="tab" aria-selected={activeTab === key} onClick={() => setActiveTab(key)}
-                className={`pb-1 -mb-px border-b-2 font-display text-[19px] leading-tight font-semibold transition-colors ${activeTab === key ? 'text-[var(--color-text)] border-[var(--color-accent)]' : 'text-[var(--color-text-muted)] border-transparent hover:text-[var(--color-text)]'}`}>
+                className={`pb-1 -mb-px border-b-2 font-display text-[19px] leading-tight font-semibold transition-colors ${activeTab === key ? 'text-[var(--color-text)] border-[var(--color-main)]' : 'text-[var(--color-text-muted)] border-transparent hover:text-[var(--color-text)]'}`}>
                 {label}
               </button>
             ))}

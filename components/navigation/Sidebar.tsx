@@ -106,9 +106,9 @@ const TONE_ICON: Record<Tone, string> = {
   purple:  'text-[var(--color-text-muted)]',
   cyan:    'text-[var(--color-text-muted)]',
 };
-// Where you are: a soft tint of the signal color with a bar on its edge.
-const ACCENT_ICON_STYLE: React.CSSProperties = { color: 'var(--color-accent-text)' };
-const ACTIVE_BG_STYLE: React.CSSProperties = { backgroundColor: 'var(--color-accent-soft)' };
+// Where you are: the main color, filled, on the deep menu (the pair).
+const ACCENT_ICON_STYLE: React.CSSProperties = { color: 'var(--side-current-text, #ffffff)' };
+const ACTIVE_BG_STYLE: React.CSSProperties = { backgroundColor: 'var(--side-current, var(--color-main))', color: 'var(--side-current-text, #ffffff)' };
 
 export default function Sidebar({
   mobileOpen = false,
@@ -517,7 +517,7 @@ function SidebarLeaf({
         collapsed ? 'h-10 justify-center' : 'h-9 px-2.5'
       } ${
         active
-          ? 'text-[var(--color-accent-text)] font-semibold before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-[3px] before:rounded-full before:bg-[var(--color-accent)]'
+          ? 'font-semibold shadow-[0_6px_14px_-8px_rgb(0_0_0/0.6)]'
           : 'text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)]'
       }`}
     >

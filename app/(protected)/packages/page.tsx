@@ -401,13 +401,13 @@ export default function PackagesPage() {
                 onChange={(e) => setName(e.target.value)}
                 placeholder='Job name * (e.g. "E-204 bundle swap")'
                 autoFocus
-                className="w-full h-10 px-3 border border-[var(--color-border-strong)] rounded-md text-base sm:text-[15px] bg-[var(--color-surface)] text-[var(--color-text)] focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none"
+                className="w-full h-10 px-3 border border-[var(--color-border-strong)] rounded-md text-base sm:text-[15px] bg-[var(--color-surface)] text-[var(--color-text)] focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none"
               />
               <input
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="One-line scope (optional)"
-                className="w-full h-10 px-3 border border-[var(--color-border-strong)] rounded-md text-base sm:text-[15px] bg-[var(--color-surface)] text-[var(--color-text)] focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none"
+                className="w-full h-10 px-3 border border-[var(--color-border-strong)] rounded-md text-base sm:text-[15px] bg-[var(--color-surface)] text-[var(--color-text)] focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none"
               />
 
               <div>
@@ -417,7 +417,7 @@ export default function PackagesPage() {
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                     placeholder="Search drawings by number or title…"
-                    className="w-full h-10 pl-8 pr-3 border border-[var(--color-border-strong)] rounded-md text-base sm:text-[15px] bg-[var(--color-surface)] text-[var(--color-text)] focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none"
+                    className="w-full h-10 pl-8 pr-3 border border-[var(--color-border-strong)] rounded-md text-base sm:text-[15px] bg-[var(--color-surface)] text-[var(--color-text)] focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none"
                   />
                 </div>
                 {results.length > 0 && (

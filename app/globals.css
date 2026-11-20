@@ -21,20 +21,27 @@
      forms), Graphite is text, Rule is lines. The signal color (the
      workspace's brand, set by ThemeProvider) marks what you can do;
      red / amber / green mark late / waiting / done. */
-  --color-canvas: #eef0f3;        /* Panel */
+  /* Defaults below are the default pair (blue and tangerine); a
+     workspace's colors replace them at runtime (ThemeProvider). */
+  --color-canvas: #ecf0f8;        /* Panel, tinted toward the brand */
   --color-surface: #ffffff;       /* Sheet */
-  --color-surface-2: #f4f5f7;     /* hover, subtle fills */
+  --color-surface-2: #f1f6fe;     /* hover, subtle fills */
   --color-text: #1f2733;          /* Graphite */
   --color-text-muted: #4f5b6b;
   --color-text-faint: #677283;
-  --color-border: #e0e4e9;        /* hairline */
-  --color-border-strong: #c7ced7; /* Rule */
+  --color-border: #dde1ea;        /* hairline */
+  --color-border-strong: #c4cbd7; /* Rule */
+  /* Main: the brand at full strength (header band, links, tabs, progress). */
+  --color-main: #2262e6;
+  --color-main-hover: #0a4bce;
+  /* Section headings: the brand's deep shade, so structure carries color. */
+  --color-heading: #0d3381;
 
   /* Graphite surfaces that are not the page: dimming behind dialogs,
      toasts, the frame around a drawing. */
   --color-ink: #1f2733;
-  /* Older name for the brand color in large areas; there are none now. */
-  --color-band: var(--color-accent);
+  /* The header band on every page: the main color. */
+  --color-band: #2262e6;
   /* Controls on graphite (viewers): white at low strength. */
   --color-ink-2: rgb(255 255 255 / 0.1);
   --color-ink-line: rgb(255 255 255 / 0.22);
@@ -123,10 +130,11 @@
 
 /* Dark theme overrides — a deep slate command-center. */
 .dark {
-  --color-canvas: #11151b;
-  --color-surface: #181d25;
-  --color-surface-2: #1e242e;
+  --color-canvas: #13161c;
+  --color-surface: #1b1e25;
+  --color-surface-2: #22272e;
   --color-ink: #0b0e13;
+  --color-band: #0041c3;
   --shadow-card: 0 1px 0 rgb(0 0 0 / 0.25);
 
   /* Viz categorical — dark-surface steps, separately validated (never an
@@ -142,12 +150,11 @@
   --color-text: #e8ebf0;
   --color-text-muted: #a9b2bf;
   --color-text-faint: #8a94a3;
-  --color-border: #2a313c;
-  --color-border-strong: #3a4250;
+  --color-border: #2c3039;
+  --color-border-strong: #3d434c;
 
-  --color-accent-soft: color-mix(in srgb, var(--color-accent) 22%, #181d25);
-  --color-accent-fg: #ffffff;
-  --color-accent-text: #8fb0ff;
+  --color-accent-soft: color-mix(in srgb, var(--color-main) 24%, #1b1e25);
+  --color-accent-text: #a5c5fe;
 
   /* On a dark command-center surface, ink-tinted shadows vanish — switch
      to deep black at higher opacity so elevation still reads. */
@@ -184,21 +191,45 @@ body {
    ring + soft shadow), so every card reads identically. `hover-lift`
    adds the subtle rise-on-hover used for clickable cards/tiles. Both
    compose with Tailwind utilities and are theme/dark-mode aware. */
-/* The side menu: light (default) or graphite, chosen per workspace; set
-   by ThemeProvider as --side-*. */
+/* The side menu: the brand's deep shade (default) or light, set by
+   ThemeProvider as --side-*. */
 .surface-side {
-  --color-canvas: var(--side-bg, #f7f8fa);
-  --color-surface: var(--side-surface, #eceff3);
-  --color-surface-2: var(--side-surface, #eceff3);
-  --color-text: var(--side-text, #1f2733);
-  --color-text-muted: var(--side-muted, #4f5b6b);
-  --color-text-faint: var(--side-faint, #677283);
-  --color-border: var(--side-border, #e0e4e9);
-  --color-border-strong: var(--side-border-strong, #c7ced7);
-  --color-accent-text: var(--side-accent-text, #1854cf);
-  --color-accent-soft: var(--side-accent-soft, #e6efff);
-  background-color: var(--side-bg, #f7f8fa);
-  color: var(--side-text, #1f2733);
+  --color-canvas: var(--side-bg, #081d48);
+  --color-surface: var(--side-surface, #242f43);
+  --color-surface-2: var(--side-surface, #242f43);
+  --color-text: var(--side-text, #ffffff);
+  --color-text-muted: var(--side-muted, rgb(255 255 255 / 0.78));
+  --color-text-faint: var(--side-faint, rgb(255 255 255 / 0.6));
+  --color-border: var(--side-border, rgb(255 255 255 / 0.12));
+  --color-border-strong: var(--side-border-strong, rgb(255 255 255 / 0.22));
+  --color-accent-text: var(--side-accent-text, #cedffd);
+  background-color: var(--side-bg, #081d48);
+  color: var(--side-text, #ffffff);
+}
+
+/* The sheet's own colors, kept so anything opened from the band (a menu,
+   a help popover) can return to them. */
+:root, .dark {
+  --sheet-text: var(--color-text);
+  --sheet-text-muted: var(--color-text-muted);
+  --sheet-text-faint: var(--color-text-faint);
+  --sheet-surface: var(--color-surface);
+  --sheet-surface-2: var(--color-surface-2);
+  --sheet-border: var(--color-border);
+  --sheet-border-strong: var(--color-border-strong);
+  --sheet-accent-text: var(--color-accent-text);
+}
+.on-sheet,
+.page-head .fixed, .page-head [role="dialog"], .page-head [role="menu"], .page-head [role="listbox"], .page-head [role="tooltip"] {
+  --color-text: var(--sheet-text);
+  --color-text-muted: var(--sheet-text-muted);
+  --color-text-faint: var(--sheet-text-faint);
+  --color-surface: var(--sheet-surface);
+  --color-surface-2: var(--sheet-surface-2);
+  --color-border: var(--sheet-border);
+  --color-border-strong: var(--sheet-border-strong);
+  --color-accent-text: var(--sheet-accent-text);
+  color: var(--color-text);
 }
 
 /* Charcoal that stays charcoal whatever the menu color: the frame around
@@ -218,29 +249,38 @@ body {
 }
 .dark .surface-charcoal { --color-canvas: #0b0e13; background-color: #0b0e13; }
 
-/* The page header (PageHero) sits on the panel, not on a colored block.
-   Controls that were written for the old dark block read their colors
-   from these, so here they become ordinary light controls. */
+/* The header band (PageHero): the main color, edge to edge. Everything
+   in it reads white; controls are white glass. */
 .page-head {
-  --color-ink-2: var(--color-surface);
-  --color-ink-line: var(--color-border-strong);
-  --color-ink-fg: var(--color-text);
-  --color-ink-text: var(--color-text-muted);
-  --color-ink-muted: var(--color-text-muted);
+  --color-text: #ffffff;
+  --color-text-muted: rgb(255 255 255 / 0.82);
+  --color-text-faint: rgb(255 255 255 / 0.68);
+  --color-surface: rgb(255 255 255 / 0.12);
+  --color-surface-2: rgb(255 255 255 / 0.2);
+  --color-border: rgb(255 255 255 / 0.2);
+  --color-border-strong: rgb(255 255 255 / 0.34);
+  --color-accent-text: #ffffff;
+  --color-heading: #ffffff;
+  --color-ink-2: rgb(255 255 255 / 0.12);
+  --color-ink-line: rgb(255 255 255 / 0.34);
+  --color-ink-fg: #ffffff;
+  --color-ink-text: rgb(255 255 255 / 0.82);
+  --color-ink-muted: rgb(255 255 255 / 0.82);
+  --state-overdue-on: #ffd0d0;
+  color: #ffffff;
 }
+.page-head a[class*="color-accent-text"] { text-decoration: underline; text-underline-offset: 3px; }
+.page-head option { background: #ffffff; color: #1f2733; }
+.dark .page-head option { background: #1b1e25; color: #e8ebf0; }
+.page-head .text-rose-200, .page-head .text-rose-300, .page-head .text-red-200, .page-head .text-red-300,
+.page-head .text-\[var\(--state-overdue\)\] { color: #ffd0d0; }
+.page-head .text-amber-200, .page-head .text-amber-300, .page-head .text-\[var\(--state-held\)\] { color: #ffe3a6; }
+.page-head .text-emerald-200, .page-head .text-emerald-300, .page-head .text-\[var\(--state-released\)\] { color: #c4f5d6; }
+.page-head .border-white, .page-head .border-b-white { border-color: #ffffff; }
 
-/* Header pieces written for the old dark block: white text becomes
-   graphite, light status tints become the real status colors, and a
-   white underline (the tab you're on) becomes the signal color. Elements
-   with their own fill (a red count badge) keep white text. */
-.page-head .text-white:not(.bg-red-600, .bg-red-500, .bg-rose-600, .bg-rose-500, .bg-emerald-600, .bg-amber-500, .bg-amber-600, .bg-blue-600, .bg-slate-900, .bg-black, .bg-\[var\(--color-accent\)\], .bg-\[var\(--color-ink\)\], .bg-\[var\(--color-text\)\]),
-.page-head .hover\:text-white:hover { color: var(--color-text); }
-.page-head [class*="text-white/"] { color: var(--color-text-muted); }
-.page-head .text-rose-200, .page-head .text-rose-300, .page-head .text-red-200, .page-head .text-red-300 { color: var(--state-overdue); }
-.page-head .text-amber-200, .page-head .text-amber-300 { color: var(--state-held); }
-.page-head .text-emerald-200, .page-head .text-emerald-300 { color: var(--state-released); }
-.page-head .border-white, .page-head .border-b-white { border-color: var(--color-accent); }
-.page-head .placeholder\:text-\[var\(--color-ink-muted\)\]::placeholder { color: var(--color-text-faint); }
+/* Section headings carry the brand's deep shade. */
+h2.font-display, h3.font-display { color: var(--color-heading); }
+.dark { --color-heading: #cedffd; }
 
 /* Titles, tag and drawing numbers, figures: the condensed cut. */
 .font-display { font-family: var(--font-display); }

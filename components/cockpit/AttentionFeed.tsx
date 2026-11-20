@@ -71,7 +71,7 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
           return (
             <button key={t.key} type="button" role="tab" aria-selected={on} onClick={() => onFilter(t.key)}
               className={`-mb-px inline-flex items-center gap-1.5 h-10 border-b-2 text-[15px] transition-colors ${on
-                ? "border-[var(--color-accent)] font-semibold text-[var(--color-text)]"
+                ? "border-[var(--color-main)] font-semibold text-[var(--color-text)]"
                 : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
               {t.label}
               <span className="font-display tabular-nums text-[var(--color-text-muted)]">{t.n}</span>

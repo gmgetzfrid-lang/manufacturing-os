@@ -176,7 +176,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                 <div 
                   key={set.id}
                   onClick={() => selectSet(set)}
-                  className={`p-3 rounded-lg cursor-pointer border transition-all ${activeSet?.id === set.id ? 'bg-[var(--color-surface)] border-[var(--color-accent)]/30 shadow-sm ring-1 ring-[var(--color-accent)]/20' : 'bg-transparent border-transparent hover:bg-[var(--color-surface-2)]'}`}
+                  className={`p-3 rounded-lg cursor-pointer border transition-all ${activeSet?.id === set.id ? 'bg-[var(--color-surface)] border-[var(--color-main)]/30 shadow-sm ring-1 ring-[var(--color-main)]/20' : 'bg-transparent border-transparent hover:bg-[var(--color-surface-2)]'}`}
                 >
                   <div className="flex items-center justify-between mb-1">
                     <span className="font-bold text-sm text-[var(--color-text)] truncate">{set.title}</span>

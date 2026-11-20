@@ -7,7 +7,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useRole } from "@/components/providers/RoleContext";
 import { useOrgBranding } from "@/components/providers/OrgBrandingProvider";
-import { PALETTE_PRESETS, useTheme, type Palette } from "@/components/providers/ThemeProvider";
+import { PALETTE_PRESETS, useTheme, sideOf, type Palette } from "@/components/providers/ThemeProvider";
 import { extractLogoColors } from "@/lib/logoTheme";
 import { signalFromLogo } from "@/lib/brandColors";
 import PalettePicker from "@/components/branding/PalettePicker";
@@ -93,7 +93,7 @@ export default function AdminBrandingPage() {
         const colors = (await extractLogoColors(file)).map((c) => c.hex);
         setLogoColors(colors);
         const r = signalFromLogo(colors);
-        if (r) { setPalette({ id: "logo", name: "From your logo", primary: r.signal, secondary: r.second ?? r.signal, side: palette.side ?? "light" }); setLogoNote("Brand color set from your logo. You can pick another below."); }
+        if (r) { setPalette({ id: "logo", name: "From your logo", primary: r.signal, secondary: r.second ?? r.signal, side: sideOf(palette) }); setLogoNote("Brand color set from your logo. You can pick another below."); }
         else setLogoNote("The logo has no strong color (only black, white or grey), so the colors stay as they are.");
       } catch { /* keep current palette */ }
       // Upload to durable storage.

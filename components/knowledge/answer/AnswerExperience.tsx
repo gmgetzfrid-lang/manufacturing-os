@@ -928,7 +928,7 @@ function AnsweringFor({ chips, onCorrect }: { chips: string[]; onCorrect?: (valu
           <input id={`af-${i}`} autoFocus value={value} onChange={(e) => setValue(e.target.value)}
             aria-label="Correct this and ask again"
             onKeyDown={(e) => { if (e.key === "Escape") setEditing(null); }}
-            className="h-8 text-[14px] px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] w-52 focus:outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40" />
+            className="h-8 text-[14px] px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] w-52 focus:outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40" />
           <button type="submit" className={QUIET}>Ask again</button>
         </form>
       ) : (
@@ -969,7 +969,7 @@ function OneQuestion({ followup, onAnswer, primary }: {
           ))}
           <input id="one-question" value={value} onChange={(e) => setValue(e.target.value)} placeholder="Or type the answer"
             aria-label="Type the answer"
-            className="h-9 text-[14px] px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] w-48 placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40" />
+            className="h-9 text-[14px] px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] w-48 placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40" />
           <button type="submit" disabled={!value.trim()} className={act(primary)}>
             Finish the answer
           </button>

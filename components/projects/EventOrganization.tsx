@@ -10,7 +10,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Check, Loader2, Plus, X } from "lucide-react";
 import { defaultRoles, loadOrg, orgStanding, saveOrg, type OrgRole } from "@/lib/eventOrganization";
 
-const field = "w-full h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[14px] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 disabled:opacity-70";
+const field = "w-full h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[14px] text-[var(--color-text)] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 disabled:opacity-70";
 const label = "text-[13px] font-semibold text-[var(--color-text-muted)]";
 const btn = "inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
 const pri = "inline-flex items-center justify-center gap-1.5 h-9 px-4 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-semibold hover:bg-[var(--color-accent-hover)] whitespace-nowrap disabled:opacity-50";

@@ -9,7 +9,7 @@ import { PageHero, PageBody, Card } from '@/components/ui/PageHero';
 import { bandSeg, bandSegItem } from '@/components/admin/band';
 import { btnPrimary, link, label } from '@/components/admin/kit';
 
-const inputCls = "w-full h-11 pl-10 pr-3 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-md text-[15px] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 transition-colors placeholder:text-[var(--color-text-faint)]";
+const inputCls = "w-full h-11 pl-10 pr-3 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-md text-[15px] text-[var(--color-text)] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 transition-colors placeholder:text-[var(--color-text-faint)]";
 const iconCls = "absolute left-3 top-1/2 -translate-y-1/2 w-[18px] h-[18px] text-[var(--color-text-faint)] pointer-events-none";
 
 type Mode = "new-org" | "request-access";

@@ -151,7 +151,7 @@ export default function QualityTab({ orgId, projectId, canManage, canEditPunch, 
 }
 
 const quietBtn = "inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
-const fieldCls = "h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[14px] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40";
+const fieldCls = "h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[14px] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40";
 
 // ── Checklists ───────────────────────────────────────────────────────────
 

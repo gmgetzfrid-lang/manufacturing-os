@@ -259,7 +259,7 @@ export default function CustomizeNodeModal({
         <div className="px-5 py-3.5 border-t border-[var(--color-border)] flex items-center justify-end gap-2">
           {saveErr && <p role="alert" className="mr-auto text-[13px] text-rose-700 dark:text-rose-300">{saveErr}</p>}
           <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Cancel</button>
-          <button onClick={handleSave} disabled={saving} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold text-[var(--color-accent-fg)] disabled:opacity-50" style={{ background: "var(--color-accent)" }}>
+          <button onClick={handleSave} disabled={saving} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold text-[var(--color-accent-fg)] disabled:opacity-50" style={{ background: "var(--color-main)" }}>
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save
           </button>
         </div>

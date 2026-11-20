@@ -225,7 +225,7 @@ function InstructionsPane({
   useEffect(() => { setProf(profile); }, [profile]);
 
   const flash = (what: string) => { setSaved(what); setTimeout(() => setSaved(null), 1800); };
-  const field = "w-full px-3 py-2 text-[15px] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40";
+  const field = "w-full px-3 py-2 text-[15px] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40";
   const label = "font-display text-[17px] font-semibold text-[var(--color-text)] mb-0.5";
   const quiet = "inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[14px] font-semibold hover:bg-[var(--color-surface-2)] disabled:opacity-40 transition-colors";
   const savedTag = <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]"><span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-released)]" /> Saved</span>;

@@ -252,7 +252,7 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
                 <PickRow orgId={orgId} label="Alternates (step in if a primary is slow / out)" people={alternates} setPeople={setAlternates} roles={alternateRoles} setRoles={setAlternateRoles} allTeams={allTeams} teamIds={alternateTeams} setTeamIds={setAlternateTeams} />
                 <div className="flex items-center gap-2">
                   <span className="text-[13px] text-[var(--color-text-muted)]">Activate alternates after</span>
-                  <input type="number" min={1} value={timeoutDays} onChange={(e) => setTimeoutDays(Math.max(1, parseInt(e.target.value) || 1))} className="text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 w-16 outline-none focus:border-[var(--color-accent)]" />
+                  <input type="number" min={1} value={timeoutDays} onChange={(e) => setTimeoutDays(Math.max(1, parseInt(e.target.value) || 1))} className="text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 w-16 outline-none focus:border-[var(--color-main)]" />
                   <span className="text-[13px] text-[var(--color-text-muted)]">days</span>
                 </div>
                 <PickRow orgId={orgId} label="Extra draft viewers (besides reviewers + owner + DocCtrl)" people={viewers} setPeople={setViewers} roles={viewerRoles} setRoles={setViewerRoles} allTeams={allTeams} teamIds={viewerTeams} setTeamIds={setViewerTeams} />

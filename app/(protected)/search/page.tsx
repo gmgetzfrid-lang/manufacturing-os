@@ -98,7 +98,7 @@ export default function SearchPage() {
             placeholder="Tag, equipment ID, drawing number, words from the drawing"
             aria-label="Search"
             data-find-input
-            className="w-full h-12 pl-11 pr-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] text-base sm:text-[15px] focus:outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 transition-colors"
+            className="w-full h-12 pl-11 pr-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] text-base sm:text-[15px] focus:outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 transition-colors"
           />
           {query && (
             <button type="button" onClick={() => { setQuery(""); router.replace("/search"); }} title="Clear the search" aria-label="Clear the search"

@@ -247,7 +247,7 @@ function ContractorCard({ x, onOpen }: { x: Crew; onOpen: () => void }) {
   const steps = stepsOf(x);
   const left = steps.filter((s) => !s.done).length;
   return (
-    <button type="button" onClick={onOpen} className={`${card} text-left hover:border-[var(--color-accent)] transition-colors flex flex-col gap-2.5`} data-contractor={x.c.company}>
+    <button type="button" onClick={onOpen} className={`${card} text-left hover:border-[var(--color-main)] transition-colors flex flex-col gap-2.5`} data-contractor={x.c.company}>
       <span className="flex items-center gap-2">
         <HardHat className="w-4 h-4 text-[var(--color-text-muted)]" />
         <b className="min-w-0 flex-1 text-[15px] text-[var(--color-text)] truncate">{x.c.company}</b>

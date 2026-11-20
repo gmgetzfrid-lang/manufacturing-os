@@ -62,7 +62,7 @@ export function BudgetDocDrop({ orgId, projectId, onRead, compact, label }: {
         role="button" tabIndex={0}
         onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && !reading) input.current?.click(); }}
         className={`rounded-xl border-2 border-dashed transition-colors cursor-pointer flex items-center gap-3 ${compact ? "px-3 py-2.5" : "px-4 py-5"} ${
-          drag.over ? `border-[var(--color-accent)] ${drag.ring}` : "border-[var(--color-border-strong)] hover:border-[var(--color-accent-ring)] bg-[var(--color-surface-2)]/30"}`}
+          drag.over ? `border-[var(--color-main)] ${drag.ring}` : "border-[var(--color-border-strong)] hover:border-[var(--color-accent-ring)] bg-[var(--color-surface-2)]/30"}`}
       >
         {reading ? <FileThumb file={reading} size={36} /> : (
           <span className="p-2 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)] shrink-0">

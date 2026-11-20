@@ -34,7 +34,7 @@ export const link =
 
 /** A text field with no size: give it a width, height and text size. */
 export const fieldBox =
-  "px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 disabled:opacity-60 transition-colors";
+  "px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 disabled:opacity-60 transition-colors";
 
 /** A full-width text field on a white sheet. */
 export const field = `w-full h-10 text-[15px] ${fieldBox}`;

@@ -161,7 +161,7 @@ export function Tabs<T extends string>({ value, onChange, options, className = "
           <button key={o.value} role="tab" aria-selected={on} type="button" onClick={() => onChange(o.value)}
             className={`shrink-0 -mb-px inline-flex items-center gap-1.5 h-9 border-b-2 text-[14px] transition-colors ${
               on
-                ? "border-[var(--color-accent)] font-semibold text-[var(--color-text)]"
+                ? "border-[var(--color-main)] font-semibold text-[var(--color-text)]"
                 : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
             }`}>
             {o.label}

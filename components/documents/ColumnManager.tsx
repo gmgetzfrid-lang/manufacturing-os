@@ -235,7 +235,7 @@ export default function ColumnManager(props: {
                           }}
                           autoFocus
                           disabled={savingRename}
-                          className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-[var(--color-accent)]/40 bg-[var(--color-surface)] text-sm font-bold text-[var(--color-text)] outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]"
+                          className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-[var(--color-main)]/40 bg-[var(--color-surface)] text-sm font-bold text-[var(--color-text)] outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]"
                         />
                         <button
                           onClick={() => void saveRename()}
@@ -272,7 +272,7 @@ export default function ColumnManager(props: {
                         {canRename && (
                           <button
                             onClick={() => startRename(col.key, col.label)}
-                            className="shrink-0 p-2 rounded-lg border-2 border-[var(--color-accent)]/25 bg-[var(--color-surface-2)] text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)] hover:border-[var(--color-accent)]/50 transition-colors"
+                            className="shrink-0 p-2 rounded-lg border-2 border-[var(--color-main)]/25 bg-[var(--color-surface-2)] text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)] hover:border-[var(--color-main)]/50 transition-colors"
                             title={`Rename "${col.label}" - works for built-in columns too`}
                           >
                             <Pencil className="h-3.5 w-3.5" />

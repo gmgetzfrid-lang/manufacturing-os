@@ -821,7 +821,7 @@ function SafetyTopic({ value, topics, edit, onSave }: { value?: string; topics?:
           <span className="text-[11px] text-[var(--color-text-muted)]">From the report:</span>
           {picks.map((x) => (
             <button key={x} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => commit(x)}
-              className="max-w-full truncate h-6 px-2 rounded-full border border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[11px] font-semibold text-[var(--color-text)] dark:text-[var(--color-text)] hover:border-[var(--color-accent)]">
+              className="max-w-full truncate h-6 px-2 rounded-full border border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[11px] font-semibold text-[var(--color-text)] dark:text-[var(--color-text)] hover:border-[var(--color-main)]">
               {x}
             </button>
           ))}

@@ -235,7 +235,7 @@ export default function LoginPage() {
 
   // The front door is drawn like the app: the grey panel, the answer in the
   // title block, the form on one white sheet, one filled button.
-  const input = "w-full h-11 pl-10 pr-3 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-md text-[15px] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 transition-colors placeholder:text-[var(--color-text-faint)]";
+  const input = "w-full h-11 pl-10 pr-3 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-md text-[15px] text-[var(--color-text)] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 transition-colors placeholder:text-[var(--color-text-faint)]";
   const fieldLabel = "block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5";
   const primaryBtn = `${btnPrimary} w-full h-11`;
   const quietBtn = `${btnQuiet} w-full h-11 text-[15px] gap-2.5`;

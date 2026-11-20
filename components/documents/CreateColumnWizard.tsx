@@ -147,7 +147,7 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
                   <button
                     key={t.type}
                     onClick={() => setSelectedType(t.type)}
-                    className={`text-left p-4 rounded-xl border-2 transition-all flex items-start group ${active ? 'border-[var(--color-text)] bg-[var(--color-surface-2)] ring-1 ring-[var(--color-accent)]' : 'border-[var(--color-border)] hover:border-[var(--color-accent)]/40 hover:bg-[var(--color-surface-2)]'}`}
+                    className={`text-left p-4 rounded-xl border-2 transition-all flex items-start group ${active ? 'border-[var(--color-text)] bg-[var(--color-surface-2)] ring-1 ring-[var(--color-main)]' : 'border-[var(--color-border)] hover:border-[var(--color-main)]/40 hover:bg-[var(--color-surface-2)]'}`}
                   >
                     <div className={`p-2.5 rounded-lg shrink-0 mr-3 ${active ? 'bg-[var(--color-surface-2)] text-[var(--color-text)]' : 'bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-muted)] group-hover:text-[var(--color-text)]'}`}>
                       <Icon className="w-6 h-6" />
@@ -282,11 +282,11 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
                 <div className="bg-[var(--color-surface-2)] p-4 rounded-xl border border-[var(--color-border)]">
                   <h4 className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-3 flex items-center"><MousePointerClick className="w-3 h-3 mr-2" /> What does clicking a tag open?</h4>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    <button type="button" onClick={() => setReferenceKind("photos")} className={`text-left p-3 rounded-lg border-2 transition-all ${referenceKind === "photos" ? 'border-[var(--color-text)] bg-[var(--color-surface-2)] ring-1 ring-[var(--color-accent)]' : 'border-[var(--color-border)] hover:border-[var(--color-accent)]/40'}`}>
+                    <button type="button" onClick={() => setReferenceKind("photos")} className={`text-left p-3 rounded-lg border-2 transition-all ${referenceKind === "photos" ? 'border-[var(--color-text)] bg-[var(--color-surface-2)] ring-1 ring-[var(--color-main)]' : 'border-[var(--color-border)] hover:border-[var(--color-main)]/40'}`}>
                       <div className="flex items-center gap-2 mb-1"><Camera className="w-4 h-4 text-[var(--color-text-muted)]" /><span className="text-sm font-bold text-[var(--color-text)]">Photos</span><span className="ml-auto text-[13px] font-semibold text-[var(--color-text-faint)]">Default</span></div>
                       <p className="text-[13px] text-[var(--color-text-muted)] leading-snug">Asset Registry photo gallery: site photos of the equipment.</p>
                     </button>
-                    <button type="button" onClick={() => setReferenceKind("files")} className={`text-left p-3 rounded-lg border-2 transition-all ${referenceKind === "files" ? 'border-[var(--color-text)] bg-[var(--color-surface-2)] ring-1 ring-[var(--color-accent)]' : 'border-[var(--color-border)] hover:border-[var(--color-accent)]/40'}`}>
+                    <button type="button" onClick={() => setReferenceKind("files")} className={`text-left p-3 rounded-lg border-2 transition-all ${referenceKind === "files" ? 'border-[var(--color-text)] bg-[var(--color-surface-2)] ring-1 ring-[var(--color-main)]' : 'border-[var(--color-border)] hover:border-[var(--color-main)]/40'}`}>
                       <div className="flex items-center gap-2 mb-1"><FileText className="w-4 h-4 text-[var(--color-text-muted)]" /><span className="text-sm font-bold text-[var(--color-text)]">Linked drawings</span></div>
                       <p className="text-[13px] text-[var(--color-text-muted)] leading-snug">Reference another document in the system: e.g. a circuit id → its isometric. Opens in a drawing viewer.</p>
                     </button>

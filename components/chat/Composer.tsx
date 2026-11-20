@@ -127,7 +127,7 @@ export default function Composer({
   return (
     <div
       {...drag.bind}
-      className={`relative rounded-lg border bg-[var(--color-surface)] transition-colors border-[var(--color-border-strong)] focus-within:border-[var(--color-accent)] focus-within:ring-2 focus-within:ring-[var(--color-accent-ring)]/30 ${drag.ring}`}
+      className={`relative rounded-lg border bg-[var(--color-surface)] transition-colors border-[var(--color-border-strong)] focus-within:border-[var(--color-main)] focus-within:ring-2 focus-within:ring-[var(--color-accent-ring)]/30 ${drag.ring}`}
     >
       {drag.over && (
         <div className="absolute inset-0 z-10 rounded-lg bg-[var(--color-surface-2)] flex flex-col items-center justify-center text-[15px] font-semibold text-[var(--color-text)] pointer-events-none">

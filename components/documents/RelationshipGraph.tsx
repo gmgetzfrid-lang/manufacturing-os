@@ -130,7 +130,7 @@ export default function RelationshipGraph({
                   </g>
                 ))}
                 {/* center node */}
-                <circle cx={CX} cy={CY} r={13} fill="var(--color-accent)" stroke="#fff" strokeWidth={3} />
+                <circle cx={CX} cy={CY} r={13} fill="var(--color-main)" stroke="#fff" strokeWidth={3} />
                 <text x={CX} y={CY + 30} textAnchor="middle" className="fill-[var(--color-text)] text-[13px] font-semibold" style={{ fontFamily: "monospace" }}>
                   {center?.document_number || center?.title || "This document"}
                 </text>

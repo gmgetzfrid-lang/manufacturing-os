@@ -1511,7 +1511,7 @@ export default function ExecutionView({
                 <div role="separator" aria-orientation="vertical" aria-label="Resize the task column" title="Drag to resize · double-click to reset"
                   onPointerDown={startResize}
                   onDoubleClick={() => { setUserLeftW(LEFT_W); try { localStorage.removeItem("timeline:leftW"); } catch { /* private mode */ } }}
-                  className="absolute top-0 -right-1 z-30 h-full w-2 cursor-col-resize hover:bg-[var(--color-accent)]/30 active:bg-[var(--color-accent)]/50" />
+                  className="absolute top-0 -right-1 z-30 h-full w-2 cursor-col-resize hover:bg-[var(--color-main)]/30 active:bg-[var(--color-main)]/50" />
               )}
               <div className="sticky top-0 z-10 bg-[var(--color-surface)]/95 backdrop-blur border-b border-[var(--color-border)] flex items-center px-3 text-[13px] font-semibold text-[var(--color-text-muted)]" style={{ height: AXIS_H }}>
                 <ListTree className="w-3.5 h-3.5 mr-1.5 text-[var(--color-text-muted)]" /> Work breakdown

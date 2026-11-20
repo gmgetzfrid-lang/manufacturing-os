@@ -118,7 +118,7 @@ export function LetterheadStep({ projectId, canManage }: { projectId: string; ca
     return (
       <div className="space-y-2.5">
         <label {...drag.bind}
-          className={`flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-8 text-center cursor-pointer ${drag.over ? `border-[var(--color-accent)] ${drag.ring}` : "border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]"} ${!canManage ? "pointer-events-none opacity-60" : ""}`}>
+          className={`flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-8 text-center cursor-pointer ${drag.over ? `border-[var(--color-main)] ${drag.ring}` : "border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]"} ${!canManage ? "pointer-events-none opacity-60" : ""}`}>
           {picked ? <FileThumb file={picked} size={44} /> : <FileUp className="w-6 h-6 text-[var(--color-text-muted)]" />}
           <span className="text-[13.5px] font-bold text-[var(--color-text)]">
             {drag.over ? drag.say : picked ? <><Loader2 className="w-4 h-4 animate-spin inline mr-1" />Reading {picked.name} · {fileSize(picked.size)}</> : "Upload your letterhead"}

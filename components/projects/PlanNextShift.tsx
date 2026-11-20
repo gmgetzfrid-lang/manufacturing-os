@@ -203,7 +203,7 @@ function Picker({ items, out, next, span, onBack, onPick }: {
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)]" />
           <input autoFocus value={query} onChange={(e) => { setQuery(e.target.value); setMore(false); }} aria-label="Search the job for a work order"
             placeholder="Search a work order #, equipment (E-17), step or crew, the whole job"
-            className="w-full h-10 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-8 pr-8 text-[13.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/40" />
+            className="w-full h-10 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-8 pr-8 text-[13.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--color-main)]/40" />
           {query && <button type="button" onClick={() => setQuery("")} aria-label="Clear search" className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>}
         </label>
         <div className="flex flex-wrap items-center gap-1.5 text-[11.5px]">

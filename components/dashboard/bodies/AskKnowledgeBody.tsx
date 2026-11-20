@@ -310,7 +310,7 @@ export default function AskKnowledgeBody() {
                       const clause = c.quote ? clauseFor(c.quote, c.highlight, c.section) : null;
                       return (
                         <button key={c.n} type="button" onClick={() => openCite(c)}
-                          className="w-full text-left rounded-lg border border-[var(--color-border)] hover:border-[var(--color-accent)] bg-[var(--color-surface-2)]/40 px-2.5 py-1.5 transition-colors">
+                          className="w-full text-left rounded-lg border border-[var(--color-border)] hover:border-[var(--color-main)] bg-[var(--color-surface-2)]/40 px-2.5 py-1.5 transition-colors">
                           <div className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-muted)]">
                             <span className="px-1 rounded bg-[var(--color-surface-2)] text-[var(--color-text)]">{c.n}</span>
                             <FileText className="w-3 h-3" />
@@ -339,7 +339,7 @@ export default function AskKnowledgeBody() {
                       <span className="mt-1 flex flex-wrap gap-1">
                         {parts.followup.options.slice(0, 4).map((o) => (
                           <button key={o} type="button" onClick={() => void ask(o)}
-                            className="px-2 py-0.5 rounded-md border border-[var(--color-accent)]/50 text-[13px] font-bold text-[var(--color-accent-text)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)]">
+                            className="px-2 py-0.5 rounded-md border border-[var(--color-main)]/50 text-[13px] font-bold text-[var(--color-accent-text)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)]">
                             {o}
                           </button>
                         ))}

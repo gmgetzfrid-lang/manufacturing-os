@@ -667,7 +667,7 @@ export default function ReportsView(p: Props) {
               const on = r.id === sel;
               return (
                 <button key={r.id} type="button" aria-current={on ? "page" : undefined} onClick={() => { setSel(r.id); setPhoneOpen(true); }}
-                  className={`w-full text-left px-4 py-2 border-l-[3px] ${on ? "sm:border-[var(--color-accent)] sm:bg-[var(--color-surface-2)] border-transparent" : "border-transparent hover:bg-[var(--color-surface-2)]"}`}>
+                  className={`w-full text-left px-4 py-2 border-l-[3px] ${on ? "sm:border-[var(--color-main)] sm:bg-[var(--color-surface-2)] border-transparent" : "border-transparent hover:bg-[var(--color-surface-2)]"}`}>
                   <span className="block text-[15px] font-semibold text-[var(--color-text)]">{r.name}</span>
                   <span className="block text-[13px] text-[var(--color-text-muted)] leading-snug">{r.sub}</span>
                 </button>

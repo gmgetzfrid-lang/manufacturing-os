@@ -169,7 +169,7 @@ export default function LibraryHomeBoard({
         <div className="flex items-center gap-2">
           <button onClick={disableHome} disabled={saving} className="px-3 py-1.5 rounded-lg text-[13px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Turn off home</button>
           <button onClick={() => setEditing(false)} disabled={saving} className="px-3 py-1.5 rounded-lg text-xs font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-3.5 h-3.5 inline -mt-0.5" /> Cancel</button>
-          <button onClick={save} disabled={saving} className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-[13px] font-bold text-[var(--color-accent-fg)] disabled:opacity-50" style={{ background: "var(--color-accent)" }}>
+          <button onClick={save} disabled={saving} className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-[13px] font-bold text-[var(--color-accent-fg)] disabled:opacity-50" style={{ background: "var(--color-main)" }}>
             {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Save
           </button>
         </div>
@@ -181,7 +181,7 @@ export default function LibraryHomeBoard({
         {(Object.keys(PART_META) as WebPartType[]).map((t) => {
           const M = PART_META[t];
           return (
-            <button key={t} onClick={() => add(t)} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:border-[var(--color-accent)]">
+            <button key={t} onClick={() => add(t)} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:border-[var(--color-main)]">
               <Plus className="w-3 h-3" /> <M.icon className="w-3.5 h-3.5" /> {M.label}
             </button>
           );
@@ -293,7 +293,7 @@ function PartGrid({
                 <div className="flex flex-wrap gap-2">
                   {pickFolders(rootFolders, p.settings?.folderIds).map((f) => (
                     <button key={f.id} onClick={() => onOpenFolder(f.id!)}
-                      className="group inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-accent)] hover:bg-[var(--color-surface-2)] text-sm font-semibold text-[var(--color-text)] transition-colors hover-lift">
+                      className="group inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-main)] hover:bg-[var(--color-surface-2)] text-sm font-semibold text-[var(--color-text)] transition-colors hover-lift">
                       <span className="w-5 h-5 rounded-md grid place-items-center text-white shrink-0 shadow-sm" style={{ background: f.color || "var(--brand-gradient)" }}>
                         <NodeIcon name={f.icon} className="w-3 h-3" />
                       </span>

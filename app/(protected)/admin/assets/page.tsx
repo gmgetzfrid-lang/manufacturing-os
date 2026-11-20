@@ -1595,7 +1595,7 @@ function AssetEditDrawer({
                 </Link>
                 {canEdit && (
                   <button type="button" onClick={() => setDocPickerOpen(true)}
-                    className="inline-flex items-center gap-1 normal-case tracking-normal px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-accent-text)] hover:border-[var(--color-accent)]">
+                    className="inline-flex items-center gap-1 normal-case tracking-normal px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-accent-text)] hover:border-[var(--color-main)]">
                     <Plus className="w-3 h-3" /> Link document
                   </button>
                 )}

@@ -436,7 +436,7 @@ function ActivityFeed({ adminView }: { adminView: boolean }) {
           { value: "admin", label: "Admin", count: count("admin") },
         ]} />
         <label className="ml-auto pb-2 shrink-0 inline-flex items-center gap-2 text-[14px] text-[var(--color-text)] cursor-pointer select-none">
-          <input type="checkbox" checked={onlyMine} onChange={(e) => setOnlyMine(e.target.checked)} className="w-4 h-4 accent-[var(--color-accent)]" />
+          <input type="checkbox" checked={onlyMine} onChange={(e) => setOnlyMine(e.target.checked)} className="w-4 h-4 accent-[var(--color-main)]" />
           Only mine
         </label>
       </div>

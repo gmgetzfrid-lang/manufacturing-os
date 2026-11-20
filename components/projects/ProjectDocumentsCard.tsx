@@ -169,7 +169,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
               placeholder="Search documents by number or title…"
               autoFocus
               aria-label="Search documents"
-              className="h-10 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-8 pr-2 text-[15px] focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none"
+              className="h-10 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-8 pr-2 text-[15px] focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none"
             />
           </div>
           {searching && <div className="mt-1.5 text-[13px] text-[var(--color-text-muted)]">Searching…</div>}

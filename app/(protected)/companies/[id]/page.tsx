@@ -237,7 +237,7 @@ function Faint({ children }: { children: React.ReactNode }) {
   return <span className="text-[var(--color-text-faint)]">{children}</span>;
 }
 
-const FIELD = "h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[15px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40";
+const FIELD = "h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[15px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40";
 const LABEL = "block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5";
 const TH = "font-semibold px-4 h-10 whitespace-nowrap";
 

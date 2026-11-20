@@ -1,23 +1,26 @@
 "use client";
 
-// The page frame every screen shares, drawn like the title block of an
+// The page frame every screen shares. The header is a band in the main
+// (brand) color, edge to edge, drawn like the title block of an
 // engineering drawing: the page's answer in big condensed type on the left
-// (what matters right now, e.g. "43 things need you"), the few facts that
-// back it up in ruled cells beside it, and the one main action at the end.
-// It sits on the grey panel; there is no colored block. Below it, sections
-// are a heading and their content on a white sheet, full width.
+// (what matters right now, e.g. "43 things need you"), the facts that back
+// it up in ruled cells beside it, and the one main action at the end in the
+// accent color, so it is the first thing the eye lands on. Tabs, search
+// and filters sit just under the band. Below, sections are a heading and
+// their content on a white sheet, full width.
 
 import React from "react";
 import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
 
-/** A secondary button: white, ruled, graphite text. */
+/** A secondary button. On the band it is white glass; on a sheet, white
+ *  with a ruled edge. */
 export const heroQuiet =
   "inline-flex items-center justify-center gap-1.5 h-9 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-text-faint)] disabled:opacity-50 transition-colors";
 
-/** The page's one main action: filled with the signal color. */
+/** The page's one main action: the accent, the color that pops. */
 export const heroPrimary =
-  "inline-flex items-center justify-center gap-2 h-10 px-4 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[15px] font-semibold hover:bg-[var(--color-accent-hover)] shadow-[0_1px_0_rgb(0_0_0/0.12)] disabled:opacity-50 transition-colors";
+  "inline-flex items-center justify-center gap-2 h-11 px-5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[15px] font-bold hover:bg-[var(--color-accent-hover)] shadow-[0_8px_20px_-8px_rgb(0_0_0/0.45)] disabled:opacity-50 transition-colors";
 
 /** One ruled cell in the title block: a fact that backs up the answer. */
 export interface HeroFact { label: React.ReactNode; value: React.ReactNode; tone?: "bad" | "warn" | "good" }
@@ -57,48 +60,56 @@ export function PageHero({
   overlap?: boolean;
   className?: string;
 }) {
-  const big = size === "lg" ? "text-[30px] sm:text-[38px]" : "text-[26px] sm:text-[32px]";
-  const tone = (t?: HeroFact["tone"]) => t === "bad" ? "text-[var(--state-overdue)]" : t === "warn" ? "text-[var(--state-held)]" : t === "good" ? "text-[var(--state-released)]" : "text-[var(--color-text)]";
+  const big = size === "lg" ? "text-[32px] sm:text-[42px]" : "text-[28px] sm:text-[34px]";
+  // A late or waiting number is a chip in its status color, so it jumps out.
+  const chip = (t?: HeroFact["tone"]) =>
+    t === "bad" ? "bg-[var(--state-overdue)] text-white px-2 rounded-md"
+      : t === "warn" ? "bg-[#f5b301] text-[#1f2733] px-2 rounded-md"
+        : t === "good" ? "bg-[var(--state-released)] text-white px-2 rounded-md" : "";
   return (
     <>
-      <header className={`page-head ${children ? "" : "pb-5 border-b border-[var(--color-border-strong)]"} ${className}`}>
+      <header
+        className={`page-head relative bg-[var(--color-band)] -mt-6 pt-5 pb-6 sm:pb-7 [box-shadow:0_0_0_100vmax_var(--color-band)] [clip-path:inset(0_-100vmax)] ${children ? "" : "mb-1"} ${className}`}
+      >
         {(back || kicker || tools) && (
-          <div className="flex items-center gap-2 min-h-9 mb-1">
+          <div className="flex items-center gap-2 min-h-9 mb-1.5">
             {back && (back.href ? (
               <Link href={back.href} aria-label={back.label}
-                className="-ml-2 w-8 h-8 rounded-md grid place-items-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]">
+                className="-ml-2 w-8 h-8 rounded-md grid place-items-center text-white/85 hover:text-white hover:bg-white/15">
                 <ChevronLeft className="w-5 h-5" />
               </Link>
             ) : (
               <button type="button" onClick={back.onClick} aria-label={back.label}
-                className="-ml-2 w-8 h-8 rounded-md grid place-items-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]">
+                className="-ml-2 w-8 h-8 rounded-md grid place-items-center text-white/85 hover:text-white hover:bg-white/15">
                 <ChevronLeft className="w-5 h-5" />
               </button>
             ))}
-            {kicker && <div className="min-w-0 truncate text-[14px] font-medium text-[var(--color-text-muted)]">{kicker}</div>}
+            {kicker && <div className="min-w-0 truncate text-[14px] font-medium text-white/80">{kicker}</div>}
             <div className="flex-1" />
             {tools && <div className="flex items-center gap-2 shrink-0">{tools}</div>}
           </div>
         )}
         <div className="flex flex-wrap items-stretch gap-x-0 gap-y-4">
           <div className="min-w-0 flex-1 basis-[360px] pr-6 self-center">
-            <h1 className={`font-display ${big} leading-[1.05] font-semibold tracking-[-0.01em] text-[var(--color-text)]`}>{title}</h1>
-            {sub && <p className="mt-2 text-[15px] leading-snug text-[var(--color-text-muted)] max-w-[70ch]">{sub}</p>}
+            <h1 className={`font-display ${big} leading-[1.04] font-semibold tracking-[-0.01em] text-white`}>{title}</h1>
+            {sub && <p className="mt-2 text-[15px] leading-snug text-white/85 max-w-[70ch]">{sub}</p>}
           </div>
           {facts && facts.length > 0 && (
-            <dl className="grid grid-flow-col auto-cols-fr max-sm:w-full max-sm:border-t max-sm:border-[var(--color-border-strong)] max-sm:pt-3">
+            <dl className="grid grid-flow-col auto-cols-fr max-sm:w-full max-sm:border-t max-sm:border-white/25 max-sm:pt-3">
               {facts.slice(0, 4).map((f, i) => (
-                <div key={i} className="min-w-0 px-3 sm:px-5 max-sm:first:pl-0 sm:border-l max-sm:[&+&]:border-l border-[var(--color-border-strong)] flex flex-col justify-center sm:min-w-[96px]">
-                  <dt className="text-[13px] text-[var(--color-text-muted)] truncate">{f.label}</dt>
-                  <dd className={`font-display text-[22px] sm:text-[28px] leading-none mt-1 font-semibold tabular-nums truncate ${tone(f.tone)}`}>{f.value}</dd>
+                <div key={i} className="min-w-0 px-3 sm:px-5 max-sm:first:pl-0 sm:border-l max-sm:[&+&]:border-l border-white/25 flex flex-col justify-center sm:min-w-[96px]">
+                  <dt className="text-[13px] text-white/80 truncate">{f.label}</dt>
+                  <dd className="mt-1.5 leading-none">
+                    <span className={`inline-block font-display text-[22px] sm:text-[28px] leading-[1.15] font-semibold tabular-nums text-white ${chip(f.tone)}`}>{f.value}</span>
+                  </dd>
                 </div>
               ))}
             </dl>
           )}
-          {primary && <div className={`max-sm:hidden shrink-0 self-center ${facts?.length ? "pl-5 border-l border-[var(--color-border-strong)]" : ""}`}>{primary}</div>}
+          {primary && <div className={`max-sm:hidden shrink-0 self-center ${facts?.length ? "pl-5 border-l border-white/25" : ""}`}>{primary}</div>}
         </div>
-        {children && <div className="mt-5">{children}</div>}
       </header>
+      {children && <div className="mt-4">{children}</div>}
       {primary && (
         // On a phone the one action sits where a thumb reaches it.
         <div className="sm:hidden fixed inset-x-0 bottom-0 z-40 px-3.5 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))] bg-[color-mix(in_srgb,var(--color-canvas)_94%,transparent)] border-t border-[var(--color-border)] [&>*]:w-full">

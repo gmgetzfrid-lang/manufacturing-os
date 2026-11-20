@@ -246,7 +246,7 @@ export default function PlotPlanBoard() {
               <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">Place an asset</div>
               <div className="relative">
                 <Search className="w-3.5 h-3.5 text-[var(--color-text-faint)] absolute left-2.5 top-1/2 -translate-y-1/2" />
-                <input value={pickerSearch} onChange={(e) => setPickerSearch(e.target.value)} aria-label="Search equipment" placeholder="Search equipment…" className="w-full h-9 pl-8 pr-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[14px] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40" />
+                <input value={pickerSearch} onChange={(e) => setPickerSearch(e.target.value)} aria-label="Search equipment" placeholder="Search equipment…" className="w-full h-9 pl-8 pr-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[14px] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40" />
               </div>
               {placingAssetId && <div className="mt-2 text-[13px] font-semibold text-[var(--color-text)] bg-[var(--color-surface-2)] rounded px-2 py-1">Now tap the drawing to place {assetById.get(placingAssetId)?.tag}.</div>}
             </div>

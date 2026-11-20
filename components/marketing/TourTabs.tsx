@@ -140,7 +140,7 @@ function MockupFrame({ url, side, children }: { url: string; side?: number; chil
           <div className="hidden sm:flex w-12 shrink-0 flex-col items-center gap-2 py-3 bg-[var(--color-surface)] border-r border-[var(--color-border)]">
             <span className="w-6 h-6 rounded bg-[var(--color-text)] mb-2" />
             {[0, 1, 2, 3, 4, 5].map((i) => (
-              <span key={i} className={`w-7 h-7 rounded ${i === side ? "bg-[var(--color-accent-soft)] ring-1 ring-[var(--color-accent)]" : "bg-[var(--color-surface-2)]"}`} />
+              <span key={i} className={`w-7 h-7 rounded ${i === side ? "bg-[var(--color-accent-soft)] ring-1 ring-[var(--color-main)]" : "bg-[var(--color-surface-2)]"}`} />
             ))}
           </div>
         )}

@@ -413,7 +413,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
           {drag.over && <div className="absolute inset-0 z-[1] flex items-center justify-center rounded-lg text-[13px] font-bold text-[var(--color-text)] pointer-events-none">{drag.say}</div>}
           <textarea value={note} onChange={(e) => setDraft(e.target.value)} rows={note.length > 400 ? 10 : 4} aria-label="What happened"
             placeholder={"What happened? Name the equipment or WO, like you'd tell your relief.\nE-02 channel head is on the ground, they pulled it and washed it, staging to put it back.\nV-1 trays 50%. V-3 on hold, scaffold not built."}
-            className="w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-2 text-[14px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/40" />
+            className="w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-2 text-[14px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--color-main)]/40" />
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" onClick={toggleMic} disabled={!canSpeak} title={canSpeak ? undefined : "Use the microphone on your phone's keyboard to speak into the box"}
@@ -713,7 +713,7 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
                   </button>
                 ))}
                 {onAll && options.length > 1 && (
-                  <button type="button" onClick={onAll} className="rounded-lg border border-dashed border-[var(--color-accent)] px-2.5 py-1.5 text-[12px] font-bold text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]">
+                  <button type="button" onClick={onAll} className="rounded-lg border border-dashed border-[var(--color-main)] px-2.5 py-1.5 text-[12px] font-bold text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]">
                     All {options.length} of these
                   </button>
                 )}
@@ -725,7 +725,7 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
               </label>
               {found.length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
-                  {found.map((o) => <button key={o.id} type="button" onClick={() => { onEdit({ stepId: o.id, options: [] }); setFind(""); }} className={`${pill} border-[var(--color-accent)] text-[var(--color-text)]`}>{o.wo ? `WO ${o.wo} · ` : ""}{o.name}</button>)}
+                  {found.map((o) => <button key={o.id} type="button" onClick={() => { onEdit({ stepId: o.id, options: [] }); setFind(""); }} className={`${pill} border-[var(--color-main)] text-[var(--color-text)]`}>{o.wo ? `WO ${o.wo} · ` : ""}{o.name}</button>)}
                 </div>
               )}
             </div>
