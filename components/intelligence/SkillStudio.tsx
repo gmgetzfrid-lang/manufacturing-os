@@ -126,7 +126,7 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
 
   return (
     <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] p-4" onClick={onClose}>
-      <div className="w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-2xl bg-[var(--color-surface)] shadow-2xl"
+      <div className="w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-lg bg-[var(--color-surface)] shadow-2xl"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)]">
           {phase === "edit" && (
@@ -137,12 +137,12 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
           )}
           <Sparkles className="w-4 h-4 text-[var(--color-text-muted)]" />
           <div className="flex-1">
-            <div className="text-sm font-black text-[var(--color-text)]">
+            <div className="font-display text-[17px] font-semibold text-[var(--color-text)]">
               {phase === "describe"
                 ? (kind === "reasoning" ? "New reasoning skill" : "New connection skill")
                 : (kind === "reasoning" ? "Refine it, then publish" : "Prove it, then publish")}
             </div>
-            <div className="text-[11px] text-[var(--color-text-muted)]">
+            <div className="text-[13px] text-[var(--color-text-muted)]">
               {phase === "describe"
                 ? (kind === "reasoning"
                   ? "Teach the AI a discipline for how it answers: when it applies, and what it must do."
@@ -169,32 +169,32 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
               placeholder={kind === "reasoning"
                 ? 'Describe the discipline in your own words…\n\ne.g. "When someone asks about torque values, always state the lubrication condition the value assumes and warn if the passage does not say."'
                 : 'Describe the connection in your own words…\n\ne.g. "Our maintenance procedures reference work orders like WO-48122, and inspection reports cite permits written as PTW-2024-0113."'}
-              className="w-full px-3 py-2.5 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm leading-relaxed"
+              className="w-full px-3 py-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm leading-relaxed"
             />
             {error && (
-              <div role="alert" className="flex items-start gap-2 border-l-2 border-rose-500 pl-2.5 text-[11px] text-rose-700 dark:text-rose-300">
+              <div role="alert" className="flex items-start gap-2 border-l-2 border-[var(--state-overdue)] pl-2.5 text-[13px] text-[var(--state-overdue)]">
                 <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
               </div>
             )}
             <div className="flex items-center gap-2">
               <button onClick={() => void draft()} disabled={drafting || describeText.trim().length < 8}
-                className="flex-1 inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+                className="flex-1 inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-lg text-[13px] font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
                 {drafting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
                 {drafting ? "Drafting with your model…" : "Draft it with AI"}
               </button>
               <button onClick={() => setPhase("edit")}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-bold text-[var(--color-text-muted)] border border-[var(--color-border-strong)] hover:text-[var(--color-text)]">
+                className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg text-[13px] font-bold text-[var(--color-text-muted)] border border-[var(--color-border-strong)] hover:text-[var(--color-text)]">
                 <PenLine className="w-3.5 h-3.5" /> Start blank
               </button>
             </div>
-            <p className="text-[11px] text-[var(--color-text-faint)]">
+            <p className="text-[13px] text-[var(--color-text-faint)]">
               Drafting runs on your own AI key and lands in an editor. You publish it, never the model.
             </p>
           </div>
         ) : (
           <div className="p-4 space-y-3">
             {draftNote && (
-              <div className="text-[11px] text-amber-700 dark:text-amber-300 border-l-2 border-amber-500 pl-2.5">{draftNote}</div>
+              <div className="text-[13px] text-[var(--state-held)] border-l-2 border-[var(--state-held)] pl-2.5">{draftNote}</div>
             )}
             <div>
               <label className="text-[13px] font-semibold text-[var(--color-text-muted)]">Name</label>
@@ -223,7 +223,7 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
                   rows={7}
                   className="mt-1 w-full px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm leading-relaxed" />
                 {instructions.trim().length > 0 && !/applies when/i.test(instructions) && (
-                  <div className="mt-1 text-[11px] text-amber-700">
+                  <div className="mt-1 text-[13px] text-[var(--state-held)]">
                     Start with &ldquo;APPLIES WHEN …&rdquo;. The pack rides every question and must gate itself.
                   </div>
                 )}
@@ -240,13 +240,13 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
                 rows={3}
                 className="mt-1 w-full px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm font-mono" />
               {test.errors.length > 0 && (
-                <div className="mt-1 text-[11px] text-rose-600">{test.errors[0]}</div>
+                <div className="mt-1 text-[13px] text-[var(--state-overdue)]">{test.errors[0]}</div>
               )}
             </div>
             )}
 
             {kind === "connection" && (
-            <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 p-3">
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 p-3">
               <div className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">
                 <FlaskConical className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Prove it on real text
               </div>
@@ -257,9 +257,9 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
               {sample && patterns.length > 0 && (
                 <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
                   {test.matches.length === 0 ? (
-                    <span className="text-[11px] text-amber-700">No matches in this sample.</span>
+                    <span className="text-[13px] text-[var(--state-held)]">No matches in this sample.</span>
                   ) : test.matches.map((m) => (
-                    <span key={m} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-950/50 text-[11px] font-mono font-bold text-emerald-800 dark:text-emerald-300"
+                    <span key={m} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[14px] font-display font-semibold text-[var(--color-text)]"
                       style={{ animation: "pop 0.2s var(--ease-fluid) both" }}>
                       <CheckCircle2 className="w-3 h-3" /> {m}
                     </span>
@@ -273,19 +273,19 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
               <label className="text-[13px] font-semibold text-[var(--color-text-muted)]">Sharing</label>
               <div className="mt-1 flex items-center gap-2">
                 <button type="button" onClick={() => setVisibility("org")} aria-pressed={visibility === "org"}
-                  className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border text-[11px] font-black ${visibility === "org"
+                  className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border text-[13px] font-semibold ${visibility === "org"
                     ? "border-[var(--color-text)] text-[var(--color-surface)] bg-[var(--color-text)] dark:bg-[var(--color-surface-2)]"
                     : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`}>
                   <Users className="w-3.5 h-3.5" /> Share org-wide
                 </button>
                 <button type="button" onClick={() => setVisibility("private")} aria-pressed={visibility === "private"}
-                  className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border text-[11px] font-black ${visibility === "private"
+                  className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border text-[13px] font-semibold ${visibility === "private"
                     ? "border-[var(--color-text)] text-[var(--color-surface)] bg-[var(--color-text)] dark:bg-[var(--color-surface-2)]"
                     : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`}>
                   <Lock className="w-3.5 h-3.5" /> Just me
                 </button>
               </div>
-              <p className="mt-1 text-[11px] text-[var(--color-text-faint)]">
+              <p className="mt-1 text-[13px] text-[var(--color-text-faint)]">
                 {kind === "reasoning"
                   ? "Org-wide rides every member's questions; private rides only yours. It shapes reasoning and reporting, never the citation or safety rules."
                   : "Either way its findings only queue for review. Custom skills never apply links by themselves."}
@@ -293,20 +293,20 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
             </div>
 
             {error && (
-              <div role="alert" className="flex items-start gap-2 border-l-2 border-rose-500 pl-2.5 text-[11px] text-rose-700 dark:text-rose-300">
+              <div role="alert" className="flex items-start gap-2 border-l-2 border-[var(--state-overdue)] pl-2.5 text-[13px] text-[var(--state-overdue)]">
                 <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
               </div>
             )}
 
             <div className="flex items-center justify-end gap-2 pt-1">
-              <button onClick={onClose} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+              <button onClick={onClose} className="px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
                 Cancel
               </button>
               <button onClick={() => void save()}
                 disabled={saving || !name.trim() || (kind === "reasoning"
                   ? instructions.trim().length < 40
                   : patterns.length === 0 || test.errors.length > 0)}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-[13px] font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
                 {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
                 Publish skill
               </button>

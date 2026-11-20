@@ -81,20 +81,20 @@ export default function FormFillModal({ orgId, documentId, formName, question, a
           </div>
         )}
         {error && (
-          <div role="alert" className="flex items-start gap-2 text-[14px] font-semibold text-rose-700 dark:text-rose-300">
+          <div role="alert" className="flex items-start gap-2 text-[14px] font-semibold text-[var(--state-overdue)]">
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> <span>{draft ? "That didn't work: " : "Couldn't draft the form: "}{error}</span>
           </div>
         )}
         {draft && (
           <>
             {draft.notes && (
-              <p className="flex items-start gap-2 text-[13.5px] leading-relaxed text-[var(--color-text-muted)]">
+              <p className="flex items-start gap-2 text-[14px] leading-relaxed text-[var(--color-text-muted)]">
                 <Sparkles className="w-4 h-4 mt-0.5 shrink-0" /> <span>{draft.notes}</span>
               </p>
             )}
             {missing.length > 0 && (
-              <p className="flex items-start gap-2 text-[13.5px] text-amber-900 dark:text-amber-200">
-                <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" />
+              <p className="flex items-start gap-2 text-[14px] text-[var(--state-held)]">
+                <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-held)]" />
                 <span><b>{missing.length} field{missing.length === 1 ? "" : "s"} need you:</b> {missing.slice(0, 8).map((f) => f.label).join(", ")}{missing.length > 8 ? "…" : ""}</span>
               </p>
             )}
@@ -108,15 +108,15 @@ export default function FormFillModal({ orgId, documentId, formName, question, a
         )}
       </ModalBody>
       <ModalFooter>
-        <span className="mr-auto text-[12.5px] text-[var(--color-text-muted)] max-sm:hidden">Check every field before you submit it.</span>
+        <span className="mr-auto text-[13px] text-[var(--color-text-muted)] max-sm:hidden">Check every field before you submit it.</span>
         {draft && (
           <button type="button" onClick={() => void copyAll()}
             className="inline-flex items-center gap-1.5 h-10 text-[13px] font-bold px-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)]">
-            {copied ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />} {copied ? "Copied" : "Copy as text"}
+            {copied ? <Check className="w-4 h-4 text-[var(--state-released)]" /> : <Copy className="w-4 h-4" />} {copied ? "Copied" : "Copy as text"}
           </button>
         )}
         <button type="button" onClick={() => void download()} disabled={!draft || busy !== null}
-          className="inline-flex items-center gap-1.5 h-10 text-[13.5px] font-extrabold px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] shadow-[0_10px_20px_-12px_var(--color-accent)] disabled:opacity-50 disabled:shadow-none">
+          className="inline-flex items-center gap-1.5 h-10 text-[14px] font-semibold px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] shadow-[0_10px_20px_-12px_var(--color-accent)] disabled:opacity-50 disabled:shadow-none">
           {busy === "download" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} {busy === "download" ? "Filling the PDF…" : "Download filled PDF"}
         </button>
       </ModalFooter>
@@ -136,7 +136,7 @@ function FieldInput({ field: f, value, onChange, needsYou }: {
     <div className="py-3">
       <label htmlFor={id} className="flex items-center gap-2 text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">
         {f.label}
-        {needsYou && <span className="text-[13px] font-semibold text-amber-700 dark:text-amber-400">· needs you</span>}
+        {needsYou && <span className="text-[13px] font-semibold text-[var(--state-held)]">· needs you</span>}
       </label>
       {f.kind === "long" ? (
         <textarea id={id} value={value} onChange={(e) => onChange(e.target.value)} rows={Math.min(14, Math.max(4, Math.ceil(value.length / 90)))} className={`${base} leading-relaxed`} />

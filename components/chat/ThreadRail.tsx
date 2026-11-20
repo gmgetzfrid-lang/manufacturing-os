@@ -14,6 +14,7 @@ import {
 import type { ChatThread } from "@/lib/chatClient";
 import { SCOPE_META, relativeTime } from "./shared";
 import LoadingBlock from "@/components/ui/LoadingBlock";
+import { bandSeg, bandSegItem } from "@/components/admin/band";
 
 export interface RailProps {
   threads: ChatThread[];
@@ -64,49 +65,41 @@ export default function ThreadRail(p: RailProps) {
               value={q} onChange={(e) => setQ(e.target.value)}
               placeholder="Search conversations"
               aria-label="Search conversations"
-              className="w-full h-9 pl-8 pr-2 text-[13px] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-border-strong)] focus:ring-2 focus:ring-[var(--color-border)]"
+              className="w-full h-9 pl-8 pr-2 text-[14px] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
             />
           </div>
           <button onClick={p.onNew} title="New conversation" aria-label="New conversation"
-            className="shrink-0 h-9 w-9 inline-flex items-center justify-center rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 transition-opacity">
+            className="shrink-0 h-9 w-9 inline-flex items-center justify-center rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
             <Plus className="w-4 h-4" />
           </button>
           {p.onClose && (
             <button onClick={p.onClose} title="Hide conversations" aria-label="Hide conversations"
-              className="shrink-0 h-9 w-9 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors">
+              className="shrink-0 h-9 w-9 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
               <PanelLeftClose className="w-4 h-4" />
             </button>
           )}
         </div>
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <button onClick={() => setMine(false)} aria-pressed={!mine}
-            className={`h-7 text-[12px] font-bold px-2.5 rounded-md border transition-colors ${!mine
-              ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]"
-              : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
-            Everyone
-          </button>
-          <button onClick={() => setMine(true)} aria-pressed={mine}
-            className={`h-7 text-[12px] font-bold px-2.5 rounded-md border transition-colors ${mine
-              ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]"
-              : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
-            Mine
-          </button>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <div className={bandSeg} role="group" aria-label="Whose conversations">
+            <button onClick={() => setMine(false)} aria-pressed={!mine} className={`${bandSegItem(!mine)} !h-7 !text-[13px]`}>Everyone</button>
+            <button onClick={() => setMine(true)} aria-pressed={mine} className={`${bandSegItem(mine)} !h-7 !text-[13px]`}>Mine</button>
+          </div>
           {p.libraryFilter && (
             <button onClick={p.onClearLibraryFilter} title="Show every conversation" aria-label={`Stop showing only ${p.libraryFilter.name}`}
-              className="ml-auto inline-flex items-center gap-1 h-7 text-[12px] font-bold px-2 rounded-md border border-[var(--color-border-strong)] text-[var(--color-text)] bg-[var(--color-surface-2)] max-w-[55%]">
-              <span className="truncate">{p.libraryFilter.name}</span> <X className="w-3 h-3 shrink-0" />
+              className="ml-auto inline-flex items-center gap-1 h-8 text-[13px] font-semibold px-2 rounded-md border border-[var(--color-border-strong)] text-[var(--color-text)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] min-w-0 max-w-[55%]">
+              <span className="truncate">{p.libraryFilter.name}</span> <X className="w-3.5 h-3.5 shrink-0" />
             </button>
           )}
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-2 pb-3">
+      <div className="flex-1 overflow-y-auto pb-3">
         {p.error ? (
-          <p role="alert" className="px-2 py-3 text-[13px] font-semibold text-rose-700 dark:text-rose-400">Couldn&apos;t load the conversations: {p.error}</p>
+          <p role="alert" className="px-3 py-3 text-[13px] font-semibold text-[var(--state-overdue)]">Couldn&apos;t load the conversations: {p.error}</p>
         ) : p.loading && p.threads.length === 0 ? (
-          <LoadingBlock what="conversations" rows={4} className="mx-1 mt-1" />
+          <LoadingBlock what="conversations" rows={4} className="mx-3 mt-1" />
         ) : filtered.length === 0 ? (
-          <p className="px-2 py-6 text-center text-[13px] text-[var(--color-text-muted)]">
+          <p className="px-3 py-6 text-center text-[14px] text-[var(--color-text-muted)]">
             {p.threads.length === 0
               ? "No conversations yet. Ask the first question."
               : "Nothing matches."}
@@ -124,14 +117,14 @@ export default function ThreadRail(p: RailProps) {
               </Section>
             )}
             {settled.length > 0 && (
-              <div className="mt-2">
+              <div className="mt-3">
                 <button onClick={() => setSettledOpen((v) => !v)}
                   aria-expanded={settledOpen}
-                  className="w-full flex items-center gap-1 px-2 py-1 text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
-                  {settledOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-                  Settled <span className="font-bold normal-case tracking-normal">({settled.length})</span>
+                  className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                  {settledOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                  Settled <span className="font-display tabular-nums">{settled.length}</span>
                 </button>
-                {settledOpen && settled.map((t) => <Row key={t.id} t={t} p={p} />)}
+                {settledOpen && <div className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">{settled.map((t) => <Row key={t.id} t={t} p={p} />)}</div>}
               </div>
             )}
           </>
@@ -143,9 +136,9 @@ export default function ThreadRail(p: RailProps) {
 
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="mt-2">
-      <div className="px-2 py-1 text-[13px] font-semibold text-[var(--color-text-muted)]">{label}</div>
-      <div className="space-y-0.5">{children}</div>
+    <div className="mt-3">
+      <div className="px-3 pb-1 text-[13px] font-semibold text-[var(--color-text-muted)]">{label}</div>
+      <div className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">{children}</div>
     </div>
   );
 }
@@ -174,29 +167,33 @@ function Row({ t, p }: { t: ChatThread; p: RailProps }) {
   };
 
   return (
-    <div ref={ref} className={`group relative rounded-lg transition-colors ${active
-      ? "bg-[var(--color-surface-2)]"
-      : "hover:bg-[var(--color-surface-2)]"}`}>
+    // Where you are: the soft tint of the signal color with a bar on its
+    // edge, the same mark as the side menu.
+    <div ref={ref} style={active ? { backgroundColor: "var(--color-accent-soft)" } : undefined}
+      className={`group relative transition-colors ${active ? "" : "hover:bg-[var(--color-surface-2)]"}`}>
+      {active && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--color-accent)]" />}
       {renaming ? (
-        <div className="px-2 py-1.5">
+        <div className="px-3 py-2">
           <input
             autoFocus value={title} onChange={(e) => setTitle(e.target.value)}
             onBlur={commitRename}
             onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") { setTitle(t.title); setRenaming(false); } }}
             aria-label="Conversation name"
-            className="w-full h-8 px-2 text-[13px] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-border)]"
+            className="w-full h-9 px-2 text-[14px] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
           />
         </div>
       ) : (
-        <button onClick={() => p.onOpen(t)} aria-current={active ? "page" : undefined} className="w-full text-left px-2.5 py-2 pr-8">
-          <div className="flex items-center gap-1.5 min-w-0">
+        <button onClick={() => p.onOpen(t)} aria-current={active ? "page" : undefined} className="w-full text-left pl-3 pr-9 py-2.5">
+          <div className="flex items-center gap-2 min-w-0">
             <Icon className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" />
-            <span className={`text-[13px] truncate ${active ? "font-extrabold text-[var(--color-text)]" : "font-semibold text-[var(--color-text)]"}`}>
+            <span className={`min-w-0 flex-1 text-[14px] truncate ${active ? "font-semibold text-[var(--color-accent-text)]" : "font-medium text-[var(--color-text)]"}`}>
               {t.title || "Untitled"}
             </span>
           </div>
-          <div className="pl-5 text-[11.5px] text-[var(--color-text-muted)] truncate">
-            {libName ? `${libName} · ` : ""}{who} · {relativeTime(t.lastMessageAt)}
+          <div className="mt-0.5 pl-[22px] flex items-center gap-2 min-w-0 text-[13px] text-[var(--color-text-muted)]">
+            <span className="shrink-0">{who}</span>
+            {libName && <span className="min-w-0 truncate text-[var(--color-text-faint)]">{libName}</span>}
+            <span className="ml-auto shrink-0 tabular-nums">{relativeTime(t.lastMessageAt)}</span>
           </div>
         </button>
       )}
@@ -206,11 +203,11 @@ function Row({ t, p }: { t: ChatThread; p: RailProps }) {
         aria-label="More"
         aria-haspopup="menu"
         aria-expanded={menu}
-        className={`absolute right-1 top-2 p-1 rounded-md text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-opacity ${menu ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus:opacity-100 [@media(hover:none)]:opacity-100"}`}>
-        <MoreHorizontal className="w-3.5 h-3.5" />
+        className={`absolute right-1.5 top-2 w-7 h-7 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-opacity ${menu ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus:opacity-100 [@media(hover:none)]:opacity-100"}`}>
+        <MoreHorizontal className="w-4 h-4" />
       </button>
       {menu && (
-        <div className="absolute right-1 top-9 z-20 w-44 rounded-xl bg-[var(--color-surface)] shadow-2xl ring-1 ring-[var(--color-border)] p-1 animate-pop">
+        <div role="menu" className="absolute right-1.5 top-10 z-20 w-44 rounded-lg bg-[var(--color-surface)] shadow-2xl ring-1 ring-[var(--color-border-strong)] p-1 animate-pop">
           <MenuItem icon={t.pinned ? PinOff : Pin} label={t.pinned ? "Unpin" : "Pin"}
             onClick={() => { setMenu(false); p.onPin(t, !t.pinned); }} />
           <MenuItem icon={t.settledAt ? ArchiveRestore : Archive} label={t.settledAt ? "Reopen" : "Settle"}
@@ -227,9 +224,9 @@ function MenuItem({ icon: Icon, label, onClick, danger }: {
   icon: React.ComponentType<{ className?: string }>; label: string; onClick: () => void; danger?: boolean;
 }) {
   return (
-    <button onClick={onClick}
-      className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-semibold transition-colors ${danger
-        ? "text-rose-600 hover:bg-rose-500/10"
+    <button onClick={onClick} role="menuitem"
+      className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-md text-[14px] font-medium transition-colors ${danger
+        ? "text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)]"
         : "text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
       <Icon className="w-3.5 h-3.5" /> {label}
     </button>

@@ -7,8 +7,8 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
-  Sparkles, Loader2, FileText, Upload,
-  Trash2, RefreshCw, CheckCircle2, AlertTriangle, History, Globe, Bot,
+  Loader2, FileText, Upload,
+  Trash2, RefreshCw, AlertTriangle, History, Globe, Bot,
   ChevronRight, ChevronDown, Wand2, Eye, MessageSquare, ArrowRight, FolderUp, Search,
 } from "lucide-react";
 import Link from "next/link";
@@ -17,6 +17,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import { useToast } from "@/components/providers/ToastProvider";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, Card, heroQuiet } from "@/components/ui/PageHero";
+import { bandSeg, bandSegItem } from "@/components/admin/band";
 import { Button } from "@/components/ui/Button";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import LoadingBlock from "@/components/ui/LoadingBlock";
@@ -448,7 +449,7 @@ export default function KnowledgeLibraryPage() {
         <PageBody>
           <Card>
             {loadError
-              ? <p role="alert" className="text-[14px] font-semibold text-red-700 dark:text-red-400">Couldn&apos;t open this library: {loadError}</p>
+              ? <p role="alert" className="text-[15px] font-semibold text-[var(--state-overdue)]">Couldn&apos;t open this library: {loadError}</p>
               : <p className="text-[14px] text-[var(--color-text-muted)]">It may have been deleted.</p>}
             <div className="mt-4 flex gap-2">
               {loadError && <Button variant="secondary" onClick={() => { setLoading(true); void refresh(); }}><RefreshCw className="w-4 h-4" /> Try again</Button>}
@@ -465,10 +466,18 @@ export default function KnowledgeLibraryPage() {
 
   // The answer: how much is in here, and how much of it can be asked.
   const answer = docs.length === 0
-    ? "Empty. Nothing to ask yet."
+    ? "Empty, nothing to ask yet"
     : readyDocs === docs.length
-      ? `${docs.length.toLocaleString()} ${docs.length === 1 ? "document" : "documents"}, all indexed.`
-      : `${docs.length.toLocaleString()} ${docs.length === 1 ? "document" : "documents"}, ${readyDocs.toLocaleString()} indexed.`;
+      ? `All ${docs.length.toLocaleString()} ${docs.length === 1 ? "document" : "documents"} indexed`
+      : readyDocs === 0
+        ? "Nothing indexed yet"
+        : `${readyDocs.toLocaleString()} of ${docs.length.toLocaleString()} documents indexed`;
+  const facts = docs.length > 0 ? [
+    { label: "Documents", value: docs.length.toLocaleString() },
+    { label: "Indexed", value: readyDocs.toLocaleString(), tone: readyDocs === docs.length ? "good" as const : undefined },
+    ...(indexingDocs > 0 ? [{ label: "In progress", value: indexingDocs.toLocaleString(), tone: "warn" as const }] : []),
+    ...(docGroups.failed > 0 ? [{ label: "Failed", value: docGroups.failed.toLocaleString(), tone: "bad" as const }] : []),
+  ] : undefined;
 
   return (
     <PageShell>
@@ -476,13 +485,16 @@ export default function KnowledgeLibraryPage() {
         back={{ href: "/knowledge", label: "Back to Knowledge" }}
         kicker={<>Knowledge · {library.name}</>}
         title={answer}
+        size="md"
+        facts={facts}
         sub={
           <>
-            {library.description || `${readyDocs} of ${docs.length} documents indexed and searchable.`}
-            {indexingDocs > 0 && <span className="block mt-1">{indexingDocs} in progress. Asking works on what&apos;s done.</span>}
+            {library.description ? <span className="line-clamp-2">{library.description}</span> : null}
+            {indexingDocs > 0 && <span className="block mt-1">Asking works on what&apos;s already indexed.</span>}
             {loadError && (
-              <span role="alert" className="block mt-1 text-rose-200 font-semibold">
-                Couldn&apos;t refresh the library: {loadError} <button type="button" onClick={() => void refresh()} className="font-bold underline text-white">Try again</button>
+              <span role="alert" className="block mt-1 text-[var(--state-overdue)] font-semibold">
+                Couldn&apos;t refresh the library: {loadError}{" "}
+                <button type="button" onClick={() => void refresh()} className="font-normal text-[var(--color-accent-text)] hover:underline">Try again</button>
               </span>
             )}
           </>
@@ -499,24 +511,22 @@ export default function KnowledgeLibraryPage() {
         ) : undefined}
       >
         {links.length > 0 && (
-          <div className="flex items-center gap-1.5 flex-wrap text-[12px] text-[var(--color-ink-text)]">
-            <span className="text-[13px] font-semibold text-[var(--color-ink-muted)] mr-1">Also searches</span>
+          <div className="flex items-center gap-x-3 gap-y-1 flex-wrap text-[14px] text-[var(--color-text-muted)]">
+            <span>Also searches</span>
             {links.map((l) => (
-              <span key={l.id} className="h-7 inline-flex items-center px-2.5 rounded-full border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] font-semibold text-[var(--color-ink-fg)]">
-                {l.linkedLibraryName} · reference
-              </span>
+              <span key={l.id} className="font-semibold text-[var(--color-text)]">{l.linkedLibraryName} <span className="font-normal text-[var(--color-text-muted)]">(reference)</span></span>
             ))}
-            <span className="ml-1">This library governs; answers say which document won.</span>
+            <span>This library governs; answers say which document won.</span>
           </div>
         )}
       </PageHero>
 
       <PageBody>
       {removing && (
-        <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] px-4 py-3 text-[13px]">
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-[14px]">
           <div className="flex items-center gap-2">
             <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" />
-            <span className="font-bold">{removing.label}…</span>
+            <span className="font-semibold">{removing.label}…</span>
             <span className="text-[var(--color-text-muted)] ml-auto">{removing.done} of {removing.total} documents removed</span>
           </div>
           {removing.total > 0 && (
@@ -546,25 +556,28 @@ export default function KnowledgeLibraryPage() {
       {/* Proof the answers hold up: real questions, re-asked and scored. */}
       {activeOrgId && isController && readyDocs > 0 && <AnswerTestsPanel orgId={activeOrgId} libraryId={libraryId} />}
 
-      <div>
+      <section>
         {/* ── Documents ──────────────────────────────────────────────────── */}
-        {/* The whole section is a drop target: files or folders (every PDF
+        <div className="flex items-end gap-3 mb-2.5 min-h-8">
+          <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Documents</h2>
+        </div>
+        {/* The whole sheet is a drop target: files or folders (every PDF
             inside, any depth), straight from the desktop. */}
         <div
           {...docsDrag.bind}
           onDrop={onDrop}
-          className={`rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 ${docsDrag.over ? docsDrag.ring : ""}`}
+          className={`rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5 ${docsDrag.over ? docsDrag.ring : ""}`}
         >
-          {docsDrag.over && <p className="mb-2 text-center text-sm font-bold text-[var(--color-text)]">{docsDrag.say}: PDFs and whole folders</p>}
+          {docsDrag.over && <p className="mb-2 text-center text-[15px] font-semibold text-[var(--color-text)]">{docsDrag.say}: PDFs and whole folders</p>}
           {activeOrgId && (
             <SourcesPanel orgId={activeOrgId} libraryId={libraryId}
               isController={isController} onChanged={() => void refresh()} />
           )}
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2 flex-wrap mb-3">
             <button onClick={() => setDocsOpen((v) => !v)} aria-expanded={docsOpen}
-              className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors">
-              {docsOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-              Documents ({readyDocs}/{docs.length} indexed{indexingDocs > 0 ? ` · ${indexingDocs} in progress` : ""})
+              className="flex items-center gap-1.5 text-[15px] font-semibold text-[var(--color-text)] hover:underline mr-auto">
+              {docsOpen ? <ChevronDown className="w-4 h-4 text-[var(--color-text-muted)]" /> : <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)]" />}
+              <span>{readyDocs.toLocaleString()} of {docs.length.toLocaleString()} indexed{indexingDocs > 0 && <span className="font-normal text-[var(--color-text-muted)]">, {indexingDocs} in progress</span>}</span>
             </button>
             {/* Re-index lives HERE, with the documents — not inside Drawing
                 Intelligence, where gating that panel to drawing sets briefly
@@ -590,9 +603,9 @@ export default function KnowledgeLibraryPage() {
                     showToast({ type: "error", title: (e as Error).message });
                   }
                 }}
-                className="text-[11px] font-black px-2 py-1 rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)] transition-colors mr-auto ml-3"
+                className={heroQuiet + " !h-8 !text-[13px]"}
               >
-                Re-index all
+                <RefreshCw className="w-3.5 h-3.5" /> Re-index all
               </button>
             )}
             {isController && (
@@ -623,173 +636,201 @@ export default function KnowledgeLibraryPage() {
           </div>
 
           {uploadState && (
-            <div className="mb-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 flex items-center gap-2 text-xs">
+            <div className="mb-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 flex items-center gap-2 text-[14px]">
               <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" />
-              <span className="font-bold truncate">{uploadState.name}</span>
+              <span className="font-semibold truncate">{uploadState.name}</span>
               <span className="text-[var(--color-text-muted)] shrink-0 ml-auto">{uploadState.phase}</span>
             </div>
           )}
           {failedUploads.length > 0 && (
             <ul className="mb-2 space-y-1">
               {failedUploads.map(({ file, error }) => (
-                <li key={`${file.name}-${file.size}-${file.lastModified}`} className="flex items-center gap-2 border-l-2 border-red-500 pl-2 text-xs">
-                  <span className="min-w-0 flex-1 truncate"><b className="text-[var(--color-text)]">{file.name}</b> <span className="text-[var(--color-text-muted)]">({(file.size / 1024 / 1024).toFixed(1)} MB)</span> <span className="text-red-700 dark:text-red-400 font-semibold">didn&apos;t upload: {error}</span></span>
-                  <button type="button" onClick={() => void retryUpload(file)} disabled={uploadState !== null} className="shrink-0 h-7 px-2.5 rounded-lg border border-[var(--color-border)] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Try again</button>
-                  <button type="button" onClick={() => setFailedUploads((fs) => fs.filter((f) => f.file !== file))} aria-label={`Dismiss ${file.name}`} className="shrink-0 px-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]">×</button>
+                <li key={`${file.name}-${file.size}-${file.lastModified}`} className="relative flex items-center gap-2 pl-4 py-0.5 text-[14px]">
+                  <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-overdue)]" />
+                  <span className="min-w-0 flex-1 truncate"><span className="font-semibold text-[var(--color-text)]">{file.name}</span> <span className="text-[var(--color-text-muted)]">({(file.size / 1024 / 1024).toFixed(1)} MB)</span> <span className="text-[var(--state-overdue)] font-semibold">didn&apos;t upload: {error}</span></span>
+                  <button type="button" onClick={() => void retryUpload(file)} disabled={uploadState !== null} className={heroQuiet + " !h-8 !text-[13px]"}>Try again</button>
+                  <button type="button" onClick={() => setFailedUploads((fs) => fs.filter((f) => f.file !== file))} aria-label={`Dismiss ${file.name}`} className="shrink-0 w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">×</button>
                 </li>
               ))}
             </ul>
           )}
           {autoIndexing && (
-            <div className="mb-2 rounded-xl border border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] px-3 py-2.5 text-xs">
+            <div className="mb-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2.5 text-[14px]">
               <div className="flex items-center gap-2">
                 <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" />
-                <span className="font-bold truncate">Indexing {autoIndexing.name}</span>
+                <span className="font-semibold truncate">Indexing {autoIndexing.name}</span>
                 <span className="text-[var(--color-text-muted)] shrink-0 ml-auto">
                   {autoIndexing.remaining} in queue. Keeps going anywhere in the app.
                 </span>
               </div>
               {(autoIndexing.visionPages ?? 0) > 0 && (
-                <div className="mt-1 flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
-                  <Eye className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
-                  <b className="text-[var(--color-text)]">{autoIndexing.visionPages}</b> page(s) had no text
+                <div className="mt-1 flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]">
+                  <Eye className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
+                  <span className="font-semibold text-[var(--color-text)]">{autoIndexing.visionPages}</span> page(s) had no text
                   layer, so AI vision read them (billed to your key, slower per page).
                 </div>
               )}
               {autoIndexing.visionSkipReason && (
-                <div className="mt-1 flex items-start gap-1.5 text-[11px] text-amber-700 dark:text-amber-400 font-bold">
-                  <AlertTriangle className="w-3 h-3 shrink-0 mt-px" /> {autoIndexing.visionSkipReason}
+                <div className="mt-1 flex items-start gap-1.5 text-[13px] text-[var(--color-text)] font-semibold">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-[var(--state-held)]" /> {autoIndexing.visionSkipReason}
                 </div>
               )}
               {autoIndexing.waiting && (
-                <div role="status" className="mt-1 flex items-start gap-1.5 text-[11px] text-amber-700 dark:text-amber-400 font-bold">
-                  <AlertTriangle className="w-3 h-3 shrink-0 mt-px" /> {autoIndexing.waiting}
+                <div role="status" className="mt-1 flex items-start gap-1.5 text-[13px] text-[var(--color-text)] font-semibold">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-[var(--state-held)]" /> {autoIndexing.waiting}
                 </div>
               )}
             </div>
           )}
 
           {!docsOpen && docs.length > 0 ? null : docs.length === 0 && !uploadState ? (
-            <div className="rounded-xl border border-dashed border-[var(--color-border-strong)] p-8 text-center text-[13px] text-[var(--color-text-muted)]">
+            <div className="rounded-md border border-dashed border-[var(--color-border-strong)] p-8 text-center text-[15px] text-[var(--color-text-muted)]">
               <FileText className="w-6 h-6 mx-auto mb-2 opacity-50" />
               {isController ? "Drag PDFs or whole folders here to build the shelf." : "No documents yet. Admin or Doc Control can add PDFs."}
             </div>
           ) : (
             <>
-            {isController && removable.length > 0 && (
-              <div className="mb-1.5 flex items-center gap-2 text-[11px]">
-                <label className="inline-flex items-center gap-1.5 font-bold text-[var(--color-text-muted)] cursor-pointer select-none">
-                  <input type="checkbox" className="accent-[var(--color-text)]"
-                    checked={selected.size > 0 && selected.size === removable.length}
-                    ref={(el) => { if (el) el.indeterminate = selected.size > 0 && selected.size < removable.length; }}
-                    onChange={() => setSelected(selected.size === removable.length ? new Set() : new Set(removable.map((d) => d.id)))} />
-                  {selected.size > 0 ? `${selected.size} selected` : "Select all"}
-                </label>
-                {selected.size > 0 && (
-                  <>
-                    <button onClick={() => void removeDocs([...selected])} disabled={removing !== null}
-                      className="inline-flex items-center gap-1 h-7 px-2.5 rounded-lg bg-rose-600 text-white font-black hover:bg-rose-700 disabled:opacity-50">
-                      <Trash2 className="w-3.5 h-3.5" /> Remove {selected.size}
-                    </button>
-                    <button onClick={() => setSelected(new Set())} className="font-bold text-[var(--color-text-muted)] hover:underline">Clear</button>
-                  </>
-                )}
-              </div>
-            )}
-            <div className="mb-2 flex items-center gap-2 flex-wrap">
+            <div className="mb-3 flex items-center gap-2 flex-wrap">
               <div className="relative flex-1 min-w-[200px]">
-                <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
                 <input id="kdoc-search" value={docQuery} onChange={(e) => { setDocQuery(e.target.value); setDocLimit(200); }}
+                  aria-label="Search documents"
                   placeholder={`Search ${docs.length.toLocaleString()} documents: "EP 5-2-3", "piping specs"…`}
-                  className="w-full h-9 pl-8 pr-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[13px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-border-strong)]" />
+                  className="w-full h-9 pl-9 pr-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40" />
               </div>
-              <div className="flex items-center gap-1 flex-wrap">
+              <div className={bandSeg} role="group" aria-label="Show">
                 {([
                   ["all", "All"], ["ready", "Fully indexed"], ["partial", "Partly read"], ["working", "In progress"], ["failed", "Failed"], ["uploaded", "Uploaded here"],
                 ] as const).filter(([k]) => k === "all" || docGroups[k] > 0).map(([k, label]) => (
                   <button key={k} onClick={() => { setDocFilter(k); setDocLimit(200); }} aria-pressed={docFilter === k}
-                    className={`h-7 px-2 rounded-lg text-[11px] font-black border transition-colors ${docFilter === k
-                      ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]"
-                      : `border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] ${k === "failed" ? "text-rose-700 dark:text-rose-400" : k === "partial" ? "text-amber-700 dark:text-amber-400" : ""}`}`}>
-                    {label} {docGroups[k].toLocaleString()}
+                    className={`${bandSegItem(docFilter === k)} !h-7 !text-[13px]`}>
+                    {k === "failed" && <span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-overdue)]" />}
+                    {k === "partial" && <span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-held)]" />}
+                    {label} <span className="font-display tabular-nums">{docGroups[k].toLocaleString()}</span>
                   </button>
                 ))}
               </div>
               <select aria-label="Sort documents" value={docSort} onChange={(e) => setDocSort(e.target.value as typeof docSort)}
-                className="h-7 px-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[11px] font-black text-[var(--color-text-muted)]">
+                className="h-9 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)]">
                 <option value="name">Sort: number</option>
                 <option value="pages">Sort: most pages</option>
                 <option value="problems">Sort: problems first</option>
               </select>
             </div>
+            {isController && selected.size > 0 && (
+              <div className="mb-2 flex items-center gap-3 text-[14px]">
+                <span className="font-semibold text-[var(--color-text)]">{selected.size} selected</span>
+                <Button size="sm" variant="danger" onClick={() => void removeDocs([...selected])} disabled={removing !== null}>
+                  <Trash2 className="w-3.5 h-3.5" /> Remove {selected.size}
+                </Button>
+                <button onClick={() => setSelected(new Set())} className="text-[var(--color-accent-text)] hover:underline">Clear</button>
+              </div>
+            )}
             {shownDocs.length === 0 && (
-              <div className="rounded-xl border border-dashed border-[var(--color-border)] p-4 text-center text-xs text-[var(--color-text-muted)]">
+              <div className="rounded-md border border-dashed border-[var(--color-border)] p-4 text-center text-[14px] text-[var(--color-text-muted)]">
                 No document matches{docQuery ? ` "${docQuery}"` : ""}{docFilter !== "all" ? " in this filter" : ""}.
               </div>
             )}
-            <ul className="border-y border-[var(--color-border)] divide-y divide-[var(--color-border)] -mx-4 sm:-mx-5">
-              {shownDocs.slice(0, docLimit).map((doc) => (
-                <li key={doc.id} className={`px-4 sm:px-5 py-2.5 flex items-center gap-3 ${selected.has(doc.id) ? "bg-[var(--color-surface-2)]" : ""}`}>
+            {shownDocs.length > 0 && (
+            <div className="-mx-4 sm:-mx-5 border-y border-[var(--color-border)]">
+            <table className="w-full text-[14px]">
+              <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+                <tr>
                   {isController && (
-                    <input type="checkbox" className="accent-[var(--color-text)] shrink-0" aria-label={`Select ${doc.name}`}
-                      disabled={!!doc.sourceDocumentId} checked={selected.has(doc.id)}
-                      title={doc.sourceDocumentId ? "Mirrored from Document Control - remove it by unlinking the source" : undefined}
-                      onChange={() => toggleSelect(doc.id)} />
+                    <th className="pl-4 sm:pl-5 w-8 h-10">
+                      {removable.length > 0 && (
+                        <input type="checkbox" className="accent-[var(--color-text)] align-middle" aria-label="Select all documents"
+                          checked={selected.size > 0 && selected.size === removable.length}
+                          ref={(el) => { if (el) el.indeterminate = selected.size > 0 && selected.size < removable.length; }}
+                          onChange={() => setSelected(selected.size === removable.length ? new Set() : new Set(removable.map((d) => d.id)))} />
+                      )}
+                    </th>
                   )}
-                  <FileText className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[13.5px] font-semibold text-[var(--color-text)] truncate flex items-center gap-1.5">
-                      <span className="truncate">{doc.name}</span>
+                  <th className={`font-semibold h-10 ${isController ? "px-3" : "px-4 sm:px-5"}`}>Document</th>
+                  <th className="font-semibold px-3 text-right hidden sm:table-cell">Pages</th>
+                  <th className="font-semibold px-3 hidden md:table-cell">Status</th>
+                  <th className="px-2 w-20"><span className="sr-only">Actions</span></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--color-border)]">
+              {shownDocs.slice(0, docLimit).map((doc) => {
+                const fullyRead = doc.status === "ready" && (doc.pageCount ?? 0) > 0 && doc.pagesIndexed >= (doc.pageCount ?? 0);
+                const bad = doc.status === "error";
+                const warn = (doc.status === "ready" && !fullyRead) || doc.status === "indexing" || doc.status === "stale";
+                const statusTag = (
+                  // Pages actually READ, against the file's page count — "28 pages
+                  // indexed" used to show the file's total even when reading
+                  // had stopped part-way.
+                  <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]"
+                    title={bad ? doc.error ?? undefined : doc.status === "ready" && !fullyRead ? "Reading stopped before the last page. Repair in Library health, at the top of this page, resumes it - pages already read aren't paid for again." : undefined}>
+                    <span aria-hidden className={`w-2 h-2 rounded-full shrink-0 ${bad ? "bg-[var(--state-overdue)]" : warn ? "bg-[var(--state-held)]" : fullyRead ? "bg-[var(--state-released)]" : "bg-[var(--color-text-faint)]"}`} />
+                    {fullyRead && "Indexed"}
+                    {doc.status === "ready" && !fullyRead && "Partly read"}
+                    {doc.status === "indexing" && "Indexing"}
+                    {doc.status === "pending" && "Waiting to index"}
+                    {doc.status === "stale" && "New revision, waiting"}
+                    {bad && <span className="text-[var(--state-overdue)]">Failed</span>}
+                  </span>
+                );
+                return (
+                <tr key={doc.id} className={`relative align-top ${selected.has(doc.id) ? "bg-[var(--color-accent-soft)]" : "hover:bg-[var(--color-surface-2)]"}`}>
+                  {isController && (
+                    <td className="relative pl-4 sm:pl-5 py-3 w-8">
+                      {bad && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />}
+                      <input type="checkbox" className="accent-[var(--color-text)] mt-1" aria-label={`Select ${doc.name}`}
+                        disabled={!!doc.sourceDocumentId} checked={selected.has(doc.id)}
+                        title={doc.sourceDocumentId ? "Mirrored from Document Control - remove it by unlinking the source" : undefined}
+                        onChange={() => toggleSelect(doc.id)} />
+                    </td>
+                  )}
+                  <td className={`py-3 min-w-0 relative ${isController ? "px-3" : "px-4 sm:px-5"}`}>
+                    {bad && !isController && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />}
+                    <div className="font-display text-[16px] font-semibold text-[var(--color-text)] break-words">{doc.name.replace(/\.pdf$/i, "")}</div>
+                    <div className="flex items-center gap-x-3 gap-y-0.5 flex-wrap text-[13px] text-[var(--color-text-muted)]">
                       {doc.sourceDocumentId && (
-                        <span className="shrink-0 text-[11px] font-black px-1 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)]"
-                          title="Mirrors a controlled document - kept current by the source sync">
-                          DOC CONTROL{doc.sourceRev ? ` · REV ${doc.sourceRev}` : ""}
+                        <span title="Mirrors a controlled document - kept current by the source sync">
+                          From Doc Control{doc.sourceRev ? `, Rev ${doc.sourceRev}` : ""}
                         </span>
                       )}
-                    </div>
-                    <div className="text-[12px] text-[var(--color-text-muted)]">
-                      {/* Pages actually READ, against the file's page count — "28 pages
-                          indexed" used to show the file's total even when reading
-                          had stopped part-way. */}
-                      {doc.status === "ready" && (doc.pageCount ?? 0) > 0 && doc.pagesIndexed >= (doc.pageCount ?? 0) && (
-                        <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400 font-black"><CheckCircle2 className="w-3 h-3" /> All {doc.pageCount} pages indexed</span>
-                      )}
-                      {doc.status === "ready" && !((doc.pageCount ?? 0) > 0 && doc.pagesIndexed >= (doc.pageCount ?? 0)) && (
-                        <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-400 font-black" title="Reading stopped before the last page. Repair in Library health, at the top of this page, resumes it - pages already read aren't paid for again.">
-                          <AlertTriangle className="w-3 h-3" /> {doc.pagesIndexed} of {doc.pageCount ?? "?"} pages indexed, partly read
-                        </span>
-                      )}
-                      {doc.status === "indexing" && <span className="text-amber-700 dark:text-amber-400 font-black">Indexing {doc.pagesIndexed}{doc.pageCount ? ` / ${doc.pageCount}` : ""} pages…</span>}
-                      {doc.status === "pending" && <span>Waiting to index</span>}
-                      {doc.status === "stale" && <span className="text-amber-700 dark:text-amber-400 font-black">New revision published, waiting to re-index</span>}
-                      {doc.status === "error" && <span className="text-rose-700 dark:text-rose-400 font-black" title={doc.error ?? undefined}>Indexing failed: {doc.error?.slice(0, 80)}</span>}
+                      <span className="md:hidden">{statusTag}</span>
+                      {doc.status === "ready" && !fullyRead && <span className="tabular-nums">{doc.pagesIndexed} of {doc.pageCount ?? "?"} pages read</span>}
+                      {doc.status === "indexing" && <span className="tabular-nums">{doc.pagesIndexed}{doc.pageCount ? ` of ${doc.pageCount}` : ""} pages so far</span>}
+                      {bad && doc.error && <span className="text-[var(--state-overdue)] truncate max-w-[60ch]">{doc.error.slice(0, 80)}</span>}
                     </div>
                     {doc.status === "indexing" && doc.pageCount ? (
-                      <div className="mt-1 h-1 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-                        <div className="h-full bg-[var(--color-text-muted)] transition-all" style={{ width: `${Math.round((doc.pagesIndexed / doc.pageCount) * 100)}%` }} />
+                      <div className="mt-1.5 h-1 max-w-sm rounded-full bg-[var(--color-surface-2)] overflow-hidden">
+                        <div className="h-full bg-[var(--state-held)] transition-all" style={{ width: `${Math.round((doc.pagesIndexed / doc.pageCount) * 100)}%` }} />
                       </div>
                     ) : null}
-                  </div>
-                  {isController && doc.status !== "ready" && (
-                    <button onClick={() => void resumeIndex(doc)} disabled={reindexing !== null}
-                      title="Resume indexing"
-                      aria-label={`Resume indexing ${doc.name}`}
-                      className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
-                      {reindexing === doc.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                    </button>
-                  )}
-                  {isController && !doc.sourceDocumentId && (
-                    <button onClick={() => void removeDocs([doc.id])} title="Remove" aria-label={`Remove ${doc.name}`} disabled={removing !== null}
-                      className="p-1.5 rounded-lg hover:bg-rose-500/10 text-[var(--color-text-muted)] hover:text-rose-600">
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
+                  </td>
+                  <td className="px-3 py-3 text-right font-display tabular-nums text-[15px] text-[var(--color-text)] hidden sm:table-cell whitespace-nowrap">{doc.pageCount ?? "?"}</td>
+                  <td className="px-3 py-3 hidden md:table-cell whitespace-nowrap">{statusTag}</td>
+                  <td className="px-2 py-2 whitespace-nowrap text-right">
+                    {isController && doc.status !== "ready" && (
+                      <button onClick={() => void resumeIndex(doc)} disabled={reindexing !== null}
+                        title="Resume indexing"
+                        aria-label={`Resume indexing ${doc.name}`}
+                        className="w-8 h-8 inline-grid place-items-center rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+                        {reindexing === doc.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                      </button>
+                    )}
+                    {isController && !doc.sourceDocumentId && (
+                      <button onClick={() => void removeDocs([doc.id])} title="Remove" aria-label={`Remove ${doc.name}`} disabled={removing !== null}
+                        className="w-8 h-8 inline-grid place-items-center rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--state-overdue)]">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </td>
+                </tr>
+                );
+              })}
+              </tbody>
+            </table>
+            </div>
+            )}
             {shownDocs.length > docLimit && (
               <button onClick={() => setDocLimit((n) => n + 500)}
-                className="mt-2 w-full h-9 text-left text-[13px] font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)]">
+                className="mt-2 w-full h-9 text-left text-[14px] text-[var(--color-accent-text)] hover:underline">
                 {docLimit.toLocaleString()} of {shownDocs.length.toLocaleString()} shown. Show {Math.min(500, shownDocs.length - docLimit).toLocaleString()} more
               </button>
             )}
@@ -797,7 +838,7 @@ export default function KnowledgeLibraryPage() {
           )}
         </div>
 
-      </div>
+      </section>
 
       {activeOrgId && library.aiFeatures?.drawingIntel === true && (
         <DrawingIntelPanel orgId={activeOrgId} libraryId={libraryId}
@@ -881,27 +922,27 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
     router.push(`/assistant?${params.toString()}`);
   };
   return (
-    <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
-      <div className="flex items-start gap-x-3 gap-y-1 flex-wrap">
+    <section>
+      <div className="flex items-end gap-x-3 gap-y-1 flex-wrap mb-2.5 min-h-8">
         <div className="min-w-0 flex-1 basis-[16rem]">
-          <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5" aria-hidden /> Ask this library</h2>
-          <div className="mt-1 text-[13px] text-[var(--color-text-muted)]">
+          <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Ask this library</h2>
+          <div className="text-[14px] text-[var(--color-text-muted)]">
             Answers come only from the indexed documents, cited to the page.
             {instructionCount > 0 && (
-              <Link href="/admin/ai-instructions" className="ml-1.5 font-bold text-[var(--color-accent-text)] dark:text-[var(--color-text)] hover:underline">
+              <Link href="/admin/ai-instructions" className="ml-1.5 text-[var(--color-accent-text)] hover:underline">
                 {instructionCount} standing instruction{instructionCount === 1 ? "" : "s"} apply
               </Link>
             )}
           </div>
         </div>
-        <Link href={askHref}
-          className="inline-flex items-center gap-1.5 h-9 -ml-3 sm:ml-0 px-3 rounded-lg text-[var(--color-accent-text)] text-[13px] font-bold hover:bg-[var(--color-surface-2)] transition-colors">
-          <MessageSquare className="w-4 h-4" /> All conversations <ArrowRight className="w-3.5 h-3.5" />
+        <Link href={askHref} className="inline-flex items-center gap-1 text-[14px] text-[var(--color-accent-text)] hover:underline">
+          All conversations <ArrowRight className="w-3.5 h-3.5" />
         </Link>
       </div>
+      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
       {/* Ask right here — the question opens in the chat already running,
           instead of a door you have to walk through first. */}
-      <form onSubmit={ask} className="mt-3 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-canvas)] focus-within:border-[var(--color-text-muted)]">
+      <form onSubmit={ask} className="rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] focus-within:border-[var(--color-accent)] focus-within:ring-2 focus-within:ring-[var(--color-accent-ring)]/30">
         <textarea id="library-ask" value={q} onChange={(e) => setQ(e.target.value)} disabled={readyDocs === 0} rows={2}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } }}
           placeholder={readyDocs === 0 ? "Asking unlocks when the first document is indexed" : "Ask this library, e.g. \"What piping spec should I use for 150 class sour gas?\""}
@@ -912,25 +953,26 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
           <AnswerMenu answerMode={mode} onAnswerMode={setMode} skills={skills} picked={picked} onPick={setPicked} question={q} />
           <span className="flex-1" />
           <button type="submit" disabled={readyDocs === 0 || !q.trim()}
-            className="shrink-0 ml-auto inline-flex items-center gap-1.5 h-10 px-4 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-extrabold hover:bg-[var(--color-accent-hover)] shadow-[0_10px_22px_-12px_var(--color-accent)] disabled:opacity-40 disabled:shadow-none transition-colors">
+            className="shrink-0 ml-auto inline-flex items-center gap-1.5 h-10 px-4 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[15px] font-semibold hover:bg-[var(--color-accent-hover)] shadow-[0_1px_0_rgb(0_0_0/0.12)] disabled:opacity-40 disabled:shadow-none transition-colors">
             Ask <ArrowRight className="w-3.5 h-3.5" />
           </button>
         </div>
       </form>
       {readyDocs === 0 && (
-        <p className="mt-3 text-[13px] text-amber-700 dark:text-amber-400 font-semibold">
+        <p className="relative mt-3 pl-4 py-0.5 text-[14px] text-[var(--color-text)] font-semibold">
+          <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-held)]" />
           {docsTotal > 0
             ? "Documents are indexing below. Asking unlocks as soon as the first one finishes."
             : "Nothing indexed yet. Link a source or add PDFs below first."}
         </p>
       )}
       {recentError && (
-        <p role="alert" className="mt-3 text-[11px] font-semibold text-red-700 dark:text-red-400">Couldn&apos;t load the recent conversations: {recentError}</p>
+        <p role="alert" className="mt-3 text-[13px] font-semibold text-[var(--state-overdue)]">Couldn&apos;t load the recent conversations: {recentError}</p>
       )}
       {recent && recent.length > 0 && (
         <div className="mt-4">
           <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1 flex items-center gap-1.5">
-            <History className="w-3 h-3" /> Recent conversations
+            <History className="w-3.5 h-3.5" /> Recent conversations
           </div>
           <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)] -mx-4 sm:-mx-5">
             {recent.map((t) => (
@@ -941,18 +983,21 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
                     : t.scope === "tools" ? <Bot className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
                     : <MessageSquare className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />}
                   <span className="min-w-0 flex-1">
-                    <span className="block text-[13.5px] font-semibold text-[var(--color-text)] truncate">{t.title || "Untitled"}</span>
-                    <span className="block text-[12px] text-[var(--color-text-muted)]">
-                      {(t.createdByName ?? "Someone").split("@")[0]} · {new Date(t.lastMessageAt).toLocaleString()}{t.settledAt ? " · settled" : ""}
+                    <span className="block text-[15px] font-semibold text-[var(--color-text)] group-hover:text-[var(--color-accent-text)] truncate">{t.title || "Untitled"}</span>
+                    <span className="flex gap-3 text-[13px] text-[var(--color-text-muted)]">
+                      <span>{(t.createdByName ?? "Someone").split("@")[0]}</span>
+                      <span>{new Date(t.lastMessageAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}, {new Date(t.lastMessageAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</span>
+                      {t.settledAt && <span>Settled</span>}
                     </span>
                   </span>
-                  <span className="text-[11px] font-black text-[var(--color-text-faint)] opacity-0 group-hover:opacity-100 transition-opacity shrink-0">Reopen →</span>
+                  <ArrowRight className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
                 </Link>
               </li>
             ))}
           </ul>
         </div>
       )}
-    </div>
+      </div>
+    </section>
   );
 }

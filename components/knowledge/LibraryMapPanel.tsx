@@ -80,7 +80,7 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
   }, [data, mapping, runMap]);
 
   if (!data && !error) {
-    return <p className="mb-6 flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading the library map…</p>;
+    return <p className="mb-6 flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading the library map…</p>;
   }
   const entries = data?.entries ?? [];
   const counts = new Map<string, number>();
@@ -89,20 +89,17 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
   const catalogs = data?.catalogs ?? [];
 
   return (
-    <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
+    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
       <div className="flex items-center gap-3 flex-wrap">
-        <div className="w-9 h-9 rounded-lg bg-[var(--color-text-muted)] flex items-center justify-center shrink-0">
-          <MapIcon className="w-4 h-4 text-[var(--color-surface)]" />
-        </div>
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-black text-[var(--color-text)]">Library map</div>
-          <div className="text-[11px] text-[var(--color-text-muted)]">
+          <div className="font-display text-[17px] font-semibold text-[var(--color-text)]">Library map</div>
+          <div className="text-[13px] text-[var(--color-text-muted)]">
             What the assistant knows is here, so it can point you to the right form, checklist or spec.
           </div>
         </div>
         {data?.canMap && data.unmapped > 0 && !mapping && (
           <button type="button" onClick={() => void runMap()}
-            className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-xs font-black hover:bg-[var(--color-surface-2)]">
+            className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[13px] font-semibold hover:bg-[var(--color-surface-2)]">
             <MapIcon className="w-4 h-4" /> Map {data.unmapped} document{data.unmapped === 1 ? "" : "s"}
           </button>
         )}
@@ -115,12 +112,12 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
           {mapping.remaining > 0 ? `, ${mapping.remaining} to go` : ""}. You can keep working; it continues while this page is open.
         </div>
       )}
-      {error && <div className="mt-3 text-[12px] font-bold text-rose-700 dark:text-rose-400">{error}</div>}
+      {error && <div className="mt-3 text-[12px] font-bold text-[var(--state-overdue)]">{error}</div>}
 
       {entries.length > 0 && (
         <div className="mt-4 flex flex-wrap gap-1.5">
           {[...counts.entries()].sort((a, b) => b[1] - a[1]).map(([type, n]) => (
-            <span key={type} className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text)]">
+            <span key={type} className="text-[13px] font-bold px-2.5 py-1 rounded-full bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text)]">
               {n} {TYPE_LABEL[type] ?? type}
             </span>
           ))}
@@ -130,20 +127,20 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
       {forms.length > 0 && (
         <div className="mt-4">
           <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Forms &amp; checklists the assistant can fill or point to</div>
-          <ul className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)] overflow-hidden">
+          <ul className="divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)] overflow-hidden">
             {forms.slice(0, showAll ? forms.length : 6).map((e) => (
               <li key={e.documentId} className="flex items-center gap-2.5 px-3.5 py-2">
                 {e.type === "checklist" ? <ClipboardCheck className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" /> : <FileText className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />}
                 <span className="min-w-0 flex-1">
-                  <span className="block text-xs font-bold text-[var(--color-text)] truncate">{e.title || e.name}</span>
-                  <span className="block text-[11px] text-[var(--color-text-muted)] truncate">
+                  <span className="block text-[13px] font-bold text-[var(--color-text)] truncate">{e.title || e.name}</span>
+                  <span className="block text-[13px] text-[var(--color-text-muted)] truncate">
                     {e.type === "checklist" ? `Checklist${e.checklistFor ? ` - ${e.checklistFor}` : ""}` : PURPOSE_LABEL[e.form?.purpose ?? "other"]}
                     {e.form ? ` · ${e.form.fieldCount} fields` : ""}
                   </span>
                 </span>
                 {e.form && (
-                  <span className={`shrink-0 text-[11px] font-bold px-2 py-0.5 rounded ${e.form.fillable
-                    ? "bg-emerald-100 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300"
+                  <span className={`shrink-0 text-[13px] font-bold px-2 py-0.5 rounded ${e.form.fillable
+                    ? "bg-emerald-100 dark:bg-emerald-950/40 text-[var(--state-released)]"
                     : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
                     {e.form.fillable ? "fillable PDF" : "flat PDF"}
                   </span>
@@ -160,18 +157,18 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
             <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Catalogs</div>
             {data?.canMap && (
               <button type="button" onClick={() => setMarking(true)}
-                className="ml-auto inline-flex items-center gap-1 h-7 px-2.5 rounded-lg border border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)] text-[11px] font-black hover:bg-[var(--color-surface-2)] dark:hover:bg-[var(--color-surface-2)]">
+                className="ml-auto inline-flex items-center gap-1 h-7 px-2.5 rounded-lg border border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)] text-[13px] font-semibold hover:bg-[var(--color-surface-2)] dark:hover:bg-[var(--color-surface-2)]">
                 <Plus className="w-3.5 h-3.5" /> Mark a catalog
               </button>
             )}
           </div>
           {catalogs.length === 0 ? (
-            <p className="text-[11px] text-[var(--color-text-muted)]">
+            <p className="text-[13px] text-[var(--color-text-muted)]">
               Does this library hold a catalog - specs, data sheets, material classes, anything listed by code? Mark it, and
               questions like &ldquo;which one should I use for …&rdquo; are answered by filtering every entry, not by a lucky search.
             </p>
           ) : (
-            <ul className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)] overflow-hidden">
+            <ul className="divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)] overflow-hidden">
               {catalogs.map((c) => {
                 const busy = busyCatalog === (c.documentId ?? c.libraryId);
                 const here = c.libraryId === libraryId;
@@ -180,13 +177,13 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
                     <div className="flex items-center gap-2">
                       <Table2 className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
                       <span className="min-w-0 flex-1">
-                        <span className="block text-xs font-bold text-[var(--color-text)] truncate">{c.name}</span>
-                        <span className="block text-[11px] text-[var(--color-text-muted)] truncate">
+                        <span className="block text-[13px] font-bold text-[var(--color-text)] truncate">{c.name}</span>
+                        <span className="block text-[13px] text-[var(--color-text-muted)] truncate">
                           {c.scope === "document" ? `${(c.documentName ?? "").replace(/\.pdf$/i, "")} - each section is an entry` : `every document in ${c.libraryName} is an entry`}
                           {!here ? ` · in ${c.libraryName}` : ""}
                         </span>
                       </span>
-                      <span className="shrink-0 text-[11px] font-bold text-[var(--color-text)]">{c.mark.entries.toLocaleString()} entries</span>
+                      <span className="shrink-0 text-[13px] font-bold text-[var(--color-text)]">{c.mark.entries.toLocaleString()} entries</span>
                       {data?.canMap && here && (
                         <>
                           <button type="button" onClick={() => void reread(c)} disabled={busy} title="Read it again"
@@ -194,17 +191,17 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
                             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
                           </button>
                           <button type="button" onClick={() => void unmark(c)} disabled={busy} title="Unmark - it stays in the library as an ordinary document"
-                            className="p-1.5 rounded-lg hover:bg-rose-500/10 text-[var(--color-text-muted)] hover:text-rose-600">
+                            className="p-1.5 rounded-lg hover:bg-rose-500/10 text-[var(--color-text-muted)] hover:text-[var(--state-overdue)]">
                             <X className="w-3.5 h-3.5" />
                           </button>
                         </>
                       )}
                     </div>
                     {c.mark.problem && (
-                      <div className="mt-1 flex items-start gap-1 text-[11px] text-amber-700 dark:text-amber-400"><AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" />{c.mark.problem}</div>
+                      <div className="mt-1 flex items-start gap-1 text-[13px] text-[var(--state-held)]"><AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" />{c.mark.problem}</div>
                     )}
                     {!c.mark.problem && (c.mark.fields?.length ?? 0) > 0 && (
-                      <div className="mt-0.5 text-[11px] text-[var(--color-text-muted)] truncate">Fields read from it: {c.mark.fields!.join(" · ")}</div>
+                      <div className="mt-0.5 text-[13px] text-[var(--color-text-muted)] truncate">Fields read from it: {c.mark.fields!.join(" · ")}</div>
                     )}
                   </li>
                 );
@@ -221,20 +218,20 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
 
       {entries.length > 0 && (
         <button type="button" onClick={() => setShowAll((v) => !v)}
-          className="mt-3 inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+          className="mt-3 inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
           <BookOpen className="w-3.5 h-3.5" /> {showAll ? "Hide" : "Show"} every mapped document ({entries.length})
           <ChevronDown className={`w-3 h-3 transition-transform ${showAll ? "rotate-180" : ""}`} />
         </button>
       )}
       {showAll && (
-        <ul className="mt-2 max-h-80 overflow-y-auto divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)]">
+        <ul className="mt-2 max-h-80 overflow-y-auto divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)]">
           {entries.map((e: CatalogSummaryEntry) => (
             <li key={e.documentId} className="px-3.5 py-2">
               <div className="flex items-center gap-2">
                 <span className="shrink-0 text-[13px] font-semibold text-[var(--color-text)] dark:text-[var(--color-text)] w-28 truncate">{TYPE_LABEL[e.type] ?? e.type}</span>
-                <span className="text-xs font-bold text-[var(--color-text)] truncate">{e.designation ? `${e.designation} - ` : ""}{e.title || e.name}</span>
+                <span className="text-[13px] font-bold text-[var(--color-text)] truncate">{e.designation ? `${e.designation} - ` : ""}{e.title || e.name}</span>
               </div>
-              {e.purpose && <div className="text-[11px] text-[var(--color-text-muted)] pl-[7.5rem] truncate">{e.purpose}</div>}
+              {e.purpose && <div className="text-[13px] text-[var(--color-text-muted)] pl-[7.5rem] truncate">{e.purpose}</div>}
             </li>
           ))}
         </ul>
@@ -248,7 +245,7 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
         </p>
       )}
       {(data?.notReady ?? 0) > 0 && (
-        <p className="mt-2 text-[11px] text-[var(--color-text-muted)]">
+        <p className="mt-2 text-[13px] text-[var(--color-text-muted)]">
           {data!.notReady} document{data!.notReady === 1 ? " is" : "s are"} still indexing - mapped once indexing finishes.
         </p>
       )}
@@ -296,7 +293,7 @@ function MarkCatalogModal({ orgId, libraryId, libraryName, docs, onClose, onDone
               <div className="mt-2 text-[12px] text-[var(--color-text-muted)]">Questions that name it, or ask which one to use, now filter every entry.</div>
             </div>
           ) : (
-            <div className="flex items-start gap-2 text-sm text-amber-800 dark:text-amber-300"><AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />{result.problem ?? "No entries were found."}</div>
+            <div className="flex items-start gap-2 text-sm text-[var(--state-held)]"><AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />{result.problem ?? "No entries were found."}</div>
           )
         ) : (
           <>
@@ -311,45 +308,45 @@ function MarkCatalogModal({ orgId, libraryId, libraryName, docs, onClose, onDone
               <div className="space-y-1.5">
                 <label className="flex items-start gap-2 text-[13px] text-[var(--color-text)] cursor-pointer">
                   <input type="radio" className="mt-1 accent-[var(--color-text)]" checked={scope === "document"} onChange={() => setScope("document")} />
-                  <span><b>One document holds all of it</b><span className="block text-[11px] text-[var(--color-text-muted)]">Each section is an entry - found by the code that repeats on its pages.</span></span>
+                  <span><b>One document holds all of it</b><span className="block text-[13px] text-[var(--color-text-muted)]">Each section is an entry - found by the code that repeats on its pages.</span></span>
                 </label>
                 <label className="flex items-start gap-2 text-[13px] text-[var(--color-text)] cursor-pointer">
                   <input type="radio" className="mt-1 accent-[var(--color-text)]" checked={scope === "library"} onChange={() => setScope("library")} />
-                  <span><b>Every document in {libraryName} is one entry</b><span className="block text-[11px] text-[var(--color-text-muted)]">A folder of separate sheets - {ready.length.toLocaleString()} indexed documents.</span></span>
+                  <span><b>Every document in {libraryName} is one entry</b><span className="block text-[13px] text-[var(--color-text-muted)]">A folder of separate sheets - {ready.length.toLocaleString()} indexed documents.</span></span>
                 </label>
               </div>
             </div>
             {scope === "document" && (
               <div>
                 <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find the document…"
-                  className="w-full h-8 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-border-strong)]" />
+                  className="w-full h-8 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[13px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-border-strong)]" />
                 <ul className="mt-1.5 max-h-56 overflow-y-auto rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
                   {shown.map((d) => (
                     <li key={d.id}>
                       <button type="button" onClick={() => setDocId(d.id)}
-                        className={`w-full text-left px-3 py-1.5 flex items-center gap-2 text-xs ${docId === d.id ? "bg-[var(--color-text)] dark:bg-[var(--color-surface-2)] text-[var(--color-surface)] dark:text-[var(--color-text)] font-bold" : "text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+                        className={`w-full text-left px-3 py-1.5 flex items-center gap-2 text-[13px] ${docId === d.id ? "bg-[var(--color-text)] dark:bg-[var(--color-surface-2)] text-[var(--color-surface)] dark:text-[var(--color-text)] font-bold" : "text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
                         <FileText className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" />
                         <span className="truncate flex-1">{d.name}</span>
-                        <span className="shrink-0 text-[11px] text-[var(--color-text-muted)]">{d.pageCount ?? "?"} pages</span>
+                        <span className="shrink-0 text-[13px] text-[var(--color-text-muted)]">{d.pageCount ?? "?"} pages</span>
                       </button>
                     </li>
                   ))}
-                  {shown.length === 0 && <li className="px-3 py-2 text-[11px] text-[var(--color-text-muted)]">No indexed document matches.</li>}
+                  {shown.length === 0 && <li className="px-3 py-2 text-[13px] text-[var(--color-text-muted)]">No indexed document matches.</li>}
                 </ul>
               </div>
             )}
-            {error && <div className="text-[12px] font-bold text-rose-700 dark:text-rose-400">{error}</div>}
+            {error && <div className="text-[12px] font-bold text-[var(--state-overdue)]">{error}</div>}
           </>
         )}
       </ModalBody>
       <ModalFooter>
         {result ? (
-          <button type="button" onClick={onDone} className="h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)]">Done</button>
+          <button type="button" onClick={onDone} className="h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-semibold hover:bg-[var(--color-accent-hover)]">Done</button>
         ) : (
           <>
-            <button type="button" onClick={onClose} disabled={busy} className="h-9 px-3 rounded-lg text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
+            <button type="button" onClick={onClose} disabled={busy} className="h-9 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Cancel</button>
             <button type="button" onClick={() => void save()} disabled={!can}
-              className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-40">
+              className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-40">
               {busy ? <><Loader2 className="w-4 h-4 animate-spin" /> Reading…</> : "Mark and read it"}
             </button>
           </>

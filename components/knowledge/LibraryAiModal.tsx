@@ -112,19 +112,19 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
             <label htmlFor="library-kind" className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">
               What&apos;s in this library
             </label>
-            <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
+            <p className="text-[13px] text-[var(--color-text-muted)] mb-2">
               A hint for mapping and answers. Every document is still identified on its own - forms,
               checklists, piping specs and standards are found wherever they live.
             </p>
             <select id="library-kind" value={kind} onChange={(e) => setKind(e.target.value as LibraryKind)}
-              className="w-full h-9 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text)]">
+              className="w-full h-9 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[13px] text-[var(--color-text)]">
               {LIBRARY_KINDS.map((k) => <option key={k.id} value={k.id}>{k.label}</option>)}
             </select>
           </div>
 
-          <div className="rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20 px-3 py-2.5">
-            <div className="text-xs font-bold text-[var(--color-text)]">Answers come from documents only</div>
-            <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
+          <div className="rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20 px-3 py-2.5">
+            <div className="text-[13px] font-bold text-[var(--color-text)]">Answers come from documents only</div>
+            <p className="text-[13px] text-[var(--color-text-muted)] mt-0.5">
               Every statement is cited to a page you can open. When the documents can&apos;t prove something -
               like why a rule exists - the answer says so and asks for the code or publication that would.
               Never the AI&apos;s own training. The web is used only when you turn on <b>Web</b> in the question box -
@@ -136,39 +136,39 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
             <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">
               Standing instructions
             </div>
-            <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
+            <p className="text-[13px] text-[var(--color-text-muted)] mb-2">
               Injected into every question against this library - write plain-English rules about how
               these documents work and how answers should behave.
             </p>
             <Textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={6}
-              placeholder={INSTRUCTIONS_PLACEHOLDER} className="text-xs" />
+              placeholder={INSTRUCTIONS_PLACEHOLDER} className="text-[13px]" />
           </div>
 
           <div>
             <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">
               Numbering &amp; code decoder
             </div>
-            <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
+            <p className="text-[13px] text-[var(--color-text-muted)] mb-2">
               Teach any numbering scheme these documents use. Unit numbers as
               <code className="font-mono"> 20 = Crude Unit</code> pairs; tag prefixes with a
               trailing dash, <code className="font-mono"> X- = Exchanger</code> - those override
               the built-in category guesses everywhere (tables, census, CSV).
             </p>
             <Textarea value={decoder} onChange={(e) => setDecoder(e.target.value)} rows={4}
-              placeholder={DECODER_PLACEHOLDER} className="text-xs" />
+              placeholder={DECODER_PLACEHOLDER} className="text-[13px]" />
           </div>
 
           <div>
             <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">
               Pinned reference documents
             </div>
-            <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
+            <p className="text-[13px] text-[var(--color-text-muted)] mb-2">
               Pick up to 3 documents whose content rides along with <b>every</b> question - a
               P&amp;ID legend, a glossary of terms, an abbreviations key, a notation guide. Like
               keeping the reference page open next to whatever you&apos;re reading.
             </p>
             {docs.length === 0 ? (
-              <p className="text-xs text-[var(--color-text-muted)] italic">Upload the reference document into this library first, then pick it here.</p>
+              <p className="text-[13px] text-[var(--color-text-muted)] italic">Upload the reference document into this library first, then pick it here.</p>
             ) : (
               <ul className="space-y-1 max-h-40 overflow-y-auto">
                 {docs.map((d) => {
@@ -176,7 +176,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
                   const full = !on && legendDocIds.size >= 3;
                   return (
                     <li key={d.id}>
-                      <label className={`flex items-center gap-2.5 rounded-xl border border-[var(--color-border)] px-3 py-1.5 transition-colors ${full ? "opacity-40" : "cursor-pointer hover:bg-[var(--color-surface-2)]"}`}>
+                      <label className={`flex items-center gap-2.5 rounded-lg border border-[var(--color-border)] px-3 py-1.5 transition-colors ${full ? "opacity-40" : "cursor-pointer hover:bg-[var(--color-surface-2)]"}`}>
                         <input type="checkbox" checked={on} disabled={full}
                           onChange={() => setLegendDocIds((prev) => {
                             const next = new Set(prev);
@@ -184,9 +184,9 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
                             return next;
                           })}
                           className="accent-[var(--color-text)] w-4 h-4" />
-                        <span className="text-xs font-bold text-[var(--color-text)] flex-1 truncate">{d.name}</span>
+                        <span className="text-[13px] font-bold text-[var(--color-text)] flex-1 truncate">{d.name}</span>
                         {on && (
-                          <span className="text-[11px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)]">PINNED</span>
+                          <span className="text-[13px] font-semibold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)]">Pinned</span>
                         )}
                       </label>
                     </li>
@@ -200,24 +200,24 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
             <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">
               AI features
             </div>
-            <label className="flex items-start gap-2.5 rounded-xl border border-[var(--color-border)] px-3 py-2.5 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors">
+            <label className="flex items-start gap-2.5 rounded-lg border border-[var(--color-border)] px-3 py-2.5 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors">
               <input type="checkbox" checked={clarifyFacets} onChange={(e) => setClarifyFacets(e.target.checked)}
                 className="accent-[var(--color-text)] w-4 h-4 mt-0.5" />
               <span className="min-w-0">
-                <span className="block text-xs font-bold text-[var(--color-text)]">Ask before broad answers</span>
-                <span className="block text-[11px] text-[var(--color-text-muted)] mt-0.5">
+                <span className="block text-[13px] font-bold text-[var(--color-text)]">Ask before broad answers</span>
+                <span className="block text-[13px] text-[var(--color-text-muted)] mt-0.5">
                   When a question&apos;s answer spans several distinct aspects (safety vs fabrication vs
                   design…), the AI asks which you want - select all that apply - instead of burying you
                   in everything at once. Single-aspect questions answer directly, no extra step.
                 </span>
               </span>
             </label>
-            <label className="mt-1.5 flex items-start gap-2.5 rounded-xl border border-[var(--color-border)] px-3 py-2.5 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors">
+            <label className="mt-1.5 flex items-start gap-2.5 rounded-lg border border-[var(--color-border)] px-3 py-2.5 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors">
               <input type="checkbox" checked={visionPages} onChange={(e) => setVisionPages(e.target.checked)}
                 className="accent-[var(--color-text)] w-4 h-4 mt-0.5" />
               <span className="min-w-0">
-                <span className="block text-xs font-bold text-[var(--color-text)]">Deep read - see pages as printed (ON by default)</span>
-                <span className="block text-[11px] text-[var(--color-text-muted)] mt-0.5">
+                <span className="block text-[13px] font-bold text-[var(--color-text)]">Deep read - see pages as printed (ON by default)</span>
+                <span className="block text-[13px] text-[var(--color-text-muted)] mt-0.5">
                   The AI reads the actual page images - complex tables (stress tables, span tables),
                   typeset formulas, figures - exactly as printed, hunts down referenced tables like
                   `Table A-1`, and can fetch additional pages it needs mid-answer. Uncheck only to save
@@ -225,14 +225,14 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
                 </span>
               </span>
             </label>
-            <label className="mt-1.5 flex items-start gap-2.5 rounded-xl border border-[var(--color-border)] px-3 py-2.5 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors">
+            <label className="mt-1.5 flex items-start gap-2.5 rounded-lg border border-[var(--color-border)] px-3 py-2.5 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors">
               <input type="checkbox" checked={visionAllPages} onChange={(e) => setVisionAllPages(e.target.checked)}
                 className="accent-[var(--color-text)] w-4 h-4 mt-0.5" />
               <span className="min-w-0">
-                <span className="block text-xs font-bold text-[var(--color-text)]">
+                <span className="block text-[13px] font-bold text-[var(--color-text)]">
                   Text doesn&apos;t extract from these files - index every page as an image
                 </span>
-                <span className="block text-[11px] text-[var(--color-text-muted)] mt-0.5">
+                <span className="block text-[13px] text-[var(--color-text-muted)] mt-0.5">
                   For documents whose PDF text layer is missing or useless: scans, photos of
                   paper, CAD drawings exported with SHX fonts, image-only PDFs. Without this, such
                   a library indexes to almost nothing and looks empty for no visible reason.
@@ -244,14 +244,14 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
                 </span>
               </span>
             </label>
-            <label className="mt-1.5 flex items-start gap-2.5 rounded-xl border border-[var(--color-border)] px-3 py-2.5 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors">
+            <label className="mt-1.5 flex items-start gap-2.5 rounded-lg border border-[var(--color-border)] px-3 py-2.5 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors">
               <input type="checkbox" checked={drawingIntel} onChange={(e) => setDrawingIntel(e.target.checked)}
                 className="accent-[var(--color-text)] w-4 h-4 mt-0.5" />
               <span className="min-w-0">
-                <span className="block text-xs font-bold text-[var(--color-text)]">
+                <span className="block text-[13px] font-bold text-[var(--color-text)]">
                   This is a drawing set - enable Drawing Intelligence
                 </span>
-                <span className="block text-[11px] text-[var(--color-text-muted)] mt-0.5">
+                <span className="block text-[13px] text-[var(--color-text-muted)] mt-0.5">
                   Adds the drawing tools to this library&apos;s page: equipment census, off-page
                   reference audit, register export, per-sheet tag index. For P&amp;IDs, isometrics,
                   loop sheets. Leave OFF for standards and manuals - they don&apos;t need drawing
@@ -265,27 +265,27 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
             <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1 flex items-center gap-1.5">
               <Link2 className="w-3.5 h-3.5" /> Linked reference libraries
             </div>
-            <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
+            <p className="text-[13px] text-[var(--color-text-muted)] mb-2">
               Questions asked here also search the linked libraries. <b>{library.name}</b> is
-              <b> GOVERNING</b> - its documents supersede reference minimums except where they defer,
+              <b> governing</b> - its documents supersede reference minimums except where they defer,
               and every answer says which document won.
             </p>
             {!loaded ? (
-              <div className="py-4 text-center text-xs text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline mr-1.5" /> Loading the other libraries…</div>
+              <div className="py-4 text-center text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline mr-1.5" /> Loading the other libraries…</div>
             ) : loadError ? (
-              <p role="alert" className="text-xs font-semibold text-red-700 dark:text-red-400">Couldn&apos;t load the other libraries: {loadError}</p>
+              <p role="alert" className="text-[13px] font-semibold text-[var(--state-overdue)]">Couldn&apos;t load the other libraries: {loadError}</p>
             ) : allLibraries.length === 0 ? (
-              <p className="text-xs text-[var(--color-text-muted)] italic">No other libraries yet. Make a second library (e.g. Code Books) to link it.</p>
+              <p className="text-[13px] text-[var(--color-text-muted)] italic">No other libraries yet. Make a second library (e.g. Code Books) to link it.</p>
             ) : (
               <ul className="space-y-1.5">
                 {allLibraries.map((l) => (
                   <li key={l.id}>
-                    <label className="flex items-center gap-2.5 rounded-xl border border-[var(--color-border)] px-3 py-2 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors">
+                    <label className="flex items-center gap-2.5 rounded-lg border border-[var(--color-border)] px-3 py-2 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors">
                       <input type="checkbox" checked={linked.has(l.id)} onChange={() => toggle(l.id)}
                         className="accent-[var(--color-text)] w-4 h-4" />
-                      <span className="text-xs font-bold text-[var(--color-text)] flex-1">{l.name}</span>
+                      <span className="text-[13px] font-bold text-[var(--color-text)] flex-1">{l.name}</span>
                       {linked.has(l.id) && (
-                        <span className="text-[11px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]">REFERENCE</span>
+                        <span className="text-[13px] font-semibold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]">Reference</span>
                       )}
                     </label>
                   </li>

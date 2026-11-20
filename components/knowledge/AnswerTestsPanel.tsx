@@ -66,13 +66,13 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
 
   if (error && !state) {
     return (
-      <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 text-xs text-[var(--color-text-muted)] flex items-center gap-2">
+      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-[13px] text-[var(--color-text-muted)] flex items-center gap-2">
         <FlaskConical className="w-4 h-4" /> Answer tests: {error}
       </div>
     );
   }
   if (!state) {
-    return <p className="mb-6 flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading answer tests…</p>;
+    return <p className="mb-6 flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading answer tests…</p>;
   }
 
   const save = async (d: AnswerTestDraft) => {
@@ -83,33 +83,30 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
   const toDraft = (c: AnswerTestCase): AnswerTestDraft => ({ id: c.id, question: c.question, expect: c.expect, tags: c.tags, notes: c.notes ?? undefined, sourceQuestionId: c.source_question_id });
 
   return (
-    <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
+    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
       <div className="flex items-center gap-3 flex-wrap">
-        <div className="w-9 h-9 rounded-lg bg-[var(--color-text-muted)] flex items-center justify-center shrink-0">
-          <FlaskConical className="w-4 h-4 text-[var(--color-surface)]" />
-        </div>
         <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex-1 min-w-0 text-left">
-          <div className="text-sm font-black text-[var(--color-text)] flex items-center gap-1.5">
+          <div className="font-display text-[17px] font-semibold text-[var(--color-text)] flex items-center gap-1.5">
             Answer tests {open ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
           </div>
-          <div className="text-xs text-[var(--color-text-muted)]">
+          <div className="text-[13px] text-[var(--color-text-muted)]">
             {cases.length === 0
               ? "No tests yet. Under any answer, “Make this a test case” marks what a right answer must do."
               : shownRun
-                ? <>{cases.length} test{cases.length === 1 ? "" : "s"} · last run {when(shownRun.created_at)}: <b className={shownRun.failed ? "text-rose-600" : "text-emerald-600"}>{shownRun.passed} of {shownRun.total} passed</b>{shownRun.status === "stopped" ? ` · stopped - ${shownRun.stop_reason ?? ""}` : ""} · ${Number(shownRun.cost_usd).toFixed(2)}</>
+                ? <>{cases.length} test{cases.length === 1 ? "" : "s"} · last run {when(shownRun.created_at)}: <b className={shownRun.failed ? "text-[var(--state-overdue)]" : "text-[var(--state-released)]"}>{shownRun.passed} of {shownRun.total} passed</b>{shownRun.status === "stopped" ? ` · stopped - ${shownRun.stop_reason ?? ""}` : ""} · ${Number(shownRun.cost_usd).toFixed(2)}</>
                 : <>{cases.length} test{cases.length === 1 ? "" : "s"} · never run</>}
           </div>
         </button>
         {running ? (
-          <button onClick={() => { stopper.current.stopped = true; }} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-xs font-bold">
+          <button onClick={() => { stopper.current.stopped = true; }} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-[13px] font-bold">
             <Square className="w-3.5 h-3.5" /> Stop
           </button>
         ) : cases.length > 0 && (
           <div className="flex items-center gap-1.5">
-            <label className="text-[11px] text-[var(--color-text-muted)] flex items-center gap-1" title="The run stops when it has spent this much on your key">
-              up to $<input value={cap} onChange={(e) => setCap(e.target.value.replace(/[^0-9.]/g, ""))} className="w-10 rounded border border-[var(--color-border)] bg-transparent px-1 py-0.5 text-xs" />
+            <label className="text-[13px] text-[var(--color-text-muted)] flex items-center gap-1" title="The run stops when it has spent this much on your key">
+              up to $<input value={cap} onChange={(e) => setCap(e.target.value.replace(/[^0-9.]/g, ""))} className="w-10 rounded border border-[var(--color-border)] bg-transparent px-1 py-0.5 text-[13px]" />
             </label>
-            <button onClick={() => void run()} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-1.5 text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+            <button onClick={() => void run()} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-1.5 text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
               <Play className="w-3.5 h-3.5" /> Run tests
             </button>
           </div>
@@ -121,7 +118,7 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
           <div className="h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
             <div className="h-full bg-[var(--color-text-muted)] transition-all" style={{ width: `${running.total ? (running.done / running.total) * 100 : 0}%` }} />
           </div>
-          <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+          <div className="mt-1 text-[13px] text-[var(--color-text-muted)]">
             <Loader2 className="w-3 h-3 animate-spin inline mr-1" />
             Asking test {Math.min(running.done + 1, running.total)} of {running.total} (each is a full question, about a minute) · {running.run.passed} passed, {running.run.failed} failed so far · ${Number(running.run.cost_usd).toFixed(2)} of ${Number(running.run.cost_cap_usd).toFixed(2)}
           </div>
@@ -129,27 +126,27 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
       )}
 
       {regressions.length > 0 && (
-        <div role="alert" className="mt-3 border-l-2 border-rose-500 pl-3 text-xs text-rose-900 dark:text-rose-200 flex gap-2">
+        <div role="alert" className="mt-3 border-l-2 border-[var(--state-overdue)] pl-3 text-[13px] text-rose-900 flex gap-2">
           <AlertTriangle className="w-4 h-4 shrink-0" />
           <span><b>Regression:</b> {regressions.length} critical test{regressions.length === 1 ? "" : "s"} passed on the baseline run and fail{regressions.length === 1 ? "s" : ""} now. Don&apos;t promote this version until they pass.</span>
         </div>
       )}
-      {error && <div className="mt-2 text-[11px] font-bold text-rose-600">{error}</div>}
+      {error && <div className="mt-2 text-[13px] font-bold text-[var(--state-overdue)]">{error}</div>}
 
       {open && (
         <div className="mt-4 space-y-3">
           {editing ? (
-            <div className="rounded-xl border border-[var(--color-border)] p-3">
+            <div className="rounded-lg border border-[var(--color-border)] p-3">
               <AnswerTestEditor initial={editing} onSave={save} onCancel={() => setEditing(null)} />
             </div>
           ) : (
-            <button onClick={() => setEditing({ question: "", expect: {}, tags: [] })} className="inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent-text)] hover:underline">
+            <button onClick={() => setEditing({ question: "", expect: {}, tags: [] })} className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-accent-text)] hover:underline">
               <Plus className="w-3.5 h-3.5" /> Add a test
             </button>
           )}
 
           {state.runs.length > 0 && (
-            <div className="flex items-center gap-2 flex-wrap text-[11px] text-[var(--color-text-muted)]">
+            <div className="flex items-center gap-2 flex-wrap text-[13px] text-[var(--color-text-muted)]">
               <span>Showing run</span>
               <select value={state.runId ?? ""} onChange={(e) => void load(e.target.value)} className="rounded border border-[var(--color-border)] bg-transparent px-1.5 py-0.5">
                 {state.runs.map((r) => (
@@ -174,37 +171,37 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
               return (
                 <li key={c.id} className="py-2">
                   <div className="flex items-start gap-2">
-                    {r ? (r.pass ? <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" /> : <XCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />)
+                    {r ? (r.pass ? <CheckCircle2 className="w-4 h-4 text-[var(--state-released)] shrink-0 mt-0.5" /> : <XCircle className="w-4 h-4 text-[var(--state-overdue)] shrink-0 mt-0.5" />)
                       : <span className="w-4 h-4 rounded-full border border-[var(--color-border)] shrink-0 mt-0.5" />}
                     <button onClick={() => setExpanded(isOpen ? null : c.id)} className="flex-1 min-w-0 text-left">
-                      <div className="text-xs text-[var(--color-text)]">
+                      <div className="text-[13px] text-[var(--color-text)]">
                         {c.question}
-                        {c.tags.includes("critical") && <span className="ml-1.5 rounded bg-amber-100 dark:bg-amber-950/40 px-1 text-[11px] font-black uppercase text-amber-800 dark:text-amber-200">critical</span>}
-                        {before === true && r?.pass === false && <span className="ml-1.5 text-[11px] font-bold text-rose-600">was passing</span>}
-                        {before === false && r?.pass === true && <span className="ml-1.5 text-[11px] font-bold text-emerald-600">now passing</span>}
+                        {c.tags.includes("critical") && <span className="ml-1.5 rounded bg-amber-100 dark:bg-amber-950/40 px-1 text-[13px] font-semibold text-[var(--state-held)]">critical</span>}
+                        {before === true && r?.pass === false && <span className="ml-1.5 text-[13px] font-bold text-[var(--state-overdue)]">was passing</span>}
+                        {before === false && r?.pass === true && <span className="ml-1.5 text-[13px] font-bold text-[var(--state-released)]">now passing</span>}
                       </div>
-                      {r?.error && <div className="text-[11px] text-rose-600">Couldn&apos;t run: {r.error}</div>}
+                      {r?.error && <div className="text-[13px] text-[var(--state-overdue)]">Couldn&apos;t run: {r.error}</div>}
                       {!r?.error && failing.length > 0 && (
-                        <div className="text-[11px] text-rose-700 dark:text-rose-300">{[...new Set(failing.map((k) => CHECK_LABEL[k.code] ?? k.code))].join(" · ")}</div>
+                        <div className="text-[13px] text-[var(--state-overdue)]">{[...new Set(failing.map((k) => CHECK_LABEL[k.code] ?? k.code))].join(" · ")}</div>
                       )}
                     </button>
                     <button aria-label="Run this test" title="Run this test" disabled={!!running} onClick={() => void run([c.id])} className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-accent-hover)] disabled:opacity-40"><Play className="w-3.5 h-3.5" /></button>
                     <button aria-label="Edit test" title="Edit" onClick={() => setEditing(toDraft(c))} className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><Pencil className="w-3.5 h-3.5" /></button>
-                    <button aria-label="Remove test" title="Remove" onClick={() => void archiveAnswerTest(orgId, c.id).then(() => load(state.runId ?? undefined), (e: unknown) => setError(`The test wasn't removed: ${e instanceof Error ? e.message : String(e)}`))} className="p-1 text-[var(--color-text-muted)] hover:text-rose-600"><Trash2 className="w-3.5 h-3.5" /></button>
+                    <button aria-label="Remove test" title="Remove" onClick={() => void archiveAnswerTest(orgId, c.id).then(() => load(state.runId ?? undefined), (e: unknown) => setError(`The test wasn't removed: ${e instanceof Error ? e.message : String(e)}`))} className="p-1 text-[var(--color-text-muted)] hover:text-[var(--state-overdue)]"><Trash2 className="w-3.5 h-3.5" /></button>
                   </div>
                   {isOpen && r && (
                     <div className="mt-2 ml-6 space-y-2">
                       <ul className="space-y-0.5">
                         {r.checks.map((k, i) => (
-                          <li key={i} className={`text-[11px] ${k.pass ? "text-[var(--color-text-muted)]" : "text-rose-700 dark:text-rose-300 font-bold"}`}>
+                          <li key={i} className={`text-[13px] ${k.pass ? "text-[var(--color-text-muted)]" : "text-[var(--state-overdue)] font-bold"}`}>
                             {k.pass ? "✓" : "✗"} {CHECK_LABEL[k.code] ?? k.code}: <span className="font-normal">{k.detail}</span>
                           </li>
                         ))}
                       </ul>
                       {r.answer && (
-                        <details className="text-[11px]">
+                        <details className="text-[13px]">
                           <summary className="cursor-pointer text-[var(--color-text-muted)]">The answer it gave</summary>
-                          <pre className="mt-1 whitespace-pre-wrap rounded-lg bg-[var(--color-surface-2)] p-2 text-[11px] text-[var(--color-text)]">{r.answer}</pre>
+                          <pre className="mt-1 whitespace-pre-wrap rounded-lg bg-[var(--color-surface-2)] p-2 text-[13px] text-[var(--color-text)]">{r.answer}</pre>
                         </details>
                       )}
                     </div>

@@ -12,12 +12,13 @@
 
 import React, { useEffect, useState } from "react";
 import {
-  Loader2, Plug, CheckCircle2, AlertTriangle, Trash2, KeyRound, Gauge, Users, Sparkles,
+  Loader2, Plug, CheckCircle2, AlertTriangle, Trash2, KeyRound, Users,
 } from "lucide-react";
 import { useToast } from "@/components/providers/ToastProvider";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { Button } from "@/components/ui/Button";
 import { Modal, ModalHeader, ModalBody } from "@/components/ui/Modal";
+import HelpTooltip from "@/components/ui/HelpTooltip";
 import { Input, Select } from "@/components/ui/Field";
 import {
   getAiConnections, saveAiConnection, testAiConnection, removeAiConnection,
@@ -58,21 +59,43 @@ const modelLabel = (m: string, offered: string[]) =>
 function Notice({ notice }: { notice: { tone: "ok" | "err"; text: string } | null }) {
   if (!notice) return null;
   return (
-    <p className={`text-[11px] font-bold flex items-start gap-1.5 ${
-      notice.tone === "ok" ? "text-emerald-700 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
+    <p className={`relative pl-4 py-0.5 text-[14px] font-semibold flex items-start gap-1.5 ${
+      notice.tone === "ok" ? "text-[var(--color-text)]" : "text-[var(--state-overdue)]"}`}>
+      <span aria-hidden className={`absolute left-0 inset-y-0 w-[3px] rounded-full ${notice.tone === "ok" ? "bg-[var(--state-released)]" : "bg-[var(--state-overdue)]"}`} />
       {notice.tone === "ok"
-        ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-px" />
-        : <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" />}
+        ? <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-[var(--state-released)]" />
+        : <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />}
       <span>{notice.text}</span>
     </p>
   );
 }
 
-const NoKeyChip = ({ label }: { label: string }) => (
-  <span className="inline-flex items-center gap-1 text-[11px] font-black text-amber-700 dark:text-amber-400">
-    <AlertTriangle className="w-3 h-3" /> {label}
+/** A small, quiet status tag: a dot in the status color, graphite words. */
+const StateTag = ({ tone, children }: { tone: "good" | "warn"; children: React.ReactNode }) => (
+  <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)] whitespace-nowrap">
+    <span aria-hidden className={`w-2 h-2 rounded-full ${tone === "good" ? "bg-[var(--state-released)]" : "bg-[var(--state-held)]"}`} />{children}
   </span>
 );
+
+/** One settings section: its heading on the panel, the form on a white
+ *  sheet (the same shape as a page Card). */
+function Section({ title, state, help, children }: { title: string; state?: React.ReactNode; help?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <section className="min-w-0">
+      <div className="flex items-end gap-3 mb-2.5 min-h-8">
+        <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)] inline-flex items-center gap-1.5">
+          {title}{help && <HelpTooltip>{help}</HelpTooltip>}
+        </h2>
+        <div className="flex-1" />
+        {state}
+      </div>
+      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5 space-y-4">{children}</div>
+    </section>
+  );
+}
+
+const FIELD_LABEL = "block mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]";
+const NOTE = "text-[13px] text-[var(--color-text-muted)]";
 
 const fmtUsd = (n: number) => `$${n.toFixed(2)}`;
 const fmtTok = (n: number) =>
@@ -169,7 +192,7 @@ export function KeyEditor({ orgId, current, onChanged }: {
       setNotice({
         tone: "ok",
         text: apiKey.trim()
-          ? "The key works - now press Save to store it. Testing alone does NOT save."
+          ? "The key works. Press Verify and save to store it; testing alone doesn't save."
           : "Your saved key works - the model answered.",
       });
     } catch (e) {
@@ -195,30 +218,22 @@ export function KeyEditor({ orgId, current, onChanged }: {
   };
 
   return (
-    <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">
-          Your API key (only you use it, only you pay for it)
-        </div>
-        {current && !grandfatheredBlocked ? (
-          <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-700 dark:text-emerald-400">
-            <KeyRound className="w-3 h-3" /> ACTIVE · ····{current.keyLast4 ?? "????"}
-          </span>
-        ) : !current ? (
-          <NoKeyChip label="NO KEY SAVED YET" />
-        ) : null}
-      </div>
-
+    <Section title="Your API key"
+      help="Only you use it, only you pay for it. Verify and save makes a live call with the key first, so a key that saves is a key that works. Test only never saves anything. Saving again replaces your key; if your provider runs out of credits it stops answering until you top up."
+      state={current && !grandfatheredBlocked
+        ? <StateTag tone="good">Active, key ending {current.keyLast4 ?? "????"}</StateTag>
+        : !current ? <StateTag tone="warn">No key saved yet</StateTag> : null}>
       {grandfatheredBlocked && (
-        <div role="alert" className="border-l-2 border-rose-500 pl-2 text-[11px] font-bold text-rose-700 dark:text-rose-300">
+        <p role="alert" className="relative pl-4 py-0.5 text-[14px] font-semibold text-[var(--state-overdue)]">
+          <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-overdue)]" />
           Your saved {current?.provider} key is blocked: that provider can train on submitted data.
           Save a Claude or OpenAI key to ask questions again.
-        </div>
+        </p>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <label className="block">
-          <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Provider</span>
+          <span className={FIELD_LABEL}>Provider</span>
           <Select value={provider} onChange={(e) => {
             setProvider(e.target.value);
             const meta = PROVIDERS.find((p) => p.id === e.target.value);
@@ -228,23 +243,23 @@ export function KeyEditor({ orgId, current, onChanged }: {
           </Select>
         </label>
         <label className="block">
-          <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Main model</span>
+          <span className={FIELD_LABEL}>Main model</span>
           <Select value={model} onChange={(e) => pickModel(e.target.value)} disabled={busy !== null}>
             {options.map((m) => <option key={m} value={m}>{modelLabel(m, offered)}</option>)}
           </Select>
         </label>
       </div>
-      <p className="text-[11px] text-[var(--color-text-muted)]">{PROVIDER_BLOCK_MESSAGE}</p>
+      <p className={NOTE}>{PROVIDER_BLOCK_MESSAGE}</p>
       <label className="block">
-        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">
+        <span className={FIELD_LABEL}>
           API key {current ? "(leave blank to keep the saved key)" : ""}
         </span>
         <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)}
-          placeholder={current ? `Saved · ends in ${current.keyLast4 ?? "????"}` : "Paste your API key"} autoComplete="off" />
+          placeholder={current ? `Saved, ends in ${current.keyLast4 ?? "????"}` : "Paste your API key"} autoComplete="off" />
       </label>
       <div className="flex items-center gap-2 flex-wrap">
         <Button onClick={() => void save()} disabled={busy !== null}>
-          {busy === "save" ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Verify &amp; save
+          {busy === "save" ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Verify and save
         </Button>
         <Button variant="secondary" onClick={() => void test()} disabled={busy !== null || (!current && !apiKey.trim())}>
           {busy === "test" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plug className="w-4 h-4" />} Test only
@@ -256,12 +271,7 @@ export function KeyEditor({ orgId, current, onChanged }: {
         )}
       </div>
       <Notice notice={notice} />
-      <p className="text-[11px] text-[var(--color-text-muted)]">
-        <b>Verify &amp; save</b> makes a live call with the key first - a key that saves is a key that
-        works. <b>Test only</b> never saves anything. Saving again replaces your key; if your provider
-        runs out of credits it simply stops answering until you top up.
-      </p>
-    </div>
+    </Section>
   );
 }
 
@@ -302,17 +312,16 @@ export function JobModelsEditor({ orgId, current, jobModels, ready, jobUse, onCh
   };
 
   return (
-    <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 space-y-3">
-      <div className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center gap-1.5">
-        <Sparkles className="w-3.5 h-3.5" /> Model for each job
-      </div>
+    <Section title="Model for each job"
+      help={`Each choice shows what one use costs on it, from your own averages once you have a few. Everything else (codebook, flows, links, equipment census, catalog) runs on the main model, ${mainName}.`}>
       {!ready && (
-        <p className="border-l-2 border-amber-500 pl-2 text-[11px] font-bold text-amber-800 dark:text-amber-300">
+        <p className="relative pl-4 py-0.5 text-[14px] font-semibold text-[var(--color-text)]">
+          <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-held)]" />
           Picking a model per job needs a one-time database update (20261108_job_models.sql). Until it&apos;s run,
           every job uses its default below.
         </p>
       )}
-      <ul className="space-y-3">
+      <ul className="-mx-4 sm:-mx-5 -my-1 divide-y divide-[var(--color-border)]">
         {AI_JOBS.map((j) => {
           const def = jobDefault(j.id, provider);
           const chosen = picks[j.id] ?? (def ?? MAIN);
@@ -321,34 +330,33 @@ export function JobModelsEditor({ orgId, current, jobModels, ready, jobUse, onCh
           const own = jobUse[j.id];
           const use = own && own.n >= 3 ? own : j.use;
           return (
-            <li key={j.id} className="space-y-1.5">
-              <div className="flex items-baseline gap-2 flex-wrap">
-                <span className="text-[13px] font-black text-[var(--color-text)]">{j.label}</span>
-                <span className="text-[11px] text-[var(--color-text-muted)]">{j.what}</span>
+            <li key={j.id} className="px-4 sm:px-5 py-3 grid gap-x-6 gap-y-1.5 sm:grid-cols-[minmax(0,1fr)_minmax(0,340px)] items-start">
+              <div className="min-w-0">
+                <div className="text-[15px] font-semibold text-[var(--color-text)]">{j.label}</div>
+                <div className={NOTE}>{j.what}</div>
               </div>
-              <div className="flex items-center gap-2">
-                <Select value={chosen} onChange={(e) => void pick(j.id, e.target.value)}
-                  disabled={!ready || busy !== null} aria-label={`Model for ${j.label}`} className="flex-1 min-w-0">
-                  {options.map((m) => (
-                    <option key={m} value={m}>
-                      {m === MAIN ? `Main (${mainName})` : modelName(m)} · {fmtCost(costPerUse(m === MAIN ? current.model : m, use))}{(def ?? MAIN) === m ? " · default" : ""}
-                    </option>
-                  ))}
-                </Select>
-                {busy === j.id && <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" />}
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <Select value={chosen} onChange={(e) => void pick(j.id, e.target.value)}
+                    disabled={!ready || busy !== null} aria-label={`Model for ${j.label}`} className="flex-1 min-w-0">
+                    {options.map((m) => (
+                      <option key={m} value={m}>
+                        {m === MAIN ? `Main (${mainName})` : modelName(m)}, {fmtCost(costPerUse(m === MAIN ? current.model : m, use))}{(def ?? MAIN) === m ? ", default" : ""}
+                      </option>
+                    ))}
+                  </Select>
+                  {busy === j.id && <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" />}
+                </div>
+                <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">
+                  Cost per {j.use.per}{own && own.n >= 3 ? ` from your average of ${own.n}` : " at a typical size"}.
+                </p>
               </div>
-              <p className="text-[11px] text-[var(--color-text-muted)]">
-                Cost per {j.use.per}{own && own.n >= 3 ? ` from your average of ${own.n}` : " at a typical size"}.
-              </p>
             </li>
           );
         })}
       </ul>
-      <p className="text-[11px] text-[var(--color-text-muted)]">
-        Everything else (codebook, flows, links, equipment census, catalog) runs on the main model, {mainName}.
-      </p>
       <Notice notice={notice} />
-    </div>
+    </Section>
   );
 }
 
@@ -441,7 +449,7 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
       setNotice({
         tone: "ok",
         text: apiKey.trim()
-          ? "The key works - now press Verify & save to store it. Testing alone does NOT save."
+          ? "The key works. Press Verify and save to store it; testing alone doesn't save."
           : "Your saved embeddings key works.",
       });
     } catch (e) {
@@ -469,37 +477,24 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
   };
 
   return (
-    <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center gap-1.5">
-          <Sparkles className="w-3.5 h-3.5" /> Meaning-based search (optional)
-        </div>
-        {saved ? (
-          <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-700 dark:text-emerald-400">
-            <KeyRound className="w-3 h-3" /> ACTIVE · ····{current?.embeddingKeyLast4 ?? "????"}
-          </span>
-        ) : reusingChatKey ? null : (
-          <NoKeyChip label="NO EMBEDDINGS KEY YET" />
-        )}
-      </div>
-
-      <p className="text-[11px] text-[var(--color-text-muted)]">
-        Finds &ldquo;pipe supports&rdquo; in a standard that says &ldquo;hanger and support details&rdquo;.
-        This is a <b>separate service from your chat key</b> - Anthropic doesn&apos;t make an
-        embeddings model, so Claude answers the questions and this key builds the index.
-        Without it, search stays keyword-only, which is what it has always been.
-      </p>
+    <Section title="Meaning-based search (optional)"
+      help={<>Finds &ldquo;pipe supports&rdquo; in a standard that says &ldquo;hanger and support details&rdquo;. This is a separate service from your chat key: Anthropic doesn&apos;t make an embeddings model, so Claude answers the questions and this key builds the index. Without it, search stays keyword-only. Verify and save makes a real embed call first. Embedding spend bills to your own account with that provider; the meter&apos;s figure is an estimate, your provider&apos;s invoice is the real number.</>}
+      state={saved
+        ? <StateTag tone="good">Active, key ending {current?.embeddingKeyLast4 ?? "????"}</StateTag>
+        : reusingChatKey ? null : <StateTag tone="warn">No embeddings key yet</StateTag>}>
+      <p className={NOTE}>A separate key from your chat key. Without it, search is keyword-only.</p>
 
       {reusingChatKey && !saved && (
-        <div className="rounded-lg border border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] px-3 py-2 text-[11px] text-[var(--color-text)] dark:text-[var(--color-text)]">
-          Your OpenAI chat key already works for embeddings - nothing to add here unless you
+        <p className="relative pl-4 py-0.5 text-[14px] text-[var(--color-text)]">
+          <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-released)]" />
+          Your OpenAI chat key already works for embeddings. Nothing to add here unless you
           want to use a different provider.
-        </div>
+        </p>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <label className="block">
-          <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Provider</span>
+          <span className={FIELD_LABEL}>Provider</span>
           <Select value={provider} onChange={(e) => {
             setProvider(e.target.value);
             setModel(defaultEmbeddingModel(e.target.value as "voyage" | "openai"));
@@ -508,26 +503,26 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
           </Select>
         </label>
         <label className="block">
-          <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Model</span>
+          <span className={FIELD_LABEL}>Model</span>
           <Select value={model} onChange={(e) => setModel(e.target.value)}>
             {meta.models.map((m) => <option key={m} value={m}>{m}</option>)}
           </Select>
         </label>
       </div>
-      <p className="text-[11px] text-[var(--color-text-muted)]">{meta.hint}</p>
+      <p className={NOTE}>{meta.hint}</p>
 
       <label className="block">
-        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">
+        <span className={FIELD_LABEL}>
           Embeddings API key {saved ? "(leave blank to keep the saved key)" : ""}
         </span>
         <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)}
-          placeholder={saved ? `Saved · ends in ${current?.embeddingKeyLast4 ?? "????"}` : "Paste your embeddings key"}
+          placeholder={saved ? `Saved, ends in ${current?.embeddingKeyLast4 ?? "????"}` : "Paste your embeddings key"}
           autoComplete="off" />
       </label>
 
       <div className="flex items-center gap-2 flex-wrap">
         <Button variant="secondary" onClick={() => void save()} disabled={busy !== null}>
-          {busy === "save" ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Verify &amp; save
+          {busy === "save" ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Verify and save
         </Button>
         <Button variant="secondary" onClick={() => void test()} disabled={busy !== null || (!saved && !apiKey.trim())}>
           {busy === "test" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plug className="w-4 h-4" />} Test only
@@ -539,12 +534,7 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
         )}
       </div>
       <Notice notice={notice} />
-      <p className="text-[11px] text-[var(--color-text-muted)]">
-        <b>Verify &amp; save</b> makes a real embed call with the key first - a key that saves is a key
-        that works. Embedding spend bills to <b>your own account with that provider</b>; the meter&apos;s
-        figure is an estimate, your provider&apos;s invoice is the real number.
-      </p>
-    </div>
+    </Section>
   );
 }
 
@@ -572,12 +562,12 @@ export function UsagePanel({ orgId }: { orgId: string }) {
   }, [orgId, tick]);
 
   // Pre-migration DB, or the read failed: say so in one quiet line.
-  if (failed) return <p className="text-[11px] text-[var(--color-text-muted)]">Couldn&apos;t load this month&apos;s AI spend.</p>;
+  if (failed) return <p className={NOTE}>Couldn&apos;t load this month&apos;s AI spend.</p>;
   if (!usage) {
     return (
-      <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] px-4 py-3 text-center text-[13px] text-[var(--color-text-muted)]">
-        <Loader2 className="w-4 h-4 animate-spin inline mr-1.5" /> Loading this month&apos;s AI spend…
-      </div>
+      <Section title="Your AI use this month">
+        <p className="text-center text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline mr-1.5" /> Loading this month&apos;s AI spend…</p>
+      </Section>
     );
   }
 
@@ -592,7 +582,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
     : null;
   const hot = usage.percent >= 80;
   const capped = usage.percent >= 100;
-  const barColor = capped ? "bg-rose-600" : hot ? "bg-amber-500" : "bg-emerald-600";
+  const barColor = capped ? "bg-[var(--state-overdue)]" : hot ? "bg-[var(--state-held)]" : "bg-[var(--state-released)]";
 
   const saveCap = async () => {
     const cap = Number(capDraft);
@@ -628,106 +618,127 @@ export function UsagePanel({ orgId }: { orgId: string }) {
     } finally { setSavingUser(null); }
   };
 
+  const cell = "px-4 sm:px-5 py-3 min-w-0";
+  const figure = "font-display text-[24px] leading-none font-semibold tabular-nums text-[var(--color-text)]";
   return (
-    <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center gap-1.5">
-          <Gauge className="w-3.5 h-3.5" /> Your AI usage - {usage.monthLabel}
+    <Section title={`Your AI use, ${usage.monthLabel}`}
+      help="These numbers are yours alone: every question you ask, and every indexing or drawing-reading run your key pays for, is metered under your user id with the token counts your provider reported. All of it counts toward the cap. Estimated from provider token counts times published rates. Questions stop at 100% and reset on the 1st (UTC).">
+      {/* The month in ruled cells: spent against the cap, then what it bought. */}
+      <dl className="-mx-4 sm:-mx-5 -mt-4 sm:-mt-5 grid grid-cols-2 sm:grid-cols-4 divide-x divide-[var(--color-border)] border-b border-[var(--color-border)]">
+        <div className={cell}>
+          <dt className="text-[13px] text-[var(--color-text-muted)]">Spent</dt>
+          <dd className={`mt-1 ${figure} ${capped ? "!text-[var(--state-overdue)]" : hot ? "!text-[var(--state-held)]" : ""}`}>{fmtUsd(usage.spentUsd)}</dd>
         </div>
-        <span className={`text-xs font-black ${capped ? "text-rose-600" : hot ? "text-amber-600" : "text-[var(--color-text)]"}`}>
-          {fmtUsd(usage.spentUsd)} of {fmtUsd(usage.capUsd)} · {usage.percent}%
-        </span>
+        <div className={cell}>
+          <dt className="text-[13px] text-[var(--color-text-muted)]">Cap</dt>
+          <dd className={`mt-1 ${figure}`}>{fmtUsd(usage.capUsd)}</dd>
+        </div>
+        <div className={`${cell} max-sm:border-t max-sm:border-[var(--color-border)] max-sm:!border-l-0`}>
+          <dt className="text-[13px] text-[var(--color-text-muted)]">Questions</dt>
+          <dd className={`mt-1 ${figure}`}>{usage.asks.toLocaleString()}</dd>
+        </div>
+        <div className={`${cell} max-sm:border-t max-sm:border-[var(--color-border)]`}>
+          <dt className="text-[13px] text-[var(--color-text-muted)]">Tokens</dt>
+          <dd className={`mt-1 ${figure}`}>{fmtTok(totalTokens)}{estTokenBudget ? <span className="text-[15px] font-normal text-[var(--color-text-muted)]"> of ~{fmtTok(estTokenBudget)}</span> : null}</dd>
+        </div>
+      </dl>
+      <div className="flex items-center gap-3">
+        <div className="flex-1 h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
+          <div className={`h-full rounded-full transition-all ${barColor}`}
+            style={{ width: `${Math.min(100, usage.percent)}%` }} />
+        </div>
+        <span className="font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)]">{usage.percent}% used</span>
       </div>
-      <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-        <div className={`h-full rounded-full transition-all ${barColor}`}
-          style={{ width: `${Math.min(100, usage.percent)}%` }} />
-      </div>
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-[var(--color-text-muted)]">
-        <span>
-          <b className="text-[var(--color-text)]">{fmtTok(totalTokens)}</b>
-          {estTokenBudget ? <> of ~{fmtTok(estTokenBudget)}</> : null} tokens
-        </span>
-        <span><b className="text-[var(--color-text)]">{usage.asks}</b> questions</span>
-        {usage.asks > 0 && (
-          <span>avg <b className="text-[var(--color-text)]">{fmtTok(usage.avgPromptTokens)}</b> prompt tokens / question</span>
-        )}
-        {background > 0.005 && (
-          <span><b className="text-[var(--color-text)]">{fmtUsd(background)}</b> on indexing and reading documents</span>
-        )}
-      </div>
-      <p className="text-[11px] text-[var(--color-text-muted)]">
-        These numbers are YOURS alone: every question you ask, and every indexing or drawing-reading run
-        your key pays for, writes a metering row under your user id with the token counts your provider
-        reported - nobody else&apos;s work is mixed in. All of it counts toward the cap.
-      </p>
+      {(usage.asks > 0 || background > 0.005) && (
+        <div className="flex flex-wrap gap-x-5 gap-y-1 text-[13px] text-[var(--color-text-muted)]">
+          {usage.asks > 0 && <span>About {fmtTok(usage.avgPromptTokens)} prompt tokens per question</span>}
+          {background > 0.005 && <span>{fmtUsd(background)} on indexing and reading documents</span>}
+        </div>
+      )}
       {capped ? (
-        <p className="text-[11px] font-bold text-rose-600">
-          Cap reached - questions are locked until the 1st, unless an Admin raises the cap.
+        <p className="relative pl-4 py-0.5 text-[14px] font-semibold text-[var(--state-overdue)]">
+          <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-overdue)]" />
+          Cap reached. Questions are locked until the 1st, unless an Admin raises the cap.
         </p>
       ) : hot ? (
-        <p className="text-[11px] font-bold text-amber-600">
-          Over 80% of your monthly budget - questions lock at 100% until the 1st.
+        <p className="relative pl-4 py-0.5 text-[14px] font-semibold text-[var(--color-text)]">
+          <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-held)]" />
+          Over 80% of your monthly budget. Questions lock at 100% until the 1st.
         </p>
       ) : null}
 
       {usage.team && (
-        <div className="pt-2 border-t border-[var(--color-border)] space-y-2">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center gap-1.5">
-              <Users className="w-3.5 h-3.5" /> Team this month
-            </span>
-            <div className="ml-auto flex items-center gap-1.5">
-              <span className="text-[11px] text-[var(--color-text-muted)]">Cap $/person</span>
-              <Input value={capDraft} onChange={(e) => setCapDraft(e.target.value)}
-                className="!w-20 !py-1 text-xs" inputMode="decimal" />
-              <Button variant="secondary" onClick={() => void saveCap()} disabled={savingCap}
-                className="!px-2.5 !py-1 text-xs">
-                {savingCap ? <Loader2 className="w-3 h-3 animate-spin" /> : "Set"}
+        <div className="pt-4 border-t border-[var(--color-border)] space-y-3">
+          <div className="flex items-center gap-x-3 gap-y-2 flex-wrap">
+            <h3 className="font-display text-[17px] font-semibold text-[var(--color-text)] inline-flex items-center gap-1.5">
+              <Users className="w-4 h-4 text-[var(--color-text-muted)]" /> Team this month
+            </h3>
+            <div className="ml-auto flex items-center gap-2">
+              <label htmlFor="ai-default-cap" className="text-[13px] text-[var(--color-text-muted)]">Default cap, $ per person</label>
+              <Input id="ai-default-cap" value={capDraft} onChange={(e) => setCapDraft(e.target.value)}
+                className="!w-20" inputMode="decimal" />
+              <Button variant="secondary" size="sm" onClick={() => void saveCap()} disabled={savingCap}>
+                {savingCap ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Set"}
               </Button>
             </div>
           </div>
-          <ul className="space-y-1">
-            {usage.team.map((m) => {
-              // Each person meters against THEIR cap (override or default).
-              const pct = m.capUsd > 0 ? Math.min(100, Math.round((m.spentUsd / m.capUsd) * 100)) : 100;
-              const presets = [5, 10, 15, 20, 25, 30, 35, 50, 75, 100];
-              if (m.hasOverride && !presets.includes(m.capUsd)) presets.push(m.capUsd);
-              return (
-                <li key={m.userId} className="flex items-center gap-2 text-[11px]">
-                  <span className="w-32 truncate font-bold text-[var(--color-text)]">{m.name}</span>
-                  <div className="flex-1 h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-                    <div className={`h-full rounded-full ${pct >= 100 ? "bg-rose-600" : pct >= 80 ? "bg-amber-500" : "bg-emerald-600"}`}
-                      style={{ width: `${pct}%` }} />
-                  </div>
-                  <span className="w-[88px] text-right text-[var(--color-text-muted)] tabular-nums">
-                    {fmtUsd(m.spentUsd)} · {m.asks} asks
-                  </span>
-                  <select
-                    value={m.hasOverride ? String(m.capUsd) : "default"}
-                    disabled={savingUser === m.userId}
-                    onChange={(e) => void setMemberCap(m.userId, m.name, e.target.value)}
-                    title={`${m.name}'s monthly cap`}
-                    className={`shrink-0 w-[74px] text-[11px] font-black rounded-lg border px-1 py-0.5 bg-[var(--color-surface)] cursor-pointer disabled:opacity-50 ${
-                      m.hasOverride
-                        ? "border-[var(--color-text)] text-[var(--color-text)]"
-                        : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
-                    <option value="default">${usage.orgCapUsd ?? usage.capUsd} def</option>
-                    {presets.sort((a, b) => a - b).map((p) => (
-                      <option key={p} value={String(p)}>${p}</option>
-                    ))}
-                  </select>
-                </li>
-              );
-            })}
-          </ul>
-          <p className="text-[11px] text-[var(--color-text-muted)]">
-            Each person has their own cap; the dropdown sets it (dark outline = a personal cap,
-            &ldquo;def&rdquo; = the workspace default). Estimated from provider token counts ×
-            published rates. Questions stop at 100% and reset on the 1st (UTC).
-          </p>
+          <div className="-mx-4 sm:-mx-5 border-y border-[var(--color-border)] overflow-x-auto">
+            <table className="w-full text-[14px]">
+              <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+                <tr>
+                  <th className="font-semibold px-4 sm:px-5 h-10">Person</th>
+                  <th className="font-semibold px-3 text-right">Spent</th>
+                  <th className="font-semibold px-3 text-right hidden sm:table-cell">Questions</th>
+                  <th className="font-semibold px-3 hidden md:table-cell w-[30%]">Used</th>
+                  <th className="font-semibold px-4 sm:px-5">Cap</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--color-border)]">
+                {usage.team.map((m) => {
+                  // Each person meters against THEIR cap (override or default).
+                  const pct = m.capUsd > 0 ? Math.min(100, Math.round((m.spentUsd / m.capUsd) * 100)) : 100;
+                  const presets = [5, 10, 15, 20, 25, 30, 35, 50, 75, 100];
+                  if (m.hasOverride && !presets.includes(m.capUsd)) presets.push(m.capUsd);
+                  return (
+                    <tr key={m.userId}>
+                      <td className="px-4 sm:px-5 py-2.5 font-semibold text-[var(--color-text)] max-w-[180px] truncate">{m.name}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-[var(--color-text)]">{fmtUsd(m.spentUsd)}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-[var(--color-text-muted)] hidden sm:table-cell">{m.asks}</td>
+                      <td className="px-3 py-2.5 hidden md:table-cell">
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
+                            <div className={`h-full rounded-full ${pct >= 100 ? "bg-[var(--state-overdue)]" : pct >= 80 ? "bg-[var(--state-held)]" : "bg-[var(--state-released)]"}`}
+                              style={{ width: `${pct}%` }} />
+                          </div>
+                          <span className="w-10 text-right tabular-nums text-[13px] text-[var(--color-text-muted)]">{pct}%</span>
+                        </div>
+                      </td>
+                      <td className="px-4 sm:px-5 py-2">
+                        <select
+                          value={m.hasOverride ? String(m.capUsd) : "default"}
+                          disabled={savingUser === m.userId}
+                          onChange={(e) => void setMemberCap(m.userId, m.name, e.target.value)}
+                          aria-label={`${m.name}'s monthly cap`}
+                          className={`h-8 w-[118px] text-[13px] font-semibold rounded-md border px-2 bg-[var(--color-surface)] cursor-pointer disabled:opacity-50 ${
+                            m.hasOverride
+                              ? "border-[var(--color-text)] text-[var(--color-text)]"
+                              : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`}>
+                          <option value="default">${usage.orgCapUsd ?? usage.capUsd} default</option>
+                          {presets.sort((a, b) => a - b).map((p) => (
+                            <option key={p} value={String(p)}>${p}</option>
+                          ))}
+                        </select>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className={NOTE}>A graphite edge on the cap means that person has their own cap.</p>
         </div>
       )}
-    </div>
+    </Section>
   );
 }
 
@@ -753,12 +764,12 @@ export default function AiSettingsModal({ orgId, open, onClose }: {
         <ModalHeader icon={KeyRound} title="AI settings"
           subtitle="Your questions run on your own API key and monthly cap. Keys are stored on the server and never shown again."
           onClose={onClose} />
-        <ModalBody className="space-y-4">
+        <ModalBody className="space-y-6">
           {loadError && (
-            <p role="alert" className="border-l-2 border-rose-500 pl-2 text-xs font-bold text-rose-700 dark:text-rose-300">Couldn&apos;t load the AI settings: {loadError}</p>
+            <p role="alert" className="relative pl-4 py-0.5 text-[14px] font-semibold text-[var(--state-overdue)]"><span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-overdue)]" />Couldn&apos;t load the AI settings: {loadError}</p>
           )}
           {!data && !loadError && (
-            <div className="py-8 text-center text-sm text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin inline mr-2" /> Loading the AI settings…</div>
+            <div className="py-8 text-center text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin inline mr-2" /> Loading the AI settings…</div>
           )}
           {data && (
             <>

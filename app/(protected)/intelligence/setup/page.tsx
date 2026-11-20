@@ -44,38 +44,44 @@ export default function IntelligenceSetupPage() {
         kicker="Intelligence · Setup"
         title={answer}
         sub={loadError
-          ? <span className="text-rose-200 font-semibold">Couldn&apos;t load your AI setup: {loadError}</span>
+          ? undefined
           : data ? (data.personal?.keyLast4 ? "Caps and models are below." : "Add your AI key below to start asking questions.") : "Your keys, spending caps and models."}
       >
         <ViewTabs tabs={INTELLIGENCE_VIEWS} variant="dark" />
       </PageHero>
 
       <PageBody>
-      <div className="max-w-3xl space-y-4">
+      {/* Forms on white sheets; the usage table and the per-job menus get
+          the full width, the key forms sit beside each other on a wide screen. */}
         {!data && !loadError && (
-          <Card><p className="py-6 text-center text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin inline mr-2" /> Loading your AI setup…</p></Card>
+          <Card><p className="py-6 text-center text-[15px] text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin inline mr-2" /> Loading your AI setup…</p></Card>
         )}
         {loadError && (
-          <Card><p role="alert" className="text-[14px] font-semibold text-rose-700 dark:text-rose-300">Couldn&apos;t load your AI setup: {loadError}</p></Card>
+          <div className="relative pl-4 py-1">
+            <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-overdue)]" />
+            <p role="alert" className="text-[15px] font-semibold text-[var(--state-overdue)]">Couldn&apos;t load your AI setup: {loadError}</p>
+          </div>
         )}
         {data && (
           <>
-            <KeyEditor orgId={activeOrgId} current={data.personal}
-              onChanged={() => setReloadTick((t) => t + 1)} />
+            <div className="grid gap-8 xl:grid-cols-2 items-start">
+              <KeyEditor orgId={activeOrgId} current={data.personal}
+                onChanged={() => setReloadTick((t) => t + 1)} />
+              <EmbeddingKeyEditor orgId={activeOrgId} current={data.personal}
+                onChanged={() => setReloadTick((t) => t + 1)} />
+            </div>
             <UsagePanel orgId={activeOrgId} />
             <JobModelsFor orgId={activeOrgId} data={data} onChanged={() => setReloadTick((t) => t + 1)} />
-            <EmbeddingKeyEditor orgId={activeOrgId} current={data.personal}
-              onChanged={() => setReloadTick((t) => t + 1)} />
           </>
         )}
 
         {/* Org-level teaching + health, for the roles that hold them. */}
-        <Card label="Teach the workspace">
+        <Card label="Teach the workspace" pad={false} className="overflow-hidden">
           <div className="divide-y divide-[var(--color-border)]">
           {isController && (
             <SetupLink href="/admin/ai-instructions" icon={GraduationCap}
               title="AI instructions (playbooks)"
-              body="Standing org instructions added to every AI prompt, e.g. 'our drawing types never include vendor codes'." />
+              body="Standing instructions added to every AI prompt, e.g. 'our drawing types never include vendor codes'." />
           )}
           {isController && (
             <SetupLink href="/admin/codebook" icon={BookMarked}
@@ -85,16 +91,15 @@ export default function IntelligenceSetupPage() {
           {isAdmin && (
             <SetupLink href="/admin/settings" icon={Database}
               title="Database health"
-              body="Probes every table the AI features expect and names any migration still to run." />
+              body="Checks every table the AI features expect and names any migration still to run." />
           )}
           {!isController && (
-            <p className="py-2 text-[13px] text-[var(--color-text-muted)]">
-              Org-level configuration (playbooks, codebook) is managed by Admin / Doc Control.
+            <p className="px-4 py-3 text-[15px] text-[var(--color-text-muted)]">
+              Admin or Doc Control manage the org-level setup (playbooks, codebook).
             </p>
           )}
           </div>
         </Card>
-      </div>
       </PageBody>
     </PageShell>
   );
@@ -104,13 +109,13 @@ function SetupLink({ href, icon: Icon, title, body }: {
   href: string; icon: React.ComponentType<{ className?: string }>; title: string; body: string;
 }) {
   return (
-    <Link href={href} className="flex items-start gap-3 rounded-lg px-2 py-3 -mx-2 hover:bg-[var(--color-surface-2)] transition-colors">
-      <Icon className="w-4 h-4 text-[var(--color-text-muted)] mt-0.5 shrink-0" />
-      <div className="flex-1">
-        <div className="text-[14px] font-bold text-[var(--color-text)]">{title}</div>
-        <p className="text-[13px] text-[var(--color-text-muted)]">{body}</p>
+    <Link href={href} className="group flex items-start gap-3 px-4 py-3 hover:bg-[var(--color-surface-2)] transition-colors">
+      <Icon className="w-4 h-4 text-[var(--color-text-muted)] mt-1 shrink-0" />
+      <div className="flex-1 min-w-0">
+        <div className="text-[15px] font-semibold text-[var(--color-text)] group-hover:text-[var(--color-accent-text)]">{title}</div>
+        <p className="text-[14px] text-[var(--color-text-muted)]">{body}</p>
       </div>
-      <ArrowRight className="w-3.5 h-3.5 text-[var(--color-text-faint)] mt-1" />
+      <ArrowRight className="w-4 h-4 text-[var(--color-text-muted)] mt-1 shrink-0" />
     </Link>
   );
 }

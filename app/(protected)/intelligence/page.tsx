@@ -11,10 +11,7 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import {
-  GitPullRequest, Gauge, Loader2,
-  CheckCircle2, XCircle, ArrowRight, MessageSquare,
-} from "lucide-react";
+import { Loader2, ArrowRight } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { badgeText } from "@/lib/badge";
 import { supabase } from "@/lib/supabase";
@@ -184,14 +181,46 @@ export default function IntelligencePage() {
       : s.pendingProposals > 0 ? { text: `${s.pendingProposals} proposed connection${s.pendingProposals === 1 ? "" : "s"} wait for you.`, href: "/admin/proposed-links", cta: "Review them" }
       : { text: "AI is set up and reading your documents.", href: "/assistant", cta: "Ask a question" };
 
+  const when = (iso: string) => {
+    const d = new Date(iso);
+    const day = d.toDateString() === new Date().toDateString()
+      ? "Today"
+      : d.toLocaleDateString(undefined, { month: "short", day: "numeric", ...(d.getFullYear() !== new Date().getFullYear() ? { year: "numeric" } : {}) });
+    return `${day}, ${d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
+  };
+  // The four checks, one ruled row each.
+  const checks: CheckRow[] = [
+    { pending: !s.keysKnown, ok: !!s.chatKey, title: "Chat key",
+      okText: `Claude or OpenAI key active, ending ${s.chatKey}`, fixText: "No key saved, so questions can't run",
+      href: "/intelligence/setup", cta: "Add a key" },
+    { pending: !s.keysKnown, ok: !!s.embeddingKey, title: "Embeddings key",
+      okText: `Meaning-based search on, key ending ${s.embeddingKey}`, fixText: "Keyword search only until a Voyage or OpenAI key is added",
+      href: "/intelligence/setup", cta: "Add a key" },
+    { pending: !s.countsKnown, ok: s.docs > 0, title: "Knowledge",
+      okText: `${s.docs} document${s.docs === 1 ? "" : "s"} across ${s.libraries} librar${s.libraries === 1 ? "y" : "ies"}`, fixText: "Nothing indexed, so the AI has nothing to read yet",
+      href: "/knowledge", cta: "Upload documents" },
+    s.schemaGaps !== null
+      ? { ok: s.schemaGaps === 0, title: "Database", okText: "All expected tables present",
+        fixText: `${s.schemaGaps} schema gap${s.schemaGaps === 1 ? "" : "s"}: some features stay empty until migrated`,
+        href: "/admin/settings", cta: "Open database health" }
+      : { pending: !s.coverageKnown, ok: s.chunksTotal > 0 ? s.chunksEmbedded > 0 : true, title: "Meaning index",
+        okText: s.chunksTotal > 0 ? `${coveragePct}% of passages embedded` : "Builds after your first uploads",
+        fixText: "Index not built yet, so meaning-based linking is off", href: "/knowledge", cta: "Build the index" },
+  ];
+  const facts = s.countsKnown ? [
+    { label: "Documents", value: s.docs.toLocaleString() },
+    { label: "Libraries", value: s.libraries.toLocaleString() },
+    ...(s.chunksTotal > 0 ? [{ label: "Indexed", value: `${coveragePct}%`, tone: coveragePct < 100 ? "warn" as const : undefined }] : []),
+    { label: "Waiting on you", value: s.pendingProposals.toLocaleString(), tone: s.pendingProposals > 0 ? "warn" as const : undefined },
+  ] : undefined;
+
   return (
     <PageShell>
       <PageHero
         kicker="Intelligence · Status"
         title={lead ? lead.text : error ? "Couldn't check the AI." : "Checking the AI…"}
-        sub={error
-          ? <span className="text-rose-200 font-semibold">Couldn&apos;t load the AI status: {error}</span>
-          : s.countsKnown ? `${s.docs.toLocaleString()} document${s.docs === 1 ? "" : "s"} across ${s.libraries} librar${s.libraries === 1 ? "y" : "ies"}${s.chunksTotal > 0 ? `, ${coveragePct}% of passages in the meaning index` : ""}.` : undefined}
+        sub={error ? <span className="text-[var(--state-overdue)] font-semibold">Couldn&apos;t load the AI status: {error}</span> : undefined}
+        facts={facts}
         primary={lead ? (
           <Link href={lead.href} className={heroPrimary}>
             {lead.cta} <ArrowRight className="w-4 h-4" />
@@ -202,106 +231,92 @@ export default function IntelligencePage() {
       </PageHero>
 
       <PageBody>
-          {/* ── Is the machine on? One card, four checks. ── */}
-          <Card label="Is it on" pad={false}>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-px bg-[var(--color-border)] border-t border-[var(--color-border)] rounded-b-2xl overflow-hidden [&>*]:bg-[var(--color-surface)]">
-            <StatusCard
-              pending={!s.keysKnown}
-              ok={!!s.chatKey}
-              title="Chat key"
-              okText={`Claude/OpenAI key active · ····${s.chatKey}`}
-              fixText="No key saved, so questions can't run"
-              href="/intelligence/setup" cta="Add key"
-            />
-            <StatusCard
-              pending={!s.keysKnown}
-              ok={!!s.embeddingKey}
-              title="Embeddings key"
-              okText={`Meaning-based search enabled · ····${s.embeddingKey}`}
-              fixText="Keyword search only until a Voyage/OpenAI key is added"
-              href="/intelligence/setup" cta="Add key"
-            />
-            <StatusCard
-              pending={!s.countsKnown}
-              ok={s.docs > 0}
-              title="Knowledge"
-              okText={`${s.docs} document${s.docs === 1 ? "" : "s"} across ${s.libraries} librar${s.libraries === 1 ? "y" : "ies"}`}
-              fixText="Nothing indexed, so the AI has nothing to read yet"
-              href="/knowledge" cta="Upload documents"
-            />
-            {s.schemaGaps !== null ? (
-              <StatusCard
-                ok={s.schemaGaps === 0}
-                title="Database"
-                okText="All expected tables present"
-                fixText={`${s.schemaGaps} schema gap${s.schemaGaps === 1 ? "" : "s"}: some features stay empty until migrated`}
-                href="/admin/settings" cta="Open Database health"
-              />
-            ) : (
-              <StatusCard
-                pending={!s.coverageKnown}
-                ok={s.chunksTotal > 0 ? s.chunksEmbedded > 0 : true}
-                title="Meaning index"
-                okText={s.chunksTotal > 0 ? `${coveragePct}% of passages embedded` : "Builds after your first uploads"}
-                fixText="Index not built yet, so meaning-based linking is off"
-                href="/knowledge" cta="Build index"
-              />
-            )}
-          </div>
+          {/* ── Is the machine on? Four checks, one ruled row each. ── */}
+          <Card label="Is it on" pad={false} className="overflow-hidden">
+            <table className="w-full text-[15px]">
+              <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+                <tr>
+                  <th className="font-semibold px-4 h-10 w-[30%] sm:w-[22%]">Check</th>
+                  <th className="font-semibold px-4">State</th>
+                  <th className="font-semibold px-4 hidden sm:table-cell text-right">Fix</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--color-border)]">
+                {checks.map((c) => <CheckLine key={c.title} c={c} />)}
+              </tbody>
+            </table>
           </Card>
 
           {/* ── What is it waiting on from me? ── */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <Card label={<span className="inline-flex items-center gap-1.5"><GitPullRequest className="w-3.5 h-3.5" /> Waiting on you</span>}>
-              {!s.countsKnown ? (
-                <p className="flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking what waits on you…</p>
-              ) : s.pendingProposals > 0 ? (
-                <Link href="/admin/proposed-links" className="flex items-center gap-3 border-t border-[var(--color-border)] py-3 hover:bg-[var(--color-surface-2)] -mx-4 sm:-mx-5 px-4 sm:px-5 transition-colors">
-                  <span className="text-[15px] font-black text-[var(--color-text)] tabular-nums w-9">{badgeText(s.pendingProposals)}</span>
-                  <div className="flex-1">
-                    <div className="text-[14px] font-bold text-[var(--color-text)]">Proposed connections to review</div>
-                    <div className="text-[13px] text-[var(--color-text-muted)]">Links found in your own data. Approve or dismiss each, with its evidence.</div>
-                  </div>
-                  <ArrowRight className="w-4 h-4 text-[var(--color-text-faint)]" />
-                </Link>
-              ) : (
-                <p className="text-[13.5px] text-[var(--color-text-muted)]">Nothing pending. New link proposals appear here as documents get indexed.</p>
-              )}
-              {s.chunksTotal > 0 && s.chunksEmbedded < s.chunksTotal && !!s.embeddingKey && (
-                <Link href="/knowledge" className="flex items-center gap-3 border-t border-[var(--color-border)] py-3 hover:bg-[var(--color-surface-2)] -mx-4 sm:-mx-5 px-4 sm:px-5 transition-colors">
-                  <Gauge className="w-5 h-5 text-[var(--color-text-muted)]" />
-                  <div className="flex-1">
-                    <div className="text-[14px] font-bold text-[var(--color-text)]">Meaning index {coveragePct}% built</div>
-                    <div className="text-[13px] text-[var(--color-text-muted)]">{s.chunksEmbedded} of {s.chunksTotal} passages embedded. Finish it from the library page.</div>
-                  </div>
-                  <ArrowRight className="w-4 h-4 text-[var(--color-text-faint)]" />
-                </Link>
-              )}
-            </Card>
+          <Card label="Waiting on you" pad={false} className="overflow-hidden">
+            {!s.countsKnown ? (
+              <p className="px-4 py-3 flex items-center gap-1.5 text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking what waits on you…</p>
+            ) : (
+              <ul className="divide-y divide-[var(--color-border)]">
+                {s.pendingProposals > 0 ? (
+                  <li>
+                    <Link href="/admin/proposed-links" className="flex items-center gap-4 px-4 py-3 hover:bg-[var(--color-surface-2)] transition-colors">
+                      <span className="font-display text-[22px] font-semibold text-[var(--color-text)] tabular-nums w-10 text-right">{badgeText(s.pendingProposals)}</span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-[15px] font-semibold text-[var(--color-text)]">Proposed connections to review</span>
+                        <span className="block text-[14px] text-[var(--color-text-muted)]">Approve or dismiss each, with its evidence.</span>
+                      </span>
+                      <ArrowRight className="w-4 h-4 text-[var(--color-text-muted)]" />
+                    </Link>
+                  </li>
+                ) : (
+                  <li className="px-4 py-3 text-[15px] text-[var(--color-text-muted)]">Nothing pending. New link proposals show up here as documents get indexed.</li>
+                )}
+                {s.chunksTotal > 0 && s.chunksEmbedded < s.chunksTotal && !!s.embeddingKey && (
+                  <li>
+                    <Link href="/knowledge" className="flex items-center gap-4 px-4 py-3 hover:bg-[var(--color-surface-2)] transition-colors">
+                      <span className="font-display text-[22px] font-semibold text-[var(--color-text)] tabular-nums w-10 text-right">{coveragePct}%</span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-[15px] font-semibold text-[var(--color-text)]">Meaning index built</span>
+                        <span className="block text-[14px] text-[var(--color-text-muted)]">{s.chunksEmbedded.toLocaleString()} of {s.chunksTotal.toLocaleString()} passages. Finish it from the library page.</span>
+                      </span>
+                      <ArrowRight className="w-4 h-4 text-[var(--color-text-muted)]" />
+                    </Link>
+                  </li>
+                )}
+              </ul>
+            )}
+          </Card>
 
-            <Card label={<span className="inline-flex items-center gap-1.5"><MessageSquare className="w-3.5 h-3.5" /> Recent questions</span>}>
-              {!s.countsKnown ? (
-                <p className="flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading recent questions…</p>
-              ) : s.recentAsks.length === 0 ? (
-                <p className="text-[13.5px] text-[var(--color-text-muted)]">
-                  Nobody has asked anything yet. Try &ldquo;what do we have on E-101?&rdquo;
-                </p>
-              ) : (
-                <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)] -mx-4 sm:-mx-5">
+          <Card label="Recent questions" pad={false} className="overflow-hidden"
+            action={<Link href="/assistant" className="text-[14px] text-[var(--color-accent-text)] hover:underline">All conversations</Link>}>
+            {!s.countsKnown ? (
+              <p className="px-4 py-3 flex items-center gap-1.5 text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading recent questions…</p>
+            ) : s.recentAsks.length === 0 ? (
+              <p className="px-4 py-3 text-[15px] text-[var(--color-text-muted)]">
+                Nobody has asked anything yet. Try &ldquo;what do we have on E-101?&rdquo;
+              </p>
+            ) : (
+              <table className="w-full text-[15px]">
+                <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+                  <tr>
+                    <th className="font-semibold px-4 h-10">Question</th>
+                    <th className="font-semibold px-4 hidden sm:table-cell">Asked by</th>
+                    <th className="font-semibold px-4 hidden sm:table-cell whitespace-nowrap">When</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--color-border)]">
                   {s.recentAsks.map((a) => (
-                    <li key={a.id}>
-                      {/* The conversation itself: new asks carry the chat thread id;
-                          older rows were backfilled as one-turn threads under their own id. */}
-                      <Link href={`/assistant?thread=${a.threadId ?? a.id}`} className="block px-4 sm:px-5 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors">
-                        <div className="text-[14px] font-semibold text-[var(--color-text)] truncate">{a.question}</div>
-                        <div className="text-[12px] text-[var(--color-text-muted)]">{a.userName ?? "someone"} · {new Date(a.at).toLocaleString()}</div>
-                      </Link>
-                    </li>
+                    // The conversation itself: new asks carry the chat thread id;
+                    // older rows were backfilled as one-turn threads under their own id.
+                    <tr key={a.id} className="hover:bg-[var(--color-surface-2)]">
+                      <td className="px-4 py-3 max-w-0 w-full">
+                        <Link href={`/assistant?thread=${a.threadId ?? a.id}`} className="block truncate font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{a.question}</Link>
+                        <span className="sm:hidden block text-[13px] text-[var(--color-text-muted)]">{(a.userName ?? "someone").split("@")[0]}, {when(a.at)}</span>
+                      </td>
+                      <td className="px-4 py-3 hidden sm:table-cell whitespace-nowrap text-[var(--color-text-muted)]">{(a.userName ?? "someone").split("@")[0]}</td>
+                      <td className="px-4 py-3 hidden sm:table-cell whitespace-nowrap text-[var(--color-text-muted)] tabular-nums">{when(a.at)}</td>
+                    </tr>
                   ))}
-                </ul>
-              )}
-            </Card>
-          </div>
+                </tbody>
+              </table>
+            )}
+          </Card>
 
           {/* Ask, Knowledge, Graph and Setup live in the tabs above: one home each. */}
       </PageBody>
@@ -309,41 +324,32 @@ export default function IntelligencePage() {
   );
 }
 
-function StatusCard({ ok, title, okText, fixText, href, cta, pending }: {
+interface CheckRow {
   ok: boolean; title: string; okText: string; fixText: string; href: string; cta: string;
-  /** Data for this card hasn't arrived yet — shimmer instead of a default
+  /** Data for this row hasn't arrived yet — "Checking" instead of a default
    *  that would read as a false "No key saved". */
   pending?: boolean;
-}) {
-  if (pending) {
-    return (
-      <div className="px-4 sm:px-5 py-3.5">
-        <div className="flex items-center gap-1.5 mb-1">
-          <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-muted)]" />
-          <span className="text-[13px] font-bold text-[var(--color-text)]">{title}</span>
-        </div>
-        <p className="text-[13px] text-[var(--color-text-muted)]">Checking…</p>
-      </div>
-    );
-  }
-  return (
-    <div className="px-4 sm:px-5 py-3.5">
-      <div className="flex items-center gap-1.5 mb-1">
-        {ok
-          ? <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-          : <XCircle className="w-4 h-4 text-amber-600" />}
-        <span className="text-[13px] font-bold text-[var(--color-text)]">{title}</span>
-      </div>
-      <p className={`text-[13px] ${ok ? "text-[var(--color-text-muted)]" : "font-semibold text-amber-800 dark:text-amber-300"}`}>
-        {ok ? okText : fixText}
-      </p>
-      {!ok && (
-        <Link href={href} className="mt-1.5 inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)]">
-          {cta} <ArrowRight className="w-3 h-3" />
-        </Link>
-      )}
-    </div>
-  );
 }
 
-
+function CheckLine({ c }: { c: CheckRow }) {
+  const fix = !c.pending && !c.ok
+    ? <Link href={c.href} className="inline-flex items-center gap-1 text-[14px] text-[var(--color-accent-text)] hover:underline whitespace-nowrap">{c.cta} <ArrowRight className="w-3.5 h-3.5" /></Link>
+    : null;
+  return (
+    <tr className="align-top">
+      <td className="px-4 py-3 font-semibold text-[var(--color-text)]">{c.title}</td>
+      <td className="px-4 py-3">
+        {c.pending ? (
+          <span className="inline-flex items-center gap-1.5 text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking…</span>
+        ) : (
+          <span className={`inline-flex items-start gap-2 text-[14px] ${c.ok ? "text-[var(--color-text-muted)]" : "font-semibold text-[var(--color-text)]"}`}>
+            <span aria-hidden className={`mt-[7px] w-2 h-2 rounded-full shrink-0 ${c.ok ? "bg-[var(--state-released)]" : "bg-[var(--state-held)]"}`} />
+            {c.ok ? c.okText : c.fixText}
+          </span>
+        )}
+        {fix && <div className="sm:hidden mt-1 pl-4">{fix}</div>}
+      </td>
+      <td className="px-4 py-3 hidden sm:table-cell text-right">{fix}</td>
+    </tr>
+  );
+}

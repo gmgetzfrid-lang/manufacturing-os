@@ -21,13 +21,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
-  Puzzle, Loader2, Eye, EyeOff, Trash2, AlertTriangle, Lock, Users,
-  Sparkles, Waypoints, FileSearch, MessageSquareQuote, Boxes, ArrowUpRight,
-  BrainCircuit,
+  Puzzle, Loader2, Trash2, AlertTriangle, Lock, Users,
+  Sparkles, FileSearch, MessageSquareQuote, Boxes, ArrowUpRight,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { PageShell } from "@/components/ui/PageShell";
-import { PageHero, PageBody, Card } from "@/components/ui/PageHero";
+import { PageHero, PageBody, Card, heroQuiet } from "@/components/ui/PageHero";
 import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
 import SkillStudio, { type StudioKind } from "@/components/intelligence/SkillStudio";
 import {
@@ -114,105 +113,93 @@ export default function SkillLibraryPage() {
   const loading = rules === undefined || rskills === undefined;
   const notInstalled = rules === null && rskills === null;
 
-  // A shelf is one card: its name, one line on what it does, then the
-  // skills in a hairline grid (no boxes inside the box).
-  const shelfHeading = (icon: React.ReactNode, title: string, blurb: string) => (
-    <div className="px-4 sm:px-5 pt-4 pb-3">
-      <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)] inline-flex items-center gap-1.5">{icon}{title}</h2>
-      <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">{blurb}</p>
-    </div>
-  );
+  // Who a skill belongs to, in words: built-in, or whose and how shared.
+  const whose = (r: { builtin_key: string | null; visibility: string; created_by: string | null; created_by_name: string | null }) =>
+    r.builtin_key ? "Built-in"
+      : `${r.visibility === "org" ? "Org-wide" : "Private"}, by ${r.created_by === uid ? "you" : (r.created_by_name?.split("@")[0] ?? "a teammate")}`;
 
-  const badgeRow = (r: { builtin_key: string | null; visibility: string }, kindLabel: string) => (
-    <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
-      <span className="text-[11px] font-black uppercase tracking-wide text-[var(--color-text-muted)]">{kindLabel}</span>
-      {r.builtin_key ? (
-        <span className="text-[11px] font-black uppercase tracking-wide text-[var(--color-text)]">Built-in</span>
-      ) : (
-        <span className="inline-flex items-center gap-0.5 text-[11px] font-black uppercase tracking-wide text-[var(--color-text-faint)]">
-          {r.visibility === "org" ? <Users className="w-2.5 h-2.5" /> : <Lock className="w-2.5 h-2.5" />}
-          {r.visibility === "org" ? "Org-wide" : "Private"}
-        </span>
-      )}
-    </div>
-  );
-
-  const cardControls = (opts: {
-    id: string; name: string; builtin: boolean; mayManage: boolean; mine: boolean;
-    enabled: boolean; visibility: string; authorName: string | null;
-    onToggle: () => Promise<void>; onFlip: () => Promise<void>; onDelete: () => Promise<void>;
-  }) => (
-    <div className="flex items-center gap-1.5 pt-1 border-t border-[var(--color-border)]/60">
-      <span className="text-[12px] text-[var(--color-text-muted)] flex-1 truncate">
-        {opts.builtin ? "Ships with the engine" : `by ${opts.mine ? "you" : (opts.authorName ?? "a teammate")}`}
-      </span>
-      {!opts.builtin && opts.mayManage && (
-        <>
-          <button type="button" onClick={() => void guard(opts.id, opts.onFlip)} disabled={busyId === opts.id}
-            title={opts.visibility === "org" ? "Make private" : "Share org-wide"}
-            className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
-            {opts.visibility === "org" ? <Lock className="w-3.5 h-3.5" /> : <Users className="w-3.5 h-3.5" />}
-          </button>
-          <button type="button" onClick={() => void removeConfirmed(opts.id, opts.name, opts.onDelete)} disabled={busyId === opts.id}
-            title="Delete this skill"
-            className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40">
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
-        </>
-      )}
-    </div>
-  );
-
-  const toggleButton = (opts: { id: string; enabled: boolean; mayManage: boolean; onToggle: () => Promise<void> }) =>
+  // On or off: a real switch, graphite when on.
+  const toggleButton = (opts: { id: string; name: string; enabled: boolean; mayManage: boolean; onToggle: () => Promise<void> }) =>
     opts.mayManage ? (
-      <button type="button" onClick={() => void guard(opts.id, opts.onToggle)} disabled={busyId === opts.id}
+      <button type="button" role="switch" aria-checked={opts.enabled} onClick={() => void guard(opts.id, opts.onToggle)} disabled={busyId === opts.id}
+        aria-label={`${opts.name}: ${opts.enabled ? "on" : "off"}`}
         title={opts.enabled ? "Turn off: it stops running" : "Turn on"}
-        aria-pressed={opts.enabled}
-        className={`shrink-0 inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-[11px] font-black border transition-colors ${opts.enabled
-          ? "border-[var(--color-text)] text-[var(--color-surface)] bg-[var(--color-text)]"
-          : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`}>
-        {busyId === opts.id ? <Loader2 className="w-3 h-3 animate-spin" />
-          : opts.enabled ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-        {opts.enabled ? "On" : "Off"}
+        className="inline-flex items-center gap-2 text-[14px] font-semibold text-[var(--color-text)] disabled:opacity-50">
+        <span className={`relative inline-flex w-9 h-5 rounded-full transition-colors ${opts.enabled ? "bg-[var(--color-text)]" : "bg-[var(--color-border-strong)]"}`}>
+          <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-[var(--color-surface)] shadow transition-transform ${opts.enabled ? "translate-x-4" : ""}`} />
+        </span>
+        <span className="max-sm:sr-only w-6 text-left">{busyId === opts.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : opts.enabled ? "On" : "Off"}</span>
       </button>
-    ) : null;
+    ) : (
+      <span className="text-[14px] text-[var(--color-text-muted)]">{opts.enabled ? "On" : "Off"}</span>
+    );
 
-  const buildCard = (kind: StudioKind, delayIndex: number, blurb: string) => (
-    activeOrgId && uid ? (
-      <button type="button" onClick={() => setStudioKind(kind)}
-        style={{ animation: "rise 0.45s var(--ease-fluid) both", animationDelay: `${Math.min(delayIndex, 9) * 60}ms` }}
-        className="min-h-[9rem] flex flex-col items-center justify-center gap-1.5 bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors p-4">
-        <Sparkles className="w-5 h-5" />
-        <span className="text-[14px] font-bold text-[var(--color-accent-text)]">Build a skill</span>
-        <span className="text-[13px] text-center max-w-[18rem]">{blurb}</span>
+  // Share and delete, as icon buttons with a visible hover fill.
+  const rowActions = (opts: {
+    id: string; name: string; builtin: boolean; mayManage: boolean; visibility: string;
+    onFlip: () => Promise<void>; onDelete: () => Promise<void>;
+  }) => !opts.builtin && opts.mayManage ? (
+    <div className="flex items-center justify-end gap-1">
+      <button type="button" onClick={() => void guard(opts.id, opts.onFlip)} disabled={busyId === opts.id}
+        title={opts.visibility === "org" ? "Make private" : "Share org-wide"} aria-label={opts.visibility === "org" ? `Make ${opts.name} private` : `Share ${opts.name} org-wide`}
+        className="w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+        {opts.visibility === "org" ? <Lock className="w-4 h-4" /> : <Users className="w-4 h-4" />}
       </button>
-    ) : null
+      <button type="button" onClick={() => void removeConfirmed(opts.id, opts.name, opts.onDelete)} disabled={busyId === opts.id}
+        title="Delete this skill" aria-label={`Delete ${opts.name}`}
+        className="w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)]">
+        <Trash2 className="w-4 h-4" />
+      </button>
+    </div>
+  ) : null;
+
+  const buildButton = (kind: StudioKind) => activeOrgId && uid ? (
+    <button type="button" onClick={() => setStudioKind(kind)} className={heroQuiet}>
+      <Sparkles className="w-4 h-4" /> Build a skill
+    </button>
+  ) : null;
+
+  const head = (
+    <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+      <tr>
+        <th className="font-semibold px-4 h-10">Skill</th>
+        <th className="font-semibold px-4 hidden md:table-cell">Kind</th>
+        <th className="font-semibold px-4 hidden sm:table-cell">Whose</th>
+        <th className="font-semibold px-2 sm:px-4 w-14 sm:w-24">On</th>
+        <th className="px-1 sm:px-2 w-[72px] sm:w-20"><span className="sr-only">Actions</span></th>
+      </tr>
+    </thead>
   );
 
   return (
     <PageShell>
       <PageHero
         kicker="Intelligence · Skills"
-        title={loading ? "Skill library" : notInstalled ? "The skill library isn't installed yet." : `${stats.total} ${stats.total === 1 ? "skill" : "skills"}, ${stats.enabled} on.`}
+        title={loading ? "Skill library" : notInstalled ? "The skill library isn't installed yet." : `${stats.enabled} of ${stats.total} ${stats.total === 1 ? "skill" : "skills"} on`}
         sub={
           <>
-            {!loading && !notInstalled && <>{stats.custom} written here, {stats.mine} by you. </>}
-            Connection skills grow the org graph; reasoning skills shape how the AI answers. Describe either in plain words and your AI drafts it.
-            {error && <span role="alert" className="block mt-1 text-rose-200 font-semibold"><AlertTriangle className="inline w-3.5 h-3.5 -mt-0.5 mr-1" />{error}</span>}
+            Describe a skill in plain words and your AI drafts it.
+            {error && <span role="alert" className="block mt-1 text-[var(--state-overdue)] font-semibold"><AlertTriangle className="inline w-3.5 h-3.5 -mt-0.5 mr-1" />{error}</span>}
           </>
         }
+        facts={!loading && !notInstalled ? [
+          { label: "Skills", value: stats.total },
+          { label: "On", value: stats.enabled },
+          { label: "Written here", value: stats.custom },
+          { label: "By you", value: stats.mine },
+        ] : undefined}
       >
         <ViewTabs tabs={INTELLIGENCE_VIEWS} variant="dark" />
       </PageHero>
 
       <PageBody>
       {loading ? (
-        <Card><p className="flex items-center justify-center gap-2 py-12 text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin" /> Loading the skill library…</p></Card>
+        <Card><p className="flex items-center justify-center gap-2 py-12 text-[15px] text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin" /> Loading the skill library…</p></Card>
       ) : notInstalled ? (
         <Card>
           <div className="text-center py-10 space-y-2 max-w-md mx-auto">
             <Puzzle className="w-6 h-6 mx-auto text-[var(--color-text-faint)]" />
-            <p className="text-[14px] text-[var(--color-text-muted)]">
+            <p className="text-[15px] text-[var(--color-text-muted)]">
               Run the connection-skills and reasoning-skills migrations on your database, then reload.
               The built-ins add themselves.
             </p>
@@ -221,130 +208,118 @@ export default function SkillLibraryPage() {
       ) : (
         <>
           {/* ── Reasoning skills ─────────────────────────────────────────── */}
-          <Card pad={false} className="overflow-hidden">
-          {shelfHeading(
-            <BrainCircuit className="w-3.5 h-3.5" />,
-            "Reasoning skills",
-            "Disciplines the AI carries when it answers. Each names when it applies, so enabling several is safe.",
-          )}
-          {rskills === null ? (
-            <div className="px-4 sm:px-5 pb-4 text-[13px] text-[var(--color-text-muted)]">Run the reasoning-skills migration to unlock this shelf.</div>
-          ) : (
-            <div className="grid md:grid-cols-2 -mb-px border-t border-[var(--color-border)] [&>*]:border-b [&>*]:border-[var(--color-border)] md:[&>*:nth-child(odd)]:border-r">
-              {rskills.map((r, i) => {
-                const mine = r.created_by === uid;
-                const mayManage = canManageOrg || mine;
-                return (
-                  <div key={r.id}
-                    style={{ animation: "rise 0.45s var(--ease-fluid) both", animationDelay: `${Math.min(i, 8) * 60}ms` }}
-                    className={`bg-[var(--color-surface)] transition-opacity ${r.enabled ? "" : "opacity-70"}`}>
-                    <div className="p-4 sm:px-5 space-y-2">
-                      <div className="flex items-start gap-2.5">
-                        <span className={`shrink-0 w-9 h-9 rounded-[10px] bg-[var(--color-surface-2)] text-[var(--color-text)] flex items-center justify-center ${r.enabled ? "" : "grayscale"}`}>
-                          <BrainCircuit className="w-[18px] h-[18px]" />
-                        </span>
-                        <div className="flex-1 min-w-0">
-                          <div className="text-[14px] font-bold text-[var(--color-text)] leading-tight">{r.name}</div>
-                          {badgeRow(r, "Answer discipline")}
-                        </div>
-                        {toggleButton({ id: r.id, enabled: r.enabled, mayManage, onToggle: () => setAnswerSkillEnabled(r.id, !r.enabled) })}
-                      </div>
-                      {r.description && (
-                        <p className="text-[13px] text-[var(--color-text-muted)] leading-relaxed">{r.description}</p>
-                      )}
-                      {/* The pack itself, on demand — the description sells it,
-                          the details prove it. */}
-                      <details className="group">
-                        <summary className="cursor-pointer text-[13px] font-semibold text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] list-none">
-                          View the discipline ▸
-                        </summary>
-                        <pre className="mt-1.5 whitespace-pre-wrap text-[12.5px] leading-relaxed text-[var(--color-text-muted)] bg-[var(--color-surface-2)]/60 rounded-lg p-2.5 max-h-48 overflow-y-auto font-sans">{r.instructions}</pre>
-                      </details>
-                      {cardControls({
-                        id: r.id, name: r.name, builtin: !!r.builtin_key, mayManage, mine,
-                        enabled: r.enabled, visibility: r.visibility, authorName: r.created_by_name,
-                        onToggle: () => setAnswerSkillEnabled(r.id, !r.enabled),
-                        onFlip: () => setAnswerSkillVisibility(r.id, r.visibility === "org" ? "private" : "org"),
-                        onDelete: () => deleteAnswerSkill(r.id),
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
-              {buildCard("reasoning", rskills.length,
-                "Describe a discipline in plain words: “when someone asks X, always do Y”. Your AI drafts the pack.")}
+          <section>
+            <div className="flex items-end gap-3 mb-2.5 min-h-9">
+              <div className="min-w-0 flex-1">
+                <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Reasoning skills</h2>
+                <p className="text-[14px] text-[var(--color-text-muted)]">What the AI carries when it answers. Each names when it applies, so several can be on.</p>
+              </div>
+              {buildButton("reasoning")}
             </div>
-          )}
-          </Card>
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+              {rskills === null ? (
+                <p className="px-4 py-3 text-[15px] text-[var(--color-text-muted)]">Run the reasoning-skills migration to unlock this list.</p>
+              ) : rskills.length === 0 ? (
+                <p className="px-4 py-3 text-[15px] text-[var(--color-text-muted)]">No reasoning skills yet. Build one: &ldquo;when someone asks X, always do Y&rdquo;.</p>
+              ) : (
+                <table className="w-full text-[15px]">
+                  {head}
+                  <tbody className="divide-y divide-[var(--color-border)]">
+                    {rskills.map((r) => {
+                      const mayManage = canManageOrg || r.created_by === uid;
+                      return (
+                        <tr key={r.id} className={`align-top ${r.enabled ? "" : "text-[var(--color-text-muted)]"}`}>
+                          <td className="px-4 py-3 min-w-0">
+                            <div className={`font-semibold ${r.enabled ? "text-[var(--color-text)]" : ""}`}>{r.name}</div>
+                            {r.description && <p className="mt-0.5 text-[14px] text-[var(--color-text-muted)] line-clamp-2 max-w-[80ch]">{r.description}</p>}
+                            <div className="sm:hidden mt-0.5 text-[13px] text-[var(--color-text-muted)]">{whose(r)}</div>
+                            {/* The pack itself, on demand. */}
+                            <details className="group mt-1">
+                              <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden inline-flex text-[14px] text-[var(--color-accent-text)] hover:underline">
+                                <span className="group-open:hidden">View the discipline</span><span className="hidden group-open:inline">Hide the discipline</span>
+                              </summary>
+                              <pre className="mt-1.5 whitespace-pre-wrap text-[14px] leading-relaxed text-[var(--color-text-muted)] border-l-2 border-[var(--color-border-strong)] pl-3 max-h-48 overflow-y-auto font-sans">{r.instructions}</pre>
+                            </details>
+                          </td>
+                          <td className="px-4 py-3 hidden md:table-cell whitespace-nowrap text-[14px] text-[var(--color-text-muted)]">Answer discipline</td>
+                          <td className="px-4 py-3 hidden sm:table-cell text-[14px] text-[var(--color-text-muted)]">{whose(r)}</td>
+                          <td className="px-2 sm:px-4 py-3">{toggleButton({ id: r.id, name: r.name, enabled: r.enabled, mayManage, onToggle: () => setAnswerSkillEnabled(r.id, !r.enabled) })}</td>
+                          <td className="px-1 sm:px-2 py-2">{rowActions({
+                            id: r.id, name: r.name, builtin: !!r.builtin_key, mayManage, visibility: r.visibility,
+                            onFlip: () => setAnswerSkillVisibility(r.id, r.visibility === "org" ? "private" : "org"),
+                            onDelete: () => deleteAnswerSkill(r.id),
+                          })}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </section>
 
           {/* ── Connection skills ────────────────────────────────────────── */}
-          <Card pad={false} className="overflow-hidden">
-          {shelfHeading(
-            <Waypoints className="w-3.5 h-3.5" />,
-            "Connection skills",
-            "Detectors the engine runs to grow the org graph. Findings queue for review; nothing custom applies itself.",
-          )}
-          {rules === null ? (
-            <div className="px-4 sm:px-5 pb-4 text-[13px] text-[var(--color-text-muted)]">Run the connection-skills migration to unlock this shelf.</div>
-          ) : (
-            <div className="grid md:grid-cols-2 -mb-px border-t border-[var(--color-border)] [&>*]:border-b [&>*]:border-[var(--color-border)] md:[&>*:nth-child(odd)]:border-r">
-              {rules.map((r, i) => {
-                const meta = KIND_META[r.kind] ?? KIND_META.reference;
-                const KindIcon = meta.icon;
-                const mine = r.created_by === uid;
-                const mayManage = canManageOrg || mine;
-                return (
-                  <div key={r.id}
-                    style={{ animation: "rise 0.45s var(--ease-fluid) both", animationDelay: `${Math.min(i, 8) * 60}ms` }}
-                    className={`bg-[var(--color-surface)] transition-opacity ${r.enabled ? "" : "opacity-70"}`}>
-                    <div className="p-4 sm:px-5 space-y-2">
-                      <div className="flex items-start gap-2.5">
-                        <span className={`shrink-0 w-9 h-9 rounded-[10px] bg-[var(--color-surface-2)] text-[var(--color-text)] flex items-center justify-center ${r.enabled ? "" : "grayscale"}`}>
-                          <KindIcon className="w-[18px] h-[18px]" />
-                        </span>
-                        <div className="flex-1 min-w-0">
-                          <div className="text-[14px] font-bold text-[var(--color-text)] leading-tight">{r.name}</div>
-                          {badgeRow(r, meta.label)}
-                        </div>
-                        {toggleButton({ id: r.id, enabled: r.enabled, mayManage, onToggle: () => setLinkRuleEnabled(r.id, !r.enabled) })}
-                      </div>
-                      {r.description && (
-                        <p className="text-[13px] text-[var(--color-text-muted)] leading-relaxed">{r.description}</p>
-                      )}
-                      {(r.config?.patterns?.length ?? 0) > 0 && (
-                        <div className="flex items-center gap-1 flex-wrap">
-                          {r.config.patterns!.slice(0, 3).map((p) => (
-                            <code key={p} className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[11px] font-mono text-[var(--color-text)] max-w-full truncate">{p}</code>
-                          ))}
-                          {(r.config.patterns!.length > 3) && (
-                            <span className="text-[11px] text-[var(--color-text-faint)]">+{r.config.patterns!.length - 3}</span>
-                          )}
-                        </div>
-                      )}
-                      {cardControls({
-                        id: r.id, name: r.name, builtin: !!r.builtin_key, mayManage, mine,
-                        enabled: r.enabled, visibility: r.visibility, authorName: r.created_by_name,
-                        onToggle: () => setLinkRuleEnabled(r.id, !r.enabled),
-                        onFlip: () => setLinkRuleVisibility(r.id, r.visibility === "org" ? "private" : "org"),
-                        onDelete: () => deleteLinkRule(r.id),
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
-              {buildCard("connection", rules.length,
-                "Describe your facility's numbering convention: your AI drafts the detector, the tester proves it.")}
+          <section>
+            <div className="flex items-end gap-3 mb-2.5 min-h-9">
+              <div className="min-w-0 flex-1">
+                <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Connection skills</h2>
+                <p className="text-[14px] text-[var(--color-text-muted)]">
+                  Detectors that grow the org graph; they run with &ldquo;Find connections&rdquo; and findings wait for review.{" "}
+                  <Link href="/admin/proposed-links" className="inline-flex items-center gap-0.5 text-[var(--color-accent-text)] hover:underline">
+                    Review what they found <ArrowUpRight className="w-3.5 h-3.5" />
+                  </Link>
+                </p>
+              </div>
+              {buildButton("connection")}
             </div>
-          )}
-          </Card>
-
-          <div className="px-1 flex flex-wrap items-center gap-2 text-[13px] text-[var(--color-text-muted)]">
-            <Waypoints className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
-            Connection skills run with “Find connections”; reasoning skills ride every question.
-            <Link href="/admin/proposed-links" className="inline-flex items-center gap-0.5 font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)]">
-              Review what the engine found <ArrowUpRight className="w-3 h-3" />
-            </Link>
-          </div>
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+              {rules === null ? (
+                <p className="px-4 py-3 text-[15px] text-[var(--color-text-muted)]">Run the connection-skills migration to unlock this list.</p>
+              ) : rules.length === 0 ? (
+                <p className="px-4 py-3 text-[15px] text-[var(--color-text-muted)]">No connection skills yet. Describe your facility&apos;s numbering convention and your AI drafts the detector.</p>
+              ) : (
+                <table className="w-full text-[15px]">
+                  {head}
+                  <tbody className="divide-y divide-[var(--color-border)]">
+                    {rules.map((r) => {
+                      const meta = KIND_META[r.kind] ?? KIND_META.reference;
+                      const KindIcon = meta.icon;
+                      const mayManage = canManageOrg || r.created_by === uid;
+                      return (
+                        <tr key={r.id} className={`align-top ${r.enabled ? "" : "text-[var(--color-text-muted)]"}`}>
+                          <td className="px-4 py-3 min-w-0">
+                            <div className={`font-semibold ${r.enabled ? "text-[var(--color-text)]" : ""}`}>{r.name}</div>
+                            {r.description && <p className="mt-0.5 text-[14px] text-[var(--color-text-muted)] line-clamp-2 max-w-[80ch]">{r.description}</p>}
+                            <div className="sm:hidden mt-0.5 text-[13px] text-[var(--color-text-muted)]">{meta.label}, {whose(r).toLowerCase()}</div>
+                            {(r.config?.patterns?.length ?? 0) > 0 && (
+                              <div className="mt-1 flex items-center gap-1 flex-wrap">
+                                {r.config.patterns!.slice(0, 3).map((pt) => (
+                                  <code key={pt} className="px-1.5 py-0.5 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[12px] font-mono text-[var(--color-text)] max-w-full truncate">{pt}</code>
+                                ))}
+                                {(r.config.patterns!.length > 3) && (
+                                  <span className="text-[13px] text-[var(--color-text-muted)]">+{r.config.patterns!.length - 3} more</span>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 hidden md:table-cell whitespace-nowrap text-[14px] text-[var(--color-text-muted)]">
+                            <span className="inline-flex items-center gap-1.5"><KindIcon className="w-4 h-4" /> {meta.label}</span>
+                          </td>
+                          <td className="px-4 py-3 hidden sm:table-cell text-[14px] text-[var(--color-text-muted)]">{whose(r)}</td>
+                          <td className="px-2 sm:px-4 py-3">{toggleButton({ id: r.id, name: r.name, enabled: r.enabled, mayManage, onToggle: () => setLinkRuleEnabled(r.id, !r.enabled) })}</td>
+                          <td className="px-1 sm:px-2 py-2">{rowActions({
+                            id: r.id, name: r.name, builtin: !!r.builtin_key, mayManage, visibility: r.visibility,
+                            onFlip: () => setLinkRuleVisibility(r.id, r.visibility === "org" ? "private" : "org"),
+                            onDelete: () => deleteLinkRule(r.id),
+                          })}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </section>
         </>
       )}
 

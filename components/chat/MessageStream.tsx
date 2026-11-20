@@ -109,35 +109,32 @@ export default function MessageStream({
           {empty && loading ? (
             <div className="pt-6 max-w-3xl mx-auto"><LoadingBlock what="the conversation" rows={5} /></div>
           ) : empty ? (
-            <div className="pt-[8vh] sm:pt-[10vh] max-w-2xl mx-auto animate-rise">
-              <div className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-muted)]">
-                <Icon className="w-3.5 h-3.5" aria-hidden /> {meta.label}
-              </div>
+            <div className="pt-[6vh] sm:pt-[8vh] max-w-2xl mx-auto animate-rise">
               {/* The one big line on an empty chat: what you can do here. */}
-              <h2 className="mt-3 text-[34px] sm:text-[44px] leading-[1.03] font-black tracking-[-0.03em] text-[var(--color-text)]">
-                {scope === "library" ? "Ask the library." : scope === "tools" ? "Ask the system." : "Ask the internet."}
+              <h2 className="flex items-center gap-3 font-display text-[30px] sm:text-[38px] leading-[1.05] font-semibold tracking-[-0.01em] text-[var(--color-text)]">
+                <Icon className="w-7 h-7 shrink-0 text-[var(--color-text-muted)]" aria-hidden />
+                {scope === "library" ? "Ask the library" : scope === "tools" ? "Ask the system" : "Ask the internet"}
               </h2>
-              <p className="mt-3 text-[14px] sm:text-[15px] text-[var(--color-text-muted)]">{meta.hint}</p>
+              <p className="mt-2 text-[15px] text-[var(--color-text-muted)]">
+                {meta.hint}{scope !== "internet" ? " It reads only documents cleared for AI." : ""}
+              </p>
               {emptyNote && (
-                <p className="mt-3 flex items-start gap-2 text-[13.5px] font-semibold text-amber-800 dark:text-amber-300">
-                  <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" /> {emptyNote}
+                // A warning is a row with its status on the edge.
+                <p className="relative mt-4 pl-4 py-1 flex items-start gap-2 text-[14px] font-semibold text-[var(--color-text)]">
+                  <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-held)]" />
+                  <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-held)]" /> {emptyNote}
                 </p>
               )}
-              <div className="mt-6 text-[13px] font-semibold text-[var(--color-text-muted)]">Try</div>
-              <div className="mt-2 flex flex-col divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
+              <h3 className="mt-7 mb-2 font-display text-[17px] font-semibold text-[var(--color-text)]">Try one of these</h3>
+              <div className="flex flex-col divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
                 {EXAMPLES[scope].map((e) => (
                   <button key={e} onClick={() => onExample(e)}
-                    className="group flex items-center gap-3 py-3 text-left text-[14.5px] font-semibold text-[var(--color-text)] transition-colors">
-                    <span className="flex-1 group-hover:underline decoration-[var(--color-border-strong)] underline-offset-4">{e}</span>
-                    <ArrowDown className="w-4 h-4 -rotate-90 text-[var(--color-text-faint)] group-hover:text-[var(--color-text)] group-hover:translate-x-0.5 transition-transform" />
+                    className="group -mx-2 px-2 flex items-center gap-3 py-3 text-left text-[15px] text-[var(--color-text)] rounded-md hover:bg-[var(--color-surface-2)] transition-colors">
+                    <span className="flex-1">{e}</span>
+                    <ArrowDown className="w-4 h-4 -rotate-90 shrink-0 text-[var(--color-text-faint)] group-hover:text-[var(--color-accent-text)] group-hover:translate-x-0.5 transition-transform" />
                   </button>
                 ))}
               </div>
-              {scope !== "internet" && (
-                <p className="mt-4 text-[12px] text-[var(--color-text-muted)]">
-                  It reads only documents cleared for AI.
-                </p>
-              )}
             </div>
           ) : (
             <div className="space-y-2">
@@ -164,7 +161,7 @@ export default function MessageStream({
       </div>
       {!atBottom && !empty && (
         <button onClick={jump}
-          className="absolute left-1/2 -translate-x-1/2 bottom-3 inline-flex items-center gap-1.5 h-8 px-3.5 rounded-full bg-[var(--color-ink)] text-[12.5px] font-bold text-[var(--color-ink-fg)] shadow-lg hover:opacity-90 transition-opacity animate-pop">
+          className="absolute left-1/2 -translate-x-1/2 bottom-3 inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] shadow-lg hover:bg-[var(--color-surface-2)] transition-colors animate-pop">
           <ArrowDown className="w-3.5 h-3.5" /> Latest
         </button>
       )}

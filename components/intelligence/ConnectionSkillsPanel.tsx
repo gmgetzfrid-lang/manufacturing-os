@@ -81,17 +81,17 @@ export default function ConnectionSkillsPanel() {
   const enabledCount = useMemo(() => (rules ?? []).filter((r) => r?.enabled).length, [rules]);
 
   if (rules === undefined) {
-    return <p className="mb-4 flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading connection skills…</p>;
+    return <p className="mb-4 flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading connection skills…</p>;
   }
 
   return (
-    <div className="mb-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+    <div className="mb-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
       <button type="button" onClick={() => setOpen((v) => !v)}
         className="w-full flex items-center gap-2.5 px-3.5 py-3 text-left">
         <Puzzle className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
         <div className="flex-1 min-w-0">
-          <div className="text-xs font-black text-[var(--color-text)]">Connection skills</div>
-          <div className="text-[11px] text-[var(--color-text-muted)]">
+          <div className="text-[13px] font-semibold text-[var(--color-text)]">Connection skills</div>
+          <div className="text-[13px] text-[var(--color-text-muted)]">
             {rules === null
               ? "Not installed yet - run the connection-skills migration to author your own detectors."
               : `${rules.length} skill${rules.length === 1 ? "" : "s"} · ${enabledCount} enabled. The detectors “Find connections” runs - including ones you write for your own numbering conventions.`}
@@ -103,7 +103,7 @@ export default function ConnectionSkillsPanel() {
       {open && rules !== null && (
         <div className="px-3.5 pb-3.5 space-y-1.5 border-t border-[var(--color-border)] pt-3">
           {error && (
-            <div role="alert" className="flex items-start gap-2 border-l-2 border-rose-500 pl-2.5 text-[11px] text-rose-700 dark:text-rose-300">
+            <div role="alert" className="flex items-start gap-2 border-l-2 border-[var(--state-overdue)] pl-2.5 text-[13px] text-[var(--state-overdue)]">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
             </div>
           )}
@@ -118,26 +118,26 @@ export default function ConnectionSkillsPanel() {
                 <div className="flex items-start gap-2.5">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-xs font-black text-[var(--color-text)]">{r.name}</span>
-                      <span className="px-1.5 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[11px] font-black uppercase tracking-wide text-[var(--color-text-muted)]">
+                      <span className="text-[13px] font-semibold text-[var(--color-text)]">{r.name}</span>
+                      <span className="px-1.5 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text-muted)]">
                         {KIND_LABELS[r.kind] ?? r.kind}
                       </span>
                       {r.builtin_key ? (
-                        <span className="text-[11px] font-black uppercase tracking-wide text-[var(--color-text)]">Built-in</span>
+                        <span className="text-[13px] font-semibold text-[var(--color-text)]">Built-in</span>
                       ) : (
-                        <span className="inline-flex items-center gap-0.5 text-[11px] font-black uppercase tracking-wide text-[var(--color-text-faint)]">
+                        <span className="inline-flex items-center gap-0.5 text-[13px] font-semibold text-[var(--color-text-faint)]">
                           {r.visibility === "org" ? <Users className="w-2.5 h-2.5" /> : <Lock className="w-2.5 h-2.5" />}
                           {r.visibility === "org" ? "Org-wide" : "Private"}
                         </span>
                       )}
                     </div>
                     {r.description && (
-                      <div className="text-[11px] text-[var(--color-text-muted)] leading-snug mt-0.5">{r.description}</div>
+                      <div className="text-[13px] text-[var(--color-text-muted)] leading-snug mt-0.5">{r.description}</div>
                     )}
                     {(r.config?.patterns?.length ?? 0) > 0 && (
                       <div className="flex items-center gap-1 flex-wrap mt-1">
                         {r.config.patterns!.slice(0, 4).map((p) => (
-                          <code key={p} className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[11px] font-mono text-[var(--color-text)]">{p}</code>
+                          <code key={p} className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[13px] font-mono text-[var(--color-text)]">{p}</code>
                         ))}
                       </div>
                     )}
@@ -152,7 +152,7 @@ export default function ConnectionSkillsPanel() {
                         </button>
                         <button type="button" onClick={() => void remove(r)} disabled={busyId === r.id}
                           title="Delete this skill"
-                          className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40">
+                          className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] hover:bg-rose-50 dark:hover:bg-rose-950/40">
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </>
@@ -161,7 +161,7 @@ export default function ConnectionSkillsPanel() {
                       <button type="button" onClick={() => void toggle(r)} disabled={busyId === r.id}
                         title={r.enabled ? "Turn off: the engine skips this skill" : "Turn on"}
                         aria-pressed={r.enabled}
-                        className={`inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-[11px] font-black border transition-colors ${r.enabled
+                        className={`inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-[13px] font-semibold border transition-colors ${r.enabled
                           ? "border-[var(--color-text)] text-[var(--color-surface)] bg-[var(--color-text)]"
                           : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`}>
                         {busyId === r.id ? <Loader2 className="w-3 h-3 animate-spin" />
@@ -177,11 +177,11 @@ export default function ConnectionSkillsPanel() {
 
           <div className="flex items-center gap-1.5">
             <button type="button" onClick={() => setWizardOpen(true)}
-              className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border-2 border-dashed border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-accent-hover)] transition-colors">
+              className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border-2 border-dashed border-[var(--color-border-strong)] text-[13px] font-semibold text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-accent-hover)] transition-colors">
               <Plus className="w-3.5 h-3.5" /> New skill - teach the engine your numbering convention
             </button>
             <Link href="/intelligence/skills"
-              className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-[11px] font-black text-[var(--color-text)] border border-[var(--color-border)] dark:border-[var(--color-border)] hover:bg-[var(--color-surface-2)] dark:hover:bg-[var(--color-surface-2)]">
+              className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-[13px] font-semibold text-[var(--color-text)] border border-[var(--color-border)] dark:border-[var(--color-border)] hover:bg-[var(--color-surface-2)] dark:hover:bg-[var(--color-surface-2)]">
               Skill library <ArrowUpRight className="w-3.5 h-3.5" />
             </Link>
           </div>

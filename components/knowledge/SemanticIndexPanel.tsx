@@ -172,12 +172,12 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
   // total is 0, so the panel vanished — exactly when the person needed it to
   // explain itself. Say the state out loud instead, and name the fix.
   const strip = (tone: "warn" | "muted", body: React.ReactNode) => (
-    <div className={`mt-4 text-[11px] flex items-start gap-2 ${
+    <div className={`mt-4 text-[13px] flex items-start gap-2 ${
       tone === "warn"
-        ? "border-l-2 border-amber-500 pl-3 py-1 text-amber-900 dark:text-amber-200"
-        : "rounded-2xl px-4 py-3 bg-[var(--color-surface)] shadow-[var(--shadow-card)] text-[var(--color-text-muted)]"}`}>
+        ? "border-l-2 border-[var(--state-held)] pl-3 py-1 text-[var(--state-held)]"
+        : "rounded-lg px-4 py-3 border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>
       {tone === "warn"
-        ? <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
+        ? <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-[var(--state-held)]" />
         : <Brain className="w-4 h-4 shrink-0 mt-0.5 opacity-60" />}
       <span className="min-w-0">{body}</span>
     </div>
@@ -209,15 +209,15 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
   const fullCents = Math.ceil((status.total / 1000) * CENTS_PER_1K_PASSAGES);
 
   return (
-    <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4">
+    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
       <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-lg flex items-center justify-center bg-[var(--color-text)]">
             <Brain className="w-4 h-4 text-[var(--color-surface)]" />
           </div>
           <div>
-            <div className="text-xs font-black text-[var(--color-text)]">Meaning-based search</div>
-            <div className="text-[11px] text-[var(--color-text-muted)]">
+            <div className="text-[13px] font-semibold text-[var(--color-text)]">Meaning-based search</div>
+            <div className="text-[13px] text-[var(--color-text-muted)]">
               Finds &ldquo;pipe supports&rdquo; in a standard that says &ldquo;hanger and support details&rdquo;.
               Keyword search still handles exact tags, and always will.
             </div>
@@ -254,9 +254,9 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
         />
       </div>
 
-      <div className="mt-1.5 flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
+      <div className="mt-1.5 flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]">
         {building && <Loader2 className="w-3 h-3 animate-spin" />}
-        {complete && <Check className="w-3 h-3 text-emerald-600" />}
+        {complete && <Check className="w-3 h-3 text-[var(--state-released)]" />}
         <span>
           <b className="text-[var(--color-text)]">{status.estimated ? "≈ " : ""}{covered.toLocaleString()}</b> of{" "}
           {status.total.toLocaleString()} passages carry meaning vectors ({pct}%).
@@ -265,7 +265,7 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
       </div>
 
       {building && status.rateLimited && (
-        <div className="mt-2 border-l-2 border-amber-500 pl-3 text-[11px] text-amber-900 dark:text-amber-200">
+        <div className="mt-2 border-l-2 border-[var(--state-held)] pl-3 text-[13px] text-[var(--state-held)]">
           <b>Provider rate limit: pacing, not stopped.</b> Your embeddings account is on a free
           tier (Voyage without a payment method: 3 calls and 10K tokens per minute), so the build
           continues in small batches about once a minute. Leave this page open and it will finish.
@@ -275,24 +275,24 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
       )}
 
       {buildNote && (
-        <div className={`mt-2 border-l-2 pl-3 text-[11px] ${
+        <div className={`mt-2 border-l-2 pl-3 text-[13px] ${
           buildNote.tone === "ok"
-            ? "border-emerald-500 text-emerald-800 dark:text-emerald-200"
+            ? "border-emerald-500 text-[var(--state-released)]"
             : buildNote.tone === "info"
               ? "border-[var(--color-border-strong)] text-[var(--color-text)]"
-              : "border-rose-500 text-rose-800 dark:text-rose-200"}`}>
+              : "border-[var(--state-overdue)] text-[var(--state-overdue)]"}`}>
           {buildNote.text}
         </div>
       )}
 
       {needsKey && (
-        <div className="mt-2 border-l-2 border-amber-500 pl-3 text-[11px] text-amber-900 dark:text-amber-200">
+        <div className="mt-2 border-l-2 border-[var(--state-held)] pl-3 text-[13px] text-[var(--state-held)]">
           {needsKey}
         </div>
       )}
 
       {!complete && !needsKey && (
-        <p className="mt-1 text-[11px] text-[var(--color-text-faint)]">
+        <p className="mt-1 text-[13px] text-[var(--color-text-faint)]">
           {covered === 0
             ? "Not built yet. Questions use keyword search alone, as this library did before."
             : "Partly built. Questions already use both; the remaining passages are keyword-only until this finishes."}

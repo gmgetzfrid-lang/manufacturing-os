@@ -1,8 +1,10 @@
 "use client";
 
-// StatusChip — one quiet corner for "is the machine on and what is it
-// costing me": key health dot, model, month-to-date spend against the cap.
-// Paints from the last snapshot instantly, refreshes in the background.
+// StatusChip — one quiet line for "is the machine on and what is it
+// costing me": the provider and month-to-date spend against the cap, in
+// plain words; a missing key or a near-full cap in its status color with
+// the way to AI setup. Paints from the last snapshot instantly, refreshes
+// in the background.
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
@@ -12,13 +14,15 @@ interface Snap {
   /** The status couldn't be read this time (not the same as "no key"). */
   failed?: boolean;
   model: string | null;
+  /** Who runs the model (anthropic, openai, gemini). */
+  provider?: string | null;
   keyOk: boolean;
   spentUsd: number;
   capUsd: number;
   known: boolean;
 }
 
-export default function StatusChip({ orgId, bump, onDark = false }: { orgId: string; /** Change to refetch (after an answer lands). */ bump: number; /** Sitting on the ink band. */ onDark?: boolean }) {
+export default function StatusChip({ orgId, bump }: { orgId: string; /** Change to refetch (after an answer lands). */ bump: number; /** Kept for older callers; the header is plain now. */ onDark?: boolean }) {
   const [snap, setSnap] = useState<Snap>({ model: null, keyOk: false, spentUsd: 0, capUsd: 0, known: false });
   const key = `chat-status-${orgId}`;
 
@@ -44,6 +48,7 @@ export default function StatusChip({ orgId, bump, onDark = false }: { orgId: str
       }
       const next: Snap = {
         model: conns?.personal?.model ?? null,
+        provider: conns?.personal?.provider ?? null,
         keyOk: !!conns?.personal?.keyLast4,
         spentUsd: usage?.spentUsd ?? 0,
         capUsd: usage?.capUsd ?? 0,
@@ -56,28 +61,36 @@ export default function StatusChip({ orgId, bump, onDark = false }: { orgId: str
   }, [orgId, key, bump]);
 
   const pct = snap.capUsd > 0 ? Math.min(100, Math.round((snap.spentUsd / snap.capUsd) * 100)) : 0;
-  const tone = !snap.known || snap.failed ? "bg-[var(--color-border-strong)]"
-    : !snap.keyOk ? "bg-amber-500"
-      : pct >= 90 ? "bg-rose-500" : "";
+  const money = (n: number) => `$${n.toFixed(2)}`;
+  const cap = (n: number) => `$${Math.round(n)}`;
+  const who = snap.provider ? (PROVIDER_NAME[snap.provider] ?? snap.provider) : "AI";
+  const problem = snap.known && (snap.failed || !snap.keyOk);
+  const nearCap = snap.known && !problem && pct >= 90;
+  const title = !snap.known ? "Checking AI status"
+    : snap.failed ? "Couldn't check the AI status"
+    : !snap.keyOk ? "No API key saved, so questions can't run"
+      : `${snap.model ?? "Model not set"}: ${money(snap.spentUsd)} spent${snap.capUsd > 0 ? ` of your ${cap(snap.capUsd)} cap` : ""} this month`;
 
+  // Plain words, not a chip: who answers and what this month has cost. A
+  // problem says so in its status color, with the way to fix it.
   return (
-    <Link href="/intelligence/setup"
-      title={!snap.known ? "Checking AI status…"
-        : snap.failed ? "Couldn't check the AI status. Open AI setup."
-        : !snap.keyOk ? "No API key saved, so questions can't run. Open AI setup."
-          : `${snap.model ?? "model"} · $${snap.spentUsd.toFixed(2)}${snap.capUsd > 0 ? ` of $${snap.capUsd.toFixed(2)}` : ""} this month`}
-      className={`inline-flex items-center gap-2 pl-2 pr-2.5 rounded-full border font-bold transition-colors max-w-[220px] ${onDark
-        ? "max-sm:hidden h-8 border-[var(--color-ink-line)] bg-[var(--color-ink-2)] text-[12px] text-[var(--color-ink-fg)] hover:text-white"
-        : "h-7 border-[var(--color-border)] bg-[var(--color-surface)] text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)]"}`}>
-      {tone && <span className={`w-2 h-2 rounded-full shrink-0 ${tone}`} />}
-      <span className="truncate">
-        {!snap.known ? "AI status" : snap.failed ? "AI status unknown" : !snap.keyOk ? "No AI key" : (snap.model ?? "model")}
-      </span>
-      {snap.known && !snap.failed && snap.keyOk && (
-        <span className={`tabular-nums shrink-0 ${onDark ? "text-[var(--color-ink-muted)]" : "text-[var(--color-text-faint)]"}`}>
-          ${snap.spentUsd.toFixed(2)}{snap.capUsd > 0 ? `/${snap.capUsd.toFixed(0)}` : ""}
+    <div title={title} className="min-w-0 flex items-center gap-2 text-[13px] max-sm:hidden">
+      {problem || nearCap ? (
+        <>
+          <span className={`inline-flex items-center gap-1.5 font-semibold whitespace-nowrap ${snap.failed ? "text-[var(--color-text-muted)]" : nearCap ? "text-[var(--state-overdue)]" : "text-[var(--state-held)]"}`}>
+            <span aria-hidden className={`w-2 h-2 rounded-full ${snap.failed ? "bg-[var(--color-text-faint)]" : nearCap ? "bg-[var(--state-overdue)]" : "bg-[var(--state-held)]"}`} />
+            {snap.failed ? "AI status unknown" : nearCap ? `${money(snap.spentUsd)} of ${cap(snap.capUsd)} used this month` : "No AI key"}
+          </span>
+          <Link href="/intelligence/setup" className="whitespace-nowrap text-[var(--color-accent-text)] hover:underline">AI setup</Link>
+        </>
+      ) : (
+        <span className="min-w-0 truncate text-[var(--color-text-muted)]">
+          {!snap.known ? "Checking AI" : <><span className="font-semibold text-[var(--color-text)]">{who}</span>{` ${money(snap.spentUsd)}${snap.capUsd > 0 ? ` of ${cap(snap.capUsd)}` : ""} this month`}</>}
         </span>
       )}
-    </Link>
+    </div>
   );
 }
+
+/** The provider by the name people know it by. */
+const PROVIDER_NAME: Record<string, string> = { anthropic: "Anthropic", openai: "OpenAI", gemini: "Google Gemini" };

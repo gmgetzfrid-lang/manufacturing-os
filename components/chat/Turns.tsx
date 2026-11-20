@@ -53,16 +53,16 @@ export function UserTurn({ m, mine, onOpenAttachment }: {
     <>
     <div ref={bubbleRef} className="py-2">
       <div className="flex justify-end">
-        {/* Your own question is charcoal; a teammate's sits on the warm
+        {/* Your own question is graphite; a teammate's sits on the light
             fill, so a shared conversation shows who asked what. */}
-        <div className={`max-w-[85%] rounded-2xl rounded-tr-md px-4 py-2.5 ${mine
-          ? "bg-[var(--color-ink)] shadow-[var(--shadow-card)]"
-          : "bg-[var(--color-surface-2)]"}`}>
-          <div className={`text-[14.5px] font-medium whitespace-pre-wrap leading-relaxed ${mine ? "text-[var(--color-ink-fg)]" : "text-[var(--color-text)]"}`}>{m.content}</div>
+        <div className={`max-w-[85%] rounded-lg rounded-tr-sm px-4 py-2.5 ${mine
+          ? "bg-[var(--color-ink)]"
+          : "bg-[var(--color-surface-2)] border border-[var(--color-border)]"}`}>
+          <div className={`text-[15px] whitespace-pre-wrap leading-relaxed ${mine ? "text-[var(--color-ink-fg)]" : "text-[var(--color-text)]"}`}>{m.content}</div>
           {(focus?.length || inputs) ? (
             <div className="mt-1.5 flex flex-wrap gap-1">
               {[...(focus ?? []), ...(inputs ? [inputs] : [])].map((f) => (
-                <span key={f} className={`text-[11.5px] font-bold px-1.5 py-0.5 rounded-md border ${mine
+                <span key={f} className={`text-[12px] font-semibold px-1.5 py-0.5 rounded border ${mine
                   ? "border-[var(--color-ink-line)] bg-[var(--color-ink-2)] text-[var(--color-ink-fg)]"
                   : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]"}`}>{f}</span>
               ))}
@@ -73,8 +73,8 @@ export function UserTurn({ m, mine, onOpenAttachment }: {
               {m.attachments.map((a) => <AttachmentCard key={a.id || a.path} a={a} onOpen={() => onOpenAttachment(a)} />)}
             </div>
           )}
-          <div className={`mt-1 text-[11px] text-right ${mine ? "text-[color-mix(in_srgb,var(--color-ink-fg)_62%,transparent)]" : "text-[var(--color-text-muted)]"}`}>
-            {who} · {relativeTime(m.createdAt)}
+          <div className={`mt-1 flex justify-end gap-2 text-[12px] ${mine ? "text-[color-mix(in_srgb,var(--color-ink-fg)_70%,transparent)]" : "text-[var(--color-text-muted)]"}`}>
+            <span>{who}</span><span className="tabular-nums">{relativeTime(m.createdAt)}</span>
           </div>
         </div>
       </div>
@@ -88,7 +88,7 @@ export function UserTurn({ m, mine, onOpenAttachment }: {
           <button
             onClick={() => bubbleRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
             title="Back to the question"
-            className="max-w-[70%] inline-flex items-center gap-2 h-8 px-3 rounded-full bg-[var(--color-surface)] shadow-[var(--shadow-card)] ring-1 ring-[var(--color-border)] text-[12.5px] text-[var(--color-text)] animate-pop">
+            className="max-w-[70%] inline-flex items-center gap-2 h-8 px-3 rounded-md bg-[var(--color-surface)] shadow-[var(--shadow-card)] ring-1 ring-[var(--color-border-strong)] text-[13px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] animate-pop">
             <span className="shrink-0 text-[13px] font-semibold text-[var(--color-text-faint)]">{who}</span>
             <span className="truncate">{m.content}</span>
           </button>
@@ -116,7 +116,7 @@ export function AttachmentCard({ a, onOpen, large }: { a: ChatAttachment; onOpen
       ) : (
         <div className={`flex items-center gap-2 px-2.5 py-2 ${large ? "" : "max-w-[200px]"}`}>
           {a.kind === "image" ? <ImageIcon className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" /> : <FileText className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />}
-          <span className="text-[12px] font-bold text-[var(--color-text)] truncate">{a.name}</span>
+          <span className="text-[13px] font-semibold text-[var(--color-text)] truncate">{a.name}</span>
         </div>
       )}
     </button>
@@ -156,14 +156,16 @@ export function AssistantTurn({
   if (m.status === "error") {
     return (
       // Said in place, where the answer would have been.
-      <div role="alert" className="flex items-start gap-2.5 flex-wrap">
-        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" />
+      <div role="alert" className="relative pl-4 py-1 flex items-center gap-x-3 gap-y-2 flex-wrap">
+        <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-overdue)]" />
         <div className="min-w-0 flex-1 basis-60">
-          <div className="text-[14.5px] font-bold text-rose-800 dark:text-rose-300">No answer this time.</div>
-          <div className="text-[13.5px] text-[var(--color-text-muted)]">{m.error ?? "The question didn't get an answer."}</div>
+          <div className="inline-flex items-center gap-1.5 text-[15px] font-semibold text-[var(--state-overdue)]">
+            <AlertTriangle className="h-4 w-4 shrink-0" /> No answer this time
+          </div>
+          <div className="text-[14px] text-[var(--color-text-muted)]">{m.error ?? "The question didn't get an answer."}</div>
         </div>
         {isLast && question && (
-          <button onClick={() => onRetry(question)} className="shrink-0 inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)]">
+          <button onClick={() => onRetry(question)} className={QUIET_BTN}>
             <RotateCcw className="w-4 h-4" /> Ask again
           </button>
         )}
@@ -189,7 +191,7 @@ export function AssistantTurn({
       <ClarifyCard prompt={answer.clarification.question} options={answer.clarification.options}
         onAnswer={(focus) => onClarify(question, focus)} />
     ) : (
-      <p className="text-[13px] text-[var(--color-text-muted)]">Asked which parts to cover: {answer.clarification.options.join(", ")}.</p>
+      <p className="text-[14px] text-[var(--color-text-muted)]">Asked which parts to cover: {answer.clarification.options.join(", ")}.</p>
     );
   }
   if (need) {
@@ -197,24 +199,26 @@ export function AssistantTurn({
     return isLast ? (
       <NeedCard prompt={need} onProvide={(values) => onNeed(question, values, undefined, priorInputs)} />
     ) : (
-      <p className="text-[13px] text-[var(--color-text-muted)]">Needed a value: {need}</p>
+      <p className="text-[14px] text-[var(--color-text-muted)]">Needed a value: {need}</p>
     );
   }
 
   if (answer.mode === "internet") {
     return (
       <article className="max-w-3xl">
-        <div className="mb-4 flex items-center gap-x-3 gap-y-1 flex-wrap">
-          <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Internet answer</span>
-          <span className="inline-flex items-center gap-1 text-[12px] font-bold text-amber-700 dark:text-amber-400">
-            <Globe className="w-3.5 h-3.5 shrink-0" />
-            {answer.liveWeb ? "From a live web search" : "From the model's general knowledge"}, not your controlled documents
+        <div className="mb-4 flex items-center gap-x-4 gap-y-1 flex-wrap">
+          <span className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]"><Globe className="w-3.5 h-3.5 shrink-0" /> Internet answer</span>
+          {/* Not a controlled source: said as a quiet status tag. */}
+          <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]">
+            <span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-held)]" />
+            {answer.liveWeb ? "Live web search" : "Model's general knowledge"}, not your controlled documents
           </span>
         </div>
         <AnswerView answer={answer.answer} citations={answer.citations} onCite={onCite} />
         <CitationChips citations={answer.citations} onOpen={onCite} />
-        <p className="mt-3 text-[12px] text-[var(--color-text-muted)]">
-          {answer.provider} · {answer.model} · not a controlled source. Check it before you rely on it.
+        <p className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-[var(--color-text-muted)]">
+          <span>Check it before you rely on it.</span>
+          {answer.model && <span title={answer.provider}>Model {answer.model}</span>}
         </p>
       </article>
     );
@@ -223,9 +227,9 @@ export function AssistantTurn({
   return (
     <div>
       {replayed && (
-        <p className="mb-4 flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]">
+        <p className="mb-4 flex items-center gap-2 text-[14px] text-[var(--color-text-muted)]">
           <History className="w-4 h-4 shrink-0" />
-          <span><b className="font-bold text-[var(--color-text)]">Reused from the team&apos;s record:</b> answered for {(replayed.userName ?? "someone").split("@")[0]} on {new Date(replayed.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}. No new AI run.</span>
+          <span><span className="font-semibold text-[var(--color-text)]">Reused from the team&apos;s record:</span> answered for {(replayed.userName ?? "someone").split("@")[0]} on {new Date(replayed.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}. No new AI run.</span>
         </p>
       )}
       <AnswerExperience question={question} answer={answer} showQuestion={false}
@@ -253,9 +257,11 @@ function RatedFeedback({ questionId, onRated, question, citations }: {
   return <AnswerFeedback key={questionId} questionId={questionId} onRated={onRated} question={question} citations={citations} />;
 }
 
-const ORANGE_BTN = "inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-extrabold hover:bg-[var(--color-accent-hover)] shadow-[0_10px_20px_-12px_var(--color-accent)] disabled:opacity-50 transition-colors";
-const INK_BTN = "inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[13px] font-bold hover:opacity-90 disabled:opacity-50 transition-opacity";
-const QUIET_BTN = "inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-colors";
+// Send is the chat's one filled button: everything in the stream is a
+// white, ruled secondary button. The next step on the newest turn gets a
+// graphite edge so it still stands out.
+const QUIET_BTN = "shrink-0 inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-text-faint)] disabled:opacity-50 transition-colors";
+const NEXT_BTN = `${QUIET_BTN} !border-[var(--color-text)]`;
 
 function ToolsTurn({ m, payload, actions, onConfirm, latest }: {
   m: ChatMessage;
@@ -299,7 +305,7 @@ function ToolsTurn({ m, payload, actions, onConfirm, latest }: {
             onClick={() => setShowTrace((s) => !s)} aria-expanded={showTrace}
             className="group w-full flex items-center gap-x-3 gap-y-1 flex-wrap text-left"
           >
-            <span className="text-[13px] font-semibold text-[var(--color-text-muted)] group-hover:text-[var(--color-text)]">
+            <span className="text-[14px] font-semibold text-[var(--color-text)] group-hover:underline">
               {steps.length} {steps.length === 1 ? "step" : "steps"} it took
             </span>
             {!showTrace && steps.length > 0 && (
@@ -307,15 +313,15 @@ function ToolsTurn({ m, payload, actions, onConfirm, latest }: {
                 {steps.slice(0, 12).map((s, i) => (
                   <React.Fragment key={i}>
                     {i > 0 && <span className="w-3 h-0.5 bg-[var(--color-border-strong)]" />}
-                    <span className={`w-2.5 h-2.5 rounded-full ${s.error ? "bg-rose-500" : "bg-[var(--color-text)]"}`} />
+                    <span className={`w-2.5 h-2.5 rounded-full ${s.error ? "bg-[var(--state-overdue)]" : "bg-[var(--color-text-muted)]"}`} />
                   </React.Fragment>
                 ))}
               </span>
             )}
             {payload.stoppedBecause && (
-              <span className="text-[12px] font-bold text-amber-700 dark:text-amber-400">Stopped early: {payload.stoppedBecause}</span>
+              <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]"><span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-held)]" />Stopped early: {payload.stoppedBecause}</span>
             )}
-            <span className="ml-auto inline-flex items-center gap-1.5 text-[12px] text-[var(--color-text-faint)]">
+            <span className="ml-auto inline-flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]">
               {payload.model}
               <ChevronDown className={`h-4 w-4 transition-transform ${showTrace ? "rotate-180" : ""}`} />
             </span>
@@ -338,24 +344,24 @@ function StepView({ step, n, last }: { step: RunStep; n: number; last: boolean }
   return (
     <li className="relative pl-9 pb-4 last:pb-0">
       {!last && <span aria-hidden className="absolute left-[11px] top-6 bottom-0 w-0.5 bg-[var(--color-border)]" />}
-      <span className={`absolute left-0 top-0 w-6 h-6 rounded-full border-2 bg-[var(--color-surface)] grid place-items-center font-mono text-[11px] font-bold ${step.error
-        ? "border-rose-500 text-rose-700 dark:text-rose-300"
-        : "border-[var(--color-text)] text-[var(--color-text)]"}`}>{n}</span>
+      <span className={`absolute left-0 top-0 w-6 h-6 rounded-full border-2 bg-[var(--color-surface)] grid place-items-center font-display tabular-nums text-[13px] font-semibold ${step.error
+        ? "border-[var(--state-overdue)] text-[var(--state-overdue)]"
+        : "border-[var(--color-text-muted)] text-[var(--color-text)]"}`}>{n}</span>
       {step.error ? (
         <div className="text-[14px] leading-snug">
-          <span className="font-bold text-[var(--color-text)]">{describeTool(step.tool)}</span>
+          <span className="font-semibold text-[var(--color-text)]">{describeTool(step.tool)}</span>
           {params && <span className="text-[var(--color-text-muted)]">: {params}</span>}
-          <p className="mt-0.5 text-[13px] font-semibold text-rose-700 dark:text-rose-400">Didn&apos;t work: {step.error}</p>
+          <p className="mt-0.5 text-[14px] font-semibold text-[var(--state-overdue)]">Didn&apos;t work: {step.error}</p>
         </div>
       ) : (
         <>
-          <button onClick={() => setOpen((o) => !o)} aria-expanded={open} className="group text-left text-[14px] leading-snug">
-            <span className="font-bold text-[var(--color-text)] group-hover:underline">{describeTool(step.tool)}</span>
+          <div className="text-[14px] leading-snug">
+            <span className="font-semibold text-[var(--color-text)]">{describeTool(step.tool)}</span>
             {params && <span className="text-[var(--color-text-muted)]">: {params}</span>}
-            <span className="ml-2 text-[12px] font-bold text-[var(--color-text-faint)] group-hover:text-[var(--color-text)]">{open ? "Hide result" : "Show result"}</span>
-          </button>
+            <button onClick={() => setOpen((o) => !o)} aria-expanded={open} className="ml-2 text-[13px] text-[var(--color-accent-text)] hover:underline">{open ? "Hide result" : "Show result"}</button>
+          </div>
           {open && (
-            <pre className="mt-2 max-h-48 overflow-auto rounded-lg bg-[var(--color-surface-2)] p-2.5 text-[12px] text-[var(--color-text-muted)]">
+            <pre className="mt-2 max-h-48 overflow-auto rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2.5 text-[12px] text-[var(--color-text-muted)]">
               {JSON.stringify(step.result, null, 2)}
             </pre>
           )}
@@ -369,24 +375,25 @@ function PendingCard({ action, done, outcome, busy, onConfirm, primary }: {
   action: PendingAction; done: boolean;
   outcome?: { ok: boolean; note: string };
   busy: boolean; onConfirm: () => void;
-  /** The one orange on the screen: the first proposal still waiting. */
+  /** The next step on the screen: the first proposal still waiting. */
   primary: boolean;
 }) {
   return (
-    <section className="space-y-2">
-      <div className={`flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-[0.14em] ${done
-        ? "text-emerald-700 dark:text-emerald-400"
-        : "text-amber-700 dark:text-amber-400"}`}>
-        {done ? <Check className="h-3.5 w-3.5" /> : <ShieldAlert className="h-3.5 w-3.5" />}
+    // A proposal is a row with its state on the edge: waiting (amber) until
+    // it runs, done (green) after.
+    <section className="relative pl-4 py-1 space-y-2">
+      <span aria-hidden className={`absolute left-0 inset-y-0 w-[3px] rounded-full ${done ? "bg-[var(--state-released)]" : "bg-[var(--state-held)]"}`} />
+      <div className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]">
+        {done ? <Check className="h-3.5 w-3.5 text-[var(--state-released)]" /> : <ShieldAlert className="h-3.5 w-3.5 text-[var(--state-held)]" />}
         {done ? "Ran with your OK" : "Needs your OK before it runs"}
       </div>
       <p className="text-[15px] font-semibold leading-snug text-[var(--color-text)]">{action.summary}</p>
       {outcome && !outcome.ok && (
-        <p role="alert" className="text-[13px] font-semibold text-rose-700 dark:text-rose-400">It didn&apos;t run: {outcome.note}</p>
+        <p role="alert" className="text-[14px] font-semibold text-[var(--state-overdue)]">It didn&apos;t run: {outcome.note}</p>
       )}
       <div className="flex items-center gap-2">
         {done ? (
-          <span className="inline-flex items-center gap-1.5 text-[13px] font-bold text-emerald-700 dark:text-emerald-400">
+          <span className="inline-flex items-center gap-1.5 text-[14px] font-semibold text-[var(--state-released)]">
             <Check className="h-4 w-4" /> Done{outcome?.note && outcome.note !== "done" ? `: ${outcome.note}` : ""}
           </span>
         ) : action.href ? (
@@ -396,7 +403,7 @@ function PendingCard({ action, done, outcome, busy, onConfirm, primary }: {
             Open and continue there <ArrowUpRight className="h-4 w-4" />
           </Link>
         ) : (
-          <button onClick={onConfirm} disabled={busy} className={primary ? ORANGE_BTN : INK_BTN}>
+          <button onClick={onConfirm} disabled={busy} className={primary ? NEXT_BTN : QUIET_BTN}>
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
             {busy ? "Running…" : "Confirm and run"}
           </button>

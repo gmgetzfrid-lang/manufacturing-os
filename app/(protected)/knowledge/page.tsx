@@ -9,7 +9,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  BookOpen, Plus, Loader2, Settings2, Sparkles, FileText, AlertTriangle,
+  BookOpen, Plus, Loader2, Settings2, AlertTriangle,
 } from "lucide-react";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import LoadingBlock from "@/components/ui/LoadingBlock";
@@ -83,28 +83,28 @@ export default function KnowledgePage() {
   };
 
   const docTotal = (libraries ?? []).reduce((n, l) => n + (l.documentCount ?? 0), 0);
+  const emptyCount = (libraries ?? []).filter((l) => (l.documentCount ?? 0) === 0).length;
   const answer = libraries === null
-    ? (error ? "The libraries didn't load." : "Knowledge")
-    : libraries.length === 0 ? "No knowledge libraries yet."
-      : `${libraries.length} ${libraries.length === 1 ? "library" : "libraries"}, ${docTotal.toLocaleString()} ${docTotal === 1 ? "document" : "documents"}.`;
+    ? (error ? "The libraries didn't load" : "Knowledge")
+    : libraries.length === 0 ? "No knowledge libraries yet"
+      : docTotal === 0 ? "No documents in any library yet"
+        : `${docTotal.toLocaleString()} ${docTotal === 1 ? "document" : "documents"} you can ask`;
+  const when = (iso: string) => {
+    const d = new Date(iso);
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric", ...(d.getFullYear() !== new Date().getFullYear() ? { year: "numeric" } : {}) });
+  };
 
   return (
     <PageShell>
       <PageHero
         kicker="Intelligence · Knowledge"
         title={answer}
-        sub={
-          <>
-            Reference libraries you can ask. Answers cite the page.
-            {aiConfigured === false && (
-              <span className="block mt-1.5 text-amber-300">
-                <AlertTriangle className="inline w-3.5 h-3.5 -mt-0.5 mr-1" />
-                No AI key yet, so questions can&apos;t run. Libraries still build and index.{" "}
-                <button className="underline font-bold text-white" onClick={() => setShowSettings(true)}>Add a key</button> (Anthropic or OpenAI). The key owner pays the provider directly.
-              </span>
-            )}
-          </>
-        }
+        sub="Reference libraries you can ask. Answers cite the page."
+        facts={libraries && libraries.length > 0 ? [
+          { label: "Libraries", value: libraries.length },
+          { label: "Documents", value: docTotal.toLocaleString() },
+          { label: "Empty", value: emptyCount, tone: emptyCount > 0 ? "warn" : undefined },
+        ] : undefined}
         tools={
           <button type="button" className={heroQuiet} onClick={() => setShowSettings(true)}>
             <Settings2 className="w-4 h-4" /><span className="max-sm:hidden">AI settings</span><span className="sr-only sm:hidden">AI settings</span>
@@ -116,12 +116,25 @@ export default function KnowledgePage() {
       </PageHero>
 
       <PageBody>
+      {aiConfigured === false && (
+        // A warning is a row with its status on the edge.
+        <div className="relative pl-4 py-1 flex flex-wrap items-center gap-x-4 gap-y-2">
+          <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-held)]" />
+          <p className="min-w-0 flex-1 basis-72 text-[15px] text-[var(--color-text)]">
+            <AlertTriangle className="inline w-4 h-4 -mt-0.5 mr-1.5 text-[var(--state-held)]" />
+            <span className="font-semibold">No AI key yet, so questions can&apos;t run.</span>{" "}
+            <span className="text-[var(--color-text-muted)]">Libraries still build and index. The key owner pays the provider directly.</span>
+          </p>
+          <button type="button" className={heroQuiet} onClick={() => setShowSettings(true)}>Add a key</button>
+        </div>
+      )}
       {error && (
-        <Card>
-          <p role="alert" className="text-[14px] font-semibold text-red-700 dark:text-red-400">
+        <div className="relative pl-4 py-1">
+          <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-overdue)]" />
+          <p role="alert" className="text-[15px] font-semibold text-[var(--state-overdue)]">
             Couldn&apos;t load the libraries: {error}. If the knowledge tables aren&apos;t migrated yet, run migration 20260911.
           </p>
-        </Card>
+        </div>
       )}
 
       {libraries === null ? (
@@ -137,26 +150,46 @@ export default function KnowledgePage() {
           />
         </Card>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {libraries.map((lib) => (
-            <Link key={lib.id} href={`/knowledge/${lib.id}`}
-              className="group rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 transition-shadow hover:shadow-[0_1px_2px_rgb(11_18_32/0.06),0_30px_56px_-26px_rgb(11_18_32/0.5)]">
-              <div className="flex items-center gap-3">
-                <span className="w-9 h-9 rounded-[10px] flex items-center justify-center shrink-0 bg-[var(--color-surface-2)]">
-                  <Sparkles className="w-4 h-4 text-[var(--color-text-muted)]" />
-                </span>
-                <h3 className="min-w-0 flex-1 text-[15px] font-bold text-[var(--color-text)] truncate">{lib.name}</h3>
-              </div>
-              {lib.description && (
-                <p className="mt-2.5 text-[13px] text-[var(--color-text-muted)] line-clamp-2">{lib.description}</p>
-              )}
-              <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex items-center gap-2 text-[12px] text-[var(--color-text-muted)]">
-                <FileText className="w-3.5 h-3.5" />
-                <span className="font-semibold text-[var(--color-text)]">{(lib.documentCount ?? 0) === 0 ? "Empty" : `${lib.documentCount} document${lib.documentCount === 1 ? "" : "s"}`}</span>
-                <span className="truncate">· Created {new Date(lib.createdAt).toLocaleDateString()}{lib.createdByName ? ` by ${lib.createdByName.split("@")[0]}` : ""}</span>
-              </div>
-            </Link>
-          ))}
+        // The libraries as one ruled table: the whole row opens it.
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+          <table className="w-full text-[15px]">
+            <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+              <tr>
+                <th className="font-semibold px-4 h-10">Library</th>
+                <th className="font-semibold px-4 text-right whitespace-nowrap">Documents</th>
+                <th className="font-semibold px-4 hidden sm:table-cell">Status</th>
+                <th className="font-semibold px-4 hidden md:table-cell">Created</th>
+                <th className="font-semibold px-4 hidden lg:table-cell">By</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--color-border)]">
+              {libraries.map((lib) => {
+                const n = lib.documentCount ?? 0;
+                return (
+                  <tr key={lib.id} onClick={() => router.push(`/knowledge/${lib.id}`)} className="hover:bg-[var(--color-surface-2)] cursor-pointer align-top">
+                    <td className="px-4 py-3 min-w-0">
+                      <Link href={`/knowledge/${lib.id}`} onClick={(e) => e.stopPropagation()}
+                        className="font-display text-[17px] font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
+                        {lib.name}
+                      </Link>
+                      {lib.description && (
+                        <p className="mt-0.5 text-[14px] text-[var(--color-text-muted)] line-clamp-1 max-w-[70ch]">{lib.description}</p>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right font-display text-[17px] font-semibold tabular-nums text-[var(--color-text)]">{n.toLocaleString()}</td>
+                    <td className="px-4 py-3 hidden sm:table-cell whitespace-nowrap">
+                      <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]">
+                        <span aria-hidden className={`w-2 h-2 rounded-full ${n === 0 ? "bg-[var(--state-held)]" : "bg-[var(--state-released)]"}`} />
+                        {n === 0 ? "Empty" : "Has documents"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 hidden md:table-cell whitespace-nowrap text-[var(--color-text-muted)]">{when(lib.createdAt)}</td>
+                    <td className="px-4 py-3 hidden lg:table-cell whitespace-nowrap text-[var(--color-text-muted)]">{lib.createdByName ? lib.createdByName.split("@")[0] : ""}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
       </PageBody>
@@ -174,7 +207,7 @@ export default function KnowledgePage() {
                 <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2}
                   placeholder="What lives in this library and who should ask it questions" />
               </label>
-              {createError && <p role="alert" className="text-xs font-semibold text-red-700 dark:text-red-400">Not made: {createError}</p>}
+              {createError && <p role="alert" className="text-[13px] font-semibold text-[var(--state-overdue)]">Not made: {createError}</p>}
             </ModalBody>
             <ModalFooter>
                 <Button variant="secondary" onClick={() => setShowCreate(false)} disabled={creating}>Cancel</Button>

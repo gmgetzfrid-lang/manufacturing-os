@@ -16,7 +16,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { PanelLeftOpen, Square, BookOpen, Waypoints, GitPullRequest, Puzzle, Gauge, Settings2, AlertTriangle } from "lucide-react";
+import { PanelLeftOpen, BookOpen, Waypoints, GitPullRequest, Puzzle, Gauge, Settings2, AlertTriangle } from "lucide-react";
 import MoreMenu from "@/components/ui/MoreMenu";
 import { useDraft, clearDraft } from "@/hooks/useDraft";
 import { useRole } from "@/components/providers/RoleContext";
@@ -687,17 +687,20 @@ export default function ChatShell() {
   const panelOpen = panel !== null;
   const ScopeIcon = SCOPE_META[scope].icon;
 
+  const sourceName = scope === "library" ? (libraries.find((l) => l.id === libraryId)?.name ?? "a library") : null;
+  const contextLine = scope === "library" ? `Asking ${sourceName}` : scope === "tools" ? "Asking the system tools" : "Asking the internet";
+
   return (
     // The chat keeps the full height: the conversation is the page. Its
-    // parts sit on the paper as cards: conversations (left), the stream
-    // under a slim ink band that says what you're asking (middle), the
-    // reading panel (right).
+    // parts are white sheets on the grey panel: conversations (left), the
+    // stream under a plain header that says what you're asking (middle),
+    // the reading panel (right).
     <div className="relative flex h-full min-h-0 overflow-hidden gap-3 px-2 sm:px-4 lg:px-6 pt-1 pb-2 sm:pb-4">
       {/* Rail */}
       {railOpen && (
         <div className={isMobile
-          ? "absolute inset-y-0 left-0 z-40 w-[85vw] max-w-xs shadow-2xl rounded-r-2xl overflow-hidden"
-          : "w-72 shrink-0 rounded-2xl overflow-hidden shadow-[var(--shadow-card)]"}>
+          ? "absolute inset-y-0 left-0 z-40 w-[85vw] max-w-xs shadow-2xl rounded-r-lg overflow-hidden"
+          : "w-72 shrink-0 rounded-lg overflow-hidden border border-[var(--color-border)]"}>
           <ThreadRail
             threads={threads} activeId={active?.id ?? null} libraryNames={libraryNames} uid={uid}
             libraryFilter={libraryFilter}
@@ -712,29 +715,24 @@ export default function ChatShell() {
       {isMobile && railOpen && <div className="absolute inset-0 z-30 bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)]" onClick={() => setRailOpen(false)} />}
 
       {/* Stream */}
-      <div className="flex-1 min-w-0 flex flex-col rounded-[20px] overflow-hidden bg-[var(--color-surface)] shadow-[var(--shadow-card)]">
-        <div className="px-3 sm:px-5 py-2.5 flex items-center gap-2.5 shrink-0 bg-[var(--color-band)] text-white">
+      <div className="flex-1 min-w-0 flex flex-col rounded-lg overflow-hidden bg-[var(--color-surface)] border border-[var(--color-border)]">
+        <div className="px-3 sm:px-5 py-2.5 min-h-[60px] flex items-center gap-2 shrink-0 border-b border-[var(--color-border)]">
           {!railOpen && (
             <button onClick={() => setRailOpen(true)} title="Conversations" aria-label="Show conversations"
-              className="h-9 w-9 -ml-1 inline-flex items-center justify-center rounded-[10px] text-[var(--color-ink-fg)] hover:bg-[var(--color-ink-2)]">
+              className="h-9 w-9 -ml-1 shrink-0 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
               <PanelLeftOpen className="w-4 h-4" />
             </button>
           )}
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-ink-muted)] truncate">
+            <h1 className="font-display text-[19px] sm:text-[21px] leading-tight font-semibold text-[var(--color-text)] truncate">{active?.title || "New conversation"}</h1>
+            <div className="mt-0.5 flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)] min-w-0">
               <ScopeIcon className="w-3.5 h-3.5 shrink-0" aria-hidden />
-              <span className="truncate">Ask · {scope === "library" ? (libraries.find((l) => l.id === libraryId)?.name ?? SCOPE_META[scope].label) : SCOPE_META[scope].label}</span>
+              <span className="truncate">{contextLine}</span>
             </div>
-            <h1 className="mt-0.5 text-[15px] font-bold text-white truncate">{active?.title || "New conversation"}</h1>
           </div>
-          {streaming && (
-            <button onClick={stop} className="hidden sm:inline-flex items-center gap-1.5 h-8 px-3 rounded-[10px] border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] text-[12px] font-bold text-[var(--color-ink-fg)] hover:text-white">
-              <Square className="w-3 h-3" /> Stop
-            </button>
-          )}
-          <StatusChip orgId={orgId} bump={statusBump} onDark />
+          <StatusChip orgId={orgId} bump={statusBump} />
           {/* The rest of Intelligence, one tap away (the chat is its front door). */}
-          <MoreMenu iconOnly label="Knowledge, graph, review, skills, status, setup" triggerClass="h-9 w-9 inline-flex items-center justify-center rounded-[10px] border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] text-[var(--color-ink-fg)] hover:bg-[var(--color-ink-line)]"
+          <MoreMenu iconOnly label="Knowledge, graph, review, skills, status, setup" triggerClass="shrink-0 h-9 w-9 inline-flex items-center justify-center rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
             items={[
               { icon: <BookOpen className="w-4 h-4" />, label: "Knowledge", onClick: () => router.push("/knowledge") },
               { icon: <Waypoints className="w-4 h-4" />, label: "Graph", onClick: () => router.push("/graph") },
@@ -747,7 +745,8 @@ export default function ChatShell() {
 
         {threadError && (
           // Said in place, at the top of the conversation it is about.
-          <p role="alert" className="mx-auto max-w-3xl w-full px-4 sm:px-6 pt-4 flex items-start gap-2 text-[13.5px] font-semibold text-rose-700 dark:text-rose-400">
+          <p role="alert" className="relative mx-4 sm:mx-6 mt-4 pl-4 py-1 flex items-start gap-2 text-[14px] font-semibold text-[var(--state-overdue)]">
+            <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-overdue)]" />
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {threadError}
           </p>
         )}
@@ -806,7 +805,7 @@ export default function ChatShell() {
               answerMode={pickedMode} onAnswerMode={pickMode}
               skills={skills} pickedSkills={pickedSkills} onPickSkills={pickSkills}
             />
-            <p className="mt-1.5 px-1 text-[12px] text-[var(--color-text-muted)] truncate">
+            <p className="mt-1.5 px-1 text-[13px] text-[var(--color-text-muted)] truncate">
               {scope === "library" && useWeb
                 ? "Documents first, they govern. Web is on: every web statement links to the page it came from."
                 : SCOPE_META[scope].hint}
@@ -822,8 +821,8 @@ export default function ChatShell() {
       )}
       {panelOpen && (
         <div className={isMobile
-          ? "absolute inset-x-0 bottom-0 top-3 z-40 rounded-t-[20px] overflow-hidden shadow-[0_-30px_60px_-30px_rgb(0_0_0/0.6)] bg-[var(--color-surface)] animate-rise"
-          : "w-[420px] xl:w-[500px] 2xl:w-[560px] shrink-0 rounded-2xl overflow-hidden shadow-[var(--shadow-card)] bg-[var(--color-surface)]"}>
+          ? "absolute inset-x-0 bottom-0 top-3 z-40 rounded-t-lg overflow-hidden shadow-[0_-30px_60px_-30px_rgb(0_0_0/0.6)] bg-[var(--color-surface)] animate-rise"
+          : "w-[420px] xl:w-[500px] 2xl:w-[560px] shrink-0 rounded-lg overflow-hidden border border-[var(--color-border)] bg-[var(--color-surface)]"}>
           <RightPanel
             state={panel!} onClose={() => setPanel(null)} orgId={orgId} thread={active} libraries={libraries}
             canPromote={canPromote}

@@ -99,23 +99,23 @@ export default function EstateReviewPanel() {
   };
 
   return (
-    <section className="mb-6 rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden">
+    <section className="mb-6 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex flex-wrap items-center justify-between gap-3">
         <div>
-          <div className="text-sm font-black inline-flex items-center gap-2"><Link2 className="w-4 h-4 text-[var(--color-text-muted)]" /> Links waiting for you</div>
-          <div className="text-xs text-[var(--color-text-muted)]">Only what is proven links by itself: a unit&apos;s number and name together (&ldquo;20 - Crude&rdquo;), a drawing number, a folder under a linked folder. A name on its own is asked here. <b>Belongs to</b>: it is that unit&apos;s own. <b>Applies to</b>: a standard or reference that covers it.</div>
+          <div className="text-sm font-semibold inline-flex items-center gap-2"><Link2 className="w-4 h-4 text-[var(--color-text-muted)]" /> Links waiting for you</div>
+          <div className="text-[13px] text-[var(--color-text-muted)]">Only what is proven links by itself: a unit&apos;s number and name together (&ldquo;20 - Crude&rdquo;), a drawing number, a folder under a linked folder. A name on its own is asked here. <b>Belongs to</b>: it is that unit&apos;s own. <b>Applies to</b>: a standard or reference that covers it.</div>
         </div>
         {canDecide && (
-          <button onClick={run} disabled={running} title="Work the links out again. Links made earlier that are no longer proven come back here; a person's links are never touched." className="shrink-0 inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-60">
+          <button onClick={run} disabled={running} title="Work the links out again. Links made earlier that are no longer proven come back here; a person's links are never touched." className="shrink-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-60">
             {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} {running ? "Checking…" : "Check the links again"}
           </button>
         )}
       </div>
-      {note && <div className="px-4 py-2 text-xs text-[var(--color-text-muted)] border-b border-[var(--color-border)]">{note}</div>}
+      {note && <div className="px-4 py-2 text-[13px] text-[var(--color-text-muted)] border-b border-[var(--color-border)]">{note}</div>}
       {rows === null ? (
-        <div className="p-6 text-xs text-[var(--color-text-muted)] inline-flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading…</div>
+        <div className="p-6 text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading…</div>
       ) : rows.length === 0 ? (
-        <div className="p-6 text-xs text-[var(--color-text-muted)] italic">Nothing waiting. &ldquo;Check the links again&rdquo; after teaching aliases or adding units to the codebook to find more.</div>
+        <div className="p-6 text-[13px] text-[var(--color-text-muted)] italic">Nothing waiting. &ldquo;Check the links again&rdquo; after teaching aliases or adding units to the codebook to find more.</div>
       ) : (
         <ul className="divide-y divide-[var(--color-border)]">
           {rows.map((e) => {
@@ -125,14 +125,14 @@ export default function EstateReviewPanel() {
                 <I className="w-4 h-4 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
                 <div className="flex-1 min-w-0 text-sm">
                   <div className="flex flex-wrap items-center gap-x-1.5"><Node id={e.a} /> <span className="text-[var(--color-text-muted)]">{e.type === "belongs_to_unit" ? "and" : TYPE_LABEL[e.type] ?? e.type}</span> <Node id={e.b} /></div>
-                  <div className="text-xs text-[var(--color-text-muted)] mt-0.5">{e.summary}</div>
-                  <div className="text-[11px] text-[var(--color-text-faint)] mt-0.5">{HOW[e.origin] ?? e.origin} · {e.tier === "strong" ? "likely" : e.tier === "inferred" ? "a guess" : "proven"}{e.createdByName ? ` · found on a run by ${e.createdByName}` : ""}</div>
+                  <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{e.summary}</div>
+                  <div className="text-[13px] text-[var(--color-text-faint)] mt-0.5">{HOW[e.origin] ?? e.origin} · {e.tier === "strong" ? "likely" : e.tier === "inferred" ? "a guess" : "proven"}{e.createdByName ? ` · found on a run by ${e.createdByName}` : ""}</div>
                 </div>
                 {canDecide && (
                   <div className="flex items-center gap-1 shrink-0 flex-wrap">
-                    <button onClick={() => decide(e, true)} disabled={busy === e.id} className="inline-flex items-center gap-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] px-2 py-1 text-xs font-bold hover:bg-[var(--color-surface-2)] disabled:opacity-50"><Check className="w-3.5 h-3.5" /> {e.type === "alias_of" ? "Teach" : e.type === "belongs_to_unit" ? "Belongs to" : "Link"}</button>
-                    {e.type === "belongs_to_unit" && <button onClick={() => applies(e)} disabled={busy === e.id} className="inline-flex items-center gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-1 text-xs font-bold hover:bg-[var(--color-surface-2)] disabled:opacity-50"><Link2 className="w-3.5 h-3.5" /> Applies to</button>}
-                    <button onClick={() => decide(e, false)} disabled={busy === e.id} className="inline-flex items-center gap-1 rounded-lg border border-[var(--color-border)] px-2 py-1 text-xs font-bold hover:bg-[var(--color-canvas)] disabled:opacity-50"><X className="w-3.5 h-3.5" /> No</button>
+                    <button onClick={() => decide(e, true)} disabled={busy === e.id} className="inline-flex items-center gap-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] px-2 py-1 text-[13px] font-bold hover:bg-[var(--color-surface-2)] disabled:opacity-50"><Check className="w-3.5 h-3.5" /> {e.type === "alias_of" ? "Teach" : e.type === "belongs_to_unit" ? "Belongs to" : "Link"}</button>
+                    {e.type === "belongs_to_unit" && <button onClick={() => applies(e)} disabled={busy === e.id} className="inline-flex items-center gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-1 text-[13px] font-bold hover:bg-[var(--color-surface-2)] disabled:opacity-50"><Link2 className="w-3.5 h-3.5" /> Applies to</button>}
+                    <button onClick={() => decide(e, false)} disabled={busy === e.id} className="inline-flex items-center gap-1 rounded-lg border border-[var(--color-border)] px-2 py-1 text-[13px] font-bold hover:bg-[var(--color-canvas)] disabled:opacity-50"><X className="w-3.5 h-3.5" /> No</button>
                   </div>
                 )}
               </li>

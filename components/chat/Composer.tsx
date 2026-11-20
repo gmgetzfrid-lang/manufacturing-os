@@ -127,12 +127,12 @@ export default function Composer({
   return (
     <div
       {...drag.bind}
-      className={`relative rounded-2xl border bg-[var(--color-surface)] shadow-[var(--shadow-card)] transition-colors border-[var(--color-border-strong)] focus-within:border-[var(--color-text-muted)] ${drag.ring}`}
+      className={`relative rounded-lg border bg-[var(--color-surface)] transition-colors border-[var(--color-border-strong)] focus-within:border-[var(--color-accent)] focus-within:ring-2 focus-within:ring-[var(--color-accent-ring)]/30 ${drag.ring}`}
     >
       {drag.over && (
-        <div className="absolute inset-0 z-10 rounded-2xl bg-[var(--color-surface-2)] flex flex-col items-center justify-center text-sm font-black text-[var(--color-text)] pointer-events-none">
+        <div className="absolute inset-0 z-10 rounded-lg bg-[var(--color-surface-2)] flex flex-col items-center justify-center text-[15px] font-semibold text-[var(--color-text)] pointer-events-none">
           {drag.say}
-          <span className="text-[11px] font-semibold text-[var(--color-text-muted)]">Images and PDFs, for this question only</span>
+          <span className="text-[13px] font-normal text-[var(--color-text-muted)]">Images and PDFs, for this question only</span>
         </div>
       )}
 
@@ -140,9 +140,10 @@ export default function Composer({
         <div className="px-3 pt-3 flex flex-wrap gap-1.5">
           {attachments.map((a) => (
             <div key={a.localId} title={a.error ?? `${a.name} · ${fmtBytes(a.size)}`}
-              className={`inline-flex items-center gap-1.5 pl-1 pr-1.5 py-1 rounded-lg border text-[12px] font-bold max-w-[300px] ${a.error
-                ? "border-rose-300 bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300"
+              className={`relative inline-flex items-center gap-1.5 pl-1 pr-1.5 py-1 rounded-md border text-[13px] font-semibold max-w-[300px] overflow-hidden ${a.error
+                ? "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--state-overdue)]"
                 : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]"}`}>
+              {a.error && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />}
               {a.file
                 ? <FileThumb file={a.file} size={32} />
                 : a.kind === "image" && a.previewUrl
@@ -153,15 +154,15 @@ export default function Composer({
                     : <FileText className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" />}
               <span className="min-w-0 flex flex-col leading-tight">
                 <span className="truncate">{a.name}</span>
-                <span className={`truncate font-semibold ${a.error ? "" : "text-[var(--color-text-muted)]"}`}>
+                <span className={`truncate font-normal text-[12px] ${a.error ? "" : "text-[var(--color-text-muted)]"}`}>
                   {a.error ? (a.retryable ? "Didn't upload" : a.error) : fmtBytes(a.size)}
                 </span>
               </span>
               {a.att === null && !a.error
                 ? <span className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-muted)] shrink-0"><Loader2 className="w-3 h-3 animate-spin" />{Math.round(a.percent)}%</span>
-                : a.att && <Check className="w-3 h-3 text-emerald-600 shrink-0" />}
+                : a.att && <Check className="w-3.5 h-3.5 text-[var(--state-released)] shrink-0" />}
               {a.error && a.retryable && a.file && onRetryAttachment && (
-                <button type="button" onClick={() => onRetryAttachment(a.localId)} className="shrink-0 px-1.5 py-0.5 rounded border border-current/30 hover:bg-[var(--color-surface)] font-black">
+                <button type="button" onClick={() => onRetryAttachment(a.localId)} className="shrink-0 h-7 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] font-semibold">
                   Try again
                 </button>
               )}
@@ -194,7 +195,7 @@ export default function Composer({
         <input ref={fileRef} type="file" multiple hidden accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
           onChange={(e) => { onAddFiles(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
         <button onClick={() => fileRef.current?.click()} title="Attach an image or PDF (for this question only)" aria-label="Attach a file"
-          className="h-8 w-8 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+          className="h-8 w-8 shrink-0 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
           <Paperclip className="w-4 h-4" />
         </button>
 
@@ -211,20 +212,21 @@ export default function Composer({
 
         {instructionsActive && (
           <button onClick={onToggleInstructions} title="Instructions apply to this conversation"
-            className="h-8 inline-flex items-center gap-1 px-2 rounded-lg text-[12px] font-bold border border-[var(--color-border)] text-[var(--color-text)] bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)]">
+            className="h-8 inline-flex items-center gap-1 px-2 rounded-md text-[13px] font-semibold border border-[var(--color-border-strong)] text-[var(--color-text)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]">
             <SlidersHorizontal className="w-3.5 h-3.5" /> {instructionCount}
           </button>
         )}
 
         {busy ? (
           <button onClick={onStop} title="Stop" aria-label="Stop"
-            className="h-8 w-8 inline-flex items-center justify-center rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 transition-opacity">
-            <Square className="w-3.5 h-3.5" />
+            className="shrink-0 h-9 max-sm:w-9 inline-flex items-center justify-center gap-1.5 sm:px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+            <Square className="w-3.5 h-3.5" /><span className="max-sm:sr-only">Stop</span>
           </button>
         ) : (
+          // The one filled button on the chat.
           <button onClick={onSend} disabled={!canSend} title="Send (Enter)" aria-label="Send"
-            className="shrink-0 h-8 w-8 inline-flex items-center justify-center rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-35 disabled:cursor-not-allowed transition-colors">
-            <Send className="w-4 h-4" />
+            className="shrink-0 h-9 max-sm:w-9 inline-flex items-center justify-center gap-1.5 sm:px-3.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-semibold hover:bg-[var(--color-accent-hover)] shadow-[0_1px_0_rgb(0_0_0/0.12)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+            <Send className="w-4 h-4" /><span className="max-sm:sr-only">Send</span>
           </button>
         )}
       </div>

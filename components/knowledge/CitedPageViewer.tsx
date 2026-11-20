@@ -407,7 +407,7 @@ export default function CitedPageViewer({
               <X className="w-4 h-4" />
             </button>
           </div>
-          <h2 className="mt-1 text-[22px] sm:text-[26px] leading-[1.1] font-black tracking-[-0.02em] text-[var(--color-text)] line-clamp-2 break-words">
+          <h2 className="mt-1 font-display text-[22px] sm:text-[26px] leading-[1.1] font-semibold text-[var(--color-text)] line-clamp-2 break-words">
             {view.title.replace(/\.pdf$/i, "")}
           </h2>
           <p className="mt-1 text-[13px] text-[var(--color-text-muted)] truncate">
@@ -503,7 +503,7 @@ export default function CitedPageViewer({
                 </button>
               ))}
               {locateNote && (
-                <span className="text-[12px] font-semibold text-amber-700 dark:text-amber-400 flex-1 min-w-0">{locateNote}</span>
+                <span className="text-[13px] font-semibold text-[var(--state-held)] flex-1 min-w-0">{locateNote}</span>
               )}
             </div>
           )}
@@ -573,7 +573,7 @@ export default function CitedPageViewer({
                           : "w-14 h-4 bg-amber-300/60 ring-1 ring-amber-500/70"
                       }`} />
                       <span className="absolute left-1/2 -translate-x-1/2 top-full mt-1 whitespace-nowrap
- px-1.5 py-0.5 rounded text-[11px] font-black text-[var(--color-ink-fg)] bg-[var(--color-ink)]">
+ px-1.5 py-0.5 rounded font-display text-[12px] font-semibold text-[var(--color-ink-fg)] bg-[var(--color-ink)]">
                         {m.tag}{approx ? " ~" : ""}
                       </span>
                     </div>
@@ -603,7 +603,7 @@ export default function CitedPageViewer({
                     <button type="button" onClick={() => setIdx(i)}
                       title={`${s.title.replace(/\.pdf$/i, "")}${s.section ? ` · ${s.section}` : ""} · p.${s.page}`}
                       aria-label={`Source ${s.n ?? i + 1}: ${s.title.replace(/\.pdf$/i, "")}, page ${s.page}`}
-                      className={`w-7 h-7 rounded-full grid place-items-center text-[11px] font-black tabular-nums transition-colors ${
+                      className={`w-7 h-7 rounded-full grid place-items-center font-display text-[13px] font-semibold tabular-nums transition-colors ${
                         i === idx
                           ? "bg-[var(--color-text)] text-[var(--color-surface)]"
                           : "border-2 border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:border-[var(--color-text)] hover:text-[var(--color-text)]"
@@ -620,7 +620,7 @@ export default function CitedPageViewer({
             </div>
             <button type="button" onClick={() => setIdx((i) => Math.min(list.length - 1, i + 1))}
               disabled={idx >= list.length - 1}
-              className="shrink-0 inline-flex items-center gap-1 h-10 px-4 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-extrabold hover:bg-[var(--color-accent-hover)] shadow-[0_10px_20px_-12px_var(--color-accent)] disabled:opacity-40 disabled:shadow-none"
+              className="shrink-0 inline-flex items-center gap-1 h-10 px-4 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-semibold hover:bg-[var(--color-accent-hover)] shadow-[0_1px_0_rgb(0_0_0/0.12)] disabled:opacity-40 disabled:shadow-none"
               aria-label="Next source">
               <span className="max-sm:hidden">Next source</span> <ChevronRight className="w-4 h-4" />
             </button>
