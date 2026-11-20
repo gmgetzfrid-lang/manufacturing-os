@@ -121,7 +121,7 @@ function Tooltip({ text }: { text: string }) {
         onMouseLeave={() => setShow(false)}
       />
       {show && (
-        <span className="absolute left-5 top-0 z-50 w-48 bg-[var(--color-text)] text-[var(--color-surface)] text-xs rounded-lg px-3 py-2 shadow-xl">
+        <span className="absolute left-5 top-0 z-50 w-48 bg-[var(--color-text)] text-[var(--color-surface)] text-[13px] rounded-lg px-3 py-2 shadow-xl">
           {text}
         </span>
       )}
@@ -151,7 +151,7 @@ function RolePicker({
         <button
           type="button"
           onClick={() => onAllChange(true)}
-          className="w-full text-left px-3 py-2 rounded-lg border border-green-200 bg-green-50 text-green-800 text-xs font-bold"
+          className="w-full text-left px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text)] text-[13px] font-semibold"
         >
           Everyone in the organization
         </button>
@@ -167,7 +167,7 @@ function RolePicker({
                   key={role}
                   type="button"
                   onClick={() => toggle(role)}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all ${
+                  className={`px-2.5 py-1 rounded-lg text-[13px] font-semibold border transition-all ${
                     active
                       ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent"
                       : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-text)]"
@@ -321,18 +321,18 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
   const STEPS = ["Library info", "Document fields", "Permissions"];
 
   return (
-    <div role="dialog" aria-modal="true" aria-label={initialData ? "Edit Library" : "Create New Library"} className="fixed inset-0 z-50 flex items-start sm:items-center justify-center overflow-y-auto bg-[var(--color-ink)]/60 p-4">
-      <div className="bg-[var(--color-surface)] w-full max-w-3xl rounded-2xl shadow-2xl flex flex-col overflow-hidden max-h-[92vh]">
+    <div role="dialog" aria-modal="true" aria-label={initialData ? "Edit library" : "New library"} className="fixed inset-0 z-50 flex items-start sm:items-center justify-center overflow-y-auto bg-[var(--color-ink)]/60 p-4">
+      <div className="bg-[var(--color-surface)] w-full max-w-3xl rounded-lg shadow-2xl flex flex-col overflow-hidden max-h-[92vh]">
 
         {/* Header */}
         <div className="px-5 sm:px-8 py-4 border-b border-[var(--color-border)] flex justify-between items-center shrink-0">
           <div>
             <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Admin · Libraries</div>
-            <h2 className="text-[15px] font-bold text-[var(--color-text)]">
+            <h2 className="font-display text-[22px] font-semibold text-[var(--color-text)]">
               {initialData ? `Edit ${initialData.name || "library"}` : "New library"}
             </h2>
           </div>
-          <button onClick={onClose} disabled={isLoading} aria-label="Close" className="p-2 text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] rounded-lg transition-colors">
+          <button onClick={onClose} disabled={isLoading} aria-label="Close" className="p-2 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg transition-colors">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -348,34 +348,34 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
             <div className="space-y-8">
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-bold text-[var(--color-text)] mb-1.5">
-                    Library Name <span className="text-red-500">*</span>
+                  <label className="block text-sm font-semibold text-[var(--color-text)] mb-1.5">
+                    Library name <span className="text-[var(--state-overdue)]">*</span>
                   </label>
                   <input
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     placeholder="e.g. Bakersfield P&IDs, Safety Procedures"
-                    className="w-full px-4 py-3 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl text-[var(--color-text)] font-bold focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:bg-[var(--color-surface)] outline-none transition-all text-[15px] placeholder:text-[var(--color-text-faint)]"
+                    className="w-full px-4 py-3 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg text-[var(--color-text)] font-semibold focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:bg-[var(--color-surface)] outline-none transition-all text-[15px] placeholder:text-[var(--color-text-faint)]"
                     autoFocus
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-bold text-[var(--color-text)] mb-1.5">
+                  <label className="block text-sm font-semibold text-[var(--color-text)] mb-1.5">
                     What is this library for?
-                    <span className="text-[var(--color-text-faint)] font-normal ml-2 text-xs">(optional)</span>
+                    <span className="text-[var(--color-text-faint)] font-normal ml-2 text-[13px]">(optional)</span>
                   </label>
                   <textarea
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
                     placeholder="Briefly describe what's stored here and who uses it..."
                     rows={2}
-                    className="w-full px-4 py-3 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:bg-[var(--color-surface)] outline-none resize-none transition-all placeholder:text-[var(--color-text-faint)]"
+                    className="w-full px-4 py-3 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:bg-[var(--color-surface)] outline-none resize-none transition-all placeholder:text-[var(--color-text-faint)]"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm font-bold text-[var(--color-text)] mb-3">
+                <label className="block text-sm font-semibold text-[var(--color-text)] mb-3">
                   What type of documents will go here?
                 </label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -387,17 +387,17 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
                         key={t.type}
                         type="button"
                         onClick={() => setType(t.type)}
-                        className={`text-left p-4 rounded-xl border-2 transition-all ${
+                        className={`text-left p-4 rounded-lg border-2 transition-all ${
                           active ? "border-[var(--color-text)] bg-[var(--color-surface-2)]" : `border-[var(--color-border)] hover:border-[var(--color-border-strong)] ${t.bg}`
                         }`}
                       >
                         <div className="flex items-center gap-3 mb-2">
                           <Icon className={`w-5 h-5 ${active ? "text-[var(--color-text-muted)]" : t.color}`} />
-                          <span className="font-bold text-sm text-[var(--color-text)]">{t.label}</span>
+                          <span className="font-semibold text-sm text-[var(--color-text)]">{t.label}</span>
                           {active && <CheckCircle2 className="w-4 h-4 text-[var(--color-text-muted)] ml-auto" />}
                         </div>
-                        <p className="text-xs text-[var(--color-text-muted)] leading-relaxed">{t.desc}</p>
-                        <p className="text-[11px] text-[var(--color-text-faint)] mt-1.5 italic">{t.example}</p>
+                        <p className="text-[13px] text-[var(--color-text-muted)] leading-relaxed">{t.desc}</p>
+                        <p className="text-[13px] text-[var(--color-text-faint)] mt-1.5">{t.example}</p>
                       </button>
                     );
                   })}
@@ -409,14 +409,14 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
           {/* STEP 2: Document Fields */}
           {step === 2 && (
             <div className="space-y-4">
-              <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl p-4">
-                <p className="text-sm font-bold text-[var(--color-text)] mb-0.5">Define what information is tracked per document</p>
-                <p className="text-xs text-[var(--color-text)]">These fields appear as columns in the document list. Edit, reorder, or add fields. The first four are pre-set but fully editable.</p>
+              <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-4">
+                <p className="text-sm font-semibold text-[var(--color-text)] mb-0.5">Define what information is tracked per document</p>
+                <p className="text-[13px] text-[var(--color-text)]">These fields appear as columns in the document list. Edit, reorder, or add fields. The first four are pre-set but fully editable.</p>
               </div>
 
               <div className="space-y-2">
                 {columns.map((f, i) => (
-                  <div key={i} className="flex items-center gap-2 p-3 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl group">
+                  <div key={i} className="flex items-center gap-2 p-3 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg group">
                     {/* Reorder buttons */}
                     <div className="flex flex-col gap-0.5 shrink-0">
                       <button
@@ -458,15 +458,15 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
 
                     {/* Toggles */}
                     <div className="flex items-center gap-3 shrink-0">
-                      <label className="flex items-center gap-1 text-[11px] text-[var(--color-text-muted)] cursor-pointer">
+                      <label className="flex items-center gap-1 text-[13px] text-[var(--color-text-muted)] cursor-pointer">
                         <input type="checkbox" checked={f.required ?? false} onChange={(e) => updateField(i, { required: e.target.checked })} className="rounded" />
                         Required
                       </label>
-                      <label className="flex items-center gap-1 text-[11px] text-[var(--color-text-muted)] cursor-pointer">
+                      <label className="flex items-center gap-1 text-[13px] text-[var(--color-text-muted)] cursor-pointer">
                         <input type="checkbox" checked={f.searchable ?? true} onChange={(e) => updateField(i, { searchable: e.target.checked })} className="rounded" />
                         Searchable
                       </label>
-                      <label className="flex items-center gap-1 text-[11px] text-[var(--color-text-muted)] cursor-pointer">
+                      <label className="flex items-center gap-1 text-[13px] text-[var(--color-text-muted)] cursor-pointer">
                         <input type="checkbox" checked={f.visible ?? true} onChange={(e) => updateField(i, { visible: e.target.checked })} className="rounded" />
                         Visible
                       </label>
@@ -476,7 +476,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
                     <button
                       type="button"
                       onClick={() => removeField(i)}
-                      className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors shrink-0"
+                      className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)] rounded-md transition-colors shrink-0"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -487,7 +487,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
               <button
                 onClick={addField}
                 type="button"
-                className="flex items-center gap-2 px-4 py-3 border-2 border-dashed border-[var(--color-border-strong)] rounded-xl text-sm font-bold text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-all w-full justify-center"
+                className="flex items-center gap-2 px-4 py-3 border-2 border-dashed border-[var(--color-border-strong)] rounded-lg text-sm font-semibold text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-all w-full justify-center"
               >
                 <Plus className="w-4 h-4" />
                 Add Field
@@ -499,38 +499,38 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
           {step === 3 && (
             <div className="space-y-6">
               {/* View access */}
-              <div className="border border-[var(--color-border)] rounded-xl overflow-hidden">
+              <div className="border border-[var(--color-border)] rounded-lg overflow-hidden">
                 <div className="px-5 py-4 bg-[var(--color-surface-2)] border-b border-[var(--color-border)]">
-                  <p className="text-sm font-bold text-[var(--color-text)]">
+                  <p className="text-sm font-semibold text-[var(--color-text)]">
                     Who can view documents in this library?
                   </p>
-                  <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Read and download access.</p>
+                  <p className="text-[13px] text-[var(--color-text-muted)] mt-0.5">Read and download access.</p>
                 </div>
                 <div className="p-5 space-y-3">
                   <div className="flex gap-3">
                     <button
                       type="button"
                       onClick={() => setViewAccess("all")}
-                      className={`flex-1 px-4 py-3 rounded-xl border-2 text-sm font-bold transition-all text-left ${
+                      className={`flex-1 px-4 py-3 rounded-lg border-2 text-sm font-semibold transition-all text-left ${
                         viewAccess === "all"
                           ? "border-green-500 bg-green-50 text-green-800"
                           : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"
                       }`}
                     >
-                      <div className="font-bold">Everyone</div>
-                      <div className="text-xs font-normal mt-0.5 opacity-70">All org members can view</div>
+                      <div className="font-semibold">Everyone</div>
+                      <div className="text-[13px] font-normal mt-0.5 opacity-70">All org members can view</div>
                     </button>
                     <button
                       type="button"
                       onClick={() => setViewAccess("restricted")}
-                      className={`flex-1 px-4 py-3 rounded-xl border-2 text-sm font-bold transition-all text-left ${
+                      className={`flex-1 px-4 py-3 rounded-lg border-2 text-sm font-semibold transition-all text-left ${
                         viewAccess === "restricted"
                           ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]"
                           : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"
                       }`}
                     >
-                      <div className="font-bold">Restricted</div>
-                      <div className="text-xs font-normal mt-0.5 opacity-70">Only selected roles</div>
+                      <div className="font-semibold">Restricted</div>
+                      <div className="text-[13px] font-normal mt-0.5 opacity-70">Only selected roles</div>
                     </button>
                   </div>
                   {viewAccess === "restricted" && (
@@ -542,13 +542,13 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
               </div>
 
               {/* Upload access */}
-              <div className="border border-[var(--color-border)] rounded-xl overflow-hidden">
+              <div className="border border-[var(--color-border)] rounded-lg overflow-hidden">
                 <div className="px-5 py-4 bg-[var(--color-surface-2)] border-b border-[var(--color-border)]">
-                  <p className="text-sm font-bold text-[var(--color-text)]">
+                  <p className="text-sm font-semibold text-[var(--color-text)]">
                     Who can upload and edit documents?
                     <Tooltip text="These roles can upload new files, edit metadata, and manage document revisions." />
                   </p>
-                  <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Admins and Doc Control always have full access.</p>
+                  <p className="text-[13px] text-[var(--color-text-muted)] mt-0.5">Admins and Doc Control always have full access.</p>
                 </div>
                 <div className="p-5">
                   <RolePicker selected={uploadRoles} onChange={setUploadRoles} />
@@ -559,18 +559,18 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
               <button
                 type="button"
                 onClick={() => setShowAdvanced((v) => !v)}
-                className="flex items-center gap-2 text-xs font-bold text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] transition-colors"
+                className="flex items-center gap-2 text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
               >
                 {showAdvanced ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                 Advanced settings
               </button>
 
               {showAdvanced && (
-                <div className="border border-[var(--color-border)] rounded-xl p-5 space-y-4 bg-[var(--color-surface-2)]">
-                  <p className="text-xs text-[var(--color-text-muted)]">These settings have sensible defaults and rarely need changing.</p>
-                  <div className="text-xs text-[var(--color-text-muted)] space-y-2">
-                    <p><span className="font-bold">Folder permissions:</span> Folders inherit the library&rsquo;s settings by default. Individual folder overrides can be set after creation.</p>
-                    <p><span className="font-bold">New document visibility:</span> Documents are visible to anyone with library access by default.</p>
+                <div className="border border-[var(--color-border)] rounded-lg p-5 space-y-4 bg-[var(--color-surface-2)]">
+                  <p className="text-[13px] text-[var(--color-text-muted)]">These settings have sensible defaults and rarely need changing.</p>
+                  <div className="text-[13px] text-[var(--color-text-muted)] space-y-2">
+                    <p><span className="font-semibold">Folder permissions:</span> Folders inherit the library&rsquo;s settings by default. Individual folder overrides can be set after creation.</p>
+                    <p><span className="font-semibold">New document visibility:</span> Documents are visible to anyone with library access by default.</p>
                   </div>
                 </div>
               )}
@@ -579,7 +579,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
 
           {/* Error */}
           {error && (
-            <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 font-medium">
+            <div className="mt-4 p-3 border-l-[3px] border-[var(--state-overdue)] text-[14px] text-[var(--state-overdue)] font-semibold">
               {error}
             </div>
           )}
@@ -589,7 +589,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
         <div className="px-8 py-5 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex justify-between items-center shrink-0">
           <button
             onClick={step === 1 ? onClose : () => setStep((s) => (s - 1) as 1 | 2 | 3)}
-            className="text-sm font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
+            className="text-sm font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
             type="button"
           >
             {step === 1 ? "Cancel" : "← Back"}
@@ -600,7 +600,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
               <button
                 onClick={handleNext}
                 type="button"
-                className="px-6 py-2.5 text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] rounded-xl shadow hover:bg-[var(--color-accent-hover)] flex items-center transition-all"
+                className="px-6 py-2.5 text-sm font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] rounded-lg shadow hover:bg-[var(--color-accent-hover)] flex items-center transition-all"
               >
                 Continue <ArrowRight className="w-4 h-4 ml-2" />
               </button>
@@ -609,7 +609,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
                 onClick={handleSubmit}
                 disabled={isLoading}
                 type="button"
-                className="px-6 py-2.5 text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] rounded-xl shadow hover:bg-[var(--color-accent-hover)] flex items-center disabled:opacity-60 transition-all"
+                className="px-6 py-2.5 text-sm font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] rounded-lg shadow hover:bg-[var(--color-accent-hover)] flex items-center disabled:opacity-60 transition-all"
               >
                 <Save className="w-4 h-4 mr-2" />
                 {isLoading ? "Saving…" : initialData ? "Save library" : "Create library"}

@@ -11,16 +11,18 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   Download, FileJson, FileArchive, Loader2, AlertTriangle,
-  ShieldCheck, Plus, Server, Trash2, TestTube, RefreshCw, Clock,
-  CheckCircle2, XCircle, Lock, ExternalLink, Calendar, Cpu,
+  Plus, Trash2, TestTube, RefreshCw,
+  Lock, ExternalLink, Cpu,
   Webhook, HardDrive, Archive as ArchiveIcon, Edit3, X,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { startGlobalBackup, subscribeBackup, cancelBackup, backupIsRunning, type BackupProgress } from "@/lib/clientBackup";
 import { PageShell } from "@/components/ui/PageShell";
-import { PageHero, PageBody, Card } from "@/components/ui/PageHero";
-import { plural } from "@/components/admin/band";
+import { PageHero, PageBody } from "@/components/ui/PageHero";
+import { bandSeg, bandSegItem } from "@/components/admin/band";
+import { tbl, sheet, link, btnPrimary, btnQuiet, btnRow, btnIcon, FormRow, Section, StatusTag, RowEdge, Problem, shortDateTime } from "@/components/admin/kit";
+import HelpTooltip from "@/components/ui/HelpTooltip";
 import { Input, Select } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -204,174 +206,144 @@ export default function DataExportPage() {
     : lastAt ? `Last export ${lastAt.toLocaleDateString(undefined, { month: "short", day: "numeric" })}, ${lastAt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}.`
     : "No exports yet.";
 
+  const failedRuns = runs.filter((r) => r.status === "failed").length;
+
   return (
-    <PageShell width="form">
+    <PageShell width="work">
         <PageHero
           kicker="Admin · Data export and backup"
           title={answer}
-          size="md"
-          sub={isAuthorized && !loading
-            ? `${plural(destinations.length, "scheduled destination")}. Your data, yours to take any time.`
-            : "Your data, yours to take any time."}
+          sub="Your data, yours to take any time. Every export is in the audit log."
+          facts={isAuthorized && !loading ? [
+            { label: "Destinations", value: destinations.length },
+            { label: "Exports", value: runs.length },
+            { label: "Failed", value: failedRuns, tone: failedRuns > 0 ? "bad" : undefined },
+          ] : undefined}
+          tools={<Link href="/data-portability" target="_blank" className={`text-[14px] inline-flex items-center gap-1 ${link}`}>Our data promise <ExternalLink className="w-3.5 h-3.5" /></Link>}
         />
 
         <PageBody>
         {!isAuthorized && (
-          <Card>
-            <p className="text-[14px] text-[var(--color-text-muted)] flex items-start gap-2">
-              <Lock className="w-4 h-4 mt-0.5 shrink-0" />
-              <span>Only <b>Admin</b>, <b>Manager</b> or <b>DocCtrl</b> roles manage data exports.</span>
-            </p>
-          </Card>
+          <p className="text-[15px] text-[var(--color-text-muted)] flex items-start gap-2">
+            <Lock className="w-4 h-4 mt-0.5 shrink-0" /> Only Admin, Manager or DocCtrl roles manage data exports.
+          </p>
         )}
 
-        {error && (
-          <Card>
-            <p role="alert" className="text-[14px] text-red-700 dark:text-red-400 flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-              <span>{error} <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button></span>
-            </p>
-          </Card>
-        )}
+        {error && <Problem retry={() => void refresh()}>{error}</Problem>}
 
         {/* ──── DIRECT DOWNLOAD ──── */}
         {isAuthorized && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] p-5">
-              <div className="flex items-start gap-3 mb-3">
-                <div className="p-2.5 bg-[var(--color-surface-2)] rounded-xl"><FileJson className="w-5 h-5 text-[var(--color-text-muted)]" /></div>
-                <div className="flex-1">
-                  <div className="text-[14px] font-bold text-[var(--color-text)]">JSON only</div>
-                  <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">Records, plus a list of files with links that work for 24 hours.</div>
-                </div>
-              </div>
-              <button
-                onClick={downloadJson} disabled={busyJson || !activeOrgId}
-                className="w-full inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
-              >
-                {busyJson ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                Download JSON
-              </button>
+          <Section label="Download now">
+            <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
+              <FormRow label={<span className="inline-flex items-center gap-2"><FileJson className="w-4 h-4 text-[var(--color-text-muted)]" /> JSON only</span>} hint="Records, plus a list of files with links that work for 24 hours.">
+                <button type="button" onClick={downloadJson} disabled={busyJson || !activeOrgId} className={btnQuiet}>
+                  {busyJson ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Download JSON
+                </button>
+              </FormRow>
+              <FormRow label={<span className="inline-flex items-center gap-2"><FileArchive className="w-4 h-4 text-[var(--color-text-muted)]" /> Full ZIP with files</span>} hint="Records and every PDF and DWG, in parts of about 300 MB. Allow several downloads when the browser asks.">
+                <button type="button" onClick={downloadZip} disabled={busyZip || !activeOrgId} className={btnPrimary}>
+                  {busyZip ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                  {busyZip ? "Building backup…" : "Download full ZIP"}
+                </button>
+                {backupProgress && busyZip && (
+                  <div className="mt-3 space-y-1.5 max-w-xl">
+                    <div className="h-2 rounded-sm bg-[var(--color-surface-2)] overflow-hidden">
+                      <div className="h-full bg-[var(--color-text)] transition-all duration-300"
+                        style={{ width: `${backupProgress.filesTotal > 0 ? Math.round((backupProgress.filesDone / backupProgress.filesTotal) * 100) : 5}%` }} />
+                    </div>
+                    <div className="flex items-center justify-between gap-3 text-[13px] text-[var(--color-text-muted)]">
+                      <span className="truncate">
+                        {backupProgress.phase === "envelope" && "Reading every table…"}
+                        {backupProgress.phase === "files" &&
+                          `File ${backupProgress.filesDone + 1} of ${backupProgress.filesTotal}, ${(backupProgress.bytesDone / 1048576).toFixed(0)} MB, part ${backupProgress.part}` +
+                          (backupProgress.currentPath ? `: ${backupProgress.currentPath.split("/").pop()}` : "")}
+                        {backupProgress.phase === "finalizing" && `Packing part ${backupProgress.part}…`}
+                      </span>
+                      <button type="button" onClick={cancelBackup} className={btnRow}>Cancel</button>
+                    </div>
+                    <div className="text-[13px] text-[var(--color-text-muted)]">You can keep working; the corner card follows it. Don&apos;t close the tab.</div>
+                    {backupProgress.errors.length > 0 && (
+                      <StatusTag tone="warn">{backupProgress.errors.length} file(s) didn&apos;t make it so far. They&apos;re listed in backup-report.json.</StatusTag>
+                    )}
+                  </div>
+                )}
+                {backupProgress?.phase === "done" && !busyZip && (
+                  <p role="status" className="mt-2"><StatusTag tone="good">Backup complete: {backupProgress.part} part(s), every file checked (SHA-256).</StatusTag></p>
+                )}
+              </FormRow>
             </div>
-            <div className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] p-5">
-              <div className="flex items-start gap-3 mb-3">
-                <div className="p-2.5 bg-[var(--color-surface-2)] rounded-xl"><FileArchive className="w-5 h-5 text-[var(--color-text-muted)]" /></div>
-                <div className="flex-1">
-                  <div className="text-[14px] font-bold text-[var(--color-text)]">Full ZIP with files</div>
-                  <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">Records and every PDF and DWG, in zip parts of about 300 MB. Allow several downloads when the browser asks.</div>
-                </div>
-              </div>
-              <button
-                onClick={downloadZip} disabled={busyZip || !activeOrgId}
-                className="w-full inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
-              >
-                {busyZip ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                {busyZip ? "Building backup…" : "Download full ZIP"}
-              </button>
-              {backupProgress && busyZip && (
-                <div className="mt-3 space-y-1.5">
-                  <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-                    <div className="h-full bg-[var(--color-text)] transition-all duration-300"
-                      style={{ width: `${backupProgress.filesTotal > 0 ? Math.round((backupProgress.filesDone / backupProgress.filesTotal) * 100) : 5}%` }} />
-                  </div>
-                  <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
-                    <span className="truncate">
-                      {backupProgress.phase === "envelope" && "Reading every table…"}
-                      {backupProgress.phase === "files" &&
-                        `File ${backupProgress.filesDone + 1} of ${backupProgress.filesTotal} · ${(backupProgress.bytesDone / 1048576).toFixed(0)} MB · part ${backupProgress.part}` +
-                        (backupProgress.currentPath ? ` · ${backupProgress.currentPath.split("/").pop()}` : "")}
-                      {backupProgress.phase === "finalizing" && `Packing part ${backupProgress.part}…`}
-                    </span>
-                    <button onClick={cancelBackup} className="font-bold text-rose-600 hover:underline shrink-0">Cancel</button>
-                  </div>
-                  <div className="text-[11px] text-[var(--color-text-faint)]">
-                    You can leave this page and keep working. The corner card follows it anywhere in the app. Don&apos;t close the tab.
-                  </div>
-                  {backupProgress.errors.length > 0 && (
-                    <div className="text-[11px] text-amber-700 dark:text-amber-400">{backupProgress.errors.length} file(s) didn&apos;t make it so far. They&apos;ll be listed in backup-report.json.</div>
-                  )}
-                </div>
-              )}
-              {backupProgress?.phase === "done" && !busyZip && (
-                <div role="status" className="mt-2 text-[11px] font-bold text-emerald-700 dark:text-emerald-400">
-                  Backup complete: {backupProgress.part} zip part(s), every file checked (SHA-256) in files-manifest.json.
-                </div>
-              )}
-            </div>
-          </div>
+          </Section>
         )}
 
         {/* ──── DESTINATIONS ──── */}
         {isAuthorized && (
-          <Card label={<span className="inline-flex items-center gap-2"><Server className="w-3.5 h-3.5" /> Scheduled push destinations</span>}
-            action={destinations.length > 0 ? (
-              <button
-                type="button"
-                onClick={() => setCreating(true)}
-                className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[12px] font-semibold"
-              ><Plus className="w-3.5 h-3.5" /> New destination</button>
-            ) : undefined}>
-            <p className="text-[13px] text-[var(--color-text-muted)] mb-3 max-w-3xl">
-              Your own S3 or R2 bucket, or a webhook. A fresh export goes there on your schedule. Its keys are stored
-              encrypted (AES-256-GCM) and only opened at push time.
-            </p>
-
+          <Section label={<span className="inline-flex items-center gap-2">Scheduled destinations <HelpTooltip>Your own S3 or R2 bucket, or a webhook. A fresh export goes there on your schedule. Keys are stored encrypted (AES-256-GCM) and only opened at push time.</HelpTooltip></span>}
+            action={<button type="button" onClick={() => setCreating(true)} className={btnQuiet}><Plus className="w-3.5 h-3.5" /> New destination</button>}>
             {loading ? (
-              <div className="flex items-center gap-2 text-[14px] text-[var(--color-text-muted)] py-2"><Spinner size="sm" /> Loading destinations…</div>
+              <div className={`${sheet} px-4 py-3 flex items-center gap-2 text-[15px] text-[var(--color-text-muted)]`}><Spinner size="sm" /> Loading destinations…</div>
             ) : destinations.length === 0 ? (
-              <div className="rounded-xl bg-[var(--color-surface-2)] p-6 text-center">
-                <div className="text-[14px] text-[var(--color-text-muted)] mb-3">No destinations yet.</div>
-                <button type="button" onClick={() => setCreating(true)} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[13px] font-semibold">
-                  <Plus className="w-3.5 h-3.5" /> Add your first destination
-                </button>
-              </div>
+              <div className={`${sheet} px-4 py-6 text-center text-[15px] text-[var(--color-text-muted)]`}>No destinations yet.</div>
             ) : (
-              <div className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
-                {destinations.map((d) => (
-                  <DestinationCard
-                    key={d.id}
-                    dest={d}
-                    busy={busyDestId === d.id}
-                    onRun={() => runDestinationNow(d.id)}
-                    onTest={() => testConnection(d.id)}
-                    onEdit={() => setEditing(d)}
-                    onDelete={() => deleteDestination(d.id)}
-                  />
-                ))}
+              <div className={tbl.wrap}>
+                <table className={tbl.table}>
+                  <thead className={`${tbl.thead} max-md:hidden`}>
+                    <tr>
+                      <th className={tbl.th}>Destination</th>
+                      <th className={tbl.th}>Schedule</th>
+                      <th className={`${tbl.th} max-lg:hidden`}>Last run</th>
+                      <th className={`${tbl.th} max-lg:hidden`}>Next run</th>
+                      <th className={`${tbl.th} w-[1%]`}><span className="sr-only">Actions</span></th>
+                    </tr>
+                  </thead>
+                  <tbody className={tbl.tbody}>
+                    {destinations.map((d) => (
+                      <DestinationRow
+                        key={d.id}
+                        dest={d}
+                        busy={busyDestId === d.id}
+                        onRun={() => runDestinationNow(d.id)}
+                        onTest={() => testConnection(d.id)}
+                        onEdit={() => setEditing(d)}
+                        onDelete={() => deleteDestination(d.id)}
+                      />
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
-          </Card>
+          </Section>
         )}
 
         {/* ──── RUN HISTORY ──── */}
         {isAuthorized && (
-          <Card label={<span className="inline-flex items-center gap-2"><Clock className="w-3.5 h-3.5" /> Export history · {runs.length}</span>}
+          <Section label="Export history"
             action={
-              <button type="button" onClick={() => void refresh()} className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+              <button type="button" onClick={() => void refresh()} className={btnQuiet}>
                 <RefreshCw className="w-3.5 h-3.5" /> Refresh
               </button>
             }>
-            <p className="text-[13px] text-[var(--color-text-muted)] mb-3">Every export, who ran it and where it went. Kept for the record.</p>
             {runs.length === 0 ? (
-              <div className="rounded-xl bg-[var(--color-surface-2)] p-6 text-center text-[14px] text-[var(--color-text-muted)]">
-                No exports run yet.
-              </div>
+              <div className={`${sheet} px-4 py-6 text-center text-[15px] text-[var(--color-text-muted)]`}>No exports run yet.</div>
             ) : (
-              <div className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)] -mx-4 sm:-mx-5">
-                {runs.map((r) => <RunRow key={r.id} run={r} />)}
+              <div className={tbl.wrap}>
+                <table className={tbl.table}>
+                  <thead className={`${tbl.thead} max-md:hidden`}>
+                    <tr>
+                      <th className={tbl.th}>When</th>
+                      <th className={tbl.th}>Went to</th>
+                      <th className={tbl.th}>Status</th>
+                      <th className={`${tbl.th} max-lg:hidden`}>Run by</th>
+                      <th className={`${tbl.th} text-right`}>Size</th>
+                    </tr>
+                  </thead>
+                  <tbody className={tbl.tbody}>
+                    {runs.map((r) => <RunRow key={r.id} run={r} />)}
+                  </tbody>
+                </table>
               </div>
             )}
-          </Card>
+          </Section>
         )}
-
-        {/* Trust footer */}
-        <p className="px-1 text-[13px] text-[var(--color-text-muted)] flex items-center gap-2">
-          <ShieldCheck className="w-4 h-4 shrink-0" />
-          <span>
-            Every export is recorded in the audit log and listed above.
-            Our promise: <Link href="/data-portability" target="_blank" className="text-[var(--color-text)] font-bold underline underline-offset-2 inline-flex items-center gap-1">data portability <ExternalLink className="w-3 h-3" /></Link>.
-          </span>
-        </p>
         </PageBody>
 
       {(creating || editing) && activeOrgId && (
@@ -387,9 +359,9 @@ export default function DataExportPage() {
   );
 }
 
-// ─── Destination card ─────────────────────────────────────────────────────
+// ─── Destination row ──────────────────────────────────────────────────────
 
-function DestinationCard({
+function DestinationRow({
   dest, busy, onRun, onTest, onEdit, onDelete,
 }: {
   dest: Destination;
@@ -413,72 +385,55 @@ function DestinationCard({
   const icon = dest.destination_type === "webhook" ? <Webhook className="w-4 h-4 text-[var(--color-text-muted)]" />
     : dest.destination_type === "r2" ? <HardDrive className="w-4 h-4 text-[var(--color-text-muted)]" />
     : <ArchiveIcon className="w-4 h-4 text-[var(--color-text-muted)]" />;
+  const target = dest.destination_type === "webhook"
+    ? dest.webhook_url
+    : `${dest.endpoint || dest.region || ""} ${dest.bucket || ""}${dest.prefix ? "/" + dest.prefix : ""}`.trim();
+  const sched = dest.schedule_kind === "manual" ? "By hand"
+    : `${dest.schedule_kind[0].toUpperCase()}${dest.schedule_kind.slice(1)}${dest.schedule_hour_utc != null ? `, ${String(dest.schedule_hour_utc).padStart(2, "0")}:00 UTC` : ""}`;
 
   return (
-    <div className="py-3.5">
-      <div className="flex items-start gap-3">
-        <div className="p-2 bg-[var(--color-surface-2)] rounded-lg">{icon}</div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[14px] font-bold text-[var(--color-text)] truncate">{dest.name}</span>
-            <span className="text-[11px] font-bold uppercase bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{dest.destination_type}</span>
-            {!dest.enabled && <span className="text-[11px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded">DISABLED</span>}
-            <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-1.5 py-0.5 rounded border ${
-              dest.schedule_kind === "manual"
-                ? "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]"
-                : "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]"
-            }`}>
-              <Calendar className="w-2.5 h-2.5" /> {dest.schedule_kind}
-              {dest.schedule_kind !== "manual" && dest.schedule_hour_utc != null ? ` @ ${String(dest.schedule_hour_utc).padStart(2, "0")}:00 UTC` : ""}
-            </span>
-          </div>
-          <div className="mt-1 text-[11px] text-[var(--color-text-muted)] font-mono truncate">
-            {dest.destination_type === "webhook"
-              ? dest.webhook_url
-              : `${dest.endpoint || dest.region || ""} ${dest.bucket || ""}${dest.prefix ? "/" + dest.prefix : ""}`.trim()}
-          </div>
-          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[var(--color-text-muted)]">
-            {dest.last_run_at && (
-              <span className={`inline-flex items-center gap-1 ${dest.last_run_status === "failed" ? "text-red-600" : "text-emerald-700 dark:text-emerald-400"}`}>
-                {dest.last_run_status === "succeeded" ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
-                last: {new Date(dest.last_run_at).toLocaleString()}
-              </span>
-            )}
-            {dest.next_run_at && <span className="inline-flex items-center gap-1"><Clock className="w-3 h-3" /> next: {new Date(dest.next_run_at).toLocaleString()}</span>}
-            {dest.retention_days && <span>retention: {dest.retention_days}d</span>}
-            {!dest.include_files && <span className="text-amber-700 dark:text-amber-400">Records only (no files)</span>}
-          </div>
-          {dest.last_run_error && (
-            <p className="mt-2 border-l-2 border-red-500 pl-2 text-[11px] text-red-700 dark:text-red-400 font-mono">{dest.last_run_error}</p>
-          )}
-          {testResult && (
-            <p role="status" className={`mt-2 border-l-2 pl-2 text-[11px] ${testResult.ok ? "border-emerald-500 text-emerald-700 dark:text-emerald-400" : "border-red-500 text-red-700 dark:text-red-400"}`}>
-              {testResult.ok ? "Connection works." : `Test failed: ${testResult.error}`}
-            </p>
-          )}
+    <tr className={`${tbl.tr} max-md:flex max-md:flex-col max-md:py-1`}>
+      <td className={`${tbl.td} relative align-top max-md:py-1`}>
+        {dest.last_run_status === "failed" && <RowEdge tone="bad" />}
+        <div className="flex items-center gap-2 flex-wrap">
+          {icon}
+          <span className="font-semibold text-[var(--color-text)]">{dest.name}</span>
+          <span className="text-[13px] text-[var(--color-text-muted)]">{dest.destination_type === "webhook" ? "Webhook" : dest.destination_type.toUpperCase()}</span>
+          {!dest.enabled && <StatusTag tone="none">Turned off</StatusTag>}
+          {!dest.include_files && <span className="text-[13px] text-[var(--color-text-muted)]">Records only</span>}
         </div>
-        <div className="flex flex-col items-end gap-1.5">
-          <div className="flex items-center gap-1">
-            <button onClick={() => void doTest()} disabled={testing} title="Test connection" aria-label="Test connection" className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-accent-hover)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 transition-colors">
-              {testing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <TestTube className="w-3.5 h-3.5" />}
-            </button>
-            <button onClick={onEdit} title="Edit" aria-label={`Edit ${dest.name}`} className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
-              <Edit3 className="w-3.5 h-3.5" />
-            </button>
-            <button onClick={onDelete} title="Delete" aria-label={`Delete ${dest.name}`} className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-red-600 hover:bg-[var(--color-surface-2)] transition-colors">
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
-          </div>
-          <button
-            onClick={onRun} disabled={busy}
-            type="button"
-            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[12px] font-semibold disabled:opacity-50"
-          >
-            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Cpu className="w-3 h-3" />} Run now
+        <div className="mt-0.5 text-[13px] text-[var(--color-text-muted)] truncate max-w-[52ch]" title={target ?? undefined}>{target}{dest.retention_days ? `, kept ${dest.retention_days} days` : ""}</div>
+        {dest.last_run_error && <p className="mt-1 text-[13px] font-semibold text-[var(--state-overdue)]">{dest.last_run_error}</p>}
+        {testResult && (
+          <p role="status" className="mt-1">
+            {testResult.ok ? <StatusTag tone="good">Connection works.</StatusTag> : <StatusTag tone="bad" colored>Test failed: {testResult.error}</StatusTag>}
+          </p>
+        )}
+      </td>
+      <td className={`${tbl.td} align-top max-md:py-1 whitespace-nowrap text-[14px] text-[var(--color-text)]`}>{sched}</td>
+      <td className={`${tbl.td} align-top max-lg:hidden whitespace-nowrap`}>
+        {dest.last_run_at
+          ? <StatusTag tone={dest.last_run_status === "failed" ? "bad" : "good"} colored={dest.last_run_status === "failed"}>{shortDateTime(dest.last_run_at)}</StatusTag>
+          : <span className="text-[14px] text-[var(--color-text-muted)]">Not yet</span>}
+      </td>
+      <td className={`${tbl.td} align-top max-lg:hidden whitespace-nowrap text-[14px] text-[var(--color-text-muted)]`}>{dest.next_run_at ? shortDateTime(dest.next_run_at) : ""}</td>
+      <td className={`${tbl.td} align-top max-md:py-1`}>
+        <div className="flex items-center md:justify-end gap-1">
+          <button type="button" onClick={onRun} disabled={busy} className={btnRow}>
+            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Cpu className="w-3.5 h-3.5" />} Run now
+          </button>
+          <button type="button" onClick={() => void doTest()} disabled={testing} title="Test connection" aria-label="Test connection" className={btnIcon}>
+            {testing ? <Loader2 className="w-4 h-4 animate-spin" /> : <TestTube className="w-4 h-4" />}
+          </button>
+          <button type="button" onClick={onEdit} title="Edit" aria-label={`Edit ${dest.name}`} className={btnIcon}>
+            <Edit3 className="w-4 h-4" />
+          </button>
+          <button type="button" onClick={onDelete} title="Delete" aria-label={`Delete ${dest.name}`} className={`${btnIcon} hover:text-[var(--state-overdue)]`}>
+            <Trash2 className="w-4 h-4" />
           </button>
         </div>
-      </div>
-    </div>
+      </td>
+    </tr>
   );
 }
 
@@ -487,37 +442,31 @@ function DestinationCard({
 function RunRow({ run }: { run: Run }) {
   const ago = run.completed_at || run.started_at;
   const dur = run.duration_ms ? `${(run.duration_ms / 1000).toFixed(1)}s` : null;
+  const status = run.status === "succeeded" ? <StatusTag tone="good">Done</StatusTag>
+    : run.status === "failed" ? <StatusTag tone="bad" colored>Failed</StatusTag>
+    : run.status === "running" ? <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Running</span>
+    : <StatusTag tone="none">{run.status}</StatusTag>;
   return (
-    <div className="px-4 sm:px-5 py-3 flex items-start gap-3">
-      <div className={`p-1.5 rounded-md shrink-0 ${
-        run.status === "succeeded" ? "bg-emerald-100 dark:bg-emerald-950/40" :
-        run.status === "failed" ? "bg-red-100 dark:bg-red-950/40" :
-        run.status === "running" ? "bg-[var(--color-surface-2)]" : "bg-[var(--color-surface-2)]"
-      }`}>
-        {run.status === "succeeded" ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" /> :
-         run.status === "failed" ? <XCircle className="w-3.5 h-3.5 text-red-700" /> :
-         run.status === "running" ? <Loader2 className="w-3.5 h-3.5 text-[var(--color-text-muted)] animate-spin" /> :
-         <Clock className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />}
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-baseline gap-2 flex-wrap text-xs">
-          <span className="font-bold text-[var(--color-text)]">{run.destination_name || "Direct download"}</span>
-          <span className="text-[11px] uppercase font-bold bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{run.trigger_type}</span>
-          {run.triggered_by_email && <span className="text-[var(--color-text-muted)]">by {run.triggered_by_email}</span>}
-          <span className="text-[var(--color-text-faint)]">{new Date(ago).toLocaleString()}</span>
-          {dur && <span className="text-[var(--color-text-faint)]">in {dur}</span>}
-        </div>
-        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-[var(--color-text-muted)]">
-          {run.table_count != null && <span>{run.table_count} tables · {run.total_rows ?? 0} rows</span>}
-          {run.file_count != null && <span>{run.file_count} files</span>}
-          {run.total_bytes != null && <span>{formatBytes(run.total_bytes)}</span>}
-          {run.destination_path && <span className="font-mono truncate max-w-[40ch]" title={run.destination_path}>→ {run.destination_path}</span>}
-        </div>
-        {run.error_message && (
-          <p className="mt-1 border-l-2 border-red-500 pl-2 text-[11px] text-red-700 dark:text-red-400 font-mono">{run.error_message}</p>
+    <tr className={`${tbl.tr} max-md:flex max-md:flex-col max-md:py-1`}>
+      <td className={`${tbl.td} relative align-top max-md:py-0.5 whitespace-nowrap text-[14px] text-[var(--color-text)]`}>
+        {run.status === "failed" && <RowEdge tone="bad" />}
+        {shortDateTime(ago)}{dur && <span className="text-[var(--color-text-muted)]">, {dur}</span>}
+      </td>
+      <td className={`${tbl.td} align-top max-md:py-0.5`}>
+        <span className="font-semibold text-[var(--color-text)]">{run.destination_name || "Direct download"}</span>
+        <span className="ml-2 text-[13px] text-[var(--color-text-muted)]">{run.trigger_type}</span>
+        {run.destination_path && <div className="text-[13px] text-[var(--color-text-muted)] truncate max-w-[48ch]" title={run.destination_path}>{run.destination_path}</div>}
+        {run.error_message && <p className="mt-0.5 text-[13px] font-semibold text-[var(--state-overdue)]">{run.error_message}</p>}
+      </td>
+      <td className={`${tbl.td} align-top max-md:py-0.5`}>{status}</td>
+      <td className={`${tbl.td} align-top max-lg:hidden text-[14px] text-[var(--color-text-muted)]`}>{run.triggered_by_email ?? ""}</td>
+      <td className={`${tbl.td} align-top max-md:py-0.5 md:text-right text-[14px] text-[var(--color-text-muted)] whitespace-nowrap`}>
+        {run.total_bytes != null && <span className="text-[var(--color-text)] tabular-nums">{formatBytes(run.total_bytes)}</span>}
+        {(run.table_count != null || run.file_count != null) && (
+          <div className="tabular-nums">{run.total_rows != null ? `${run.total_rows.toLocaleString()} rows` : ""}{run.file_count != null ? `, ${run.file_count} files` : ""}</div>
         )}
-      </div>
-    </div>
+      </td>
+    </tr>
   );
 }
 
@@ -600,11 +549,11 @@ function DestinationModal({
 
   return (
     <div role="dialog" aria-modal="true" aria-label={`${mode === "create" ? "New" : "Edit"} backup destination`} className="fixed inset-0 z-[200] bg-[var(--color-ink)]/60 animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
-      <div className="w-full max-w-xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 animate-in fade-in zoom-in-95">
+      <div className="w-full max-w-xl bg-[var(--color-surface)] rounded-lg shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
           <div>
-            <div className="text-sm font-black text-[var(--color-text)]">{mode === "create" ? "New" : "Edit"} Backup Destination</div>
-            <div className="text-xs text-[var(--color-text-muted)]">Keys are stored encrypted and only opened at push time.</div>
+            <div className="font-display text-[19px] font-semibold text-[var(--color-text)]">{mode === "create" ? "New" : "Edit"} backup destination</div>
+            <div className="text-[14px] text-[var(--color-text-muted)]">Keys are stored encrypted and only opened at push time.</div>
           </div>
           <button onClick={onClose} disabled={busy} aria-label="Close" className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] transition-colors"><X className="w-4 h-4" /></button>
         </div>
@@ -615,9 +564,9 @@ function DestinationModal({
           </Field>
 
           <Field label="Destination type">
-            <div className="flex bg-[var(--color-surface-2)] p-1 rounded-lg">
+            <div className={`${bandSeg} w-full`}>
               {(["s3", "r2", "webhook"] as const).map((t) => (
-                <button key={t} onClick={() => setType(t)} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-colors ${type === t ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+                <button key={t} onClick={() => setType(t)} className={`${bandSegItem(type === t)} flex-1 justify-center`}>
                   {t.toUpperCase()}
                 </button>
               ))}
@@ -659,9 +608,9 @@ function DestinationModal({
           )}
 
           <Field label="Schedule">
-            <div className="flex bg-[var(--color-surface-2)] p-1 rounded-lg">
+            <div className={`${bandSeg} w-full`}>
               {(["manual", "daily", "weekly", "monthly"] as const).map((s) => (
-                <button key={s} onClick={() => setSchedule(s)} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-colors ${schedule === s ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+                <button key={s} onClick={() => setSchedule(s)} className={`${bandSegItem(schedule === s)} flex-1 justify-center`}>
                   {s}
                 </button>
               ))}
@@ -672,7 +621,7 @@ function DestinationModal({
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <Field label="Due from (UTC hour)">
                 <Input type="number" min={0} max={23} value={hourUtc} onChange={(e) => setHourUtc(Number(e.target.value))} />
-                <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">It goes out at the daily run (about 5:00 AM UTC) once due.</p>
+                <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">It goes out at the daily run (about 5:00 AM UTC) once due.</p>
               </Field>
               {schedule === "weekly" && (
                 <Field label="Day of week">
@@ -691,25 +640,25 @@ function DestinationModal({
 
           <div className="grid grid-cols-2 gap-3">
             <Field label="Include file binaries">
-              <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={includeFiles} onChange={(e) => setIncludeFiles(e.target.checked)} /> Include PDFs/DWGs inline</label>
+              <label className="flex items-center gap-2 text-[14px]"><input type="checkbox" checked={includeFiles} onChange={(e) => setIncludeFiles(e.target.checked)} /> Include PDFs/DWGs inline</label>
             </Field>
             <Field label="Retention (days)" hint="Delete older exports in your bucket">
               <Input type="number" min={1} value={retentionDays === "" ? "" : retentionDays} onChange={(e) => setRetentionDays(e.target.value === "" ? "" : Number(e.target.value))} placeholder="(unlimited)" />
             </Field>
           </div>
 
-          <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Enabled</label>
+          <label className="flex items-center gap-2 text-[14px]"><input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Enabled</label>
 
           {error && (
-            <p role="alert" className="border-l-2 border-red-500 pl-3 text-xs text-red-700 dark:text-red-400 flex items-start gap-2">
+            <p role="alert" className="text-[14px] font-semibold text-[var(--state-overdue)] flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
             </p>
           )}
         </div>
 
         <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
-          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
-          <button onClick={save} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+          <button type="button" onClick={onClose} disabled={busy} className={btnQuiet}>Cancel</button>
+          <button type="button" onClick={save} disabled={busy} className={btnPrimary}>
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
             {mode === "create" ? "Create Destination" : "Save Changes"}
           </button>
@@ -722,8 +671,8 @@ function DestinationModal({
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="text-[13px] font-semibold text-[var(--color-text)] ">{label}</label>
-      {hint && <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">{hint}</div>}
+      <label className="text-[13px] font-semibold text-[var(--color-text-muted)]">{label}</label>
+      {hint && <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{hint}</div>}
       <div className="mt-1">{children}</div>
     </div>
   );

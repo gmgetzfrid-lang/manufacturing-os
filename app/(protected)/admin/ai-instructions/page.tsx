@@ -15,8 +15,8 @@
 import React, { useCallback, useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import {
-  GraduationCap, Plus, Loader2, AlertTriangle, Pencil, Trash2, Save,
-  Power, Sparkles,
+  GraduationCap, Plus, Loader2, Pencil, Trash2, Save,
+  Power,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import {
@@ -24,7 +24,8 @@ import {
   SCOPE_LABELS, type AiInstruction, type AiInstructionScope,
 } from "@/lib/aiInstructions";
 import { PageShell } from "@/components/ui/PageShell";
-import { PageHero, PageBody, Card, heroPrimary } from "@/components/ui/PageHero";
+import { PageHero, PageBody, heroPrimary } from "@/components/ui/PageHero";
+import { tbl, sheet, field, fieldBox, label, btnRow, btnIcon, btnQuiet, btnPrimary, StatusTag, Problem } from "@/components/admin/kit";
 import { plural } from "@/components/admin/band";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import LoadingBlock from "@/components/ui/LoadingBlock";
@@ -124,15 +125,18 @@ function AiInstructionsInner() {
     : rows.length === 0 ? "Nothing taught yet."
     : `${plural(on, "rule")} the AI follows.`;
 
+  const sorted = [...(rows ?? [])].sort((x, y) => SCOPES.indexOf(x.scope) - SCOPES.indexOf(y.scope));
+
   return (
     <PageShell width="work">
       <PageHero
         kicker="Admin · AI instructions"
         title={answer}
-        sub={<>
-          {off > 0 ? `${off} turned off. ` : ""}Your site&apos;s conventions, written once. The AI follows them on every call.
-          {!canWrite && " Read only: Admins and Document Controllers write these."}
-        </>}
+        sub={canWrite ? "Your site's conventions, written once. The AI follows them on every call." : "Read only: Admins and Document Controllers write these."}
+        facts={rows && rows.length > 0 ? [
+          { label: "Followed", value: on },
+          { label: "Turned off", value: off },
+        ] : undefined}
         primary={canWrite ? (
           <button type="button" onClick={openNew} className={heroPrimary}>
             <Plus className="w-4 h-4" /> New instruction
@@ -141,73 +145,64 @@ function AiInstructionsInner() {
       />
 
       <PageBody>
-      {error && !editing && (
-        <Card>
-          <p role="alert" className="text-[14px] text-red-700 dark:text-red-400 flex items-start gap-2">
-            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {error}
-          </p>
-        </Card>
-      )}
+      {error && !editing && <Problem>{error}</Problem>}
 
       {rows === null && loadError ? (
-        <Card>
-          <p role="alert" className="text-[14px] text-red-700 dark:text-red-400">
-            Couldn&apos;t load the instructions: {loadError}{" "}
-            <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
-          </p>
-        </Card>
+        <Problem retry={() => void refresh()}>Couldn&apos;t load the instructions: {loadError}</Problem>
       ) : rows === null ? (
-        <Card><LoadingBlock what="AI instructions" className="border-0 p-0" /></Card>
+        <LoadingBlock what="AI instructions" />
       ) : rows.length === 0 ? (
-        <Card className="text-center py-10">
-          <Sparkles className="w-7 h-7 text-[var(--color-text-muted)] mx-auto mb-2" />
-          <div className="text-[14px] font-bold text-[var(--color-text)]">Teach the first rule</div>
-          <p className="text-[14px] text-[var(--color-text-muted)] mt-1 max-w-md mx-auto">
-            For example: &ldquo;equipment descriptions use the P&amp;ID service name, not the vendor
-            model.&rdquo;
+        <div className={`${sheet} px-5 py-10 text-center`}>
+          <div className="font-display text-[19px] font-semibold text-[var(--color-text)]">Teach the first rule</div>
+          <p className="text-[15px] text-[var(--color-text-muted)] mt-1 max-w-md mx-auto">
+            For example: &ldquo;equipment descriptions use the P&amp;ID service name, not the vendor model.&rdquo;
           </p>
-        </Card>
+        </div>
       ) : (
-        <>
-          {SCOPES.map((scope) => {
-            const inScope = rows.filter((r) => r.scope === scope);
-            if (inScope.length === 0) return null;
-            return (
-              <Card key={scope} label={`${SCOPE_LABELS[scope]} · ${inScope.length}`} pad={false} className="overflow-hidden">
-                <div className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
-                  {inScope.map((r) => (
-                    <div key={r.id} className={`px-4 sm:px-5 py-3 flex items-start gap-3 ${r.enabled ? "" : "opacity-50"}`}>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-[14px] font-bold text-[var(--color-text)]">{r.title}</div>
-                        <div className="text-[13px] text-[var(--color-text-muted)] whitespace-pre-wrap">{r.body}</div>
-                        {r.created_by_name && (
-                          <div className="text-[12px] text-[var(--color-text-muted)] mt-0.5">taught by {r.created_by_name}</div>
-                        )}
+        <div className={tbl.wrap}>
+          <table className={tbl.table}>
+            <thead className={`${tbl.thead} max-sm:hidden`}>
+              <tr>
+                <th className={tbl.th}>Rule</th>
+                <th className={`${tbl.th} max-md:hidden`}>Applies to</th>
+                <th className={`${tbl.th} max-lg:hidden`}>Taught by</th>
+                <th className={tbl.th}>Status</th>
+                {canWrite && <th className={`${tbl.th} w-[1%]`}><span className="sr-only">Actions</span></th>}
+              </tr>
+            </thead>
+            <tbody className={tbl.tbody}>
+              {sorted.map((r) => (
+                <tr key={r.id} className={`${tbl.tr} max-sm:grid max-sm:grid-cols-[1fr_auto]`}>
+                  <td className={`${tbl.td} max-sm:col-span-2 max-sm:pb-0`}>
+                    <div className={`font-semibold ${r.enabled ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{r.title}</div>
+                    <div className="text-[14px] text-[var(--color-text-muted)] line-clamp-2 max-w-[80ch]" title={r.body}>{r.body}</div>
+                  </td>
+                  <td className={`${tbl.td} max-md:hidden whitespace-nowrap text-[var(--color-text-muted)]`}>{SCOPE_LABELS[r.scope]}</td>
+                  <td className={`${tbl.td} max-lg:hidden whitespace-nowrap text-[var(--color-text-muted)]`}>{r.created_by_name ?? ""}</td>
+                  <td className={`${tbl.td} whitespace-nowrap`}>
+                    {r.enabled ? <StatusTag tone="good">Followed</StatusTag> : <StatusTag tone="none">Off</StatusTag>}
+                  </td>
+                  {canWrite && (
+                    <td className={`${tbl.td} text-right`}>
+                      <div className="flex items-center justify-end gap-1">
+                        <button type="button" onClick={() => void toggle(r)} title={r.enabled ? "Turn off (the AI stops following it)" : "Turn on"}
+                          aria-pressed={r.enabled} className={btnRow}>
+                          <Power className="w-3.5 h-3.5" /> {r.enabled ? "Turn off" : "Turn on"}
+                        </button>
+                        <button type="button" onClick={() => { setFromLink(false); setEditing(r); }} title="Edit" aria-label={`Edit ${r.title}`} className={btnIcon}>
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        <button type="button" onClick={() => void remove(r)} title="Delete" aria-label={`Delete ${r.title}`} className={`${btnIcon} hover:text-[var(--state-overdue)]`}>
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
-                      {canWrite && (
-                        <div className="flex items-center gap-1 shrink-0">
-                          <button onClick={() => void toggle(r)} title={r.enabled ? "Turn off (AI stops following it)" : "Turn on"}
-                            aria-label={r.enabled ? `Turn off ${r.title}` : `Turn on ${r.title}`} aria-pressed={r.enabled}
-                            className={`p-1.5 rounded-lg ${r.enabled ? "text-emerald-600 hover:bg-[var(--color-surface-2)]" : "text-[var(--color-text-faint)] hover:bg-[var(--color-surface-2)]"}`}>
-                            <Power className="w-3.5 h-3.5" />
-                          </button>
-                          <button onClick={() => { setFromLink(false); setEditing(r); }} title="Edit" aria-label={`Edit ${r.title}`}
-                            className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                          <button onClick={() => void remove(r)} title="Delete" aria-label={`Delete ${r.title}`}
-                            className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-rose-600 hover:bg-[var(--color-surface-2)]">
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </Card>
-            );
-          })}
-        </>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
       </PageBody>
 
@@ -218,38 +213,34 @@ function AiInstructionsInner() {
             onClose={busy ? undefined : closeEditor} />
           <ModalBody className="space-y-3">
             <div>
-              <label className="text-[13px] font-semibold text-[var(--color-text)] ">Applies to</label>
-              <select value={editing.scope ?? "global"}
+              <label htmlFor="ai-scope" className={label}>Applies to</label>
+              <select id="ai-scope" value={editing.scope ?? "global"}
                 onChange={(e) => setEditing({ ...editing, scope: e.target.value as AiInstructionScope })}
-                className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]">
+                className={field}>
                 {SCOPES.map((s) => <option key={s} value={s}>{SCOPE_LABELS[s]}</option>)}
               </select>
             </div>
             <div>
-              <label className="text-[13px] font-semibold text-[var(--color-text)] ">Short title</label>
-              <input value={editing.title ?? ""} onChange={(e) => setEditing({ ...editing, title: e.target.value })}
+              <label htmlFor="ai-title" className={label}>Short title</label>
+              <input id="ai-title" value={editing.title ?? ""} onChange={(e) => setEditing({ ...editing, title: e.target.value })}
                 placeholder='e.g. "Transmittal numbering"' maxLength={80} autoFocus
-                className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
+                className={field} />
             </div>
             <div>
-              <label className="text-[13px] font-semibold text-[var(--color-text)] ">The rule, in plain language</label>
-              <textarea value={editing.body ?? ""} onChange={(e) => setEditing({ ...editing, body: e.target.value })}
+              <label htmlFor="ai-body" className={label}>The rule, in plain language</label>
+              <textarea id="ai-body" value={editing.body ?? ""} onChange={(e) => setEditing({ ...editing, body: e.target.value })}
                 rows={5} maxLength={1500}
                 placeholder={'e.g. "Our equipment descriptions always use the P&ID service name, never the vendor model name."'}
-                className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y bg-[var(--color-surface)] text-[var(--color-text)]" />
+                className={`${fieldBox} w-full text-[15px] py-2 resize-y`} />
             </div>
             {error && (
-              <p role="alert" className="border-l-2 border-red-500 pl-3 text-xs text-red-700 dark:text-red-400 flex items-start gap-2">
-                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {error}
-              </p>
+              <Problem>{error}</Problem>
             )}
           </ModalBody>
           <ModalFooter>
-            <button onClick={closeEditor} disabled={busy}
-              className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
-            <button onClick={() => void save()} disabled={busy}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
-              {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+            <button type="button" onClick={closeEditor} disabled={busy} className={btnQuiet}>Cancel</button>
+            <button type="button" onClick={() => void save()} disabled={busy} className={btnPrimary}>
+              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
               {editing.id ? "Save" : "Teach it"}
             </button>
           </ModalFooter>

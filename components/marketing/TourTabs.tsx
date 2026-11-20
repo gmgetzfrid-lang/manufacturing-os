@@ -1,11 +1,9 @@
 "use client";
 
-// The product tour: six stations, one screenful. The tabs sit on the blue
-// band; the screen they pick rises out of it, overlapping its bottom edge.
-// Auto-advances until the visitor touches it, then it's theirs. The screens
-// are the live product's look in miniature (charcoal side menu, the blue
-// band holding the answer, white cards, one orange action), with generic
-// industrial data so the page never claims one industry.
+// The product tour: six stations, one screenful. Auto-advances until the
+// visitor touches it, then it's theirs. The screens are the live product's
+// look in miniature (the grey panel, a title block holding the answer,
+// white sheets, one filled action), with example data.
 
 import React, { useEffect, useState } from "react";
 import {
@@ -13,6 +11,7 @@ import {
   ChevronLeft, ChevronRight, Tag, Upload, Plus,
 } from "lucide-react";
 import { bandSeg, bandSegItem } from "@/components/admin/band";
+import { StatusTag } from "@/components/admin/kit";
 
 const TABS = [
   { key: "library", label: "Library" },
@@ -53,9 +52,9 @@ export function TourTabs({ header }: { header?: React.ReactNode }) {
 
   return (
     <>
-      <div className="relative rounded-[28px] bg-[var(--color-band)] text-white px-5 sm:px-10 lg:px-14 pt-10 sm:pt-14 pb-32 sm:pb-40">
+      <div>
         {header}
-        <div className="mt-8 flex items-center gap-2 min-w-0">
+        <div className="mt-6 flex items-center gap-2 min-w-0">
           {/* Explicit pause/play: auto-advance must be stoppable without
               parking the cursor over the panel (WCAG 2.2.2). */}
           <button
@@ -64,7 +63,7 @@ export function TourTabs({ header }: { header?: React.ReactNode }) {
             aria-pressed={!auto}
             aria-label={auto ? "Pause the tour" : "Resume the tour"}
             title={auto ? "Pause the tour" : "Resume the tour"}
-            className="w-10 h-10 shrink-0 rounded-xl border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] text-white hover:bg-[var(--color-ink-line)] transition-colors grid place-items-center"
+            className="w-9 h-9 shrink-0 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors grid place-items-center"
           >
             {auto ? (
               <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="currentColor" aria-hidden="true">
@@ -83,14 +82,14 @@ export function TourTabs({ header }: { header?: React.ReactNode }) {
                 className={`relative overflow-hidden ${bandSegItem(t.key === active)}`}>
                 {t.label}
                 {t.key === active && auto && (
-                  <span aria-hidden className="absolute bottom-0 left-0 h-0.5 bg-[var(--color-ink)]/35"
+                  <span aria-hidden className="absolute bottom-0 left-0 h-0.5 bg-[var(--color-text-faint)]"
                     style={{ animation: "mkt-progress 7s linear both" }} />
                 )}
               </button>
             ))}
           </div>
         </div>
-        <p key={active} className="mt-4 text-[15px] text-[var(--color-ink-text)] max-w-2xl"
+        <p key={active} className="mt-3 text-[15px] text-[var(--color-text-muted)] max-w-2xl"
           style={{ animation: "rise 0.4s var(--ease-fluid) both" }}>
           {CAPTIONS[active]}
         </p>
@@ -100,7 +99,7 @@ export function TourTabs({ header }: { header?: React.ReactNode }) {
 .mkt-dash-anim { animation: mkt-dash 1.2s linear infinite }
 @media (prefers-reduced-motion: reduce) { .mkt-dash-anim { animation: none } }`}</style>
       <div key={`panel-${active}`} role="tabpanel" aria-live="polite"
-        className="relative -mt-24 sm:-mt-28 px-2 sm:px-6 lg:px-10"
+        className="mt-4"
         style={{ animation: "rise 0.5s var(--ease-fluid) both" }}>
         {active === "library" && <LibraryMockup />}
         {active === "ask" && <AskMockup />}
@@ -125,27 +124,27 @@ function MockupFrame({ url, side, children }: { url: string; side?: number; chil
   // out of the tab order; the captions above carry the meaning.
   return (
     <div inert aria-hidden
-      className="rounded-2xl bg-[var(--color-surface)] overflow-hidden shadow-[0_2px_6px_rgb(11_18_32/0.08),0_48px_80px_-40px_rgb(11_18_32/0.55)]">
+      className="rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] overflow-hidden">
       <div className="h-9 px-3 flex items-center gap-3 border-b border-[var(--color-border)]">
         <div className="flex gap-1.5 shrink-0">
           <span className="w-2.5 h-2.5 rounded-full bg-[var(--color-border-strong)]" />
           <span className="w-2.5 h-2.5 rounded-full bg-[var(--color-border-strong)]" />
           <span className="w-2.5 h-2.5 rounded-full bg-[var(--color-border-strong)]" />
         </div>
-        <div className="flex-1 min-w-0 max-w-md mx-auto h-6 px-3 rounded-md bg-[var(--color-surface-2)] text-[11px] text-[var(--color-text-muted)] font-mono truncate leading-6">
+        <div className="flex-1 min-w-0 max-w-md mx-auto h-6 px-3 rounded bg-[var(--color-surface-2)] text-[12px] text-[var(--color-text-muted)] truncate leading-6">
           {url}
         </div>
       </div>
       <div className="flex">
         {side !== undefined && (
-          <div className="hidden sm:flex w-12 shrink-0 flex-col items-center gap-2 py-3 bg-[var(--color-ink)]">
-            <span className="w-6 h-6 rounded-md bg-white mb-2" />
+          <div className="hidden sm:flex w-12 shrink-0 flex-col items-center gap-2 py-3 bg-[var(--color-surface)] border-r border-[var(--color-border)]">
+            <span className="w-6 h-6 rounded bg-[var(--color-text)] mb-2" />
             {[0, 1, 2, 3, 4, 5].map((i) => (
-              <span key={i} className={`w-7 h-7 rounded-md ${i === side ? "bg-[var(--color-band)]" : "bg-white/10"}`} />
+              <span key={i} className={`w-7 h-7 rounded ${i === side ? "bg-[var(--color-accent-soft)] ring-1 ring-[var(--color-accent)]" : "bg-[var(--color-surface-2)]"}`} />
             ))}
           </div>
         )}
-        <div className="flex-1 min-w-0 bg-[var(--color-canvas)] p-2.5 sm:p-4">{children}</div>
+        <div className="flex-1 min-w-0 bg-[var(--color-canvas)] p-3 sm:p-5">{children}</div>
       </div>
     </div>
   );
@@ -155,15 +154,15 @@ function MiniBand({ kicker, answer, sub, action, children }: {
   kicker: string; answer: string; sub?: string; action?: React.ReactNode; children?: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl bg-[var(--color-band)] text-white px-4 sm:px-5 pt-3.5 pb-12">
-      <div className="text-[13px] font-semibold text-[var(--color-ink-muted)] truncate">{kicker}</div>
-      <div className="mt-2 flex flex-wrap items-end gap-x-4 gap-y-2">
+    <div className="pb-3 border-b border-[var(--color-border-strong)]">
+      <div className="text-[12px] font-medium text-[var(--color-text-muted)] truncate">{kicker}</div>
+      <div className="mt-1 flex flex-wrap items-end gap-x-4 gap-y-2">
         <div className="min-w-0 flex-1 basis-[220px]">
-          <div className="text-[22px] sm:text-[26px] font-black tracking-[-0.02em] leading-[1.08]">{answer}</div>
-          {sub && <div className="mt-1.5 text-[12px] text-[var(--color-ink-text)]">{sub}</div>}
+          <div className="font-display text-[22px] sm:text-[26px] font-semibold leading-[1.08] text-[var(--color-text)]">{answer}</div>
+          {sub && <div className="mt-1 text-[13px] text-[var(--color-text-muted)]">{sub}</div>}
         </div>
         {action && (
-          <span className="shrink-0 inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12px] font-extrabold">
+          <span className="shrink-0 inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-semibold">
             {action}
           </span>
         )}
@@ -174,14 +173,14 @@ function MiniBand({ kicker, answer, sub, action, children }: {
 }
 
 function MiniBody({ children }: { children: React.ReactNode }) {
-  return <div className="relative -mt-9 px-1.5 sm:px-3 space-y-3">{children}</div>;
+  return <div className="mt-3 space-y-3">{children}</div>;
 }
 
 function MiniCard({ label, children, className = "" }: { label?: string; children: React.ReactNode; className?: string }) {
   return (
-    <div className={`rounded-xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-3 sm:p-4 ${className}`}>
-      {label && <div className="mb-2 text-[13px] font-semibold text-[var(--color-text-muted)]">{label}</div>}
-      {children}
+    <div className={className}>
+      {label && <div className="mb-1.5 font-display text-[15px] font-semibold text-[var(--color-text)]">{label}</div>}
+      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-3 sm:p-4">{children}</div>
     </div>
   );
 }
@@ -196,10 +195,10 @@ function MiniSteps({ steps, now }: { steps: string[]; now: number }) {
           <div key={s} className={last ? "shrink-0 pr-1" : "flex-1 min-w-0"}>
             <div className="flex items-center">
               <span className="w-3 h-3 rounded-full shrink-0 box-border"
-                style={done ? { background: "#fff" } : { border: `2px solid ${i === now ? "#fff" : "var(--color-ink-line)"}` }} />
-              {!last && <span className="flex-1 h-0.5" style={{ background: i + 1 <= now ? "#fff" : "var(--color-ink-line)" }} />}
+                style={done ? { background: "var(--color-text)" } : { border: `2px solid ${i === now ? "var(--color-text)" : "var(--color-border-strong)"}` }} />
+              {!last && <span className="flex-1 h-0.5" style={{ background: i + 1 <= now ? "var(--color-text)" : "var(--color-border-strong)" }} />}
             </div>
-            <div className={`mt-1.5 pr-2 text-[11px] font-bold truncate ${i <= now ? "text-white" : "text-[var(--color-ink-muted)]"}`}>{s}</div>
+            <div className={`mt-1.5 pr-2 text-[12px] font-semibold truncate ${i <= now ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{s}</div>
           </div>
         );
       })}
@@ -209,16 +208,16 @@ function MiniSteps({ steps, now }: { steps: string[]; now: number }) {
 
 function Avatar({ initials }: { initials: string }) {
   return (
-    <span className="w-6 h-6 shrink-0 rounded-full bg-[var(--color-ink)] text-white text-[11px] font-bold grid place-items-center">
+    <span className="w-6 h-6 shrink-0 rounded-full bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-[var(--color-text)] text-[11px] font-semibold grid place-items-center">
       {initials}
     </span>
   );
 }
 
 const statusChip = {
-  current: { cls: "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300", label: "Issued" },
-  revision: { cls: "bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300", label: "In revision" },
-  draft: { cls: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]", label: "Draft" },
+  current: { tone: "good", label: "Issued" },
+  revision: { tone: "warn", label: "In revision" },
+  draft: { tone: "none", label: "Draft" },
 } as const;
 
 // ─── Library ────────────────────────────────────────────────────────────────
@@ -231,16 +230,16 @@ function DocRow({ id, name, rev, status, checkedOut }: {
     <div className="flex items-center gap-3 py-2.5 border-t first:border-t-0 border-[var(--color-border)]">
       <FileText className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" />
       <div className="min-w-0 flex-1 sm:flex sm:items-center sm:gap-3">
-        <div className="text-[12px] font-mono font-bold text-[var(--color-text)] shrink-0">{id}</div>
-        <div className="text-[12px] text-[var(--color-text-muted)] truncate">{name}</div>
+        <div className="font-display text-[14px] font-semibold tabular-nums text-[var(--color-text)] shrink-0">{id}</div>
+        <div className="text-[13px] text-[var(--color-text-muted)] truncate">{name}</div>
       </div>
-      <span className="hidden sm:block text-[12px] text-[var(--color-text-muted)] shrink-0">{rev}</span>
+      <span className="hidden sm:block text-[13px] text-[var(--color-text-muted)] shrink-0">{rev}</span>
       {checkedOut && (
-        <span className="hidden sm:inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 dark:text-amber-300 shrink-0">
+        <span className="hidden sm:inline-flex items-center gap-1 text-[12px] font-semibold text-[var(--color-text-muted)] shrink-0">
           <Lock className="w-3 h-3" /> Checked out
         </span>
       )}
-      <span className={`shrink-0 px-2 py-0.5 rounded-md text-[11px] font-bold ${s.cls}`}>{s.label}</span>
+      <StatusTag tone={s.tone} className="shrink-0">{s.label}</StatusTag>
     </div>
   );
 }
@@ -250,7 +249,7 @@ function LibraryMockup() {
     <MockupFrame url="app.manufacturing-os.com/documents/site-mechanical" side={1}>
       <MiniBand kicker="Document control · Site mechanical" answer="47 drawings. 1 checked out."
         sub="38 issued, 7 in revision, 2 drafts." action={<><Upload className="w-3.5 h-3.5" /> Upload</>}>
-        <div className="h-9 px-3 rounded-lg border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] flex items-center gap-2 text-[12px] text-[var(--color-ink-muted)]">
+        <div className="h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] flex items-center gap-2 text-[13px] text-[var(--color-text-faint)]">
           <Search className="w-3.5 h-3.5 shrink-0" /> <span className="truncate">Find by number, title or equipment tag</span>
         </div>
       </MiniBand>
@@ -261,7 +260,7 @@ function LibraryMockup() {
           <DocRow id="200-PRC-001" name="Process drawing, Area 200" rev="Rev 2" status="draft" checkedOut />
           <DocRow id="200-ISO-014" name='Iso 14" line, feed inlet' rev="Rev 1" status="current" />
           <DocRow id="200-ISO-015" name='Iso 8" line, cooling return' rev="Rev 3" status="revision" />
-          <div className="pt-2.5 border-t border-[var(--color-border)] text-[12px] font-bold text-[var(--color-text)]">Show 42 more</div>
+          <div className="pt-2.5 border-t border-[var(--color-border)] text-[13px] text-[var(--color-accent-text)]">Show 42 more</div>
         </MiniCard>
       </MiniBody>
     </MockupFrame>
@@ -275,27 +274,27 @@ function AskMockup() {
     <MockupFrame url="app.manufacturing-os.com/assistant" side={3}>
       <MiniBand kicker="Intelligence · Ask" answer="285 psig at 650 °F." sub="Cited to 2 pages in your library.">
         <div className="flex justify-end">
-          <div className="max-w-[85%] rounded-xl rounded-br-sm bg-[var(--color-ink)] px-3 py-2 text-[12px] text-white">
+          <div className="max-w-[85%] rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[13px] text-[var(--color-text)]">
             What is the minimum design pressure for the Area 200 feed line?
           </div>
         </div>
       </MiniBand>
       <MiniBody>
         <MiniCard label="Answer">
-          <p className="text-[13px] font-semibold text-[var(--color-text)] leading-relaxed">
-            The feed line is rated for a minimum design pressure of 285 psig at 650&nbsp;°F<sup className="font-black ml-0.5">1</sup>,
-            set by the piping class for that service<sup className="font-black ml-0.5">2</sup>.
+          <p className="text-[14px] text-[var(--color-text)] leading-relaxed">
+            The feed line is rated for a minimum design pressure of 285 psig at 650&nbsp;°F<sup className="font-semibold ml-0.5">1</sup>,
+            set by the piping class for that service<sup className="font-semibold ml-0.5">2</sup>.
           </p>
           <div className="mt-3 space-y-1.5 text-[12px] text-[var(--color-text-muted)]">
             <div className="flex items-start gap-2"><CheckCircle2 className="w-3.5 h-3.5 mt-0.5 shrink-0 text-[var(--color-text)]" /> Basis: the piping class table and the line list entry for the 14&quot; feed line.</div>
             <div className="flex items-start gap-2"><CheckCircle2 className="w-3.5 h-3.5 mt-0.5 shrink-0 text-[var(--color-text)]" /> It can only cite documents in your library. Nothing is invented.</div>
           </div>
           <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex flex-wrap gap-2">
-            <span className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-lg bg-[var(--color-surface-2)] text-[12px] font-bold text-[var(--color-text)]">
-              <BookOpen className="w-3.5 h-3.5" /> 1 · Piping class spec <span className="font-mono font-semibold text-[var(--color-text-muted)]">p. 143</span>
+            <span className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text)]">
+              <BookOpen className="w-3.5 h-3.5" /> 1. Piping class spec <span className="text-[var(--color-text-muted)]">p. 143</span>
             </span>
-            <span className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-lg bg-[var(--color-surface-2)] text-[12px] font-bold text-[var(--color-text)]">
-              <FileText className="w-3.5 h-3.5" /> 2 · Line list, Area 200 <span className="font-mono font-semibold text-[var(--color-text-muted)]">p. 12</span>
+            <span className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text)]">
+              <FileText className="w-3.5 h-3.5" /> 2. Line list, Area 200 <span className="text-[var(--color-text-muted)]">p. 12</span>
             </span>
           </div>
           <p className="mt-3 text-[12px] text-[var(--color-text-muted)]">
@@ -316,8 +315,8 @@ function Person({ label, name, note, warn }: { label: string; name: string; note
       <div className="flex items-center gap-2 min-w-0">
         <Avatar initials={name.split(" ").map((w) => w[0]).join("")} />
         <div className="min-w-0">
-          <div className="text-[13px] font-bold text-[var(--color-text)] truncate">{name}</div>
-          <div className={`text-[12px] truncate ${warn ? "font-bold text-amber-800 dark:text-amber-300" : "text-[var(--color-text-muted)]"}`}>{note}</div>
+          <div className="text-[13px] font-semibold text-[var(--color-text)] truncate">{name}</div>
+          <div className={`text-[12px] truncate ${warn ? "font-semibold text-[var(--state-held)]" : "text-[var(--color-text-muted)]"}`}>{note}</div>
         </div>
       </div>
     </div>
@@ -339,8 +338,8 @@ function TicketMockup() {
             <Person label="Drafter" name="Tom Reyes" note="Drafter" />
             <div>
               <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">Target</div>
-              <div className="text-[13px] font-bold text-[var(--color-text)]">Jun 10</div>
-              <div className="text-[12px] font-bold text-amber-800 dark:text-amber-300">Due soon</div>
+              <div className="font-display text-[15px] font-semibold text-[var(--color-text)]">Jun 10</div>
+              <div className="text-[12px] font-semibold text-[var(--state-held)]">Due soon</div>
             </div>
           </div>
           <div className="mt-4 pt-3 border-t border-[var(--color-border)]">
@@ -348,8 +347,8 @@ function TicketMockup() {
             <div className="flex items-start gap-2.5">
               <Avatar initials="JD" />
               <p className="text-[13px] text-[var(--color-text)] leading-relaxed">
-                <span className="font-bold">John Doe</span> <span className="text-[12px] text-[var(--color-text-muted)]">2 hours ago</span><br />
-                <span className="inline-flex items-center px-1.5 rounded-md bg-[var(--color-surface-2)] font-bold">@Sarah Mitchell</span>{" "}
+                <span className="font-semibold">John Doe</span> <span className="text-[12px] text-[var(--color-text-muted)]">2 hours ago</span><br />
+                <span className="text-[var(--color-accent-text)]">@Sarah Mitchell</span>{" "}
                 please confirm the sizing on FE-201 is right for the new flow. The scope is attached.
               </p>
             </div>
@@ -408,19 +407,19 @@ function GraphMockup() {
                   <text x={n.x} y={n.y + 32} textAnchor="middle" fill="var(--color-text)" fontSize="12" fontWeight="700">{n.label}</text>
                 </g>
               ))}
-              <circle cx="540" cy="100" r="9" fill="var(--color-band)" />
+              <rect x="531" y="91" width="18" height="18" rx="3" fill="var(--color-text-muted)" />
               <text x="540" y="128" textAnchor="middle" fill="var(--color-text)" fontSize="12" fontWeight="700">P-201A</text>
               {docs.map((n) => (
                 <g key={n.label}>
                   <circle cx={n.x} cy={n.y} r="6" fill="var(--color-surface)" stroke="var(--color-text)" strokeWidth="2" />
-                  <text x={n.x} y={n.y + (n.y < 100 ? -12 : 22)} textAnchor="middle" fill="var(--color-text-muted)" fontSize="12" fontFamily="ui-monospace, monospace">{n.label}</text>
+                  <text x={n.x} y={n.y + (n.y < 100 ? -12 : 22)} textAnchor="middle" fill="var(--color-text-muted)" fontSize="13" fontFamily="var(--font-display)">{n.label}</text>
                 </g>
               ))}
             </svg>
           </div>
           <div className="mt-3 lg:mt-0 pt-3 lg:pt-0 border-t lg:border-t-0 lg:border-l border-[var(--color-border)] lg:pl-6 lg:w-56 flex flex-wrap lg:flex-col gap-x-4 gap-y-2 text-[12px] font-semibold text-[var(--color-text)]">
             <span className="inline-flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-[var(--color-text)]" /> Operating area</span>
-            <span className="inline-flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-[var(--color-band)]" /> Equipment</span>
+            <span className="inline-flex items-center gap-2"><span className="w-3 h-3 rounded-sm bg-[var(--color-text-muted)]" /> Equipment</span>
             <span className="inline-flex items-center gap-2"><span className="w-3 h-3 rounded-full border-2 border-[var(--color-text)]" /> Document</span>
             <span className="inline-flex items-center gap-2"><span className="w-4 shrink-0 border-t-2 border-dashed border-[var(--color-text)]" /> Process flow, read by the AI from your drawings and confirmed by a person</span>
           </div>
@@ -448,30 +447,30 @@ function EquipmentMockup() {
           <MiniCard label="Instruments and rotating" className="lg:col-span-7">
             <div className="grid grid-cols-2 gap-2.5">
               {tiles.map((a) => (
-                <div key={a.tag} className={`rounded-lg p-2 bg-[var(--color-surface)] ${a.on ? "ring-2 ring-[var(--color-text)]" : "ring-1 ring-[var(--color-border)]"}`}>
+                <div key={a.tag} className={`rounded-md p-2 bg-[var(--color-surface)] ${a.on ? "ring-2 ring-[var(--color-text)]" : "ring-1 ring-[var(--color-border)]"}`}>
                   <div className="h-20 sm:h-24 rounded-md bg-[var(--color-surface-2)] grid place-items-center mb-2">
                     {a.photos > 0 ? <Camera className="w-5 h-5 text-[var(--color-text-faint)]" /> : <FileText className="w-5 h-5 text-[var(--color-text-faint)]" />}
                   </div>
                   <div className="flex items-center justify-between gap-1">
-                    <span className="text-[13px] font-bold text-[var(--color-text)]">{a.tag}</span>
+                    <span className="font-display text-[14px] font-semibold text-[var(--color-text)]">{a.tag}</span>
                     <span className="text-[11px] font-semibold text-[var(--color-text-muted)] truncate">{a.type}</span>
                   </div>
                   {a.photos > 0 ? (
                     <div className="text-[12px] text-[var(--color-text-muted)]">{a.photos} photos</div>
                   ) : (
-                    <div className="text-[12px] font-bold text-amber-800 dark:text-amber-300 inline-flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> No photos</div>
+                    <div className="text-[12px] font-semibold text-[var(--state-held)] inline-flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> No photos</div>
                   )}
                 </div>
               ))}
             </div>
           </MiniCard>
           {/* A photo opened over the list: viewer chrome is charcoal. */}
-          <div className="lg:col-span-5 rounded-xl bg-[var(--color-ink)] text-white overflow-hidden shadow-[var(--shadow-card)] flex flex-col min-h-[220px]">
+          <div className="lg:col-span-5 rounded-md bg-[var(--color-ink)] text-white overflow-hidden flex flex-col min-h-[220px]">
             <div className="px-3 py-2.5 border-b border-white/10 flex items-center gap-2 min-w-0">
               <Tag className="w-3.5 h-3.5 shrink-0" />
-              <span className="text-[13px] font-bold">FE-201</span>
+              <span className="font-display text-[14px] font-semibold">FE-201</span>
               <span className="text-[11px] text-white/70">Instrument</span>
-              <span className="ml-auto text-[11px] font-mono text-white/70">2 of 4</span>
+              <span className="ml-auto text-[11px] tabular-nums text-white/70">2 of 4</span>
             </div>
             <div className="flex-1 relative grid place-items-center bg-white/5">
               <Camera className="w-8 h-8 text-white/30" />
@@ -488,7 +487,7 @@ function EquipmentMockup() {
         </div>
         <MiniCard>
           <p className="text-[12px] text-[var(--color-text-muted)] leading-relaxed">
-            <span className="inline-flex items-center gap-1 px-1.5 mr-1 rounded-md bg-[var(--color-surface-2)] text-[12px] font-bold text-[var(--color-text)]"><Tag className="w-3 h-3" /> FE-201 · 4</span>
+            <span className="inline-flex items-center gap-1 px-1.5 mr-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[12px] font-semibold text-[var(--color-text)]"><Tag className="w-3 h-3" /> FE-201, 4 photos</span>
             The same tag works everywhere FE-201 appears: document rows, viewers, requests, the graph. One tap, every photo.
           </p>
         </MiniCard>
@@ -504,7 +503,7 @@ function ActivityRow({ who, children, when }: { who: string; children: React.Rea
     <div className="flex items-start gap-2.5 py-2 border-t first:border-t-0 border-[var(--color-border)]">
       <Avatar initials={who} />
       <div className="flex-1 min-w-0 text-[13px] text-[var(--color-text-muted)] leading-snug">
-        <span className="font-bold text-[var(--color-text)]">{who}</span> {children}
+        <span className="font-semibold text-[var(--color-text)]">{who}</span> {children}
       </div>
       <span className="text-[12px] text-[var(--color-text-muted)] shrink-0">{when}</span>
     </div>
@@ -519,9 +518,9 @@ function ProjectMockup() {
       </MiniBand>
       <MiniBody>
         <MiniCard label="Recent activity">
-          <ActivityRow who="JD" when="2h">approved <b className="text-[var(--color-text)]">100-PRC-001</b> Rev 7</ActivityRow>
-          <ActivityRow who="SM" when="4h">commented on <b className="text-[var(--color-text)]">T-209</b></ActivityRow>
-          <ActivityRow who="TR" when="1d">issued the final package for <b className="text-[var(--color-text)]">200-ISO-014</b></ActivityRow>
+          <ActivityRow who="JD" when="2h">approved <span className="font-display font-semibold text-[var(--color-text)]">100-PRC-001</span> Rev 7</ActivityRow>
+          <ActivityRow who="SM" when="4h">commented on <span className="font-display font-semibold text-[var(--color-text)]">T-209</span></ActivityRow>
+          <ActivityRow who="TR" when="1d">issued the final package for <span className="font-display font-semibold text-[var(--color-text)]">200-ISO-014</span></ActivityRow>
           <div className="pt-2.5 border-t border-[var(--color-border)] flex items-center gap-1">
             <Avatar initials="JD" /><Avatar initials="SM" /><Avatar initials="TR" />
             <span className="ml-1.5 text-[12px] text-[var(--color-text-muted)]">4 members. The contractor sees this project only.</span>
@@ -539,14 +538,14 @@ function CheckoutMockup() {
         sub="Started 4 hours ago. Releases itself in 20 hours." />
       <MiniBody>
         <MiniCard>
-          <div className="h-28 rounded-lg bg-[var(--color-surface-2)] grid place-items-center">
+          <div className="h-28 rounded bg-[var(--color-surface-2)] grid place-items-center">
             <FileText className="w-8 h-8 text-[var(--color-text-faint)]" />
           </div>
           <div className="mt-3 flex gap-2">
-            <span className="flex-1 h-9 rounded-lg border border-[var(--color-border)] text-[12px] font-bold text-[var(--color-text-faint)] grid place-items-center">
+            <span className="flex-1 h-9 rounded-md border border-[var(--color-border)] text-[13px] font-semibold text-[var(--color-text-faint)] grid place-items-center">
               <span className="inline-flex items-center gap-1.5"><Lock className="w-3.5 h-3.5" /> Edit (locked)</span>
             </span>
-            <span className="flex-1 h-9 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-bold text-[var(--color-text)] grid place-items-center">View history</span>
+            <span className="flex-1 h-9 rounded-md border border-[var(--color-border-strong)] text-[13px] font-semibold text-[var(--color-text)] grid place-items-center">View history</span>
           </div>
           <p className="mt-3 text-[12px] text-[var(--color-text-muted)] leading-relaxed">
             One editor at a time, so two drafters can never save over each other. A quick hold releases itself after 24 hours.

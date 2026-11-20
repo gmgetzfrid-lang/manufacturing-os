@@ -15,8 +15,8 @@
 import React, { useCallback, useRef, useState } from "react";
 import Link from "next/link";
 import {
-  UploadCloud, Loader2, AlertTriangle, Users, UserCheck, UserPlus,
-  Building2, FileWarning, Database, ShieldAlert, CheckCircle2, FolderArchive,
+  UploadCloud, Loader2, AlertTriangle, Users,
+  Building2, Database, ShieldAlert, FolderArchive,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
@@ -24,6 +24,7 @@ import { appConfirm } from "@/components/providers/DialogProvider";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import FileThumb from "@/components/ui/FileThumb";
 import { PageShell } from "@/components/ui/PageShell";
+import { btnPrimary, btnQuiet, link, StatusTag } from "@/components/admin/kit";
 import { PageHero, PageBody, StepLine, heroQuiet } from "@/components/ui/PageHero";
 import { tryUpload } from "@/lib/uploadRetry";
 import {
@@ -319,7 +320,7 @@ export default function RestorePage() {
 
   if (!isAdmin) {
     return (
-      <PageShell width="form">
+      <PageShell width="work">
         <PageHero kicker="Admin · Storage · Restore" back={{ href: "/admin/storage", label: "Back to Storage" }}
           title="Admins only." size="md" overlap={false}
           sub={<span className="inline-flex items-center gap-2"><ShieldAlert className="w-4 h-4 shrink-0" /> Restore is for Admins only, since it can change the whole workspace.</span>} />
@@ -345,13 +346,17 @@ export default function RestorePage() {
     : "Restore complete.";
 
   return (
-    <PageShell width="form">
+    <PageShell width="work">
       <PageHero
         kicker="Admin · Storage · Restore from backup"
         back={{ href: "/admin/storage", label: "Back to Storage" }}
-        size="md"
         title={answer}
         sub="The Full ZIP (records and files) or the JSON export. Nothing is written until you approve."
+        facts={plan ? [
+          { label: "Records", value: fmtNum(plan.counts.totalRows) },
+          { label: "People re-linked", value: fmtNum(plan.counts.matchedUsers) },
+          { label: fileEntryCount ? "Files in ZIP" : "Files", value: fmtNum(fileEntryCount || plan.counts.files) },
+        ] : undefined}
         tools={step === 1 ? (
           <button type="button" className={heroQuiet} onClick={() => { setPlan(null); setPicked(null); setError(null); }}>
             Start over
@@ -371,10 +376,10 @@ export default function RestorePage() {
       <PageBody>
       {/* Dropzone */}
       {picked && !drag.over ? (
-        <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 flex items-center gap-3" {...drag.bind}>
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 flex items-center gap-3" {...drag.bind}>
           <FileThumb file={picked} />
           <div className="min-w-0 flex-1">
-            <div className="text-[14px] font-bold text-[var(--color-text)] truncate">{picked.name}</div>
+            <div className="text-[14px] font-semibold text-[var(--color-text)] truncate">{picked.name}</div>
             <div className="text-[12px] text-[var(--color-text-muted)]">
               {formatBytes(picked.size)}
               {busy && <span className="inline-flex items-center gap-1 ml-2"><Loader2 className="w-3 h-3 animate-spin" /> Reading the backup and planning…</span>}
@@ -382,7 +387,7 @@ export default function RestorePage() {
           </div>
           {!busy && !applying && !applyResult && (
             <button type="button" onClick={() => inputRef.current?.click()}
-              className="shrink-0 h-9 px-3 rounded-lg border border-[var(--color-border)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+              className={`shrink-0 ${btnQuiet}`}>
               Pick another
             </button>
           )}
@@ -393,16 +398,16 @@ export default function RestorePage() {
         <div
           {...drag.bind}
           onClick={() => inputRef.current?.click()}
-          className={`rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-10 text-center cursor-pointer transition-colors hover:bg-[var(--color-surface-2)] ${drag.ring}`}
+          className={`rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-10 text-center cursor-pointer transition-colors hover:bg-[var(--color-surface-2)] ${drag.ring}`}
         >
           <input ref={inputRef} type="file" accept=".json,.zip,application/json,application/zip" className="hidden"
             onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); e.target.value = ""; }} />
           {drag.over ? (
-            <div className="text-sm font-bold text-[var(--color-text)]">{drag.say}</div>
+            <div className="text-sm font-semibold text-[var(--color-text)]">{drag.say}</div>
           ) : (
             <>
               <UploadCloud className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-2" />
-              <div className="text-[14px] font-bold text-[var(--color-text)]">Drop a backup .zip or .json here, or tap to choose</div>
+              <div className="text-[14px] font-semibold text-[var(--color-text)]">Drop a backup .zip or .json here, or tap to choose</div>
               <div className="text-[13px] text-[var(--color-text-muted)] mt-1">Read in your browser. The Full ZIP can also put the files back.</div>
             </>
           )}
@@ -410,7 +415,7 @@ export default function RestorePage() {
       )}
 
       {error && (
-        <p role="alert" className="px-1 border-l-2 border-red-500 pl-3 text-[13px] text-red-700 dark:text-red-400 flex items-start gap-2">
+        <p role="alert" className="text-[14px] font-semibold text-[var(--state-overdue)] flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
         </p>
       )}
@@ -419,11 +424,11 @@ export default function RestorePage() {
         <>
           {/* Warnings */}
           {plan.warnings.length > 0 && (
-            <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
-              <div className="text-[14px] font-bold text-amber-800 dark:text-amber-300 mb-1 flex items-center gap-1.5"><FileWarning className="w-4 h-4" /> Check before restoring</div>
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
+              <div className="mb-1"><StatusTag tone="warn">Check before restoring</StatusTag></div>
               <ul className="space-y-1 list-disc ml-4">
                 {plan.warnings.map((w, i) => (
-                  <li key={i} className="text-[13px] text-amber-800 dark:text-amber-300">{w}</li>
+                  <li key={i} className="text-[14px] text-[var(--color-text)]">{w}</li>
                 ))}
               </ul>
             </div>
@@ -431,44 +436,40 @@ export default function RestorePage() {
 
           {/* Org-name collision */}
           {plan.orgNameCollision && (
-            <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
-              <div className="text-[14px] font-bold text-[var(--color-text)] flex items-center gap-2 mb-1"><Building2 className="w-4 h-4 text-[var(--color-text-muted)]" /> Which organization name should win?</div>
-              <p className="text-[11px] text-[var(--color-text-muted)] mb-3">The backup and this workspace have different names. Pick the one to keep.</p>
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
+              <div className="text-[14px] font-semibold text-[var(--color-text)] flex items-center gap-2 mb-1"><Building2 className="w-4 h-4 text-[var(--color-text-muted)]" /> Which organization name should win?</div>
+              <p className="text-[13px] text-[var(--color-text-muted)] mb-3">The backup and this workspace have different names. Pick the one to keep.</p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {([["current", plan.orgNameCollision.currentName, "Keep this workspace’s name"], ["backup", plan.orgNameCollision.backupName, "Use the backup’s name"]] as const).map(([val, name, hint]) => (
                   <button key={val} type="button" aria-pressed={keepName === val} onClick={() => setKeepName(val)}
-                    className={`text-left rounded-xl border p-3 transition-colors ${keepName === val ? "border-[var(--color-border-strong)] bg-[var(--color-surface-2)]" : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
+                    className={`text-left rounded-lg border p-3 transition-colors ${keepName === val ? "border-[var(--color-border-strong)] bg-[var(--color-surface-2)]" : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
                     <div className="flex items-center gap-2">
                       <span className={`w-3.5 h-3.5 rounded-full border-2 ${keepName === val ? "border-[var(--color-text)] bg-[var(--color-text)]" : "border-[var(--color-border-strong)]"}`} />
-                      <span className="text-sm font-bold text-[var(--color-text)] truncate">{name}</span>
+                      <span className="text-sm font-semibold text-[var(--color-text)] truncate">{name}</span>
                     </div>
-                    <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 pl-[22px]">{hint}</div>
+                    <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5 pl-[22px]">{hint}</div>
                   </button>
                 ))}
               </div>
             </div>
           )}
 
-          {/* What matters, in one line. */}
-          <p className="px-1 text-[14px] text-[var(--color-text)]">
-            <b>{fmtNum(plan.counts.totalRows)}</b> records to import · <b>{fmtNum(plan.counts.matchedUsers)}</b> users re-linked · <b>{fmtNum(plan.counts.newUsers)}</b> restored placeholders · <b>{fmtNum(fileEntryCount || plan.counts.files)}</b> {fileEntryCount ? "files in this ZIP" : "files referenced"}
-          </p>
-
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
           {/* Users */}
           {plan.users.length > 0 && (
-            <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden">
-              <div className="px-4 sm:px-5 py-3 border-b border-[var(--color-border)] text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center gap-1.5"><Users className="w-3.5 h-3.5" /> User reconciliation (by email)</div>
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+              <div className="px-4 h-10 flex items-center border-b border-[var(--color-border)] bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text-muted)] gap-1.5"><Users className="w-3.5 h-3.5" /> People, matched by email: {fmtNum(plan.counts.matchedUsers)} re-linked, {fmtNum(plan.counts.newUsers)} new placeholders</div>
               <div className="divide-y divide-[var(--color-border)] max-h-72 overflow-y-auto">
                 {plan.users.map((u) => (
                   <div key={u.email} className="px-4 py-2 flex items-center gap-3">
                     <div className="flex-1 min-w-0">
-                      <div className="text-xs font-bold text-[var(--color-text)] truncate">{u.displayName || u.email}</div>
-                      <div className="text-[11px] text-[var(--color-text-muted)] truncate">{u.email}{u.role ? ` · ${u.role}` : ""}</div>
+                      <div className="text-[13px] font-semibold text-[var(--color-text)] truncate">{u.displayName || u.email}</div>
+                      <div className="text-[13px] text-[var(--color-text-muted)] truncate">{u.email}{u.role ? ` · ${u.role}` : ""}</div>
                     </div>
                     {u.disposition === "linked" ? (
-                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-400"><UserCheck className="w-3 h-3" /> re-link</span>
+                      <StatusTag tone="good">Re-link</StatusTag>
                     ) : (
-                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-muted)]"><UserPlus className="w-3 h-3" /> restore and re-invite</span>
+                      <StatusTag tone="none">Restore, then re-invite</StatusTag>
                     )}
                   </div>
                 ))}
@@ -477,60 +478,61 @@ export default function RestorePage() {
           )}
 
           {/* Tables */}
-          <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden">
-            <div className="px-4 sm:px-5 py-3 border-b border-[var(--color-border)] text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center gap-1.5"><Database className="w-3.5 h-3.5" /> What would import</div>
+          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+            <div className="px-4 h-10 flex items-center border-b border-[var(--color-border)] bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text-muted)] gap-1.5"><Database className="w-3.5 h-3.5" /> What would import</div>
             <div className="divide-y divide-[var(--color-border)] max-h-72 overflow-y-auto">
               {plan.counts.tables.filter((t) => t.rows > 0).map((t) => (
                 <div key={t.name} className="px-4 py-1.5 flex items-center gap-3" title={t.reason}>
-                  <span className="font-mono text-[11px] text-[var(--color-text)] flex-1 truncate">{t.name}</span>
-                  <span className="text-[11px] text-[var(--color-text-muted)]">{fmtNum(t.rows)} rows</span>
+                  <span className="font-mono text-[13px] text-[var(--color-text)] flex-1 truncate">{t.name}</span>
+                  <span className="text-[13px] text-[var(--color-text-muted)]">{fmtNum(t.rows)} rows</span>
                   {t.willImport
-                    ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                    : <span className="text-[11px] text-[var(--color-text-faint)] italic shrink-0">skipped</span>}
+                    ? <StatusTag tone="good">Imports</StatusTag>
+                    : <span className="text-[13px] text-[var(--color-text-muted)] shrink-0">Skipped</span>}
                 </div>
               ))}
             </div>
           </div>
+          </div>
 
           {/* Apply progress */}
           {applying && (
-            <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
-              <div className="flex items-center gap-2 text-[14px] font-bold text-[var(--color-text)] mb-2">
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
+              <div className="flex items-center gap-2 text-[14px] font-semibold text-[var(--color-text)] mb-2">
                 <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)]" />
                 {applyProgress.phase === "begin" ? "Matching users…" : <>Restoring <span className="font-mono">{applyProgress.currentTable}</span>: table {Math.min(applyProgress.tablesDone + 1, applyProgress.tablesTotal)} of {applyProgress.tablesTotal}</>}
               </div>
               <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
                 <div className="h-full bg-[var(--color-text)] transition-all" style={{ width: `${pct}%` }} />
               </div>
-              <div className="text-[11px] text-[var(--color-text-muted)] mt-1">{fmtNum(applyProgress.rowsDone)} / {fmtNum(applyProgress.rowsTotal)} records ({pct}%)</div>
+              <div className="text-[13px] text-[var(--color-text-muted)] mt-1">{fmtNum(applyProgress.rowsDone)} / {fmtNum(applyProgress.rowsTotal)} records ({pct}%)</div>
             </div>
           )}
 
           {/* Apply / result */}
           {applyResult ? (
-            <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
-              <div className="flex items-center gap-2 text-[14px] font-bold text-emerald-700 dark:text-emerald-400 mb-1"><CheckCircle2 className="w-4 h-4" /> Records restored</div>
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
+              <div className="mb-1"><StatusTag tone="good">Records restored</StatusTag></div>
               <div className="text-[13px] text-[var(--color-text)] leading-relaxed">
                 Imported <b>{fmtNum(applyResult.totalInserted)}</b> record(s) · re-linked <b>{applyResult.linkedUsers}</b> user(s) · created <b>{applyResult.createdUsers}</b> restored placeholder(s).
-                {" "}Restored users are inactive. <Link href="/admin/users" className="font-bold underline underline-offset-2">Re-invite them in Users</Link> to give access.
+                {" "}Restored users are inactive. <Link href="/admin/users" className={link}>Re-invite them in Users</Link> to give access.
               </div>
               {applyResult.failedTables.length > 0 && (
-                <p role="alert" className="mt-2 border-l-2 border-red-500 pl-2.5 text-[11px] text-red-700 dark:text-red-400">
+                <p role="alert" className="mt-2 text-[13px] text-[var(--state-overdue)]">
                   These tables didn&apos;t fully import: <span className="font-mono">{applyResult.failedTables.join(", ")}</span>. Run the restore again (it only adds, so it&apos;s safe) or check the audit log.
                 </p>
               )}
             </div>
           ) : !applying && (
-            <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
               <div className="flex items-start gap-3">
-                <ShieldAlert className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+                <ShieldAlert className="w-4 h-4 text-[var(--state-held)] mt-0.5 shrink-0" />
                 <div className="flex-1 text-[13px] text-[var(--color-text-muted)] leading-relaxed">
                   <b className="text-[var(--color-text)]">This writes to the live workspace.</b> It only adds (existing data is kept), can be run again, and does exactly the plan above. Restored users are inactive (no seat).{zipRef.current ? " After the records, the next step can put the ZIP's files back." : " A JSON backup has no files. Use the Full ZIP to restore files too."}
                 </div>
               </div>
               <div className="mt-3 flex items-center justify-end">
                 <button type="button" onClick={() => void applyRestore()} disabled={plan.counts.totalRows === 0}
-                  className="inline-flex items-center gap-1.5 h-11 px-5 rounded-xl text-[14px] font-extrabold shadow-[0_12px_24px_-12px_var(--color-accent)] text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40">
+                  className={btnPrimary}>
                   <Database className="w-4 h-4" /> Restore {fmtNum(plan.counts.totalRows)} records
                 </button>
               </div>
@@ -539,7 +541,7 @@ export default function RestorePage() {
 
           {/* Put files back (ZIP only, after records) */}
           {applyResult && fileEntryCount > 0 && (
-            <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
               <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">
                 <FolderArchive className="w-4 h-4" /> Put the files back
               </div>
@@ -551,43 +553,43 @@ export default function RestorePage() {
                   <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
                     <div className="h-full bg-[var(--color-text-muted)] transition-all" style={{ width: `${filePct}%` }} />
                   </div>
-                  <div className="text-[11px] text-[var(--color-text-muted)] mt-1">
+                  <div className="text-[13px] text-[var(--color-text-muted)] mt-1">
                     {fmtNum(filesProgress.done)} / {fmtNum(filesProgress.total)} · {fmtNum(filesProgress.uploaded)} uploaded · {fmtNum(filesProgress.skipped)} already present
                     {filesProgress.offline > 0 && <> · {fmtNum(filesProgress.offline)} left to space archives</>}
-                    {filesProgress.failed > 0 && <span className="text-red-700 dark:text-red-400 font-bold"> · {fmtNum(filesProgress.failed)} didn&apos;t upload</span>}
+                    {filesProgress.failed > 0 && <span className="text-[var(--state-overdue)] font-semibold"> · {fmtNum(filesProgress.failed)} didn&apos;t upload</span>}
                   </div>
                 </div>
               )}
               {failedFiles.length > 0 && !filesProgress.running && (
-                <ul className="mb-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)] max-h-64 overflow-y-auto">
+                <ul className="mb-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)] max-h-64 overflow-y-auto">
                   {failedFiles.slice(0, 50).map((f) => (
                     <li key={f.entry} className="px-3 py-2 flex items-center gap-2">
-                      <AlertTriangle className="w-3.5 h-3.5 text-red-600 shrink-0" />
+                      <AlertTriangle className="w-3.5 h-3.5 text-[var(--state-overdue)] shrink-0" />
                       <span className="min-w-0 flex-1">
-                        <span className="block text-[11px] font-mono font-bold text-[var(--color-text)] truncate" title={f.key}>{f.key.split("/").pop()}</span>
-                        <span className="block text-[11px] text-red-700 dark:text-red-400 truncate" title={f.error}>{f.error}</span>
+                        <span className="block text-[13px] font-mono font-semibold text-[var(--color-text)] truncate" title={f.key}>{f.key.split("/").pop()}</span>
+                        <span className="block text-[13px] text-[var(--state-overdue)] truncate" title={f.error}>{f.error}</span>
                       </span>
                       <button type="button" onClick={() => void retryFile(f.entry, f.key)} disabled={!!f.retrying}
-                        className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+                        className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
                         {f.retrying ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Try again
                       </button>
                     </li>
                   ))}
-                  {failedFiles.length > 50 && <li className="px-3 py-2 text-[11px] text-[var(--color-text-muted)]">and {fmtNum(failedFiles.length - 50)} more</li>}
+                  {failedFiles.length > 50 && <li className="px-3 py-2 text-[13px] text-[var(--color-text-muted)]">and {fmtNum(failedFiles.length - 50)} more</li>}
                 </ul>
               )}
               <div className="flex items-center justify-end gap-3">
                 {filesDone && (
-                  <Link href="/documents" className="text-[14px] font-bold text-[var(--color-text)] underline underline-offset-2">Open Documents</Link>
+                  <Link href="/documents" className={`text-[15px] ${link}`}>Open Documents</Link>
                 )}
                 {failedFiles.length > 0 && !filesProgress.running ? (
                   <button type="button" onClick={() => void putFilesBack(failedFiles.map((f) => f.entry))}
-                    className="inline-flex items-center gap-1.5 h-11 px-5 rounded-xl text-[14px] font-extrabold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]">
+                    className={btnPrimary}>
                     <UploadCloud className="w-4 h-4" /> Try again for {fmtNum(failedFiles.length)}
                   </button>
                 ) : !filesDone && (
                   <button type="button" onClick={() => void putFilesBack()} disabled={filesProgress.running}
-                    className="inline-flex items-center gap-1.5 h-11 px-5 rounded-xl text-[14px] font-extrabold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40">
+                    className={btnPrimary}>
                     {filesProgress.running ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}
                     {filesProgress.running ? "Uploading…" : `Put ${fmtNum(fileEntryCount)} files back`}
                   </button>

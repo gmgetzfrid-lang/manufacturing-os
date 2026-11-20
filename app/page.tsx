@@ -6,6 +6,7 @@ import { supabase, setRememberSession, setPreferMicrosoft, prefersMicrosoft } fr
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { PageHero, PageBody, Card } from '@/components/ui/PageHero';
+import { btnPrimary, btnQuiet, link } from '@/components/admin/kit';
 import { Layout, Lock, Mail, Loader2, AlertCircle, Building2, LogOut } from 'lucide-react';
 import { SlowNotice, useElapsed, startOver } from '@/components/system/SlowNotice';
 
@@ -232,13 +233,13 @@ export default function LoginPage() {
     setView("login");
   };
 
-  // The front door wears the app's identity: the blue band holds the
-  // answer, a white card overlaps it, and the one orange button signs in.
-  const input = "w-full h-12 pl-11 pr-4 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-xl text-[15px] text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:border-transparent outline-none transition-all placeholder:text-[var(--color-text-faint)]";
+  // The front door is drawn like the app: the grey panel, the answer in the
+  // title block, the form on one white sheet, one filled button.
+  const input = "w-full h-11 pl-10 pr-3 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-md text-[15px] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 transition-colors placeholder:text-[var(--color-text-faint)]";
   const fieldLabel = "block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5";
-  const primaryBtn = "w-full h-12 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[15px] font-extrabold rounded-xl shadow-[0_12px_24px_-12px_var(--color-accent)] transition-colors flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed";
-  const quietBtn = "w-full h-12 bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[15px] font-bold rounded-xl border border-[var(--color-border-strong)] transition-colors flex items-center justify-center gap-3 disabled:opacity-70 disabled:cursor-not-allowed";
-  const kicker = <span className="inline-flex items-center gap-2"><Layout className="w-3.5 h-3.5" /> Manufacturing OS</span>;
+  const primaryBtn = `${btnPrimary} w-full h-11`;
+  const quietBtn = `${btnQuiet} w-full h-11 text-[15px] gap-2.5`;
+  const kicker = <span className="inline-flex items-center gap-2"><span className="w-6 h-6 rounded grid place-items-center bg-[var(--color-text)] text-[var(--color-surface)]"><Layout className="w-3.5 h-3.5" /></span> <span className="font-display text-[16px] font-semibold text-[var(--color-text)]">Manufacturing OS</span></span>;
 
   // ─── Checking / OAuth redirect in progress ──────────────────────
   if (view === "checking") {
@@ -258,18 +259,16 @@ export default function LoginPage() {
         <div className="w-full max-w-md mx-auto">
           <PageHero kicker={kicker} title="No workspace yet." sub={authedEmail ?? undefined} size="md" />
           <PageBody>
-            <Card className="sm:p-7">
+            <Card className="sm:p-6">
               <div className="flex items-start gap-3">
                 <Building2 className="w-5 h-5 shrink-0 mt-0.5 text-[var(--color-text-muted)]" />
-                <p className="text-[14px] text-[var(--color-text-muted)] leading-relaxed">
-                  Your Microsoft account isn&rsquo;t linked to a workspace yet. Ask your
-                  organization&rsquo;s admin to add you with this email address. Once they do,
-                  sign in with Microsoft again and you&rsquo;ll go straight in.
+                <p className="text-[15px] text-[var(--color-text)] leading-snug">
+                  Ask your admin to add you with this email, then sign in again.
                 </p>
               </div>
-              <div className="mt-6 space-y-2">
+              <div className="mt-5 space-y-2.5">
                 <a href="/signup" className={primaryBtn}>Ask for access or create a workspace</a>
-                <button onClick={handleSignOut} className="w-full h-11 text-[14px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] rounded-xl transition-colors flex items-center justify-center gap-2">
+                <button type="button" onClick={handleSignOut} className={quietBtn}>
                   <LogOut className="w-4 h-4" /> Sign out
                 </button>
               </div>
@@ -283,15 +282,15 @@ export default function LoginPage() {
   // ─── Login ──────────────────────────────────────────────────────
   return (
     <div className="min-h-dvh bg-[var(--color-canvas)] px-4 py-6 sm:py-10">
-      <div className="w-full max-w-md mx-auto">
-        <PageHero kicker={kicker} title="Sign in." sub="Your site's drawings, equipment and work, in one place." size="md" />
+      <div className="w-full max-w-[440px] mx-auto">
+        <PageHero kicker={kicker} title="Sign in." sub="Your site's drawings, equipment and work." size="md" />
         <PageBody>
-          <Card className="sm:p-7">
+          <Card className="sm:p-6">
             {/* A problem sits where it happened: right above the form it's about. */}
             {error && (
-              <div role="alert" className="mb-5 flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
-                <p className="text-[14px] text-red-700 dark:text-red-400 font-medium">{error}</p>
+              <div role="alert" className="mb-4 flex items-start gap-2 text-[var(--state-overdue)]">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <p className="text-[14px] font-semibold">{error}</p>
               </div>
             )}
 
@@ -299,7 +298,7 @@ export default function LoginPage() {
               <div>
                 <label htmlFor="si-email" className={fieldLabel}>Email</label>
                 <div className="relative">
-                  <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)] pointer-events-none" />
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-[18px] h-[18px] text-[var(--color-text-faint)] pointer-events-none" />
                   <input
                     id="si-email"
                     type="email"
@@ -316,7 +315,7 @@ export default function LoginPage() {
               <div>
                 <label htmlFor="si-password" className={fieldLabel}>Password</label>
                 <div className="relative">
-                  <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)] pointer-events-none" />
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-[18px] h-[18px] text-[var(--color-text-faint)] pointer-events-none" />
                   <input
                     id="si-password"
                     type="password"
@@ -348,7 +347,7 @@ export default function LoginPage() {
 
             <div className="flex items-center gap-3 my-5">
               <div className="h-px bg-[var(--color-border)] flex-1" />
-              <span className="text-[13px] font-semibold text-[var(--color-text-faint)] ">or</span>
+              <span className="text-[13px] text-[var(--color-text-muted)]">or</span>
               <div className="h-px bg-[var(--color-border)] flex-1" />
             </div>
 
@@ -362,16 +361,14 @@ export default function LoginPage() {
             </button>
           </Card>
 
-          <div className="pt-2 pb-6 text-center space-y-2">
-            <p className="text-[14px] text-[var(--color-text-muted)]">
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-[14px]">
+            <p className="text-[var(--color-text-muted)]">
               No workspace yet?{" "}
-              <Link href="/signup" className="text-[var(--color-text)] font-bold underline underline-offset-2">Create one</Link>
+              <Link href="/signup" className={link}>Create one</Link>
             </p>
-            <p className="text-[14px]">
-              <Link href="/about" className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline underline-offset-2">About Manufacturing OS</Link>
-            </p>
-            <p className="text-[11px] text-[var(--color-text-faint)]">v2.1.0 · Authorized use only</p>
+            <Link href="/about" className={link}>About Manufacturing OS</Link>
           </div>
+          <p className="pb-6 text-[13px] text-[var(--color-text-muted)]">Version 2.1.0. Authorized use only.</p>
         </PageBody>
       </div>
     </div>

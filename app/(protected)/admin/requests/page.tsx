@@ -16,8 +16,9 @@ import {
 } from 'lucide-react';
 import { PageShell } from '@/components/ui/PageShell';
 import { PageHero, PageBody, heroPrimary } from '@/components/ui/PageHero';
-import { plural } from '@/components/admin/band';
-import { Input } from '@/components/ui/Field';
+import { sheet, field, fieldBox, btnIcon, btnRow, btnQuiet, FormRow, Section, Problem } from '@/components/admin/kit';
+import HelpTooltip from '@/components/ui/HelpTooltip';
+
 import LoadingBlock from '@/components/ui/LoadingBlock';
 import { appAlert, appConfirm } from '@/components/providers/DialogProvider';
 
@@ -161,23 +162,25 @@ export default function DraftingConfigPage() {
     return (
       <PageShell width="work">
         <PageHero kicker="Admin · Request forms" title="Couldn't load the form settings." overlap={false} />
-        <p role="alert" className="px-1 text-[14px] text-red-700 dark:text-red-400">
-          Couldn&apos;t load the request form settings{loadError ? `: ${loadError}` : "."}{" "}
-          <button type="button" onClick={() => setReloadTick((n) => n + 1)} className="font-bold underline">Try again</button>
-        </p>
+        <Problem className="mt-6" retry={() => setReloadTick((n) => n + 1)}>Couldn&apos;t load the request form settings{loadError ? `: ${loadError}` : "."}</Problem>
       </PageShell>
     );
   }
 
   const extra = (settings.customCategories ?? []).length;
-  const answer = `${plural(settings.requestTypes.options.length, "request type")}, ${plural(settings.units.options.length, "unit")}.`;
+  const answer = "What a request asks for.";
 
   return (
     <PageShell width="work">
         <PageHero
           kicker="Admin · Request forms"
           title={answer}
-          sub={<>{plural(settings.priorities.options.length, "priority level")}{extra > 0 ? `, ${plural(extra, "custom section")}` : ""}. What a drafting request asks for; changes apply to new requests once saved.</>}
+          sub={`The drafting request form${extra > 0 ? `, with ${extra} custom section${extra === 1 ? "" : "s"}` : ""}. Changes apply to new requests once saved.`}
+          facts={[
+            { label: "Request types", value: settings.requestTypes.options.length },
+            { label: "Units", value: settings.units.options.length },
+            { label: "Priorities", value: settings.priorities.options.length },
+          ]}
           primary={
             <button type="button" onClick={handleSave} disabled={saving} className={heroPrimary}>
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
@@ -188,6 +191,7 @@ export default function DraftingConfigPage() {
 
         <PageBody>
 
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-x-6 gap-y-8 items-start">
           {/* SECTION: REQUEST TYPES */}
           <ConfigSection 
             title="Request types"
@@ -201,14 +205,14 @@ export default function DraftingConfigPage() {
                 <input 
                   value={opt.label}
                   onChange={(e) => updateOption('requestTypes', i, 'label', e.target.value)}
-                  className="flex-1 min-w-0 h-10 px-2.5 border border-[var(--color-border)] rounded-lg text-[14px]"
+                  className={`${fieldBox} h-10 text-[15px] flex-1 min-w-0`}
                   placeholder="Display label"
                   aria-label="Display label"
                 />
                 <input 
                   value={opt.value}
                   onChange={(e) => updateOption('requestTypes', i, 'value', e.target.value)}
-                  className="w-20 sm:w-32 shrink-0 h-10 px-2.5 border border-[var(--color-border)] rounded-lg text-[13px] font-mono bg-[var(--color-surface-2)]"
+                  className={`${fieldBox} h-10 text-[15px] w-24 sm:w-36 shrink-0 tabular-nums`}
                   placeholder="Value (ID)"
                   aria-label="Value (ID)"
                 />
@@ -229,14 +233,14 @@ export default function DraftingConfigPage() {
                 <input 
                   value={opt.label}
                   onChange={(e) => updateOption('units', i, 'label', e.target.value)}
-                  className="flex-1 min-w-0 h-10 px-2.5 border border-[var(--color-border)] rounded-lg text-[14px]"
+                  className={`${fieldBox} h-10 text-[15px] flex-1 min-w-0`}
                   placeholder="Unit name"
                   aria-label="Unit name"
                 />
                 <input 
                   value={opt.value}
                   onChange={(e) => updateOption('units', i, 'value', e.target.value)}
-                  className="w-20 sm:w-32 shrink-0 h-10 px-2.5 border border-[var(--color-border)] rounded-lg text-[13px] font-mono bg-[var(--color-surface-2)]"
+                  className={`${fieldBox} h-10 text-[15px] w-24 sm:w-36 shrink-0 tabular-nums`}
                   placeholder="Code"
                   aria-label="Code"
                 />
@@ -244,11 +248,6 @@ export default function DraftingConfigPage() {
             )}
           />
 
-          {/* SECTION: CUSTOM CATEGORIES */}
-          <CustomCategoriesSection
-            categories={settings.customCategories ?? []}
-            onChange={(next) => setSettings({ ...settings, customCategories: next })}
-          />
 
           {/* SECTION: PRIORITIES */}
           <ConfigSection
@@ -263,7 +262,7 @@ export default function DraftingConfigPage() {
                 <input 
                   value={opt.label}
                   onChange={(e) => updateOption('priorities', i, 'label', e.target.value)}
-                  className="flex-1 min-w-0 h-10 px-2.5 border border-[var(--color-border)] rounded-lg text-[14px]"
+                  className={`${fieldBox} h-10 text-[15px] flex-1 min-w-0`}
                   placeholder="Level description"
                   aria-label="Level description"
                 />
@@ -271,7 +270,7 @@ export default function DraftingConfigPage() {
                   type="number"
                   value={opt.value}
                   onChange={(e) => updateOption('priorities', i, 'value', Number(e.target.value))}
-                  className="w-20 shrink-0 h-10 px-2.5 border border-[var(--color-border)] rounded-lg text-[13px] font-mono bg-[var(--color-surface-2)]"
+                  className={`${fieldBox} h-10 text-[15px] w-24 shrink-0 tabular-nums`}
                   placeholder="Level number"
                   aria-label="Level number"
                 />
@@ -280,13 +279,9 @@ export default function DraftingConfigPage() {
           />
 
           {/* SECTION: REQUEST ROUTING */}
-          <div className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden">
-            <div className="px-5 sm:px-6 pt-5 pb-3 border-b border-[var(--color-border)]">
-              <h3 className="text-[13px] font-semibold text-[var(--color-text-muted)]">Request routing</h3>
-              <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">Who gets notified when a new request needs approval or assignment.</p>
-            </div>
-            <div className="p-5 sm:p-6">
-              <label className="flex items-start gap-3 cursor-pointer">
+          <Section label="Request routing">
+            <div className={sheet}>
+              <label className="flex items-start gap-3 cursor-pointer px-4 sm:px-5 py-4">
                 <input
                   type="checkbox"
                   checked={!!settings.routing?.adminsAlsoReceiveWhenSupervisorSet}
@@ -296,20 +291,22 @@ export default function DraftingConfigPage() {
                       routing: { ...settings.routing, adminsAlsoReceiveWhenSupervisorSet: e.target.checked },
                     })
                   }
-                  className="mt-0.5 w-4 h-4 accent-[var(--color-text)]"
+                  className="mt-1 w-4 h-4 accent-[var(--color-text)]"
                 />
-                <span className="text-sm text-[var(--color-text)]">
-                  <span className="font-bold">Keep Admins notified even when a Drafting Supervisor is set</span>
-                  <span className="block text-xs text-[var(--color-text-muted)] mt-1 leading-relaxed">
-                    By default, once you assign someone the <b>Drafting Supervisor</b> role, new-request
-                    approval &amp; assignment notifications route to them and stop hitting Admins. Turn this
-                    on to keep Admins in the loop too. When no Drafting Supervisor exists, Admins always
-                    receive them.
-                  </span>
+                <span>
+                  <span className="block text-[15px] font-semibold text-[var(--color-text)]">Keep Admins notified when a Drafting Supervisor is set</span>
+                  <span className="block text-[14px] text-[var(--color-text-muted)] mt-0.5">Otherwise new-request notices go only to the Drafting Supervisor. With no supervisor, Admins always get them.</span>
                 </span>
               </label>
             </div>
+          </Section>
           </div>
+
+          {/* SECTION: CUSTOM CATEGORIES */}
+          <CustomCategoriesSection
+            categories={settings.customCategories ?? []}
+            onChange={(next) => setSettings({ ...settings, customCategories: next })}
+          />
 
         </PageBody>
     </PageShell>
@@ -334,49 +331,35 @@ function ConfigSection({
   renderOption: (opt: SelectOption, idx: number) => React.ReactNode;
 }) {
   return (
-    <div className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden">
-      <div className="px-5 sm:px-6 pt-5 pb-3 border-b border-[var(--color-border)] flex justify-between items-center">
-        <div>
-          <h3 className="text-[13px] font-semibold text-[var(--color-text-muted)]">{title}</h3>
-          <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">{desc}</p>
+    <Section label={title} action={<span className="text-[13px] text-[var(--color-text-muted)] max-sm:hidden">{desc}</span>}>
+      <div className={sheet}>
+        <FormRow label="Form label" htmlFor={`label-${title}`}>
+          <input id={`label-${title}`} value={config.label} onChange={(e) => onLabelChange(e.target.value)} className={`${field} font-semibold`} />
+        </FormRow>
+        <div className="border-t border-[var(--color-border)] px-4 sm:px-5 pt-3 pb-4">
+          <div className="flex items-center gap-2 pb-1.5 text-[13px] font-semibold text-[var(--color-text-muted)]">
+            <span className="w-4 shrink-0 max-sm:hidden" />
+            <span className="flex-1">Shown as</span>
+            <span className="w-24 sm:w-36 shrink-0">Stored as</span>
+            <span className="w-8 shrink-0" />
+          </div>
+          <div className="space-y-2">
+            {config.options.map((opt, i) => (
+              <div key={i} className="flex items-center gap-2 group">
+                <GripVertical className="w-4 h-4 text-[var(--color-text-faint)] cursor-move shrink-0 max-sm:hidden" />
+                {renderOption(opt, i)}
+                <button type="button" aria-label={`Remove option ${i + 1}`} onClick={() => onRemoveOption(i)} className={`${btnIcon} hover:text-[var(--state-overdue)]`}>
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+          <button type="button" onClick={onAddOption} className={`${btnRow} mt-3`}>
+            <Plus className="w-3.5 h-3.5" /> Add option
+          </button>
         </div>
       </div>
-      <div className="p-5 sm:p-6">
-        <div className="mb-6">
-          <label className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">Form label</label>
-          <Input
-            value={config.label}
-            onChange={(e) => onLabelChange(e.target.value)}
-            className="font-bold"
-          />
-        </div>
-        
-        <label className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">Dropdown options</label>
-        <div className="space-y-2">
-          {config.options.map((opt, i) => (
-            <div key={i} className="flex items-center gap-2 group">
-              <GripVertical className="w-4 h-4 text-[var(--color-text-faint)] cursor-move shrink-0 max-sm:hidden" />
-              {renderOption(opt, i)}
-              <button 
-                type="button"
-                aria-label={`Remove option ${i + 1}`}
-                onClick={() => onRemoveOption(i)}
-                className="p-2 text-[var(--color-text-faint)] hover:text-red-500 hover:bg-[var(--color-surface-2)] rounded transition-colors"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            </div>
-          ))}
-        </div>
-        <button
-          type="button"
-          onClick={onAddOption}
-          className="mt-4 flex items-center text-[13px] font-bold text-[var(--color-text)] hover:underline transition-colors"
-        >
-          <Plus className="w-4 h-4 mr-1" /> Add option
-        </button>
-      </div>
-    </div>
+    </Section>
   );
 }
 
@@ -412,27 +395,11 @@ function CustomCategoriesSection({
   };
 
   return (
-    <div className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden">
-      <div className="px-5 sm:px-6 pt-5 pb-3 border-b border-[var(--color-border)] flex flex-wrap justify-between items-center gap-3">
-        <div className="min-w-0 flex-1 basis-64">
-          <h3 className="text-[13px] font-semibold text-[var(--color-text-muted)]">Custom categories</h3>
-          <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">
-            Add sections with your own fields so requesters can capture
-            org-specific context (e.g. <i>Inspection Type</i>, <i>Equipment Tag</i>,
-            <i> MOC Phase</i>). Each section becomes its own card on the request form.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={addCategory}
-          className="inline-flex items-center h-9 px-3 rounded-lg text-[13px] font-semibold text-[var(--color-text)] border border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] transition-colors"
-        >
-          <Plus className="w-3.5 h-3.5 mr-1" /> Add category
-        </button>
-      </div>
-      <div className="p-5 sm:p-6 space-y-6">
+    <Section label={<span className="inline-flex items-center gap-2">Custom sections <HelpTooltip>Sections with your own fields (for example Inspection type, Equipment tag, MOC phase). Each one becomes its own section on the request form.</HelpTooltip></span>}
+      action={<button type="button" onClick={addCategory} className={btnQuiet}><Plus className="w-3.5 h-3.5" /> Add section</button>}>
+      <div className="space-y-4">
         {categories.length === 0 && (
-          <div className="text-xs italic text-[var(--color-text-muted)]">No custom categories yet. Click <b>Add Category</b> above.</div>
+          <div className={`${sheet} px-4 py-6 text-center text-[15px] text-[var(--color-text-muted)]`}>No custom sections yet.</div>
         )}
         {categories.map((cat, idx) => (
           <CategoryCard
@@ -447,7 +414,7 @@ function CustomCategoriesSection({
           />
         ))}
       </div>
-    </div>
+    </Section>
   );
 }
 
@@ -474,39 +441,41 @@ function CategoryCard({
   };
 
   return (
-    <div className="border border-[var(--color-border)] rounded-lg overflow-hidden">
-      <div className="px-4 py-3 bg-[var(--color-surface-2)] flex items-center gap-2 flex-wrap">
+    <div className={`${sheet} overflow-hidden`}>
+      <div className="px-4 py-3 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <input
           value={cat.label}
           onChange={(e) => onChange({ label: e.target.value })}
-          className="flex-1 min-w-[140px] px-2 py-1 border border-[var(--color-border)] rounded text-sm font-bold text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
-          placeholder="Category label"
+          aria-label="Section name"
+          className={`${fieldBox} h-10 text-[15px] flex-1 min-w-[160px] font-semibold`}
+          placeholder="Section name"
         />
-        <label className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-muted)]">
-          <input type="checkbox" checked={cat.enabled} onChange={(e) => onChange({ enabled: e.target.checked })} className="accent-[var(--color-text)]" />
-          Enabled
+        <label className="inline-flex items-center gap-1.5 text-[14px] text-[var(--color-text)] px-1">
+          <input type="checkbox" checked={cat.enabled} onChange={(e) => onChange({ enabled: e.target.checked })} className="w-4 h-4 accent-[var(--color-text)]" />
+          Shown on the form
         </label>
-        <button onClick={onMoveUp} disabled={!canMoveUp} className="p-1.5 rounded hover:bg-[var(--color-surface-2)] disabled:opacity-30 transition-colors"><ArrowUp className="w-3.5 h-3.5" /></button>
-        <button onClick={onMoveDown} disabled={!canMoveDown} className="p-1.5 rounded hover:bg-[var(--color-surface-2)] disabled:opacity-30 transition-colors"><ArrowDown className="w-3.5 h-3.5" /></button>
-        <button onClick={onRemove} className="p-1.5 rounded text-[var(--color-text-faint)] hover:text-red-600 hover:bg-[var(--color-surface-2)] transition-colors">
-          <Trash2 className="w-3.5 h-3.5" />
+        <button type="button" onClick={onMoveUp} disabled={!canMoveUp} aria-label="Move up" className={btnIcon}><ArrowUp className="w-4 h-4" /></button>
+        <button type="button" onClick={onMoveDown} disabled={!canMoveDown} aria-label="Move down" className={btnIcon}><ArrowDown className="w-4 h-4" /></button>
+        <button type="button" onClick={onRemove} aria-label={`Remove ${cat.label}`} className={`${btnIcon} hover:text-[var(--state-overdue)]`}>
+          <Trash2 className="w-4 h-4" />
         </button>
       </div>
       <div className="px-4 py-3 space-y-2">
         <input
           value={cat.description ?? ""}
           onChange={(e) => onChange({ description: e.target.value })}
-          placeholder="Optional description shown under the section header"
-          className="w-full px-2 py-1 border border-[var(--color-border)] rounded text-xs text-[var(--color-text)]"
+          aria-label="Description"
+          placeholder="Description under the section name (optional)"
+          className={field}
         />
         <div className="space-y-2 mt-2">
-          {cat.fields.length === 0 && <div className="text-[11px] italic text-[var(--color-text-faint)]">No fields yet. Add one below.</div>}
+          {cat.fields.length === 0 && <div className="text-[14px] text-[var(--color-text-muted)]">No fields yet.</div>}
           {cat.fields.map((f, i) => (
             <FieldEditor key={f.key} field={f} onChange={(patch) => updateField(i, patch)} onRemove={() => removeField(i)} />
           ))}
         </div>
-        <button type="button" onClick={addField} className="mt-1 inline-flex items-center text-[13px] font-bold text-[var(--color-text)] hover:underline transition-colors">
-          <Plus className="w-3.5 h-3.5 mr-1" /> Add Field
+        <button type="button" onClick={addField} className={`${btnRow} mt-1`}>
+          <Plus className="w-3.5 h-3.5" /> Add field
         </button>
       </div>
     </div>
@@ -532,27 +501,29 @@ function FieldEditor({
 }) {
   const isChoice = field.type === "select" || field.type === "multiselect";
   return (
-    <div className="border border-[var(--color-border)] rounded-md p-2 bg-[var(--color-surface)]">
+    <div className="border border-[var(--color-border)] rounded-md p-3 bg-[var(--color-surface)]">
       <div className="flex items-center gap-2 flex-wrap">
         <input
           value={field.label}
           onChange={(e) => onChange({ label: e.target.value })}
           placeholder="Field label"
-          className="flex-1 min-w-[120px] px-2 py-1 border border-[var(--color-border)] rounded text-xs font-bold"
+          aria-label="Field label"
+          className={`${fieldBox} h-10 text-[15px] flex-1 min-w-[140px] font-semibold`}
         />
         <select
+          aria-label="Field type"
           value={field.type}
           onChange={(e) => onChange({ type: e.target.value as CustomFieldType, options: e.target.value === "select" || e.target.value === "multiselect" ? (field.options || []) : undefined })}
-          className="px-2 py-1 border border-[var(--color-border)] rounded text-xs bg-[var(--color-surface)]"
+          className={`${fieldBox} h-10 text-[15px]`}
         >
           {FIELD_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
         </select>
-        <label className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-muted)]">
-          <input type="checkbox" checked={!!field.required} onChange={(e) => onChange({ required: e.target.checked })} className="accent-[var(--color-text)]" />
+        <label className="inline-flex items-center gap-1.5 text-[14px] text-[var(--color-text)] px-1">
+          <input type="checkbox" checked={!!field.required} onChange={(e) => onChange({ required: e.target.checked })} className="w-4 h-4 accent-[var(--color-text)]" />
           Required
         </label>
-        <button onClick={onRemove} className="p-1 rounded text-[var(--color-text-faint)] hover:text-red-600 hover:bg-[var(--color-surface-2)] transition-colors">
-          <Trash2 className="w-3.5 h-3.5" />
+        <button type="button" onClick={onRemove} aria-label={`Remove ${field.label}`} className={`${btnIcon} hover:text-[var(--state-overdue)]`}>
+          <Trash2 className="w-4 h-4" />
         </button>
       </div>
       {(field.type === "text" || field.type === "textarea" || field.type === "number") && (
@@ -560,18 +531,20 @@ function FieldEditor({
           value={field.placeholder ?? ""}
           onChange={(e) => onChange({ placeholder: e.target.value })}
           placeholder="Placeholder (optional)"
-          className="mt-2 w-full px-2 py-1 border border-[var(--color-border)] rounded text-[11px] text-[var(--color-text-muted)]"
+          aria-label="Placeholder"
+          className={`${fieldBox} w-full mt-2 h-9 text-[14px]`}
         />
       )}
       <input
         value={field.description ?? ""}
         onChange={(e) => onChange({ description: e.target.value })}
         placeholder="Help text (optional)"
-        className="mt-2 w-full px-2 py-1 border border-[var(--color-border)] rounded text-[11px] text-[var(--color-text-muted)]"
+        aria-label="Help text"
+        className={`${fieldBox} w-full mt-2 h-9 text-[14px]`}
       />
       {isChoice && (
         <div className="mt-2 space-y-1">
-          <div className="text-[13px] font-semibold text-[var(--color-text-muted)] ">Choices</div>
+          <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Choices</div>
           {(field.options ?? []).map((opt, oi) => (
             <div key={oi} className="flex gap-1 items-center">
               <input
@@ -581,8 +554,9 @@ function FieldEditor({
                   next[oi] = { ...next[oi], label: e.target.value };
                   onChange({ options: next });
                 }}
-                placeholder="Display label"
-                className="flex-1 px-2 py-1 border border-[var(--color-border)] rounded text-[11px]"
+                placeholder="Shown as"
+                aria-label="Shown as"
+                className={`${fieldBox} flex-1 h-9 text-[14px]`}
               />
               <input
                 value={String(opt.value)}
@@ -591,22 +565,26 @@ function FieldEditor({
                   next[oi] = { ...next[oi], value: e.target.value };
                   onChange({ options: next });
                 }}
-                placeholder="Stored value"
-                className="w-24 sm:w-32 px-2 py-1 border border-[var(--color-border)] rounded text-[11px] font-mono bg-[var(--color-surface-2)]"
+                placeholder="Stored as"
+                aria-label="Stored as"
+                className={`${fieldBox} w-24 sm:w-36 h-9 text-[14px]`}
               />
               <button
+                type="button"
+                aria-label={`Remove choice ${oi + 1}`}
                 onClick={() => onChange({ options: (field.options ?? []).filter((_, j) => j !== oi) })}
-                className="p-1 text-[var(--color-text-faint)] hover:text-red-600 transition-colors"
+                className={`${btnIcon} hover:text-[var(--state-overdue)]`}
               >
-                <Trash2 className="w-3 h-3" />
+                <Trash2 className="w-4 h-4" />
               </button>
             </div>
           ))}
           <button
+            type="button"
             onClick={() => onChange({ options: [...(field.options ?? []), { label: "Option", value: "" }] })}
-            className="text-[11px] font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)] transition-colors inline-flex items-center"
+            className={btnRow}
           >
-            <Plus className="w-3 h-3 mr-1" /> Add Choice
+            <Plus className="w-3.5 h-3.5" /> Add choice
           </button>
         </div>
       )}

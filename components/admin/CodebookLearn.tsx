@@ -55,13 +55,13 @@ export default function CodebookLearn({ orgId, uid, book, canWrite, onChanged, o
 
   if (!found) {
     return (
-      <p className="mb-4 text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
+      <p className="mb-4 text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
         <Loader2 className="w-3 h-3 animate-spin" /> Reading your drawing numbers and tags…
       </p>
     );
   }
   if (readFailed) {
-    return <p className="mb-4 text-[11px] text-[var(--color-text-muted)]">Couldn&apos;t read your drawing numbers and tags for suggestions.</p>;
+    return <p className="mb-4 text-[13px] text-[var(--color-text-muted)]">Couldn&apos;t read your drawing numbers and tags for suggestions.</p>;
   }
   // The library whose numbers fit best speaks for the site.
   const best = [...found.numbering].sort((a, b) => b.learned.fit - a.learned.fit)[0] ?? null;
@@ -94,35 +94,35 @@ export default function CodebookLearn({ orgId, uid, book, canWrite, onChanged, o
   };
 
   // Suggestions, not warnings: plain cards with a quiet button each.
-  const card = "rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5";
-  const btn = "inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[12.5px] font-black disabled:opacity-50";
+  const card = "rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5";
+  const btn = "inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[14px] font-semibold disabled:opacity-50 shrink-0";
   return (
     <div className="space-y-4 empty:hidden" data-codebook-learn>
       {numberingNew && best && (
         <div className={card}>
           <div className="flex items-start gap-2 flex-wrap">
             <Lightbulb className="w-4 h-4 mt-0.5 shrink-0 text-[var(--color-text-muted)]" />
-            <div className="min-w-0 flex-1 basis-64 text-[12.5px] text-[var(--color-text)]">
-              <div className="font-black">Your drawing numbers already follow a pattern</div>
+            <div className="min-w-0 flex-1 basis-64 text-[15px] text-[var(--color-text)]">
+              <div className="font-display text-[17px] font-semibold">Your drawing numbers already follow a pattern</div>
               <p className="mt-1 text-[var(--color-text-muted)]">
                 <b className="text-[var(--color-text)]">{best.learned.fit} of {best.learned.total}</b> numbers in {best.library} read as: unit ({best.learned.segments[0].digits} digits), drawing type (2 digits), a size letter, then the drawing&rsquo;s number.
               </p>
               <ul className="mt-2 space-y-0.5">
                 {best.learned.examples.map((x) => (
-                  <li key={x.number} className="break-words"><b className="font-mono">{x.number}</b>: {x.unitLabel} ({x.unit}), type {x.type}, size {x.size}, number {x.serial}{x.added ? <>. The <b className="font-mono">-{x.added}</b> was added by an upload</> : null}</li>
+                  <li key={x.number} className="break-words"><b className="font-display font-semibold tabular-nums">{x.number}</b>: {x.unitLabel} ({x.unit}), type {x.type}, size {x.size}, number {x.serial}{x.added ? <>. The <b className="font-display font-semibold tabular-nums">-{x.added}</b> was added by an upload</> : null}</li>
                 ))}
               </ul>
               {best.learned.uploadTails > 0 && (
-                <p className="mt-1 text-[12px] text-[var(--color-text-muted)]">
-                  {best.learned.uploadTails} of these also end in a dash and digits (like <span className="font-mono">-7</span>). An upload added those to keep a repeated number apart. They are a count, not the sheet, and not part of your numbering. To take them off: Intelligence, Knowledge, open the library that reads these drawings, and press Correct in the Library health card at the top. Each sheet keeps its sheet number.
+                <p className="mt-1 text-[14px] text-[var(--color-text-muted)]">
+                  {best.learned.uploadTails} of these also end in a dash and digits (like <span className="font-display font-semibold tabular-nums">-7</span>). An upload added those to keep a repeated number apart. They are a count, not the sheet, and not part of your numbering. To take them off: Intelligence, Knowledge, open the library that reads these drawings, and press Correct in the Library health card at the top. Each sheet keeps its sheet number.
                 </p>
               )}
               <ul className="mt-2 space-y-0.5">
                 {best.learned.types.map((t) => (
-                  <li key={t.code}>Type <b className="font-mono">{t.code}</b>: {t.count} drawing{t.count === 1 ? "" : "s"}{t.folder ? `, ${t.inFolder === t.count ? "all" : `${t.inFolder}`} under ${t.folder}` : ""}{t.known ? `. Already named ${t.known}.` : t.label ? <>. Named <b>{t.label}</b>.</> : ". Filed in more than one place: name it in the Drawings tab."}</li>
+                  <li key={t.code}>Type <b className="font-display font-semibold tabular-nums">{t.code}</b>: {t.count} drawing{t.count === 1 ? "" : "s"}{t.folder ? `, ${t.inFolder === t.count ? "all" : `${t.inFolder}`} under ${t.folder}` : ""}{t.known ? `. Already named ${t.known}.` : t.label ? <>. Named <b>{t.label}</b>.</> : ". Filed in more than one place: name it in the Drawings tab."}</li>
                 ))}
               </ul>
-              {best.learned.misses.length > 0 && <p className="mt-2 text-[var(--color-text-muted)]">Did not fit: <span className="font-mono break-all">{best.learned.misses.join(", ")}</span></p>}
+              {best.learned.misses.length > 0 && <p className="mt-2 text-[var(--color-text-muted)]">Did not fit: <span className="font-display break-all">{best.learned.misses.join(", ")}</span></p>}
               <p className="mt-2 text-[var(--color-text-muted)]">With this saved, a drawing links to its unit by its number, and its type is known.</p>
             </div>
             {canWrite && <button type="button" onClick={() => void acceptNumbering()} disabled={busy !== null} className={btn}>{busy === "numbering" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Use this</button>}
@@ -133,8 +133,8 @@ export default function CodebookLearn({ orgId, uid, book, canWrite, onChanged, o
         <div className={card}>
           <div className="flex items-start gap-2 flex-wrap">
             <Lightbulb className="w-4 h-4 mt-0.5 shrink-0 text-[var(--color-text-muted)]" />
-            <div className="min-w-0 flex-1 basis-64 text-[12.5px] text-[var(--color-text)]">
-              <div className="font-black">Tag letters, from your equipment list</div>
+            <div className="min-w-0 flex-1 basis-64 text-[15px] text-[var(--color-text)]">
+              <div className="font-display text-[17px] font-semibold">Tag letters, from your equipment list</div>
               <p className="mt-1 text-[var(--color-text-muted)]">Each ID says the type (5530.29 is type 30) and each tag says the letter (E-22). A letter is listed only when it belongs to one type.</p>
               <ul className="mt-2 space-y-0.5">
                 {found.letters.map((r) => (

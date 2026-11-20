@@ -15,7 +15,8 @@ import {
   X,
 } from 'lucide-react';
 import { PageShell } from '@/components/ui/PageShell';
-import { PageHero, PageBody, Card, heroPrimary } from '@/components/ui/PageHero';
+import { PageHero, PageBody, heroPrimary } from '@/components/ui/PageHero';
+import { tbl, StatusTag, Problem, btnIcon, link, shortDate } from '@/components/admin/kit';
 import { plural } from '@/components/admin/band';
 import { Button } from '@/components/ui/Button';
 import { Input, Select } from '@/components/ui/Field';
@@ -250,11 +251,13 @@ export default function AdminUsersPage() {
     );
   }
 
-  const notActive = members.filter((m) => m.status !== 'active').length;
+  const active = members.filter((m) => m.status === 'active').length;
+  const notActive = members.length - active;
+  const admins = members.filter((m) => rolesOf(m).includes('Admin' as Role)).length;
   const answer = loading && members.length === 0 ? 'Users'
     : loadError ? "Couldn't load members."
     : members.length === 0 ? 'No members yet.'
-    : `${plural(members.length, 'member')}${notActive > 0 ? `, ${notActive} not active` : ''}.`;
+    : `${plural(members.length, 'member')}.`;
   const shownMembers = members.slice(0, memberLimit);
 
   return (
@@ -263,6 +266,11 @@ export default function AdminUsersPage() {
         kicker="Admin · Users"
         title={answer}
         sub={<span className="inline-flex items-center gap-2"><Building2 className="w-4 h-4" /> {orgName || 'Loading…'}</span>}
+        facts={members.length > 0 ? [
+          { label: 'Active', value: active },
+          { label: 'Not active', value: notActive, tone: notActive > 0 ? 'warn' : undefined },
+          { label: 'Admins', value: admins },
+        ] : undefined}
         primary={
           <button type="button" className={heroPrimary} onClick={() => { setFormData((f) => ({ ...f, role: lastRole() })); setError(null); setIsModalOpen(true); }}>
             <UserPlus className="w-4 h-4" />
@@ -272,114 +280,108 @@ export default function AdminUsersPage() {
       />
 
       <PageBody>
-        <Card pad={false} className="overflow-hidden">
-          {loading && members.length === 0 ? (
-            <LoadingBlock what="members" className="border-0 rounded-none p-5" />
-          ) : loadError ? (
-            <p role="alert" className="p-5 text-[14px] text-red-700 dark:text-red-400">
-              Couldn&apos;t load members: {loadError}{" "}
-              <button type="button" onClick={() => void fetchMembers()} className="font-bold underline">Try again</button>
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-[var(--color-border)]">
-                <thead>
-                  <tr>
-                    <th className="px-5 py-3 text-left text-[13px] font-semibold text-[var(--color-text-muted)] ">User</th>
-                    <th className="px-5 py-3 text-left text-[13px] font-semibold text-[var(--color-text-muted)] ">Role</th>
-                    <th className="px-5 py-3 text-left text-[13px] font-semibold text-[var(--color-text-muted)] ">Status</th>
-                    <th className="px-5 py-3 text-left text-[13px] font-semibold text-[var(--color-text-muted)] ">Joined</th>
-                    <th className="px-5 py-3 text-right text-[13px] font-semibold text-[var(--color-text-muted)] "><span className="sr-only">Actions</span></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--color-border)]">
-                  {shownMembers.map((m) => (
-                    <tr key={m.id} className="hover:bg-[var(--color-surface-2)] transition-colors">
-                      <td className="px-5 py-3 whitespace-nowrap">
-                        <div className="flex items-center">
+        {loading && members.length === 0 ? (
+          <LoadingBlock what="members" />
+        ) : loadError ? (
+          <Problem retry={() => void fetchMembers()}>Couldn&apos;t load members: {loadError}</Problem>
+        ) : (
+          <div className={tbl.wrap}>
+            <table className={tbl.table}>
+              <thead className={`${tbl.thead} max-sm:hidden`}>
+                <tr>
+                  <th className={tbl.th}>Member</th>
+                  <th className={tbl.th}>Roles</th>
+                  <th className={tbl.th}>Status</th>
+                  <th className={`${tbl.th} max-md:hidden`}>Joined</th>
+                  <th className={`${tbl.th} w-14`}><span className="sr-only">Remove</span></th>
+                </tr>
+              </thead>
+              <tbody className={tbl.tbody}>
+                {shownMembers.map((m) => {
+                  const memberRoles = rolesOf(m);
+                  const headline = primaryRole(memberRoles);
+                  const isSelf = !!uid && m.uid === uid;
+                  const locked = isSelf || savingRoleId === m.id;
+                  const status = m.status === 'active'
+                    ? <StatusTag tone="none">Active</StatusTag>
+                    : <StatusTag tone="warn">{m.status.charAt(0).toUpperCase() + m.status.slice(1)}</StatusTag>;
+                  return (
+                    <tr key={m.id} className={`${tbl.tr} max-sm:grid max-sm:grid-cols-[1fr_auto] max-sm:py-1`}>
+                      <td className={`${tbl.td} max-sm:pb-1`}>
+                        <div className="flex items-center gap-3 min-w-0">
                           <UserAvatar uid={m.uid} name={m.display_name} email={m.email} size={36} rounded="full" />
-                          <div className="ml-3">
-                            <div className="text-[14px] font-bold text-[var(--color-text)]">{m.display_name || 'No name'}</div>
-                            <div className="text-[13px] text-[var(--color-text-muted)]">{m.email}</div>
+                          <div className="min-w-0">
+                            <div className="font-semibold text-[var(--color-text)] truncate">{m.display_name || m.email}{isSelf && <span className="ml-1.5 text-[13px] font-normal text-[var(--color-text-muted)]">(you)</span>}</div>
+                            <div className="text-[13px] text-[var(--color-text-muted)] truncate">{m.display_name ? m.email : 'No name yet'}</div>
                           </div>
                         </div>
                       </td>
-                      <td className="px-5 py-3">
-                        {(() => {
-                          const memberRoles = rolesOf(m);
-                          const headline = primaryRole(memberRoles);
-                          const isSelf = !!uid && m.uid === uid;
-                          const locked = isSelf || savingRoleId === m.id;
-                          return (
-                            <div className="flex flex-wrap items-center gap-1.5 max-w-md">
-                              {memberRoles.map((r) => {
-                                const canRemove = !locked && memberRoles.length > 1;
-                                return (
-                                  <span
-                                    key={r}
-                                    title={r === headline ? 'Primary role (highest access)' : undefined}
-                                    className={`inline-flex items-center gap-1 pl-2.5 ${canRemove ? 'pr-1' : 'pr-2.5'} py-0.5 rounded-full text-[11px] font-bold border ${r === headline ? 'bg-[var(--color-text)] text-[var(--color-surface)] border-transparent' : 'bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]'}`}
+                      <td className={`${tbl.td} max-sm:col-span-2 max-sm:row-start-2 max-sm:pt-0 max-sm:pl-[64px]`}>
+                        <div className="flex flex-wrap items-center gap-1.5 max-w-md">
+                          {memberRoles.map((r) => {
+                            const canRemove = !locked && memberRoles.length > 1;
+                            return (
+                              <span
+                                key={r}
+                                title={r === headline ? 'Primary role (highest access)' : undefined}
+                                className={`inline-flex items-center gap-1 h-7 pl-2 ${canRemove ? 'pr-0.5' : 'pr-2'} rounded-md border text-[13px] ${r === headline ? 'font-semibold text-[var(--color-text)] border-[var(--color-border-strong)] bg-[var(--color-surface)]' : 'text-[var(--color-text-muted)] border-[var(--color-border)] bg-[var(--color-surface-2)]'}`}
+                              >
+                                {r}
+                                {canRemove && (
+                                  <button
+                                    type="button"
+                                    onClick={() => removeRole(m, r)}
+                                    title={`Remove ${r}`}
+                                    aria-label={`Remove ${r}`}
+                                    className="w-6 h-6 grid place-items-center rounded text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text)]"
                                   >
-                                    {r}
-                                    {canRemove && (
-                                      <button
-                                        type="button"
-                                        onClick={() => removeRole(m, r)}
-                                        title={`Remove ${r}`}
-                                        aria-label={`Remove ${r}`}
-                                        className="rounded-full p-0.5 hover:bg-[var(--color-border)]"
-                                      >
-                                        <X className="w-3 h-3" />
-                                      </button>
-                                    )}
-                                  </span>
-                                );
-                              })}
-                              {!isSelf && (
-                                <RoleAddPicker current={memberRoles} disabled={locked} onAdd={(r) => addRole(m, r)} />
-                              )}
-                              {savingRoleId === m.id && <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-faint)]" />}
-                            </div>
-                          );
-                        })()}
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </span>
+                            );
+                          })}
+                          {!isSelf && (
+                            <RoleAddPicker current={memberRoles} disabled={locked} onAdd={(r) => addRole(m, r)} />
+                          )}
+                          {savingRoleId === m.id && <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-faint)]" />}
+                          <span className="sm:hidden ml-1">{status}</span>
+                        </div>
                       </td>
-                      <td className="px-5 py-3 whitespace-nowrap">
-                        <span className={`text-[13px] font-semibold ${m.status === 'active' ? 'text-emerald-700 dark:text-emerald-400' : 'text-[var(--color-text-muted)]'}`}>
-                          {m.status === 'active' ? 'Active' : m.status}
-                        </span>
+                      <td className={`${tbl.td} max-sm:hidden whitespace-nowrap`}>{status}</td>
+                      <td className={`${tbl.td} max-md:hidden whitespace-nowrap text-[var(--color-text-muted)]`}>
+                        {shortDate(m.created_at) || '-'}
                       </td>
-                      <td className="px-5 py-3 whitespace-nowrap text-[13px] text-[var(--color-text-muted)]">
-                        {m.created_at ? new Date(m.created_at).toLocaleDateString() : '-'}
-                      </td>
-                      <td className="px-5 py-3 whitespace-nowrap text-right text-[13px]">
+                      <td className={`${tbl.td} max-sm:col-start-2 max-sm:row-start-1 text-right`}>
                         <button
+                          type="button"
                           onClick={() => handleRemoveMember(m)}
-                          disabled={removingId === m.id || (!!uid && m.uid === uid)}
-                          title={!!uid && m.uid === uid ? "You can't remove yourself" : 'Remove from workspace'}
+                          disabled={removingId === m.id || isSelf}
+                          title={isSelf ? "You can't remove yourself" : 'Remove from workspace'}
                           aria-label={`Remove ${m.display_name || m.email} from workspace`}
-                          className="text-[var(--color-text-faint)] hover:text-red-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                          className={`${btnIcon} hover:text-[var(--state-overdue)]`}
                         >
                           {removingId === m.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
                         </button>
                       </td>
                     </tr>
-                  ))}
-                  {members.length === 0 && (
-                    <tr><td colSpan={5} className="px-5 py-10 text-center text-[14px] text-[var(--color-text-muted)]">No members yet. Add the first one.</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          )}
-          {members.length > memberLimit && (
-            <div className="px-5 py-3 border-t border-[var(--color-border)] flex items-center justify-between text-[13px]">
-              <span className="text-[var(--color-text-muted)]">{memberLimit} of {members.length} shown</span>
-              <button type="button" onClick={() => setMemberLimit((n) => n + 100)} className="font-bold text-[var(--color-accent-text)] hover:underline">
-                Show {Math.min(100, members.length - memberLimit)} more
-              </button>
-            </div>
-          )}
-        </Card>
+                  );
+                })}
+                {members.length === 0 && (
+                  <tr><td colSpan={5} className="px-4 py-10 text-center text-[var(--color-text-muted)]">No members yet. Add the first one.</td></tr>
+                )}
+              </tbody>
+            </table>
+            {members.length > memberLimit && (
+              <div className={tbl.foot}>
+                <span className="text-[var(--color-text-muted)]">{memberLimit} of {members.length} shown</span>
+                <button type="button" onClick={() => setMemberLimit((n) => n + 100)} className={link}>
+                  Show {Math.min(100, members.length - memberLimit)} more
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </PageBody>
 
       {/* Add User Modal */}
@@ -389,7 +391,7 @@ export default function AdminUsersPage() {
           <ModalBody>
             <form onSubmit={handleCreateMember} className="space-y-4">
               {error && (
-                <p role="alert" className="border-l-2 border-red-500 pl-3 text-red-700 dark:text-red-400 text-sm font-medium flex items-center">
+                <p role="alert" className="text-[var(--state-overdue)] text-[14px] font-semibold flex items-center">
                   <AlertCircle className="w-4 h-4 mr-2 shrink-0" />
                   {error}
                 </p>
@@ -428,7 +430,6 @@ export default function AdminUsersPage() {
                 <Input
                   required type="text" value={formData.password}
                   onChange={e => setFormData({...formData, password: e.target.value})}
-                  className="font-mono"
                   placeholder="e.g. Welcome2024!"
                 />
               </div>
@@ -449,7 +450,7 @@ export default function AdminUsersPage() {
                 <Button type="submit" loading={processing} className="w-full">
                   Create account
                 </Button>
-                <p className="text-xs text-center text-[var(--color-text-faint)] mt-3">
+                <p className="text-[13px] text-center text-[var(--color-text-muted)] mt-2.5">
                   They can sign in right away with these details.
                 </p>
               </div>
@@ -478,7 +479,7 @@ function RoleAddPicker({
 
   // Nothing left that would grant new access — the guardrail in action.
   if (options.length === 0) {
-    return <span className="text-[11px] text-[var(--color-text-faint)] italic px-1">full access</span>;
+    return <span className="text-[13px] text-[var(--color-text-muted)] px-1">Full access</span>;
   }
 
   return (
@@ -487,15 +488,17 @@ function RoleAddPicker({
         type="button"
         disabled={disabled}
         onClick={() => setOpen((o) => !o)}
-        className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[11px] font-bold border border-dashed border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:border-[var(--color-accent-ring)] hover:text-[var(--color-accent-text)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className="inline-flex items-center gap-1 h-7 px-2 rounded-md text-[13px] font-semibold border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
       >
         <Plus className="w-3 h-3" /> Add role
       </button>
       {open && !disabled && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 z-50 mt-1 w-72 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg py-1 max-h-72 overflow-auto animate-in fade-in zoom-in-95 duration-150">
-            <div className="px-3 py-1.5 text-[13px] font-semibold text-[var(--color-text-faint)] border-b border-[var(--color-border)]">
+          <div role="menu" className="absolute left-0 z-50 mt-1 w-72 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border-strong)] rounded-lg shadow-lg py-1 max-h-72 overflow-auto">
+            <div className="px-3 py-1.5 text-[13px] text-[var(--color-text-muted)] border-b border-[var(--color-border)]">
               Roles that add new access
             </div>
             {options.map((r) => {
@@ -505,10 +508,11 @@ function RoleAddPicker({
                   key={r}
                   type="button"
                   onClick={() => { onAdd(r); setOpen(false); }}
+                  role="menuitem"
                   className="block w-full text-left px-3 py-2 hover:bg-[var(--color-surface-2)] transition-colors"
                 >
-                  <div className="text-xs font-bold text-[var(--color-text)]">{r}</div>
-                  <div className="text-[11px] text-[var(--color-text-muted)] leading-tight mt-0.5">+ {adds.join(' · ')}</div>
+                  <div className="text-[14px] font-semibold text-[var(--color-text)]">{r}</div>
+                  <div className="text-[13px] text-[var(--color-text-muted)] leading-snug mt-0.5">Adds {adds.join(', ')}</div>
                 </button>
               );
             })}

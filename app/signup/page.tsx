@@ -7,6 +7,10 @@ import Link from 'next/link';
 import { Layout, ArrowRight, Loader2, Building2, User, Mail, Lock, AlertCircle, Users } from 'lucide-react';
 import { PageHero, PageBody, Card } from '@/components/ui/PageHero';
 import { bandSeg, bandSegItem } from '@/components/admin/band';
+import { btnPrimary, link, label } from '@/components/admin/kit';
+
+const inputCls = "w-full h-11 pl-10 pr-3 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-md text-[15px] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 transition-colors placeholder:text-[var(--color-text-faint)]";
+const iconCls = "absolute left-3 top-1/2 -translate-y-1/2 w-[18px] h-[18px] text-[var(--color-text-faint)] pointer-events-none";
 
 type Mode = "new-org" | "request-access";
 
@@ -111,16 +115,15 @@ export default function SignupPage() {
 
   const title = mode === "new-org" ? "Set up your workspace." : requestSent ? "Request sent." : "Ask for access.";
   const sub = mode === "new-org"
-    ? "A new organization for your site's drawings, equipment and work. You'll be its Admin."
-    : requestSent ? "Your organization's admin creates your account. You'll get an email with sign-in steps."
+    ? "A new organization for your site's drawings and work. You'll be its Admin."
     : "Your organization's admin creates your account.";
 
   return (
     <div className="min-h-dvh bg-[var(--color-canvas)] px-4 py-6 sm:py-10">
-      <div className="w-full max-w-xl mx-auto">
+      <div className="w-full max-w-[640px] mx-auto">
         {/* The band: who we are, what this page is for, and the two ways in. */}
         <PageHero
-          kicker={<span className="inline-flex items-center gap-2"><Layout className="w-3.5 h-3.5" /> Manufacturing OS</span>}
+          kicker={<span className="inline-flex items-center gap-2"><span className="w-6 h-6 rounded grid place-items-center bg-[var(--color-text)] text-[var(--color-surface)]"><Layout className="w-3.5 h-3.5" /></span> <span className="font-display text-[16px] font-semibold text-[var(--color-text)]">Manufacturing OS</span></span>}
           title={title}
           sub={sub}
           size="md"
@@ -152,69 +155,71 @@ export default function SignupPage() {
         </PageHero>
 
         <PageBody>
-        <Card className="sm:p-7">
+        <Card className="sm:p-6">
 
           {/* NEW ORG MODE */}
           {mode === "new-org" && (
             <>
                 {error && (
-                  <div role="alert" className="mb-5 flex items-start gap-2">
-                    <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
-                    <p className="text-[14px] text-red-700 dark:text-red-400 font-medium">{error}</p>
+                  <div role="alert" className="mb-4 flex items-start gap-2 text-[var(--state-overdue)]">
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <p className="text-[14px] font-semibold">{error}</p>
                   </div>
                 )}
                 <form onSubmit={handleSignup} className="space-y-4">
                   <div>
-                    <label htmlFor="su-company" className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Company or organization</label>
+                    <label htmlFor="su-company" className={label}>Company or organization</label>
                     <div className="relative">
-                      <Building2 className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)] pointer-events-none" />
+                      <Building2 className={iconCls} />
                       <input id="su-company" type="text" value={formData.companyName} onChange={(e) => setFormData({...formData, companyName: e.target.value})}
-                        className="w-full h-12 pl-11 pr-4 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-xl text-[15px] text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:border-transparent outline-none transition-all placeholder:text-[var(--color-text-faint)]"
+                        className={inputCls}
                         placeholder="Acme Manufacturing Inc." required />
                     </div>
                   </div>
 
                   <div className="h-px bg-[var(--color-border)]" />
 
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <label htmlFor="su-name" className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Your full name</label>
+                    <label htmlFor="su-name" className={label}>Your full name</label>
                     <div className="relative">
-                      <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)] pointer-events-none" />
+                      <User className={iconCls} />
                       <input id="su-name" type="text" value={formData.displayName} onChange={(e) => setFormData({...formData, displayName: e.target.value})}
-                        className="w-full h-12 pl-11 pr-4 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-xl text-[15px] text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:border-transparent outline-none transition-all placeholder:text-[var(--color-text-faint)]"
+                        className={inputCls}
                         placeholder="John Doe" autoComplete="name" required />
                     </div>
                   </div>
                   <div>
-                    <label htmlFor="su-email" className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Work email</label>
+                    <label htmlFor="su-email" className={label}>Work email</label>
                     <div className="relative">
-                      <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)] pointer-events-none" />
+                      <Mail className={iconCls} />
                       <input id="su-email" type="email" value={formData.email} onChange={(e) => setFormData({...formData, email: e.target.value})}
-                        className="w-full h-12 pl-11 pr-4 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-xl text-[15px] text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:border-transparent outline-none transition-all placeholder:text-[var(--color-text-faint)]"
+                        className={inputCls}
                         placeholder="name@company.com" autoComplete="email" required />
                     </div>
                   </div>
                   <div>
-                    <label htmlFor="su-password" className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Password</label>
+                    <label htmlFor="su-password" className={label}>Password</label>
                     <div className="relative">
-                      <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)] pointer-events-none" />
+                      <Lock className={iconCls} />
                       <input id="su-password" type="password" value={formData.password} onChange={(e) => setFormData({...formData, password: e.target.value})}
-                        className="w-full h-12 pl-11 pr-4 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-xl text-[15px] text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:border-transparent outline-none transition-all placeholder:text-[var(--color-text-faint)]"
+                        className={inputCls}
                         placeholder="At least 6 characters" autoComplete="new-password" minLength={6} required />
                     </div>
                   </div>
                   <div>
-                    <label htmlFor="su-confirm" className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Confirm password</label>
+                    <label htmlFor="su-confirm" className={label}>Confirm password</label>
                     <div className="relative">
-                      <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)] pointer-events-none" />
+                      <Lock className={iconCls} />
                       <input id="su-confirm" type="password" value={formData.confirmPassword} onChange={(e) => setFormData({...formData, confirmPassword: e.target.value})}
-                        className="w-full h-12 pl-11 pr-4 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-xl text-[15px] text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:border-transparent outline-none transition-all placeholder:text-[var(--color-text-faint)]"
+                        className={inputCls}
                         placeholder="Repeat your password" autoComplete="new-password" minLength={6} required />
                     </div>
                   </div>
+                  </div>
 
                   <button type="submit" disabled={loading}
-                    className="w-full h-12 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[15px] font-extrabold rounded-xl shadow-[0_12px_24px_-12px_var(--color-accent)] transition-colors flex items-center justify-center disabled:opacity-70 disabled:cursor-not-allowed mt-2">
+                    className={`${btnPrimary} w-full sm:w-auto h-11 px-5 mt-1`}>
                     {loading ? (
                       <><Loader2 className="w-5 h-5 animate-spin mr-2" /> Creating workspace…</>
                     ) : (
@@ -229,54 +234,50 @@ export default function SignupPage() {
           {mode === "request-access" && (
             <>
                 {requestSent ? (
-                  <div className="text-center py-6">
-                    <div className="w-14 h-14 bg-emerald-50 dark:bg-emerald-950/40 rounded-full flex items-center justify-center mx-auto mb-4">
-                      <svg className="w-7 h-7 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                      </svg>
-                    </div>
-                    <h3 className="text-[15px] font-bold text-[var(--color-text)] mb-1">Your request is with your admin</h3>
-                    <p className="text-[14px] text-[var(--color-text-muted)]">Your organization&rsquo;s admin will receive your request and create your account. You&rsquo;ll get an email with login instructions.</p>
+                  <div className="py-2">
+                    <p className="inline-flex items-center gap-2 text-[15px] font-semibold text-[var(--color-text)]">
+                      <span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-released)]" /> Your request is with your admin.
+                    </p>
+                    <p className="mt-1 text-[15px] text-[var(--color-text-muted)]">You&rsquo;ll get an email with sign-in steps once they add you.</p>
                   </div>
                 ) : (
                   <>
                     {error && (
-                      <div role="alert" className="mb-5 flex items-start gap-2">
-                        <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
-                        <p className="text-[14px] text-red-700 dark:text-red-400 font-medium">{error}</p>
+                      <div role="alert" className="mb-4 flex items-start gap-2 text-[var(--state-overdue)]">
+                        <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                        <p className="text-[14px] font-semibold">{error}</p>
                       </div>
                     )}
-                    <p className="mb-5 text-[14px] text-[var(--color-text-muted)]">This tells your organization&rsquo;s Admin, who creates your account.</p>
                     <form onSubmit={handleRequestAccess} className="space-y-4">
                   <div>
-                    <label htmlFor="ra-name" className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Your full name</label>
+                    <label htmlFor="ra-name" className={label}>Your full name</label>
                     <div className="relative">
-                      <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)] pointer-events-none" />
+                      <User className={iconCls} />
                       <input id="ra-name" type="text" value={requestData.displayName} onChange={(e) => setRequestData({...requestData, displayName: e.target.value})}
-                        className="w-full h-12 pl-11 pr-4 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-xl text-[15px] text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:border-transparent outline-none transition-all placeholder:text-[var(--color-text-faint)]"
+                        className={inputCls}
                         placeholder="John Doe" autoComplete="name" required />
                     </div>
                   </div>
                   <div>
-                    <label htmlFor="ra-email" className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Your work email</label>
+                    <label htmlFor="ra-email" className={label}>Your work email</label>
                     <div className="relative">
-                      <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)] pointer-events-none" />
+                      <Mail className={iconCls} />
                       <input id="ra-email" type="email" value={requestData.email} onChange={(e) => setRequestData({...requestData, email: e.target.value})}
-                        className="w-full h-12 pl-11 pr-4 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-xl text-[15px] text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:border-transparent outline-none transition-all placeholder:text-[var(--color-text-faint)]"
+                        className={inputCls}
                         placeholder="name@company.com" autoComplete="email" required />
                     </div>
                   </div>
                   <div>
-                    <label htmlFor="ra-org" className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Organization name</label>
+                    <label htmlFor="ra-org" className={label}>Organization name</label>
                     <div className="relative">
-                      <Building2 className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)] pointer-events-none" />
+                      <Building2 className={iconCls} />
                       <input id="ra-org" type="text" value={requestData.orgName} onChange={(e) => setRequestData({...requestData, orgName: e.target.value})}
-                        className="w-full h-12 pl-11 pr-4 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-xl text-[15px] text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:border-transparent outline-none transition-all placeholder:text-[var(--color-text-faint)]"
+                        className={inputCls}
                         placeholder="Acme Manufacturing Inc." required />
                     </div>
                   </div>
                       <button type="submit" disabled={loading}
-                        className="w-full h-12 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[15px] font-extrabold rounded-xl shadow-[0_12px_24px_-12px_var(--color-accent)] transition-colors flex items-center justify-center disabled:opacity-70 disabled:cursor-not-allowed">
+                        className={`${btnPrimary} w-full sm:w-auto h-11 px-5 mt-1`}>
                         {loading ? (
                           <><Loader2 className="w-5 h-5 animate-spin mr-2" /> Sending request…</>
                         ) : (
@@ -290,9 +291,9 @@ export default function SignupPage() {
           )}
         </Card>
 
-        <p className="text-center text-[14px] text-[var(--color-text-muted)]">
+        <p className="text-[14px] text-[var(--color-text-muted)]">
           Already have an account?{' '}
-          <Link href="/" className="text-[var(--color-text)] font-bold underline underline-offset-2">Sign in</Link>
+          <Link href="/" className={link}>Sign in</Link>
         </p>
         </PageBody>
       </div>

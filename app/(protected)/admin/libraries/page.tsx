@@ -8,7 +8,8 @@ import Link from "next/link";
 import { Plus, Search, Trash2 } from "lucide-react";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import { PageShell } from "@/components/ui/PageShell";
-import { PageHero, PageBody, Card, heroPrimary } from "@/components/ui/PageHero";
+import { PageHero, PageBody, heroPrimary } from "@/components/ui/PageHero";
+import { tbl, btnRow, btnIcon, Problem } from "@/components/admin/kit";
 import { bandInput, bandInputIcon, bandSelect, plural } from "@/components/admin/band";
 import MoreMenu from "@/components/ui/MoreMenu";
 import LibraryWizard, { newLibraryDraftKey } from "./LibraryWizard";
@@ -266,7 +267,8 @@ export default function LibraryAdminPage() {
       <PageHero
         kicker="Admin · Libraries"
         title={answer}
-        sub={neverAi.size > 0 ? `${neverAi.size} kept from the AI. Each library sets its own folders, numbering and review steps.` : "Each library sets its own folders, numbering and review steps."}
+        sub="Each library sets its own folders, numbering and review steps."
+        facts={libraries.length > 0 ? [{ label: "Kept from the AI", value: neverAi.size }] : undefined}
         primary={<button type="button" onClick={openCreate} className={heroPrimary}><Plus className="w-4 h-4" /> New library</button>}
       >
         <div className="flex items-center gap-2 flex-wrap">
@@ -294,56 +296,58 @@ export default function LibraryAdminPage() {
 
       <PageBody>
         {loadError && (
-          <Card>
-            <p role="alert" className="text-[14px] text-red-700 dark:text-red-400">
-              Couldn&apos;t load libraries: {loadError}{" "}
-              <button type="button" onClick={() => setReloadTick((n) => n + 1)} className="font-bold underline">Try again</button>
-            </p>
-          </Card>
+          <Problem retry={() => setReloadTick((n) => n + 1)}>Couldn&apos;t load libraries: {loadError}</Problem>
         )}
 
-        {/* LIST */}
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {filteredLibraries.map((lib) => (
-            <div
-              key={lib.id}
-              className="bg-[var(--color-surface)] rounded-2xl p-5 shadow-[var(--shadow-card)]"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <Link href={`/documents/${lib.id}`} title={`Open ${lib.name} (id ${lib.id})`} className="block text-[15px] font-bold text-[var(--color-text)] truncate hover:underline">{lib.name}</Link>
-                  <div className="text-[13px] text-[var(--color-text-muted)] mt-1 line-clamp-2">{lib.description}</div>
-                  <div className="mt-3">
-                    {activeOrgId && (
-                      <LibraryAiSwitch orgId={activeOrgId} libraryId={lib.id!} libraryName={lib.name} excluded={neverAi.has(lib.id!)} canChange={canManageAi}
-                        onChanged={(x) => setNeverAi((s) => { const n = new Set(s); if (x) n.add(lib.id!); else n.delete(lib.id!); return n; })} />
-                    )}
-                  </div>
-                </div>
-
-                {/* Repeated on every card, so quiet: Edit, and Delete folded into More. */}
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => openEdit(lib)}
-                    className="h-9 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[13px] font-semibold"
-                  >
-                    Edit
-                  </button>
-                  <MoreMenu iconOnly label={`More for ${lib.name}`} items={[
-                    { icon: <Trash2 className="w-4 h-4" />, label: "Delete library", tone: "bad", onClick: () => initiateDelete(lib) },
-                  ]} />
-                </div>
-              </div>
-            </div>
-          ))}
-
-          {filteredLibraries.length === 0 && (
-            <div className="col-span-full bg-[var(--color-surface)] shadow-[var(--shadow-card)] rounded-2xl p-10 text-center text-[14px] text-[var(--color-text-muted)]">
-              {loadError ? "The libraries didn't load." : searchTerm ? "No libraries match that search." : "Make the first library: drawings, procedures, vendor manuals."}
-            </div>
-          )}
-        </div>
+        {filteredLibraries.length === 0 ? (
+          <div className={`${tbl.wrap} px-5 py-10 text-center text-[var(--color-text-muted)]`}>
+            {loadError ? "The libraries didn't load." : searchTerm ? "No libraries match that search." : "Make the first library: drawings, procedures, vendor manuals."}
+          </div>
+        ) : (
+          <div className={tbl.wrap}>
+            <table className={tbl.table}>
+              <thead className={`${tbl.thead} max-sm:hidden`}>
+                <tr>
+                  <th className={tbl.th}>Library</th>
+                  <th className={`${tbl.th} max-lg:hidden`}>Kind</th>
+                  <th className={`${tbl.th} max-md:hidden`}>Who can read</th>
+                  <th className={`${tbl.th} max-md:hidden`}>AI reading</th>
+                  <th className={`${tbl.th} w-[1%]`}><span className="sr-only">Actions</span></th>
+                </tr>
+              </thead>
+              <tbody className={tbl.tbody}>
+                {filteredLibraries.map((lib) => {
+                  const readers = lib.readAccess === "ALL" || !lib.readAccess ? "Everyone" : plural(lib.readAccess.length, "role");
+                  return (
+                    <tr key={lib.id} className={`${tbl.tr} max-sm:grid max-sm:grid-cols-[1fr_auto]`}>
+                      <td className={`${tbl.td} min-w-0`}>
+                        <Link href={`/documents/${lib.id}`} title={`Open ${lib.name}`} className="font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{lib.name}</Link>
+                        {lib.description && <div className="text-[14px] text-[var(--color-text-muted)] line-clamp-1 max-w-[60ch]">{lib.description}</div>}
+                      </td>
+                      <td className={`${tbl.td} max-lg:hidden text-[var(--color-text-muted)] capitalize whitespace-nowrap`}>{String(lib.type ?? "").replace(/_/g, " ").toLowerCase()}</td>
+                      <td className={`${tbl.td} max-md:hidden text-[var(--color-text-muted)] whitespace-nowrap`}>{readers}</td>
+                      <td className={`${tbl.td} max-md:hidden`}>
+                        {activeOrgId && (
+                          <LibraryAiSwitch compact orgId={activeOrgId} libraryId={lib.id!} libraryName={lib.name} excluded={neverAi.has(lib.id!)} canChange={canManageAi}
+                            onChanged={(x) => setNeverAi((s) => { const n = new Set(s); if (x) n.add(lib.id!); else n.delete(lib.id!); return n; })} />
+                        )}
+                      </td>
+                      {/* Repeated on every row, so quiet: Edit, and Delete folded into More. */}
+                      <td className={`${tbl.td} text-right`}>
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button type="button" onClick={() => openEdit(lib)} className={btnRow}>Edit</button>
+                          <MoreMenu iconOnly label={`More for ${lib.name}`} triggerClass={btnIcon} items={[
+                            { icon: <Trash2 className="w-4 h-4" />, label: "Delete library", tone: "bad", onClick: () => initiateDelete(lib) },
+                          ]} />
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </PageBody>
     </PageShell>
   );

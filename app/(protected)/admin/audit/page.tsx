@@ -12,13 +12,14 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ScrollText, AlertTriangle, Filter, RefreshCw, Eye, Download, Upload, Pencil, Trash2, FileSignature, GitBranch, Lock, Unlock, ArrowUpRight, ShieldOff, AlertOctagon, Zap, FileText, Briefcase, Layers, KeyRound } from "lucide-react";
+import { ScrollText, AlertTriangle, Filter, ChevronDown, RefreshCw, Eye, Download, Upload, Pencil, Trash2, FileSignature, GitBranch, Lock, Unlock, ArrowUpRight, ShieldOff, AlertOctagon, Zap, FileText, Briefcase, Layers, KeyRound } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import IsoGuidance from "@/components/ui/IsoGuidance";
 import ViewTabs, { ACTIVITY_VIEWS } from "@/components/navigation/ViewTabs";
 import { PageShell } from "@/components/ui/PageShell";
-import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
+import { PageHero, PageBody, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
+import { tbl, btnRow, link, StatusTag, RowEdge, Problem, shortDateTime, type Tone } from "@/components/admin/kit";
 import { bandInput, bandInputIcon, bandSelect, plural } from "@/components/admin/band";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 
@@ -43,43 +44,43 @@ interface AuditRow {
 interface LibraryLite { id: string; name: string }
 
 // Maps an action string to a (icon, tone) for the chip on each row.
-const ACTION_STYLE: Record<string, { icon: React.ComponentType<{ className?: string }>; tone: string }> = {
-  VIEW:                  { icon: Eye,           tone: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" },
-  DOWNLOAD:              { icon: Download,      tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  UPLOAD:                { icon: Upload,        tone: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900" },
-  CHECK_OUT:             { icon: Lock,          tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  CHECK_IN:              { icon: Unlock,        tone: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900" },
-  ABANDON:               { icon: Unlock,        tone: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-900" },
-  FORCE_RELEASE:         { icon: AlertOctagon,  tone: "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-900" },
-  JOIN:                  { icon: ArrowUpRight,  tone: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" },
-  REV_UP:                { icon: GitBranch,     tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  REV_BACKFILL:          { icon: GitBranch,     tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  SUPERSEDE_DOC:         { icon: ArrowUpRight,  tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  REVERT:                { icon: ArrowUpRight,  tone: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-900" },
-  ARCHIVE_DOC:           { icon: ShieldOff,     tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border-strong)]" },
-  DOC_SPLIT:             { icon: GitBranch,     tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  CREATED_FROM_SPLIT:    { icon: Zap,      tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  DOC_MERGED:            { icon: GitBranch,     tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  CREATED_FROM_MERGE:    { icon: Zap,      tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  DOC_RENUMBERED:        { icon: Pencil,        tone: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-900" },
-  SET_REV_UP:            { icon: GitBranch,     tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  DOC_SPLIT_REVERSED:    { icon: AlertTriangle, tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  DOC_MERGE_REVERSED:    { icon: AlertTriangle, tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  DOC_RENUMBER_REVERSED: { icon: AlertTriangle, tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  HOLD_OPENED:           { icon: AlertOctagon,  tone: "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-900" },
-  HOLD_RELEASED:         { icon: Unlock,        tone: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900" },
-  MILESTONE_CREATED:     { icon: Zap,      tone: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900" },
-  MILESTONE_UPDATED:     { icon: Pencil,        tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  MILESTONE_COMPLETED:   { icon: Zap,      tone: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900" },
-  MILESTONE_MISSED:      { icon: AlertOctagon,  tone: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-900" },
-  MILESTONE_BLOCKED:     { icon: AlertOctagon,  tone: "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-900" },
-  MILESTONE_DELETED:     { icon: Trash2,        tone: "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-900" },
-  EQUIPMENT_STATE_CHANGED: { icon: Layers,      tone: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-900" },
-  NOTE_CREATED:          { icon: Pencil,        tone: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" },
-  NOTE_DELETED:          { icon: Trash2,        tone: "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-900" },
-  PROJECT_CREATED:       { icon: Briefcase,     tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  MARKUP_REQUESTED:      { icon: FileSignature, tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  DATA_EXPORT:           { icon: Download,      tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
+const ACTION_STYLE: Record<string, { icon: React.ComponentType<{ className?: string }>; tone: Tone }> = {
+  VIEW:                  { icon: Eye, tone: "none" },
+  DOWNLOAD:              { icon: Download, tone: "none" },
+  UPLOAD:                { icon: Upload, tone: "none" },
+  CHECK_OUT:             { icon: Lock, tone: "none" },
+  CHECK_IN:              { icon: Unlock, tone: "none" },
+  ABANDON:               { icon: Unlock, tone: "warn" },
+  FORCE_RELEASE:         { icon: AlertOctagon, tone: "bad" },
+  JOIN:                  { icon: ArrowUpRight, tone: "none" },
+  REV_UP:                { icon: GitBranch, tone: "none" },
+  REV_BACKFILL:          { icon: GitBranch, tone: "none" },
+  SUPERSEDE_DOC:         { icon: ArrowUpRight, tone: "none" },
+  REVERT:                { icon: ArrowUpRight, tone: "warn" },
+  ARCHIVE_DOC:           { icon: ShieldOff, tone: "none" },
+  DOC_SPLIT:             { icon: GitBranch, tone: "none" },
+  CREATED_FROM_SPLIT:    { icon: Zap, tone: "none" },
+  DOC_MERGED:            { icon: GitBranch, tone: "none" },
+  CREATED_FROM_MERGE:    { icon: Zap, tone: "none" },
+  DOC_RENUMBERED:        { icon: Pencil, tone: "warn" },
+  SET_REV_UP:            { icon: GitBranch, tone: "none" },
+  DOC_SPLIT_REVERSED:    { icon: AlertTriangle, tone: "none" },
+  DOC_MERGE_REVERSED:    { icon: AlertTriangle, tone: "none" },
+  DOC_RENUMBER_REVERSED: { icon: AlertTriangle, tone: "none" },
+  HOLD_OPENED:           { icon: AlertOctagon, tone: "bad" },
+  HOLD_RELEASED:         { icon: Unlock, tone: "none" },
+  MILESTONE_CREATED:     { icon: Zap, tone: "none" },
+  MILESTONE_UPDATED:     { icon: Pencil, tone: "none" },
+  MILESTONE_COMPLETED:   { icon: Zap, tone: "none" },
+  MILESTONE_MISSED:      { icon: AlertOctagon, tone: "warn" },
+  MILESTONE_BLOCKED:     { icon: AlertOctagon, tone: "bad" },
+  MILESTONE_DELETED:     { icon: Trash2, tone: "bad" },
+  EQUIPMENT_STATE_CHANGED: { icon: Layers, tone: "warn" },
+  NOTE_CREATED:          { icon: Pencil, tone: "none" },
+  NOTE_DELETED:          { icon: Trash2, tone: "bad" },
+  PROJECT_CREATED:       { icon: Briefcase, tone: "none" },
+  MARKUP_REQUESTED:      { icon: FileSignature, tone: "none" },
+  DATA_EXPORT:           { icon: Download, tone: "none" },
 };
 
 const RESOURCE_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -106,6 +107,7 @@ export default function AuditLogPage() {
   const [userQuery, setUserQuery] = useState("");
   const [range, setRange] = useState<"24h" | "7d" | "30d" | "all">("7d");
   const [limit, setLimit] = useState(200);
+  const [openIds, setOpenIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!activeOrgId) return;
@@ -190,7 +192,8 @@ export default function AuditLogPage() {
     const topAction = [...byAction.entries()].sort((a, b) => b[1] - a[1])[0] ?? null;
     const topUser = [...byUser.entries()].sort((a, b) => b[1] - a[1])[0] ?? null;
     const deletes = [...byAction.entries()].filter(([k]) => /DELET|ARCHIVE|REVERS|FORCE/.test(k)).reduce((s, [, n]) => s + n, 0);
-    return { total: filtered.length, topAction, topUser, deletes };
+    const items = new Set(filtered.map((r) => `${r.resourceType}:${r.resourceId}`)).size;
+    return { total: filtered.length, topAction, topUser, deletes, people: byUser.size, items };
   }, [filtered]);
 
   if (!canRead) {
@@ -216,17 +219,15 @@ export default function AuditLogPage() {
           title={answer}
           sub={
             <>
-              {kpis.total > 0 && (
-                <>
-                  <span className={kpis.deletes > 0 ? "font-semibold text-rose-200" : ""}>{kpis.deletes} delete{kpis.deletes === 1 ? "" : "s"}, undo{kpis.deletes === 1 ? "" : "s"} or forced change{kpis.deletes === 1 ? "" : "s"}</span>
-                  {kpis.topAction && <> · most common: <b className="text-white">{prettyAction(kpis.topAction[0])}</b> ({kpis.topAction[1]})</>}
-                  {kpis.topUser && <> · most active: <b className="text-white">{kpis.topUser[0]}</b> ({kpis.topUser[1]})</>}
-                  {" · "}
-                </>
-              )}
-              Who did what, and when. <IsoGuidance topic="audit_log" size="md" />
+              {kpis.topUser ? <>Most active: {kpis.topUser[0]} ({kpis.topUser[1]}). </> : "Who did what, and when. "}
+              <IsoGuidance topic="audit_log" size="md" />
             </>
           }
+          facts={kpis.total > 0 ? [
+            { label: "Deletes and undos", value: kpis.deletes, tone: kpis.deletes > 0 ? "bad" : undefined },
+            { label: "People", value: kpis.people },
+            { label: "Items touched", value: kpis.items },
+          ] : undefined}
           tools={
             <button type="button" className={heroQuiet} onClick={fetchRows} disabled={loading} aria-label="Refresh">
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> <span className="max-sm:hidden">Refresh</span>
@@ -247,7 +248,7 @@ export default function AuditLogPage() {
           <div className="[&>div]:mb-0">
             <ViewTabs tabs={ACTIVITY_VIEWS} variant="dark" />
           </div>
-          {/* Filters steer the whole log, so they sit in the band. */}
+          {/* Filters steer the whole log, so they sit in the header. */}
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <div className="relative flex-1 min-w-[200px]">
               <Filter className={bandInputIcon} />
@@ -260,7 +261,7 @@ export default function AuditLogPage() {
               />
             </div>
             <Select label="When" value={range} onChange={(v) => setRange(v as typeof range)} options={[
-              { value: "24h", label: "Last 24h" },
+              { value: "24h", label: "Last 24 hours" },
               { value: "7d",  label: "Last 7 days" },
               { value: "30d", label: "Last 30 days" },
               { value: "all", label: "All time" },
@@ -284,41 +285,45 @@ export default function AuditLogPage() {
         </PageHero>
 
         <PageBody>
-        <Card pad={false} className="overflow-hidden">
           {error && rows.length > 0 && (
-            <p role="alert" className="px-4 sm:px-5 pt-4 text-[13px] text-red-700 dark:text-red-400 flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> Couldn&apos;t load the audit log: {error}{" "}
-              <button type="button" onClick={() => void fetchRows()} className="font-bold underline">Try again</button>
-            </p>
+            <Problem retry={() => void fetchRows()}>Couldn&apos;t load the audit log: {error}</Problem>
           )}
           {loading && rows.length === 0 ? (
-            <LoadingBlock what="the audit log" className="border-0 rounded-none p-5" />
+            <LoadingBlock what="the audit log" />
           ) : error && rows.length === 0 ? (
-            <p role="alert" className="py-12 px-5 text-center text-[14px] text-red-700 dark:text-red-400">
-              The audit log didn&apos;t load: {error}{" "}
-              <button type="button" onClick={() => void fetchRows()} className="font-bold underline">Try again</button>
-            </p>
+            <Problem retry={() => void fetchRows()}>The audit log didn&apos;t load: {error}</Problem>
           ) : filtered.length === 0 ? (
-            <div className="py-12 text-center text-[14px] text-[var(--color-text-muted)]">No matching events. Widen the dates or clear a filter.</div>
+            <div className={`${tbl.wrap} py-10 text-center text-[var(--color-text-muted)]`}>No matching events. Widen the dates or clear a filter.</div>
           ) : (
-            <ul className="divide-y divide-[var(--color-border)]">
-              {filtered.map((r) => (
-                <AuditRowItem key={r.id} row={r} docMeta={docMeta.get(r.resourceId)} />
-              ))}
-            </ul>
-          )}
-          {/* The log keeps going: say how much is shown and fetch more. */}
-          {rows.length > 0 && (
-            <div className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] flex items-center justify-between gap-3 text-[13px]">
-              <span className="text-[var(--color-text-muted)]">{filtered.length} of {rows.length} loaded shown</span>
-              {rows.length >= limit && (
-                <button type="button" onClick={() => setLimit((n) => n + 200)} className="font-bold text-[var(--color-accent-text)] hover:underline">
-                  Show 200 more
-                </button>
-              )}
+            <div className={tbl.wrap}>
+              <table className={tbl.table}>
+                <thead className={`${tbl.thead} max-md:hidden`}>
+                  <tr>
+                    <th className={`${tbl.th} w-[150px]`}>When</th>
+                    <th className={tbl.th}>Action</th>
+                    <th className={tbl.th}>Item</th>
+                    <th className={tbl.th}>Who</th>
+                    <th className={`${tbl.th} w-[1%]`}><span className="sr-only">Details</span></th>
+                  </tr>
+                </thead>
+                <tbody className={tbl.tbody}>
+                  {filtered.map((r) => (
+                    <AuditRowItem key={r.id} row={r} docMeta={docMeta.get(r.resourceId)}
+                      open={openIds.has(r.id)} onToggle={() => setOpenIds((prev) => { const n = new Set(prev); if (n.has(r.id)) n.delete(r.id); else n.add(r.id); return n; })} />
+                  ))}
+                </tbody>
+              </table>
+              {/* The log keeps going: say how much is shown and fetch more. */}
+              <div className={tbl.foot}>
+                <span className="text-[var(--color-text-muted)]">{filtered.length} of {rows.length} loaded shown</span>
+                {rows.length >= limit && (
+                  <button type="button" onClick={() => setLimit((n) => n + 200)} className={link}>
+                    Show 200 more
+                  </button>
+                )}
+              </div>
             </div>
           )}
-        </Card>
         </PageBody>
     </PageShell>
   );
@@ -330,7 +335,7 @@ interface SelectProps {
   onChange: (v: string) => void;
   options: Array<{ value: string; label: string }>;
 }
-/** A filter on the dark band. */
+/** A filter in the header. */
 function Select({ label, value, onChange, options }: SelectProps) {
   return (
     <select aria-label={label} value={value} onChange={(e) => onChange(e.target.value)} className={`${bandSelect} max-w-[12rem]`}>
@@ -342,11 +347,14 @@ function Select({ label, value, onChange, options }: SelectProps) {
 interface AuditRowItemProps {
   row: AuditRow;
   docMeta?: { documentNumber: string | null; title: string | null; libraryId: string };
+  open: boolean;
+  onToggle: () => void;
 }
-function AuditRowItem({ row, docMeta }: AuditRowItemProps) {
-  const style = ACTION_STYLE[row.action] ?? { icon: ScrollText, tone: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" };
+function AuditRowItem({ row, docMeta, open, onToggle }: AuditRowItemProps) {
+  const style = ACTION_STYLE[row.action] ?? { icon: ScrollText, tone: "none" as Tone };
   const ResIcon = RESOURCE_ICON[row.resourceType] ?? FileText;
   const Icon = style.icon;
+  const hasDetails = !!row.details && Object.keys(row.details).length > 0;
 
   const resourceHref = (() => {
     if (row.resourceType === "document" && docMeta?.libraryId) {
@@ -355,49 +363,53 @@ function AuditRowItem({ row, docMeta }: AuditRowItemProps) {
     if (row.resourceType === "project") return `/projects/${row.resourceId}`;
     return null;
   })();
+  const itemLabel = docMeta
+    ? <><span className="font-display text-[16px] font-semibold tabular-nums">{docMeta.documentNumber ?? ""}</span>{docMeta.title && docMeta.title !== docMeta.documentNumber && <span className="text-[var(--color-text-muted)]"> {docMeta.title}</span>}</>
+    : <span className="text-[var(--color-text-muted)] capitalize">{row.resourceType}</span>;
 
   return (
-    <li className="px-4 sm:px-5 py-3 hover:bg-[var(--color-surface-2)] transition-colors flex items-start gap-3">
-      <div className={`shrink-0 w-8 h-8 rounded-lg border ${style.tone} flex items-center justify-center`}>
-        <Icon className="w-4 h-4" />
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className={`text-[13px] font-semibold px-1.5 py-0.5 rounded-md border ${style.tone}`}>
-            {prettyAction(row.action)}
+    <>
+      <tr className={`${tbl.tr} max-md:grid max-md:grid-cols-[1fr_auto] max-md:py-1.5`}>
+        <td className={`${tbl.td} relative max-md:hidden whitespace-nowrap text-[14px] text-[var(--color-text-muted)]`}>
+          {style.tone === "bad" && <RowEdge tone="bad" />}
+          <time dateTime={row.timestamp} title={shortDateTime(row.timestamp)}>{formatTime(row.timestamp)}</time>
+        </td>
+        <td className={`${tbl.td} relative max-md:py-1 whitespace-nowrap`}>
+          {style.tone === "bad" && <span className="md:hidden"><RowEdge tone="bad" /></span>}
+          {style.tone === "none"
+            ? <span className="inline-flex items-center gap-2 text-[15px] text-[var(--color-text)]"><Icon className="w-4 h-4 text-[var(--color-text-muted)]" /> {prettyAction(row.action)}</span>
+            : <StatusTag tone={style.tone} colored={style.tone === "bad"} className="text-[15px]">{prettyAction(row.action)}</StatusTag>}
+          <span className="md:hidden ml-2 text-[13px] text-[var(--color-text-muted)]">{formatTime(row.timestamp)}</span>
+        </td>
+        <td className={`${tbl.td} max-md:col-span-2 max-md:row-start-2 max-md:py-0.5 min-w-0`}>
+          <span className="inline-flex items-baseline gap-1.5 min-w-0 max-w-[48ch]">
+            <ResIcon className="w-3.5 h-3.5 shrink-0 self-center text-[var(--color-text-faint)]" />
+            {resourceHref
+              ? <Link href={resourceHref} className="truncate hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{itemLabel}</Link>
+              : <span className="truncate">{itemLabel}</span>}
           </span>
-          <span className="text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1">
-            <ResIcon className="w-3 h-3" /> {row.resourceType}
-          </span>
-          {docMeta && (
-            <span className="text-xs font-mono text-[var(--color-text)] truncate max-w-[40ch]">
-              {docMeta.documentNumber ? `${docMeta.documentNumber} · ` : ""}{docMeta.title ?? row.resourceId}
-            </span>
+        </td>
+        <td className={`${tbl.td} max-md:col-span-2 max-md:row-start-3 max-md:pt-0.5 text-[14px] text-[var(--color-text-muted)]`}>
+          <span className="text-[var(--color-text)]">{row.userEmail || row.userId}</span>{row.userRole ? <span> ({row.userRole})</span> : null}
+        </td>
+        <td className={`${tbl.td} max-md:col-start-2 max-md:row-start-1 max-md:py-1 text-right`}>
+          {hasDetails && (
+            <button type="button" onClick={onToggle} aria-expanded={open} className={btnRow}>
+              Details <ChevronDown className={`w-3.5 h-3.5 transition-transform ${open ? "rotate-180" : ""}`} />
+            </button>
           )}
-          {!docMeta && (
-            <span className="text-xs font-mono text-[var(--color-text-muted)] truncate max-w-[40ch]">{row.resourceId}</span>
-          )}
-          {resourceHref && (
-            <Link href={resourceHref} className="text-[11px] font-bold text-[var(--color-accent-text)] hover:underline inline-flex items-center gap-0.5">
-              Open <ArrowUpRight className="w-3 h-3" />
-            </Link>
-          )}
-        </div>
-        <div className="text-[11px] text-[var(--color-text-muted)] mt-1 flex items-center flex-wrap gap-x-2 gap-y-0.5">
-          <span>{row.userEmail || row.userId}{row.userRole ? ` (${row.userRole})` : ""}</span>
-          <span className="text-[var(--color-text-faint)]">·</span>
-          <time className="text-[var(--color-text-muted)]" dateTime={row.timestamp}>{formatTime(row.timestamp)}</time>
-        </div>
-        {(row.details && Object.keys(row.details).length > 0) && (
-          <details className="mt-1.5">
-            <summary className="text-[11px] font-bold text-[var(--color-text-muted)] cursor-pointer hover:text-[var(--color-text)] transition-colors">Details</summary>
-            <pre className="mt-1 text-[11px] text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded p-2 overflow-x-auto">
+        </td>
+      </tr>
+      {open && hasDetails && (
+        <tr className="bg-[var(--color-surface-2)]">
+          <td colSpan={5} className="px-4 py-3">
+            <pre className="text-[13px] text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-md p-3 overflow-x-auto font-mono">
               {JSON.stringify(row.details, null, 2)}
             </pre>
-          </details>
-        )}
-      </div>
-    </li>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 
@@ -447,7 +459,8 @@ function exportAuditCsv(
 }
 
 function prettyAction(action: string): string {
-  return action.toLowerCase().replace(/_/g, " ").replace(/(^|\s)\w/g, (c) => c.toUpperCase());
+  const words = action.toLowerCase().replace(/_/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 function formatTime(iso: string): string {
@@ -458,7 +471,7 @@ function formatTime(iso: string): string {
     if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
     if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
     if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)}d ago`;
-    return d.toLocaleString();
+    return shortDateTime(iso);
   } catch {
     return "";
   }

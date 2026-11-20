@@ -16,8 +16,8 @@
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
-  Loader2, Check, X, RefreshCw, AlertTriangle, FileText,
-  Sparkles, ShieldCheck, Info,
+  Loader2, Check, X, RefreshCw,
+  ShieldCheck, Info,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
@@ -27,17 +27,18 @@ import {
   type LinkProposal, type ProposalTier,
 } from "@/lib/linkProposals";
 import { PageShell } from "@/components/ui/PageShell";
-import { PageHero, PageBody, Card, heroPrimary } from "@/components/ui/PageHero";
+import { PageHero, PageBody, heroPrimary } from "@/components/ui/PageHero";
+import { tbl, sheet, btnRow, StatusTag, Section, Problem, type Tone } from "@/components/admin/kit";
 import { plural } from "@/components/admin/band";
 import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
 import ConnectionSkillsPanel from "@/components/intelligence/ConnectionSkillsPanel";
 import EstateReviewPanel from "@/components/intelligence/EstateReviewPanel";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 
-const TIER_STYLE: Record<ProposalTier, string> = {
-  provable: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300",
-  strong: "bg-[var(--color-surface-2)] text-[var(--color-text)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)]",
-  inferred: "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300",
+const TIER_TONE: Record<ProposalTier, Tone> = {
+  provable: "good",
+  strong: "none",
+  inferred: "warn",
 };
 
 /** Mirrors ProposerInputs from the engine — what each skill had to work with. */
@@ -180,131 +181,105 @@ export default function ProposedLinksPage() {
       </PageHero>
 
       <PageBody>
-      {(error || lastRun) && (
-        <Card label="Last scan">
-          {error && (
-            <p role="alert" className="mb-2 flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 text-rose-600 mt-0.5 shrink-0" />
-              <span className="text-[13px] text-rose-700 dark:text-rose-300">{error}</span>
-            </p>
-          )}
-          {lastRun && (
-            <div className="space-y-1">
-              <div className="text-[14px] font-bold text-[var(--color-text)]">
-                Scanned {lastRun.scanned} documents · {lastRun.autoApplied} provable connection{lastRun.autoApplied === 1 ? "" : "s"} applied · {lastRun.proposed} queued for review
-              </div>
-              {lastRun.evidenceLost > 0 && (
-                <div className="text-[13px] text-amber-700 dark:text-amber-400">
-                  {lastRun.evidenceLost} existing system link{lastRun.evidenceLost === 1 ? "" : "s"} no longer match the reason they were made. Marked, not removed.
-                </div>
-              )}
-              {lastRun.notes.map((n) => (
-                <div key={n} className="text-[13px] text-[var(--color-text-muted)] flex items-center gap-1">
-                  <Info className="w-3.5 h-3.5" /> {n}
+      {error && <Problem>{error}</Problem>}
+      {lastRun && (
+        <Section label="Last scan">
+          <div className={sheet}>
+            <dl className="grid grid-cols-3 divide-x divide-[var(--color-border)]">
+              {[["Documents scanned", lastRun.scanned], ["Linked for you", lastRun.autoApplied], ["Waiting for review", lastRun.proposed]].map(([l, v]) => (
+                <div key={String(l)} className="px-4 py-3">
+                  <dt className="text-[13px] text-[var(--color-text-muted)]">{l}</dt>
+                  <dd className="font-display text-[24px] leading-tight font-semibold tabular-nums text-[var(--color-text)]">{v}</dd>
                 </div>
               ))}
-              {/* Zero findings explain themselves: which input was empty and
-                  what feeds it. Silence here reads as "broken"; this is the
-                  honest answer instead. */}
-              {lastRun.proposed === 0 && lastRun.autoApplied === 0 && lastRun.inputs && (
-                <div className="pt-2 mt-2 border-t border-[var(--color-border)] space-y-1">
-                  <div className="text-[13px] font-bold text-[var(--color-text)]">
-                    Why nothing was found
-                  </div>
-                  {diagnose(lastRun.inputs).map((d) => (
-                    <div key={d} className="text-[13px] text-[var(--color-text-muted)] flex items-start gap-1.5">
-                      <span aria-hidden className="shrink-0">·</span> {d}
-                    </div>
-                  ))}
-                  {diagnose(lastRun.inputs).length === 0 && (
-                    <div className="text-[13px] text-[var(--color-text-muted)]">
-                      Everything it needs is there. What it can find is likely already linked or was decided before.
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-        </Card>
+            </dl>
+            {(lastRun.evidenceLost > 0 || lastRun.notes.length > 0 || (lastRun.proposed === 0 && lastRun.autoApplied === 0 && lastRun.inputs)) && (
+              <div className="border-t border-[var(--color-border)] px-4 py-3 space-y-1 text-[14px]">
+                {lastRun.evidenceLost > 0 && (
+                  <StatusTag tone="warn">{lastRun.evidenceLost} existing system link{lastRun.evidenceLost === 1 ? " no longer matches" : "s no longer match"} its reason. Marked, not removed.</StatusTag>
+                )}
+                {lastRun.notes.map((n) => (
+                  <div key={n} className="text-[var(--color-text-muted)] flex items-center gap-1.5"><Info className="w-3.5 h-3.5 shrink-0" /> {n}</div>
+                ))}
+                {/* Zero findings explain themselves: which input was empty and
+                    what feeds it. Silence here reads as "broken"; this is the
+                    honest answer instead. */}
+                {lastRun.proposed === 0 && lastRun.autoApplied === 0 && lastRun.inputs && (
+                  <>
+                    <div className="font-semibold text-[var(--color-text)]">Why nothing was found</div>
+                    <ul className="list-disc pl-5 text-[var(--color-text-muted)]">
+                      {diagnose(lastRun.inputs).map((d) => <li key={d}>{d}</li>)}
+                      {diagnose(lastRun.inputs).length === 0 && <li>Everything it needs is there. What it can find is likely already linked or was decided before.</li>}
+                    </ul>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        </Section>
       )}
 
       {rows === null && loadError ? (
-        <Card>
-          <p role="alert" className="text-[14px] text-rose-700 dark:text-rose-400">
-            Couldn&apos;t load the proposals: {loadError}{" "}
-            <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
-          </p>
-        </Card>
+        <Problem retry={() => void refresh()}>Couldn&apos;t load the proposals: {loadError}</Problem>
       ) : rows === null ? (
-        <Card><LoadingBlock what="proposed connections" className="border-0 p-0" /></Card>
+        <LoadingBlock what="proposed connections" />
       ) : rows.length === 0 ? (
-        <Card className="text-center py-10 space-y-2">
-          <Sparkles className="w-7 h-7 mx-auto text-[var(--color-text-faint)]" />
-          <div className="text-[14px] font-bold text-[var(--color-text)]">All decided</div>
-          <p className="text-[14px] text-[var(--color-text-muted)] max-w-md mx-auto">
+        <div className={`${sheet} px-5 py-8 text-center`}>
+          <StatusTag tone="good">All decided.</StatusTag>
+          <p className="mt-1 text-[15px] text-[var(--color-text-muted)] max-w-xl mx-auto">
             {canRun
-              ? "“Find connections” reads your off-page connectors, equipment tags and aliases. Sure links are made for you; anything less sure waits here."
-              : "When the system finds connections that need a human decision, they'll appear here."}
+              ? "Find connections reads off-page connectors, equipment tags and aliases. Sure links are made for you; the rest wait here."
+              : "Connections that need a person's decision show up here."}
           </p>
-        </Card>
+        </div>
       ) : (
-        <Card label="Waiting for a decision" pad={false} className="overflow-hidden">
-          <div className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
-          {rows.map((p) => (
-            <div key={p.id} className="px-4 sm:px-5 py-3.5">
-              <div className="flex items-start gap-3 flex-wrap">
-                <div className="flex-1 min-w-[16rem] space-y-1.5">
-                  {/* The pair */}
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <Link href={docLink(p.doc)} className="inline-flex items-center gap-1.5 text-[14px] font-bold text-[var(--color-text)] hover:underline">
-                      <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {docLabel(p.doc)}
-                    </Link>
-                    <span className="text-[var(--color-text-faint)] text-xs">↔</span>
-                    <Link href={docLink(p.target)} className="inline-flex items-center gap-1.5 text-[14px] font-bold text-[var(--color-text)] hover:underline">
-                      <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {docLabel(p.target)}
-                    </Link>
-                  </div>
-
-                  {/* Why — never a bare confidence number */}
-                  <div className="text-[13px] text-[var(--color-text)]">{p.evidence?.summary}</div>
-                  {p.evidence?.detail && (
-                    <div className="text-[12px] text-[var(--color-text-muted)]">{p.evidence.detail}</div>
-                  )}
-
-                  <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
-                    <span className={`px-1.5 py-0.5 rounded-full text-[11px] font-black uppercase tracking-wide ${TIER_STYLE[p.tier]}`}>
-                      {TIER_LABELS[p.tier]}
-                    </span>
-                    <span className="text-[11px] font-bold text-[var(--color-text-muted)]">
-                      {proposerLabel(p.proposer, p.evidence)}
-                    </span>
-                    {p.source_rev && (
-                      <span className="text-[11px] text-[var(--color-text-faint)]">from rev {p.source_rev}</span>
+        <Section label="Waiting for a decision" action={<span className="text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><ShieldCheck className="w-3.5 h-3.5" /> &ldquo;Not related&rdquo; sticks until a new revision gives a new reason</span>}>
+          <div className={tbl.wrap}>
+            <table className={tbl.table}>
+              <thead className={`${tbl.thead} max-md:hidden`}>
+                <tr>
+                  <th className={tbl.th}>Documents</th>
+                  <th className={tbl.th}>Why</th>
+                  <th className={`${tbl.th} max-lg:hidden`}>Found by</th>
+                  {canDecide && <th className={`${tbl.th} w-[1%]`}><span className="sr-only">Decide</span></th>}
+                </tr>
+              </thead>
+              <tbody className={tbl.tbody}>
+                {rows.map((p) => (
+                  <tr key={p.id} className={`${tbl.tr} max-md:flex max-md:flex-col max-md:py-1`}>
+                    <td className={`${tbl.td} max-md:py-1 align-top`}>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Link href={docLink(p.doc)} className="font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{docLabel(p.doc)}</Link>
+                        <span aria-label="and" className="text-[var(--color-text-muted)]">↔</span>
+                        <Link href={docLink(p.target)} className="font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{docLabel(p.target)}</Link>
+                      </div>
+                    </td>
+                    <td className={`${tbl.td} max-md:py-1 align-top`}>
+                      <div className="text-[15px] text-[var(--color-text)]">{p.evidence?.summary}</div>
+                      {p.evidence?.detail && <div className="text-[14px] text-[var(--color-text-muted)]">{p.evidence.detail}</div>}
+                    </td>
+                    <td className={`${tbl.td} max-md:py-1 align-top max-lg:hidden`}>
+                      <StatusTag tone={TIER_TONE[p.tier]}>{TIER_LABELS[p.tier]}</StatusTag>
+                      <div className="text-[13px] text-[var(--color-text-muted)]">{proposerLabel(p.proposer, p.evidence)}{p.source_rev ? `, from rev ${p.source_rev}` : ""}</div>
+                    </td>
+                    {canDecide && (
+                      <td className={`${tbl.td} max-md:py-1 align-top`}>
+                        <div className="flex items-center md:justify-end gap-1.5">
+                          <button type="button" onClick={() => void decide(p, false)} disabled={busyId === p.id} className={btnRow}>
+                            <X className="w-3.5 h-3.5" /> Not related
+                          </button>
+                          <button type="button" onClick={() => void decide(p, true)} disabled={busyId === p.id} className={btnRow}>
+                            {busyId === p.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Link them
+                          </button>
+                        </div>
+                      </td>
                     )}
-                  </div>
-                </div>
-
-                {canDecide && (
-                  <div className="flex items-center gap-1.5">
-                    <button type="button" onClick={() => void decide(p, false)} disabled={busyId === p.id}
-                      className="inline-flex items-center gap-1 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-rose-600 disabled:opacity-50">
-                      <X className="w-3.5 h-3.5" /> Not related
-                    </button>
-                    <button type="button" onClick={() => void decide(p, true)} disabled={busyId === p.id}
-                      className="inline-flex items-center gap-1 h-9 px-3 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[13px] font-bold hover:opacity-90 disabled:opacity-50">
-                      {busyId === p.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Link them
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-          <div className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] flex items-center gap-1.5 text-[12px] text-[var(--color-text-muted)]">
-            <ShieldCheck className="w-3.5 h-3.5 text-[var(--color-text-faint)]" />
-            Pairs marked “Not related” stay that way unless a new revision gives a new reason.
-          </div>
-        </Card>
+        </Section>
       )}
 
       <EstateReviewPanel />

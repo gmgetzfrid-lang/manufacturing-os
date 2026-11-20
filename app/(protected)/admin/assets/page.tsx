@@ -13,9 +13,9 @@ import React, { useEffect, useState, useCallback, useMemo, Suspense } from "reac
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Tag, Plus, Search, Camera, Loader2,
-  Image as ImageIcon, MapPin, AlertTriangle,
+  Image as ImageIcon, AlertTriangle,
   Lock, X, Save, Edit3, Trash2, Factory,
-  FileText, Upload, QrCode, BookMarked, ArrowRight,
+  FileText, Upload, QrCode, BookMarked,
   FolderOpen, Link2, ArrowLeft, Waypoints, ChevronDown, BookMarked as BookMarkedIcon,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
@@ -54,7 +54,8 @@ import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Moda
 import { useDraft } from "@/hooks/useDraft";
 import { badgeText } from "@/lib/badge";
 import { PageShell } from "@/components/ui/PageShell";
-import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
+import { PageHero, PageBody, Card, heroPrimary, heroQuiet, type HeroFact } from "@/components/ui/PageHero";
+import { tbl, sheet, link, btnQuiet, btnRow, btnIcon, btnDanger, StatusTag, RowEdge, Problem, Section } from "@/components/admin/kit";
 import { bandInput, bandInputIcon, bandSelect, bandSeg, bandSegItem, plural } from "@/components/admin/band";
 
 // DocCtrl belongs here: document controllers own the asset↔document wiring
@@ -314,7 +315,12 @@ function AssetsPageInner() {
         ? (scope.length === 0 ? "Everything is filed." : `${plural(scope.length, "piece")} of equipment need an area.`)
         : scope.length === 0
           ? (unitFilter ? "No equipment here yet." : "No equipment yet.")
-          : `${plural(scope.length, "piece")} of equipment${scopeNoPhotos > 0 ? `, ${scopeNoPhotos.toLocaleString()} without photos` : ""}.`;
+          : `${plural(scope.length, "piece")} of equipment.`;
+  const facts: HeroFact[] | undefined = loading || error || scope.length === 0 ? undefined : [
+    ...(!unitFilter ? [{ label: "Operating areas", value: book.units.length }] : []),
+    { label: "Without photos", value: scopeNoPhotos.toLocaleString(), tone: scopeNoPhotos > 0 ? "warn" as const : undefined },
+    ...(!unitFilter && unitCounts.unassigned > 0 ? [{ label: "Not in an area", value: unitCounts.unassigned.toLocaleString(), tone: "warn" as const }] : []),
+  ];
   const sub = loading || error ? undefined : unitFilter ? (
     <>
       {unitFilter === "__unassigned" ? "Equipment with no operating area" : <>Unit {unitFilter}{currentUnit?.label ? ` · ${currentUnit.label}` : " · not in the Site Codebook yet"}</>}
@@ -322,9 +328,7 @@ function AssetsPageInner() {
     </>
   ) : (
     <>
-      {book.units.length > 0 ? plural(book.units.length, "operating area") : "No operating areas yet"}
-      {unitCounts.unassigned > 0 && <> · <span className="font-semibold text-amber-300">{unitCounts.unassigned.toLocaleString()} not in an area</span></>}
-      {searchActive && <> · {filtered.length.toLocaleString()} match the filters</>}
+      {book.units.length === 0 ? "No operating areas yet." : searchActive ? `${filtered.length.toLocaleString()} match the filters.` : "Pick an operating area to see its equipment, documents and flow."}
     </>
   );
   const primary = !isAdmin ? undefined : !unitFilter ? (
@@ -348,6 +352,7 @@ function AssetsPageInner() {
         back={unitFilter ? { onClick: () => setUnitFilter(null), label: "All operating areas" } : undefined}
         title={answer}
         sub={sub}
+        facts={facts}
         tools={isAdmin ? (
           <>
             {unitFilter && canEditEquipment && (
@@ -400,7 +405,7 @@ function AssetsPageInner() {
         {unitFilter && (currentUnit || (unitFilter !== "__unassigned" && canEditLinks)) && (
           <Card label="This unit's libraries"
             action={canEditLinks && unitFilter !== "__unassigned" ? (
-              <Link href="/admin/codebook" className="inline-flex items-center gap-1 text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+              <Link href="/admin/codebook" className={`inline-flex items-center gap-1 text-[14px] ${link}`}>
                 <Edit3 className="w-3.5 h-3.5" /> {currentUnit ? "Edit unit" : "Add this unit to the codebook"}
               </Link>
             ) : undefined}>
@@ -440,27 +445,21 @@ function AssetsPageInner() {
 
         {/* Grid */}
         {loading ? (
-          <Card><LoadingBlock what="the equipment" rows={6} className="border-0 p-0" /></Card>
+          <LoadingBlock what="the equipment" rows={6} />
         ) : error ? (
-          <Card>
-            <p role="alert" className="text-[14px] text-red-700 dark:text-red-400">
-              Couldn&apos;t load the equipment: {error}{" "}
-              <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
-            </p>
-          </Card>
+          <Problem retry={() => void refresh()}>Couldn&apos;t load the equipment: {error}</Problem>
         ) : unitFilter ? (
           // The unit hub: equipment by type, then every document that
           // references the unit's equipment.
           <>
             {filtered.length === 0 ? (
               unitFilter === "__unassigned" ? (
-                <Card className="text-center py-8">
-                  <p className="text-[14px] font-bold text-emerald-700 dark:text-emerald-400">No equipment is missing an operating area.</p>
-                  <button type="button" onClick={() => setUnitFilter(null)}
-                    className="mt-3 inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[13px] font-semibold">
+                <div className={`${sheet} text-center py-8`}>
+                  <StatusTag tone="good">No equipment is missing an operating area.</StatusTag>
+                  <div><button type="button" onClick={() => setUnitFilter(null)} className={`mt-3 ${btnQuiet}`}>
                     <ArrowLeft className="w-4 h-4" /> Back to all areas
-                  </button>
-                </Card>
+                  </button></div>
+                </div>
               ) : (
                 <EmptyState onCreate={canEditEquipment ? () => setCreating(true) : undefined} hasAny={assets.length > 0} />
               )
@@ -486,18 +485,18 @@ function AssetsPageInner() {
                         <ChevronDown className={`w-4 h-4 shrink-0 text-[var(--color-text-muted)] transition-transform ${open ? "" : "-rotate-90"}`} />
                         <span className="min-w-0">
                           <span className="flex items-center gap-2 flex-wrap">
-                            <span className="text-[14px] font-bold text-[var(--color-text)]">{g.name}</span>
-                            <span className="text-[13px] text-[var(--color-text-muted)]">{badgeText(g.list.length)}</span>
+                            <span className="font-display text-[17px] font-semibold text-[var(--color-text)]">{g.name}</span>
+                            <span className="text-[14px] text-[var(--color-text-muted)] tabular-nums">{badgeText(g.list.length)}</span>
                             {cb && (
-                              <span className="font-mono text-[11px] font-semibold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded px-1.5 py-0.5"
+                              <span className="text-[13px] text-[var(--color-text-muted)]"
                                 title={`Site Codebook equipment-type code ${cb.code}`}>
-                                code {cb.code}{cb.prefixes.length > 0 ? ` · ${cb.prefixes.join(" · ")}` : ""}
+                                Code <span className="font-display font-semibold text-[var(--color-text)]">{cb.code}</span>{cb.prefixes.length > 0 ? `, tags ${cb.prefixes.join(", ")}` : ""}
                               </span>
                             )}
                           </span>
                           {isUncat && (
-                            <span className="flex items-center gap-1 text-[12px] text-amber-700 dark:text-amber-400 font-semibold mt-0.5">
-                              <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> Sort these: tap Categorize on a card, or Auto-categorize below.
+                            <span className="flex items-center gap-1 text-[13px] text-[var(--state-held)] font-semibold mt-0.5">
+                              <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> Sort these: Categorize on a card, or Auto-categorize below.
                             </span>
                           )}
                         </span>
@@ -509,7 +508,7 @@ function AssetsPageInner() {
                             unitCode: unitFilter === "__unassigned" ? undefined : (unitFilter ?? undefined),
                           })}
                           aria-label={`Add equipment to ${g.name}`}
-                          className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] shrink-0">
+                          className={`${btnRow} shrink-0`}>
                           <Plus className="w-3.5 h-3.5" /> Asset
                         </button>
                       )}
@@ -521,23 +520,15 @@ function AssetsPageInner() {
                             typeId: g.typeId === "__none" ? undefined : g.typeId,
                             unitCode: unitFilter === "__unassigned" ? undefined : (unitFilter ?? undefined),
                           })}
-                          className="w-full rounded-xl bg-[var(--color-surface-2)] py-4 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+                          className="w-full rounded-md border border-dashed border-[var(--color-border-strong)] py-4 text-[14px] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]">
                           No {g.name.toLowerCase()} in this area yet{canEditEquipment ? ". Add the first." : "."}
                         </button>
                       </div>
                     ) : (
-                    <div className="px-4 sm:px-5 pb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-                      {g.list.map((a) => {
-                        const type = types.find((t) => t.id === a.type_id);
-                        const count = photoCounts.get(a.id) || 0;
-                        return (
-                          <AssetCard key={a.id} asset={a} type={type} photoCount={count} coverUrl={coverUrls.get(a.id)}
-                            onClick={() => count > 0 ? setCarouselOpenFor(a) : setSelectedAsset(a)}
-                            onEdit={canEditEquipment ? () => setSelectedAsset(a) : undefined}
-                            onAddPhotos={isAdmin ? () => setUploaderOpenFor(a) : undefined} />
-                        );
-                      })}
-                    </div>
+                    <AssetTable list={g.list} types={types} photoCounts={photoCounts} coverUrls={coverUrls}
+                      onOpen={(a) => (photoCounts.get(a.id) || 0) > 0 ? setCarouselOpenFor(a) : setSelectedAsset(a)}
+                      onEdit={canEditEquipment ? (a) => setSelectedAsset(a) : undefined}
+                      onAddPhotos={isAdmin ? (a) => setUploaderOpenFor(a) : undefined} />
                     ))}
                   </div>
                   );
@@ -551,59 +542,66 @@ function AssetsPageInner() {
             )}
           </>
         ) : book.units.length > 0 && !searchActive ? (
-          // The landing page IS the site: one card per operating area.
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {unitSummaries.map((s) => (
-              <UnitCard key={s.unit.code} summary={s} onOpen={() => setUnitFilter(s.unit.code)}
-                onEdit={canEditLinks ? () => router.push("/admin/codebook") : undefined} />
-            ))}
-            {unknownUnits.map(([code, n]) => (
-              <button key={code} type="button" onClick={() => setUnitFilter(code)}
-                className="text-left rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] hover:bg-[var(--color-surface-2)] p-5 transition-colors">
-                <div className="flex items-baseline gap-2 mb-1">
-                  <span className="font-mono text-[14px] font-bold text-[var(--color-text)]">{code}</span>
-                  <span className="text-[14px] font-bold text-[var(--color-text)]">Unknown unit</span>
-                </div>
-                <div className="text-[13px] text-[var(--color-text-muted)]">
-                  {plural(n, "asset")} carry this code, but it isn&apos;t in the Site Codebook yet.
-                </div>
-              </button>
-            ))}
-            {unitCounts.unassigned > 0 && (
-              <button type="button" onClick={() => setUnitFilter("__unassigned")}
-                className="text-left rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] hover:bg-[var(--color-surface-2)] p-5 transition-colors">
-                <div className="flex items-center gap-2 mb-1">
-                  <AlertTriangle className="w-4 h-4 text-amber-600" />
-                  <span className="text-[14px] font-bold text-[var(--color-text)]">No unit assigned</span>
-                </div>
-                <div className="text-[13px] text-amber-700 dark:text-amber-400 font-semibold">
-                  {plural(unitCounts.unassigned, "asset")} waiting to be filed under an operating area.
-                </div>
-              </button>
-            )}
+          // The landing page IS the site: one row per operating area.
+          <div className={tbl.wrap}>
+            <table className={tbl.table}>
+              <thead className={`${tbl.thead} max-sm:hidden`}>
+                <tr>
+                  <th className={tbl.th}>Operating area</th>
+                  <th className={`${tbl.th} text-right`}>Equipment</th>
+                  <th className={`${tbl.th} text-right`}>Without photos</th>
+                  <th className={`${tbl.th} max-lg:hidden`}>Most common</th>
+                  <th className={`${tbl.th} max-md:hidden text-right`}>Pinned libraries</th>
+                  {canEditLinks && <th className={`${tbl.th} w-12`}><span className="sr-only">Manage</span></th>}
+                </tr>
+              </thead>
+              <tbody className={tbl.tbody}>
+                {unitSummaries.map((s) => (
+                  <UnitRow key={s.unit.code} summary={s} onOpen={() => setUnitFilter(s.unit.code)}
+                    onEdit={canEditLinks ? () => router.push("/admin/codebook") : undefined} />
+                ))}
+                {unknownUnits.map(([code, n]) => (
+                  <tr key={code} onClick={() => setUnitFilter(code)} className={`${tbl.tr} cursor-pointer max-sm:grid max-sm:grid-cols-[1fr_auto]`}>
+                    <td className={`${tbl.td} relative`}>
+                      <RowEdge tone="warn" />
+                      <button type="button" onClick={(e) => { e.stopPropagation(); setUnitFilter(code); }} className="text-left">
+                        <span className="font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)] mr-2">{code}</span>
+                        <span className="font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">Unknown unit</span>
+                        <span className="block text-[13px] text-[var(--color-text-muted)]">Not in the Site Codebook yet</span>
+                      </button>
+                    </td>
+                    <td className={`${tbl.td} text-right font-display text-[16px] font-semibold tabular-nums`}>{n}</td>
+                    <td className={`${tbl.td} max-sm:hidden`} colSpan={canEditLinks ? 4 : 3} />
+                  </tr>
+                ))}
+                {unitCounts.unassigned > 0 && (
+                  <tr onClick={() => setUnitFilter("__unassigned")} className={`${tbl.tr} cursor-pointer max-sm:grid max-sm:grid-cols-[1fr_auto]`}>
+                    <td className={`${tbl.td} relative`}>
+                      <RowEdge tone="warn" />
+                      <button type="button" onClick={(e) => { e.stopPropagation(); setUnitFilter("__unassigned"); }} className="text-left font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
+                        No operating area
+                        <span className="block text-[13px] font-normal text-[var(--color-text-muted)]">Waiting to be filed</span>
+                      </button>
+                    </td>
+                    <td className={`${tbl.td} text-right font-display text-[16px] font-semibold tabular-nums text-[var(--state-held)]`}>{unitCounts.unassigned.toLocaleString()}</td>
+                    <td className={`${tbl.td} max-sm:hidden`} colSpan={canEditLinks ? 4 : 3} />
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         ) : filtered.length === 0 ? (
           <EmptyState onCreate={canEditEquipment ? () => setCreating(true) : undefined} hasAny={assets.length > 0} />
         ) : (
           // Search results (across every unit) or a no-codebook org's flat registry.
-          <Card label={searchActive ? `${plural(filtered.length, "match", "matches")}` : "All equipment"}>
-            <ShowMoreGrid items={filtered} render={(a) => {
-              const type = types.find((t) => t.id === a.type_id);
-              const count = photoCounts.get(a.id) || 0;
-              return (
-                <AssetCard
-                  key={a.id}
-                  asset={a}
-                  type={type}
-                  photoCount={count}
-                  coverUrl={coverUrls.get(a.id)}
-                  onClick={() => count > 0 ? setCarouselOpenFor(a) : setSelectedAsset(a)}
-                  onEdit={canEditEquipment ? () => setSelectedAsset(a) : undefined}
-                  onAddPhotos={isAdmin ? () => setUploaderOpenFor(a) : undefined}
-                />
-              );
-            }} />
-          </Card>
+          <Section label={searchActive ? `${plural(filtered.length, "match", "matches")}` : "All equipment"}>
+            <ShowMoreRows items={filtered} render={(list) => (
+              <AssetTable list={list} types={types} photoCounts={photoCounts} coverUrls={coverUrls} showType
+                onOpen={(a) => (photoCounts.get(a.id) || 0) > 0 ? setCarouselOpenFor(a) : setSelectedAsset(a)}
+                onEdit={canEditEquipment ? (a) => setSelectedAsset(a) : undefined}
+                onAddPhotos={isAdmin ? (a) => setUploaderOpenFor(a) : undefined} />
+            )} />
+          </Section>
         )}
 
         {/* The Site Codebook already knows the taxonomy: put it to work. */}
@@ -616,11 +614,11 @@ function AssetsPageInner() {
             flat registry. The unit-first view lights up the moment units exist. */}
         {book.units.length === 0 && isAdmin && !loading && (
           <Card label="Group by unit">
-            <p className="text-[13px] text-[var(--color-text-muted)] flex items-start gap-2">
+            <p className="text-[15px] text-[var(--color-text-muted)] flex items-start gap-2">
               <BookMarked className="w-4 h-4 shrink-0 mt-0.5" />
               <span>
                 Name your units in the Site Codebook (20 = Crude, 25 = DHT) and this list groups itself by unit, then equipment type.{" "}
-                <Link href="/admin/codebook" className="font-bold text-[var(--color-accent-text)] hover:underline">Set up the codebook</Link>
+                <Link href="/admin/codebook" className={link}>Set up the codebook</Link>
               </span>
             </p>
           </Card>
@@ -718,29 +716,27 @@ function AssetsPageInner() {
 
 /** The first screenful of cards, then "Show N more" so a long registry
  *  never renders hundreds of photos at once and still says how many are left. */
-function ShowMoreGrid<T>({ items, render, step = 24 }: { items: T[]; render: (item: T) => React.ReactNode; step?: number }) {
+function ShowMoreRows<T>({ items, render, step = 50 }: { items: T[]; render: (shown: T[]) => React.ReactNode; step?: number }) {
   const [shown, setShown] = useState(step);
   const rest = items.length - shown;
   return (
-    <>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-        {items.slice(0, shown).map(render)}
-      </div>
+    <div className={tbl.wrap}>
+      {render(items.slice(0, shown))}
       {rest > 0 && (
-        <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex items-center justify-between text-[13px]">
+        <div className={tbl.foot}>
           <span className="text-[var(--color-text-muted)]">{Math.min(shown, items.length).toLocaleString()} of {items.length.toLocaleString()} shown</span>
-          <button type="button" onClick={() => setShown((n) => n + step * 2)} className="font-bold text-[var(--color-accent-text)] hover:underline">
+          <button type="button" onClick={() => setShown((n) => n + step * 2)} className={link}>
             Show {Math.min(rest, step * 2).toLocaleString()} more
           </button>
         </div>
       )}
-    </>
+    </div>
   );
 }
 
 // ─── Unit card (the landing page) ──────────────────────────
 
-function UnitCard({ summary, onOpen, onEdit }: {
+function UnitRow({ summary, onOpen, onEdit }: {
   summary: {
     unit: { code: string; label: string };
     count: number;
@@ -753,50 +749,32 @@ function UnitCard({ summary, onOpen, onEdit }: {
 }) {
   const { unit, count, needPhotos, topTypes, links } = summary;
   return (
-    <div onClick={onOpen} role="button" tabIndex={0}
-      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); } }}
-      className="text-left rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] hover:-translate-y-0.5 transition-transform p-5 flex flex-col gap-3 group cursor-pointer">
-      <div className="flex items-start gap-3">
-        <div className="w-10 h-10 rounded-[10px] bg-[var(--color-surface-2)] flex items-center justify-center shrink-0">
-          <Factory className="w-4.5 h-4.5 text-[var(--color-text-muted)]" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-baseline gap-2">
-            <span className="font-mono text-[14px] font-bold text-[var(--color-text-muted)]">{unit.code}</span>
-            <span className="text-[14px] font-bold text-[var(--color-text)] truncate">{unit.label}</span>
-          </div>
-          <div className="text-[13px] text-[var(--color-text-muted)]">
-            {count} asset{count === 1 ? "" : "s"}
-            {links.length > 0 && ` · ${links.length} pinned librar${links.length === 1 ? "y" : "ies"}`}
-          </div>
-        </div>
-        {onEdit && (
+    <tr onClick={onOpen} className={`${tbl.tr} cursor-pointer max-sm:grid max-sm:grid-cols-[1fr_auto_auto]`}>
+      <td className={`${tbl.td} max-sm:col-span-1`}>
+        <button type="button" onClick={(e) => { e.stopPropagation(); onOpen(); }} className="text-left group">
+          <span className="font-display text-[16px] font-semibold tabular-nums text-[var(--color-text-muted)] mr-2">{unit.code}</span>
+          <span className="font-semibold text-[var(--color-text)] group-hover:text-[var(--color-accent-text)]">{unit.label}</span>
+        </button>
+        <span className="sm:hidden block text-[13px] text-[var(--color-text-muted)]">{plural(count, "piece")}{needPhotos > 0 ? `, ${needPhotos} without photos` : ""}</span>
+      </td>
+      <td className={`${tbl.td} max-sm:hidden text-right font-display text-[16px] font-semibold tabular-nums`}>{count}</td>
+      <td className={`${tbl.td} max-sm:hidden text-right font-display text-[16px] font-semibold tabular-nums ${needPhotos > 0 ? "text-[var(--state-held)]" : "text-[var(--color-text-muted)]"}`}>{needPhotos}</td>
+      <td className={`${tbl.td} max-lg:hidden text-[14px] text-[var(--color-text-muted)]`}>{topTypes.map(([name, n]) => `${name} ${n}`).join(", ")}</td>
+      <td className={`${tbl.td} max-md:hidden text-right tabular-nums text-[var(--color-text-muted)]`}>{links.length}</td>
+      {onEdit && (
+        <td className={`${tbl.td} text-right`}>
           <button
+            type="button"
             onClick={(e) => { e.stopPropagation(); onEdit(); }}
             title="Rename or manage this unit (Site Codebook)"
             aria-label={`Manage unit ${unit.code} in the Site Codebook`}
-            className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-accent-hover)] hover:bg-[var(--color-surface-2)] shrink-0"
+            className={btnIcon}
           >
-            <Edit3 className="w-3.5 h-3.5" />
+            <Edit3 className="w-4 h-4" />
           </button>
-        )}
-        <ArrowRight className="w-4 h-4 text-[var(--color-text-faint)] group-hover:text-[var(--color-text)] group-hover:translate-x-0.5 transition-all shrink-0 mt-1" />
-      </div>
-      {topTypes.length > 0 && (
-        <div className="flex gap-1.5 flex-wrap">
-          {topTypes.map(([name, n]) => (
-            <span key={name} className="text-[12px] font-semibold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-full px-2 py-0.5">
-              {name} <span className="text-[var(--color-text-faint)]">{n}</span>
-            </span>
-          ))}
-        </div>
+        </td>
       )}
-      {needPhotos > 0 && (
-        <div className="text-[12px] font-semibold text-amber-700 dark:text-amber-400 flex items-center gap-1">
-          <Camera className="w-3.5 h-3.5" /> {needPhotos} without photos
-        </div>
-      )}
-    </div>
+    </tr>
   );
 }
 
@@ -830,7 +808,7 @@ function UnitResources({ orgId, unitCode, links, canEdit, onChanged }: {
             >
               <FolderOpen className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
               <div className="min-w-0">
-                <div className="text-[14px] font-bold text-[var(--color-text)] truncate">{l.label}</div>
+                <div className="text-[14px] font-semibold text-[var(--color-text)] truncate">{l.label}</div>
                 <div className="text-[12px] text-[var(--color-text-muted)] truncate">
                   {l.libraryName}{l.folderName ? ` › ${l.folderName}` : ""}
                 </div>
@@ -838,7 +816,7 @@ function UnitResources({ orgId, unitCode, links, canEdit, onChanged }: {
             </Link>
             {canEdit && (
               <button onClick={() => void removeLink(l.id)} disabled={busy} title="Unpin" aria-label={`Unpin ${l.label}`}
-                className="absolute top-1.5 right-1.5 p-0.5 rounded text-[var(--color-text-faint)] hover:text-rose-600 opacity-70 group-hover:opacity-100 transition-opacity">
+                className="absolute top-1.5 right-1.5 p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] opacity-70 group-hover:opacity-100 transition-opacity">
                 <X className="w-3 h-3" />
               </button>
             )}
@@ -951,15 +929,15 @@ function LinkResourceModal({ orgId, onClose, onSave }: {
             className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
         </div>
         {error && (
-          <p role="alert" className="border-l-2 border-red-500 pl-2.5 text-xs text-red-700 dark:text-red-400 flex items-start gap-2">
+          <p role="alert" className="text-[14px] font-semibold text-[var(--state-overdue)] flex items-start gap-2">
             <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
           </p>
         )}
       </ModalBody>
       <ModalFooter>
-        <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
+        <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-semibold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
         <button onClick={() => void save()} disabled={busy || !libraryId}
-          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
           {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />} Pin it
         </button>
       </ModalFooter>
@@ -1047,7 +1025,7 @@ function UnassignedAssignPanel({ assets, book, userId, onAssigned }: {
           const choice = choices.get(a.id) ?? "";
           return (
             <div key={a.id} className="flex items-center gap-2.5 py-2 flex-wrap">
-              <span className="font-mono text-[13px] font-bold text-[var(--color-text)] w-20 shrink-0">{a.tag}</span>
+              <span className="font-mono text-[13px] font-semibold text-[var(--color-text)] w-20 shrink-0">{a.tag}</span>
               <select
                 value={choice}
                 onChange={(e) => setChoices((prev) => new Map(prev).set(a.id, e.target.value))}
@@ -1083,7 +1061,7 @@ function UnassignedAssignPanel({ assets, book, userId, onAssigned }: {
         <button
           onClick={() => void assign(chosen.map((a) => ({ asset: a, unitCode: choices.get(a.id)! })))}
           disabled={busy}
-          className="mt-3 inline-flex items-center gap-1.5 h-9 text-[13px] font-bold text-[var(--color-surface)] bg-[var(--color-text)] hover:opacity-90 rounded-lg px-3.5 disabled:opacity-50"
+          className="mt-3 inline-flex items-center gap-1.5 h-9 text-[13px] font-semibold text-[var(--color-surface)] bg-[var(--color-text)] hover:opacity-90 rounded-lg px-3.5 disabled:opacity-50"
         >
           {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
           Assign all {chosen.length} selected
@@ -1142,7 +1120,7 @@ function UnitDocuments({ assetIds, assets }: { assetIds: string[]; assets: Asset
     );
   }
   if (failed) {
-    return <Card label="Documents about this equipment"><p role="alert" className="text-[13px] text-rose-700 dark:text-rose-400">Couldn&apos;t load the documents that reference this unit&apos;s equipment: {failed}</p></Card>;
+    return <Card label="Documents about this equipment"><p role="alert" className="text-[13px] text-[var(--state-overdue)]">Couldn&apos;t load the documents that reference this unit&apos;s equipment: {failed}</p></Card>;
   }
   if (rows.length === 0) return null;
   const shown = expanded ? rows : rows.slice(0, 12);
@@ -1156,14 +1134,14 @@ function UnitDocuments({ assetIds, assets }: { assetIds: string[]; assets: Asset
               className="flex items-center gap-3 px-4 sm:px-5 py-2.5 hover:bg-[var(--color-surface-2)]/70 transition-colors">
               <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
               <div className="flex-1 min-w-0 text-[14px]">
-                <span className="font-bold text-[var(--color-text)]">{d.documentNumber || "(no number)"}</span>
+                <span className="font-semibold text-[var(--color-text)]">{d.documentNumber || "(no number)"}</span>
                 {d.title && <span className="text-[var(--color-text-muted)]"> · {d.title}</span>}
               </div>
               <div className="flex gap-1 flex-wrap justify-end max-w-[45%]">
                 {d.tags.slice(0, 6).map((t) => (
-                  <span key={t} className="text-[11px] font-mono font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded px-1 py-0.5">{t}</span>
+                  <span key={t} className="text-[13px] font-mono font-semibold text-[var(--color-text)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded px-1 py-0.5">{t}</span>
                 ))}
-                {d.tags.length > 6 && <span className="text-[11px] font-bold text-[var(--color-text-faint)]">+{d.tags.length - 6}</span>}
+                {d.tags.length > 6 && <span className="text-[13px] font-semibold text-[var(--color-text-faint)]">+{d.tags.length - 6}</span>}
               </div>
             </Link>
           </li>
@@ -1173,7 +1151,7 @@ function UnitDocuments({ assetIds, assets }: { assetIds: string[]; assets: Asset
         <div className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] flex items-center justify-between text-[13px]">
           <span className="text-[var(--color-text-muted)]">{shown.length} of {rows.length} shown</span>
           <button type="button" onClick={() => setExpanded((v) => !v)}
-            className="font-bold text-[var(--color-accent-text)] hover:underline">
+            className="font-semibold text-[var(--color-accent-text)] hover:underline">
             {expanded ? "Show fewer" : `Show ${rows.length - shown.length} more`}
           </button>
         </div>
@@ -1184,78 +1162,77 @@ function UnitDocuments({ assetIds, assets }: { assetIds: string[]; assets: Asset
 
 // ─── Asset card ────────────────────────────────────────────
 
-function AssetCard({
-  asset, type, photoCount, coverUrl, onClick, onEdit, onAddPhotos,
+function AssetTable({
+  list, types, photoCounts, coverUrls, onOpen, onEdit, onAddPhotos, showType = false,
 }: {
-  asset: Asset; type?: AssetType; photoCount: number; coverUrl?: string | null;
-  onClick: () => void; onEdit?: () => void; onAddPhotos?: () => void;
+  list: Asset[]; types: AssetType[]; photoCounts: Map<string, number>; coverUrls: Map<string, string>;
+  onOpen: (a: Asset) => void; onEdit?: (a: Asset) => void; onAddPhotos?: (a: Asset) => void; showType?: boolean;
 }) {
-
   return (
-    <div className="group bg-[var(--color-surface)] rounded-xl ring-1 ring-[var(--color-border)] hover:shadow-[var(--shadow-card)] transition-shadow overflow-hidden flex flex-col">
-      {/* Cover area */}
-      <button type="button" onClick={onClick} aria-label={`Open ${asset.tag}`} className="block aspect-[4/3] w-full relative overflow-hidden bg-[var(--color-surface-2)]">
-        {coverUrl ? (
-          <SignedImg path={coverUrl} alt={asset.tag} className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
-        ) : (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <ImageIcon className="w-8 h-8 text-[var(--color-text-faint)]" />
-          </div>
-        )}
-      </button>
-      {/* Info */}
-      <div className="p-3 flex-1 flex flex-col">
-        <div className="flex items-center gap-2 mb-1">
-          <button type="button" onClick={onClick} className="text-[14px] font-bold text-[var(--color-text)] hover:underline truncate flex-1 text-left">
-            {asset.tag}
-          </button>
-          {type && (
-            <span className="text-[13px] font-semibold text-[var(--color-text-muted)] shrink-0">
-              {type.name}
-            </span>
-          )}
-        </div>
-        {asset.description && (
-          <div className="text-[13px] text-[var(--color-text-muted)] line-clamp-2 mb-1">{asset.description}</div>
-        )}
-        {asset.location && (
-          <div className="text-[12px] text-[var(--color-text-muted)] flex items-center gap-1 truncate">
-            <MapPin className="w-3 h-3" /> {asset.location}
-          </div>
-        )}
-        <div className="mt-2 pt-2 border-t border-[var(--color-border)] flex items-center justify-between">
-          <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">
-            {photoCount === 0 ? (
-              <span className="text-amber-700 dark:text-amber-400 inline-flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> No photos</span>
-            ) : (
-              <span className="inline-flex items-center gap-1 text-[var(--color-text)]"><Camera className="w-3 h-3" /> {photoCount} photo{photoCount === 1 ? "" : "s"}</span>
-            )}
-          </div>
-          {/* Always visible — a hover-only edit button doesn't exist on
-              touchscreens, and "how do I edit this?" should never be a
-              puzzle. An uncategorized asset gets a LABELED door out of
-              limbo, not a pencil icon to decode. */}
-          <div className="flex items-center gap-1">
-            {!type && onEdit && (
-              <button type="button" onClick={onEdit}
-                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-amber-800 dark:text-amber-300 text-[12px] font-bold hover:bg-amber-50 dark:hover:bg-amber-950/40">
-                <Tag className="w-2.5 h-2.5" /> Categorize
-              </button>
-            )}
-            {onAddPhotos && (
-              <button onClick={onAddPhotos} title="Add photos" aria-label={`Add photos to ${asset.tag}`} className="p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded">
-                <Camera className="w-3.5 h-3.5" />
-              </button>
-            )}
-            {onEdit && (
-              <button onClick={onEdit} title="Edit asset" aria-label={`Edit ${asset.tag}`} className="p-1 text-[var(--color-text-faint)] hover:text-[var(--color-accent-hover)] hover:bg-[var(--color-surface-2)] rounded">
-                <Edit3 className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
+    <table className={`${tbl.table} border-t border-[var(--color-border)]`}>
+      <thead className={`${tbl.thead} max-sm:hidden`}>
+        <tr>
+          <th className={`${tbl.th} w-[72px]`}><span className="sr-only">Photo</span></th>
+          <th className={tbl.th}>Tag</th>
+          {showType && <th className={`${tbl.th} max-md:hidden`}>Type</th>}
+          <th className={`${tbl.th} max-md:hidden`}>Description</th>
+          <th className={`${tbl.th} max-lg:hidden`}>Location</th>
+          <th className={tbl.th}>Photos</th>
+          <th className={`${tbl.th} w-[1%]`}><span className="sr-only">Actions</span></th>
+        </tr>
+      </thead>
+      <tbody className={tbl.tbody}>
+        {list.map((a) => {
+          const type = types.find((t) => t.id === a.type_id);
+          const count = photoCounts.get(a.id) || 0;
+          const coverUrl = coverUrls.get(a.id);
+          return (
+            <tr key={a.id} className={`${tbl.tr} max-sm:grid max-sm:grid-cols-[64px_1fr_auto]`}>
+              <td className="pl-4 pr-1 py-2">
+                <button type="button" onClick={() => onOpen(a)} aria-label={`Open ${a.tag}`} className="block w-14 h-10 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] overflow-hidden relative">
+                  {coverUrl
+                    ? <SignedImg path={coverUrl} alt={a.tag} className="absolute inset-0 w-full h-full object-cover" />
+                    : <ImageIcon className="w-4 h-4 m-auto absolute inset-0 text-[var(--color-text-faint)]" />}
+                </button>
+              </td>
+              <td className={`${tbl.td} min-w-0`}>
+                <button type="button" onClick={() => onOpen(a)} className="font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)] text-left">
+                  {a.tag}
+                </button>
+                <div className="md:hidden text-[13px] text-[var(--color-text-muted)] truncate max-w-[40ch]">{[type?.name, a.description].filter(Boolean).join(", ")}</div>
+              </td>
+              {showType && <td className={`${tbl.td} max-md:hidden text-[var(--color-text-muted)]`}>{type?.name ?? "Uncategorized"}</td>}
+              <td className={`${tbl.td} max-md:hidden text-[var(--color-text)]`}><span className="line-clamp-1 max-w-[44ch]">{a.description ?? ""}</span></td>
+              <td className={`${tbl.td} max-lg:hidden text-[14px] text-[var(--color-text-muted)]`}>{a.location ?? ""}</td>
+              <td className={`${tbl.td} max-sm:hidden whitespace-nowrap`}>
+                {count === 0 ? <StatusTag tone="warn">None</StatusTag> : <span className="tabular-nums text-[var(--color-text)]">{count}</span>}
+              </td>
+              <td className={`${tbl.td} text-right`}>
+                {/* Always visible: a hover-only button doesn't exist on a
+                    touchscreen. An uncategorized asset gets a labeled way out. */}
+                <div className="flex items-center justify-end gap-1">
+                  {!type && onEdit && (
+                    <button type="button" onClick={() => onEdit(a)} className={btnRow}>
+                      <Tag className="w-3.5 h-3.5" /> Categorize
+                    </button>
+                  )}
+                  {onAddPhotos && (
+                    <button type="button" onClick={() => onAddPhotos(a)} title="Add photos" aria-label={`Add photos to ${a.tag}`} className={btnIcon}>
+                      <Camera className="w-4 h-4" />
+                    </button>
+                  )}
+                  {onEdit && (
+                    <button type="button" onClick={() => onEdit(a)} title="Edit asset" aria-label={`Edit ${a.tag}`} className={btnIcon}>
+                      <Edit3 className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }
 
@@ -1263,11 +1240,8 @@ function AssetCard({
 
 function EmptyState({ onCreate, hasAny }: { onCreate?: () => void; hasAny: boolean }) {
   return (
-    <Card className="text-center py-10">
-      <div className="w-12 h-12 rounded-xl bg-[var(--color-surface-2)] mx-auto mb-3 flex items-center justify-center">
-        <Tag className="w-6 h-6 text-[var(--color-text-muted)]" />
-      </div>
-      <h3 className="text-[14px] font-bold text-[var(--color-text)] mb-1">
+    <div className={`${sheet} text-center py-10 px-5`}>
+      <h3 className="font-display text-[19px] font-semibold text-[var(--color-text)] mb-1">
         {hasAny ? "No matches" : "Start with one piece of equipment"}
       </h3>
       <p className="text-[14px] text-[var(--color-text-muted)] max-w-md mx-auto mb-4">
@@ -1276,11 +1250,11 @@ function EmptyState({ onCreate, hasAny }: { onCreate?: () => void; hasAny: boole
           : "Add the first piece of equipment: a pump, instrument, valve, anything with a tag."}
       </p>
       {!hasAny && onCreate && (
-        <button type="button" onClick={onCreate} className="inline-flex items-center gap-1.5 h-10 px-4 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[14px] font-bold">
+        <button type="button" onClick={onCreate} className={btnQuiet}>
           <Plus className="w-4 h-4" /> Add the first piece of equipment
         </button>
       )}
-    </Card>
+    </div>
   );
 }
 
@@ -1465,7 +1439,7 @@ function AssetEditDrawer({
               <X className="w-4 h-4" />
             </button>
           </div>
-          <h2 className="mt-3 text-[32px] sm:text-[38px] leading-none font-black tracking-[-0.03em] text-[var(--color-text)] break-words">
+          <h2 className="mt-3 text-[32px] sm:text-[38px] leading-none font-semibold tracking-[-0.03em] text-[var(--color-text)] break-words">
             {isCreate ? (tag.trim() || "New asset") : asset?.tag}
           </h2>
           <p className="mt-2 text-[14px] text-[var(--color-text-muted)]">
@@ -1495,7 +1469,7 @@ function AssetEditDrawer({
                 className="font-mono mt-1"
               />
               {tag && (
-                <div className="text-[11px] text-[var(--color-text-muted)] mt-1">Normalized: <span className="font-mono">{normalizeTag(tag)}</span></div>
+                <div className="text-[13px] text-[var(--color-text-muted)] mt-1">Normalized: <span className="font-mono">{normalizeTag(tag)}</span></div>
               )}
             </div>
             <div>
@@ -1541,23 +1515,23 @@ function AssetEditDrawer({
                 </div>
                 <div className="flex items-center gap-1.5">
                   {photos.length > 0 && (
-                    <button type="button" onClick={() => onOpenCarousel(asset)} className="inline-flex items-center gap-1 text-[12px] font-bold text-[var(--color-text)] hover:underline">
+                    <button type="button" onClick={() => onOpenCarousel(asset)} className="inline-flex items-center gap-1 text-[12px] font-semibold text-[var(--color-text)] hover:underline">
                       <ImageIcon className="w-3 h-3" /> Open photos
                     </button>
                   )}
                   {canEdit && (
-                    <button type="button" onClick={() => onOpenUploader(asset)} className="inline-flex items-center gap-1 text-[12px] font-bold text-[var(--color-text)] hover:underline">
+                    <button type="button" onClick={() => onOpenUploader(asset)} className="inline-flex items-center gap-1 text-[12px] font-semibold text-[var(--color-text)] hover:underline">
                       <Camera className="w-3 h-3" /> Add photos
                     </button>
                   )}
                 </div>
               </div>
               {photosFailed ? (
-                <div role="alert" className="text-center text-xs text-rose-700 dark:text-rose-400 py-6 border border-dashed border-[var(--color-border)] rounded-lg">
+                <div role="alert" className="text-center text-xs text-[var(--state-overdue)] py-6 border border-dashed border-[var(--color-border)] rounded-lg">
                   Couldn&apos;t load the photos.
                 </div>
               ) : photos.length === 0 ? (
-                <div className="text-center text-xs text-[var(--color-text-faint)] italic py-6 border border-dashed border-[var(--color-border)] rounded-lg">
+                <div className="text-center text-xs text-[var(--color-text-faint)] py-6 border border-dashed border-[var(--color-border)] rounded-lg">
                   No photos yet.
                 </div>
               ) : (
@@ -1569,12 +1543,12 @@ function AssetEditDrawer({
                         <SignedImg path={p.file_url} alt={p.caption || ""} className="w-full h-full object-cover" />
                         {/* Date and status on one strip along the bottom of the photo. */}
                         <div className="absolute bottom-0 inset-x-0 px-1.5 py-1 bg-black/65">
-                          <div className="text-[11px] font-mono flex items-center gap-1 text-white">
+                          <div className="text-[13px] font-mono flex items-center gap-1 text-white">
                             <span className={age.category === "stale" ? "text-red-300" : age.category === "aging" ? "text-amber-300" : ""}>
                               {p.captured_at ? new Date(p.captured_at).toLocaleDateString() : "No date"}
                             </span>
                             {p.status !== "current" && (
-                              <span className={`ml-auto font-sans font-bold ${p.status === "needs_verification" ? "text-amber-300" : "text-red-300"}`}>
+                              <span className={`ml-auto font-sans font-semibold ${p.status === "needs_verification" ? "text-amber-300" : "text-red-300"}`}>
                                 {p.status === "needs_verification" ? "Check" : "Old"}
                               </span>
                             )}
@@ -1583,10 +1557,10 @@ function AssetEditDrawer({
                         {canEdit && (
                           <div className="absolute top-1 right-1 flex flex-col gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
                             <button onClick={() => markPhotoStatus(p, p.status === "current" ? "needs_verification" : "current")} title={p.status === "current" ? "Mark as needs checking" : "Mark as current"} aria-label={p.status === "current" ? "Mark as needs checking" : "Mark as current"} className="p-1 bg-[var(--color-surface)]/90 rounded hover:bg-[var(--color-surface)]">
-                              <AlertTriangle className="w-3 h-3 text-amber-600" />
+                              <AlertTriangle className="w-3 h-3 text-[var(--state-held)]" />
                             </button>
                             <button onClick={() => onDeletePhoto(p)} title="Delete photo" aria-label="Delete photo" className="p-1 bg-[var(--color-surface)]/90 rounded hover:bg-[var(--color-surface)]">
-                              <Trash2 className="w-3 h-3 text-red-600" />
+                              <Trash2 className="w-3 h-3 text-[var(--state-overdue)]" />
                             </button>
                           </div>
                         )}
@@ -1613,27 +1587,27 @@ function AssetEditDrawer({
             <div>
               <div className="text-[13px] font-semibold text-[var(--color-text)] mb-2 flex items-center gap-1.5">
                 <FileText className="w-3 h-3" /> Linked documents
-                {linkedDocs && <span className="text-[var(--color-text-faint)] font-bold">({linkedDocs.length})</span>}
+                {linkedDocs && <span className="text-[var(--color-text-faint)] font-semibold">({linkedDocs.length})</span>}
                 <span className="flex-1" />
                 <Link href={`/graph?focus=${encodeURIComponent(`asset:${asset.id}`)}`}
-                  className="inline-flex items-center gap-1 normal-case tracking-normal text-[11px] font-black text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)]">
+                  className="inline-flex items-center gap-1 normal-case tracking-normal text-[13px] font-semibold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)]">
                   <Waypoints className="w-3 h-3" /> See on graph
                 </Link>
                 {canEdit && (
                   <button type="button" onClick={() => setDocPickerOpen(true)}
-                    className="inline-flex items-center gap-1 normal-case tracking-normal px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text-muted)] hover:text-[var(--color-accent-text)] hover:border-[var(--color-accent)]">
+                    className="inline-flex items-center gap-1 normal-case tracking-normal px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-accent-text)] hover:border-[var(--color-accent)]">
                     <Plus className="w-3 h-3" /> Link document
                   </button>
                 )}
               </div>
               {linkedDocs === null ? (
-                <div className="text-[11px] text-[var(--color-text-muted)] py-2 inline-flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" /> Loading linked documents…</div>
+                <div className="text-[13px] text-[var(--color-text-muted)] py-2 inline-flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" /> Loading linked documents…</div>
               ) : docsFailed ? (
-                <div role="alert" className="text-xs text-rose-700 dark:text-rose-400 py-2">
-                  Couldn&apos;t load the linked documents. <button type="button" onClick={refreshDocs} className="font-bold underline">Try again</button>
+                <div role="alert" className="text-xs text-[var(--state-overdue)] py-2">
+                  Couldn&apos;t load the linked documents. <button type="button" onClick={refreshDocs} className="text-[var(--color-accent-text)] hover:underline">Try again</button>
                 </div>
               ) : linkedDocs.length === 0 ? (
-                <div className="text-center text-xs text-[var(--color-text-faint)] italic py-4 border border-dashed border-[var(--color-border)] rounded-lg">
+                <div className="text-center text-xs text-[var(--color-text-faint)] py-4 border border-dashed border-[var(--color-border)] rounded-lg">
                   No documents reference this asset yet.
                 </div>
               ) : (
@@ -1643,7 +1617,7 @@ function AssetEditDrawer({
                       {canEdit && (
                         <button type="button" title="Unlink from this equipment" aria-label="Unlink from this equipment"
                           onClick={() => void unlinkDocument(d.documentId)}
-                          className="absolute right-2 top-1/2 -translate-y-1/2 z-10 p-1.5 rounded-md text-[var(--color-text-faint)] hover:text-rose-600 opacity-0 group-hover/docrow:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
+                          className="absolute right-2 top-1/2 -translate-y-1/2 z-10 p-1.5 rounded-md text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] opacity-0 group-hover/docrow:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
                           <X className="w-3.5 h-3.5" />
                         </button>
                       )}
@@ -1654,11 +1628,11 @@ function AssetEditDrawer({
                       >
                         <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
                         <div className="flex-1 min-w-0">
-                          <div className="text-xs font-bold text-[var(--color-text)] truncate">
+                          <div className="text-xs font-semibold text-[var(--color-text)] truncate">
                             {d.documentNumber || "(no number)"} {d.title && <span className="font-normal text-[var(--color-text-muted)]">· {d.title}</span>}
                           </div>
                           {d.tagText && (
-                            <div className="text-[11px] font-mono text-[var(--color-text-faint)] truncate">tag: {d.tagText}</div>
+                            <div className="text-[13px] font-mono text-[var(--color-text-faint)] truncate">tag: {d.tagText}</div>
                           )}
                         </div>
                       </Link>
@@ -1683,7 +1657,7 @@ function AssetEditDrawer({
           )}
 
           {error && (
-            <p role="alert" className="border-l-2 border-red-500 pl-2.5 text-xs text-red-700 dark:text-red-400 flex items-start gap-2">
+            <p role="alert" className="text-[14px] font-semibold text-[var(--state-overdue)] flex items-start gap-2">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
             </p>
           )}
@@ -1691,7 +1665,7 @@ function AssetEditDrawer({
 
         <div className="px-5 sm:px-6 py-3 pb-[calc(12px+env(safe-area-inset-bottom))] border-t border-[var(--color-border)] flex items-center justify-between shrink-0">
           {!isCreate && canEdit ? (
-            <button type="button" onClick={onDelete} disabled={busy} className="text-[13px] font-semibold text-red-600 hover:text-red-700 inline-flex items-center gap-1">
+            <button type="button" onClick={onDelete} disabled={busy} className={btnDanger}>
               <Trash2 className="w-3.5 h-3.5" /> Delete asset
             </button>
           ) : <div />}
@@ -1751,12 +1725,12 @@ function AddUnitModal({ orgId, userId, existingCodes, onClose, onCreated }: {
 
   return (
     <div role="dialog" aria-modal="true" aria-label="New operating area" className="fixed inset-0 z-[700] flex items-start justify-center bg-[var(--color-ink)]/60 pt-[14vh] p-4" onClick={onClose}>
-      <div className="w-full max-w-sm rounded-2xl bg-[var(--color-surface)] shadow-2xl p-5 space-y-3"
+      <div className="w-full max-w-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl p-5 space-y-3"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2">
           <Factory className="w-4 h-4 text-[var(--color-text-muted)]" />
           <div className="flex-1">
-            <div className="text-[14px] font-bold text-[var(--color-text)]">New operating area</div>
+            <div className="text-[14px] font-semibold text-[var(--color-text)]">New operating area</div>
             <div className="text-[12px] text-[var(--color-text-muted)]">
               Saved in your Site Codebook, where the whole app reads units from.
             </div>
@@ -1771,13 +1745,13 @@ function AddUnitModal({ orgId, userId, existingCodes, onClose, onCreated }: {
             onKeyDown={(e) => { if (e.key === "Enter") void save(); }}
             className="flex-1 px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-sm" />
         </div>
-        {error && <div role="alert" className="text-[11px] text-rose-700 dark:text-rose-400">{error}</div>}
+        {error && <div role="alert" className="text-[13px] text-[var(--state-overdue)]">{error}</div>}
         <div className="flex items-center justify-between gap-2">
-          <Link href="/admin/codebook" className="text-[11px] font-bold text-[var(--color-accent-text)] hover:underline inline-flex items-center gap-1">
+          <Link href="/admin/codebook" className="text-[13px] font-semibold text-[var(--color-accent-text)] hover:underline inline-flex items-center gap-1">
             <BookMarkedIcon className="w-3 h-3" /> Full codebook (AI import, decoder)
           </Link>
           <button onClick={() => void save()} disabled={busy}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Create area
           </button>
         </div>
@@ -1851,12 +1825,12 @@ function AddCategoryModal({ orgId, userId, existingTypeCodes, onClose, onCreated
 
   return (
     <div role="dialog" aria-modal="true" aria-label="New equipment category" className="fixed inset-0 z-[700] flex items-start justify-center bg-[var(--color-ink)]/60 pt-[14vh] p-4" onClick={onClose}>
-      <div className="w-full max-w-sm rounded-2xl bg-[var(--color-surface)] shadow-2xl p-5 space-y-3"
+      <div className="w-full max-w-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl p-5 space-y-3"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2">
           <Tag className="w-4 h-4 text-[var(--color-text-muted)]" />
           <div className="flex-1">
-            <div className="text-[14px] font-bold text-[var(--color-text)]">New equipment category</div>
+            <div className="text-[14px] font-semibold text-[var(--color-text)]">New equipment category</div>
             <div className="text-[12px] text-[var(--color-text-muted)]">
               A section in every operating area. Add its tag prefix and new equipment sorts itself.
             </div>
@@ -1871,14 +1845,14 @@ function AddCategoryModal({ orgId, userId, existingTypeCodes, onClose, onCreated
           <input value={typeCode} onChange={(e) => setTypeCode(e.target.value)} placeholder="Code (02)" aria-label="Equipment-type code"
             className="w-24 px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-sm font-mono" />
         </div>
-        <p className="text-[11px] text-[var(--color-text-faint)]">
+        <p className="text-[13px] text-[var(--color-text-faint)]">
           No numbering system? Leave prefixes blank. You can add them later.
         </p>
-        {error && <div role="alert" className="text-[11px] text-rose-700 dark:text-rose-400">{error}</div>}
+        {error && <div role="alert" className="text-[13px] text-[var(--state-overdue)]">{error}</div>}
         <div className="flex items-center justify-end gap-2">
-          <button onClick={onClose} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
+          <button onClick={onClose} className="px-3 py-2 rounded-lg text-xs font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
           <button onClick={() => void save()} disabled={busy}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Create category
           </button>
         </div>

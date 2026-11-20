@@ -13,11 +13,12 @@ import {
   listTeamMembers, addTeamMember, removeTeamMember, type Team,
 } from "@/lib/teams";
 import { setLibraryOwnerTeam } from "@/lib/ownership";
-import { UsersRound, Plus, Trash2, Loader2, Check, Search, ShieldAlert } from "lucide-react";
+import { Plus, Trash2, Loader2, Check, Search, ShieldAlert } from "lucide-react";
 import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import { PageShell } from "@/components/ui/PageShell";
-import { PageHero, PageBody, Card, heroPrimary } from "@/components/ui/PageHero";
+import { PageHero, PageBody, heroPrimary } from "@/components/ui/PageHero";
+import { tbl, sheet, field, label, btnQuiet, btnIcon, FormRow, Section, Problem } from "@/components/admin/kit";
 import { plural } from "@/components/admin/band";
 
 interface OrgMember { uid: string; display_name: string | null; email: string | null; role: string }
@@ -85,12 +86,22 @@ export default function AdminTeamsPage() {
 
   useEffect(() => { void refresh(); }, [refresh]);
 
+  // Open the first team once the list arrives, so its people and libraries
+  // are in view without a click.
+  const autoOpened = React.useRef(false);
+
   const openTeam = async (team: Team) => {
     setSelected(team);
     setTeamMemberIds([]);
     try { setTeamMemberIds(await listTeamMembers(team.id)); }
     catch (e) { await appAlert({ title: "Couldn't load the team's members", message: (e as Error).message, tone: "danger" }); }
   };
+
+  useEffect(() => {
+    if (autoOpened.current || selected || teams.length === 0) return;
+    autoOpened.current = true;
+    void openTeam(teams[0]);
+  }, [teams, selected]);
 
   const handleCreate = async () => {
     if (!activeOrgId || !uid || !newName.trim()) return;
@@ -146,103 +157,122 @@ export default function AdminTeamsPage() {
     return !q || (m.display_name ?? "").toLowerCase().includes(q) || (m.email ?? "").toLowerCase().includes(q);
   });
 
+  const ownedCount = (teamId: string) => libraries.filter((l) => l.owner_team_id === teamId).length;
+  const nameOf = (u?: string | null) => { const m = members.find((x) => x.uid === u); return m ? (m.display_name || m.email || m.uid) : null; };
+  const ownedLibs = libraries.filter((l) => !!l.owner_team_id).length;
+
   const answer = loading && teams.length === 0 ? "Teams"
     : loadError ? "Couldn't load teams."
     : teams.length === 0 ? "No teams yet."
-    : `${plural(teams.length, "team")}, ${plural(members.length, "person", "people")}.`;
+    : `${plural(teams.length, "team")}.`;
 
   return (
     <PageShell width="work">
       <PageHero
         kicker="Admin · Teams and departments"
         title={answer}
-        sub="Group people, give a whole team access, and let a department own a library."
+        sub="Give a whole team access at once, and let a department own a library."
+        facts={teams.length > 0 ? [
+          { label: "People", value: members.length },
+          { label: "Libraries owned", value: `${ownedLibs} of ${libraries.length}` },
+        ] : undefined}
         primary={<button type="button" onClick={() => setCreating(true)} className={heroPrimary}><Plus className="w-4 h-4" /> New team</button>}
       />
 
       <PageBody>
       {loading && teams.length === 0 ? (
-        <Card><LoadingBlock what="teams" className="border-0 p-0" /></Card>
+        <LoadingBlock what="teams" />
       ) : loadError ? (
-        <Card>
-          <p role="alert" className="text-[14px] text-red-700 dark:text-red-400">
-            Couldn&apos;t load teams: {loadError}{" "}
-            <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
-          </p>
-        </Card>
+        <Problem retry={() => void refresh()}>Couldn&apos;t load teams: {loadError}</Problem>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-4 items-start">
-          {/* team list */}
-          <Card label="Teams" pad={false} className="overflow-hidden">
+        <>
+          <Section label="Teams">
             {creating && (
-              <div className="px-4 pb-3 border-b border-[var(--color-border)]">
-                <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Team name (e.g. Drafting)"
-                  aria-label="Team name"
-                  onKeyDown={(e) => e.key === "Enter" && handleCreate()}
-                  className="w-full h-10 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] text-[var(--color-text)] mb-2" />
-                <div className="flex items-center gap-1.5 mb-2" role="group" aria-label="Team color">
-                  {TEAM_COLORS.map((c) => (
-                    <button key={c} type="button" onClick={() => setNewColor(c)} aria-label={`Team color ${c}`} aria-pressed={newColor === c} className={`w-6 h-6 rounded-full ${newColor === c ? "ring-2 ring-offset-1 ring-[var(--color-text-muted)]" : ""}`} style={{ backgroundColor: c }} />
-                  ))}
+              <div className={`${sheet} mb-3 p-4 flex flex-wrap items-end gap-3`}>
+                <div className="flex-1 min-w-[220px]">
+                  <label htmlFor="new-team-name" className={label}>Team name</label>
+                  <input id="new-team-name" autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. Drafting"
+                    onKeyDown={(e) => e.key === "Enter" && handleCreate()} className={field} />
+                </div>
+                <div>
+                  <div className={label} id="new-team-color">Color</div>
+                  <div className="flex items-center gap-1.5 h-10" role="group" aria-labelledby="new-team-color">
+                    {TEAM_COLORS.map((c) => (
+                      <button key={c} type="button" onClick={() => setNewColor(c)} aria-label={`Team color ${c}`} aria-pressed={newColor === c} className={`w-6 h-6 rounded-full ${newColor === c ? "ring-2 ring-offset-2 ring-[var(--color-text)]" : ""}`} style={{ backgroundColor: c }} />
+                    ))}
+                  </div>
                 </div>
                 <div className="flex gap-2">
-                  <button type="button" onClick={handleCreate} disabled={busy || !newName.trim()} className="flex-1 inline-flex items-center justify-center gap-1 h-9 px-3 rounded-lg text-[13px] font-bold bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 disabled:opacity-50">{busy && <Loader2 className="w-3 h-3 animate-spin" />} Create</button>
-                  <button type="button" onClick={() => { setCreating(false); setNewName(""); }} className="h-9 px-3 rounded-lg text-[13px] font-semibold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Cancel</button>
+                  <button type="button" onClick={handleCreate} disabled={busy || !newName.trim()} className={btnQuiet}>{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Create team</button>
+                  <button type="button" onClick={() => { setCreating(false); setNewName(""); }} className={btnQuiet}>Cancel</button>
                 </div>
               </div>
             )}
-            {teams.length === 0 && !creating && (
-              <div className="px-4 pb-5 text-[14px] text-[var(--color-text-muted)]">No teams yet. Make one to get started.</div>
-            )}
-            <div className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)] empty:border-t-0">
-            {teams.map((t) => (
-              <div key={t.id} className={`group flex items-center gap-3 px-4 py-3 transition-colors ${selected?.id === t.id ? "bg-[var(--color-surface-2)]" : "hover:bg-[var(--color-surface-2)]"}`}>
-                <button type="button" onClick={() => openTeam(t)} aria-current={selected?.id === t.id ? "true" : undefined} className="flex items-center gap-3 min-w-0 flex-1 text-left">
-                  <span className="w-9 h-9 rounded-[10px] grid place-items-center text-white shrink-0" style={{ backgroundColor: t.color ?? "#4f46e5" }}>
-                    <UsersRound className="w-4 h-4" />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block font-bold text-[14px] text-[var(--color-text)] truncate">{t.name}</span>
-                    <span className="block text-[13px] text-[var(--color-text-muted)]">{t.memberCount ?? 0} member{(t.memberCount ?? 0) === 1 ? "" : "s"}</span>
-                  </span>
-                </button>
-                <button type="button" aria-label={`Delete ${t.name}`} onClick={() => void handleDelete(t)} className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-rose-600">
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            ))}
-            </div>
-          </Card>
-
-          {/* member editor */}
-          <Card pad={false} className="overflow-hidden">
-            {!selected ? (
-              <div className="p-12 text-center text-[14px] text-[var(--color-text-muted)]">
-                <UsersRound className="w-8 h-8 mx-auto mb-3 text-[var(--color-text-faint)]" />
-                Pick a team to manage its members.
-              </div>
+            {teams.length === 0 ? (
+              !creating && <div className={`${sheet} px-4 py-8 text-center text-[var(--color-text-muted)]`}>No teams yet. Make one to group people and give them access together.</div>
             ) : (
-              <>
-                <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
-                  <span className="w-8 h-8 rounded-lg grid place-items-center text-white shrink-0" style={{ backgroundColor: selected.color ?? "#4f46e5" }}><UsersRound className="w-4 h-4" /></span>
-                  <input key={selected.id} defaultValue={selected.name} aria-label="Team name" onBlur={(e) => { if (e.target.value.trim() && e.target.value !== selected.name) { void rename(selected, e.target.value.trim()); } }}
-                    className="text-[15px] font-bold text-[var(--color-text)] bg-transparent flex-1 min-w-0 outline-none" />
-                  <span className="text-[13px] text-[var(--color-text-muted)]">{teamMemberIds.length} in team</span>
-                </div>
+              <div className={tbl.wrap}>
+                <table className={tbl.table}>
+                  <thead className={`${tbl.thead} max-sm:hidden`}>
+                    <tr>
+                      <th className={tbl.th}>Team</th>
+                      <th className={`${tbl.th} text-right`}>People</th>
+                      <th className={`${tbl.th} max-md:hidden`}>Supervisor</th>
+                      <th className={`${tbl.th} text-right max-md:hidden`}>Libraries owned</th>
+                      <th className={`${tbl.th} w-14`}><span className="sr-only">Delete</span></th>
+                    </tr>
+                  </thead>
+                  <tbody className={tbl.tbody}>
+                    {teams.map((t) => {
+                      const on = selected?.id === t.id;
+                      return (
+                        <tr key={t.id} onClick={() => void openTeam(t)} className={`${tbl.tr} cursor-pointer ${on ? "bg-[var(--color-surface-2)]" : ""}`}>
+                          <td className={`${tbl.td} relative`}>
+                            {on && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--color-text)]" />}
+                            <button type="button" onClick={(e) => { e.stopPropagation(); void openTeam(t); }} aria-current={on ? "true" : undefined}
+                              className="inline-flex items-center gap-2.5 text-left font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
+                              <span aria-hidden className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: t.color ?? "#64748b" }} />
+                              {t.name}
+                            </button>
+                            <span className="sm:hidden ml-2 text-[13px] text-[var(--color-text-muted)]">{plural(t.memberCount ?? 0, "person", "people")}</span>
+                          </td>
+                          <td className={`${tbl.td} max-sm:hidden text-right font-display text-[16px] font-semibold tabular-nums`}>{t.memberCount ?? 0}</td>
+                          <td className={`${tbl.td} max-md:hidden text-[var(--color-text-muted)]`}>{nameOf(t.supervisorUserId) ?? "None"}</td>
+                          <td className={`${tbl.td} max-md:hidden text-right font-display text-[16px] font-semibold tabular-nums`}>{ownedCount(t.id)}</td>
+                          <td className={`${tbl.td} text-right`}>
+                            <button type="button" aria-label={`Delete ${t.name}`} onClick={(e) => { e.stopPropagation(); void handleDelete(t); }} className={`${btnIcon} hover:text-[var(--state-overdue)]`}>
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Section>
 
-                {/* Department: supervisor (effective owner of owned libraries) + owned libraries */}
-                <div className="px-5 py-3 border-b border-[var(--color-border)] space-y-2">
-                  <div className="flex items-center gap-2">
-                    <label htmlFor="team-supervisor" className="text-[13px] font-semibold text-[var(--color-text-muted)] w-24 shrink-0">Supervisor</label>
-                    <select id="team-supervisor" value={selected.supervisorUserId ?? ""} onChange={(e) => void setSupervisor(e.target.value || null)}
-                      className="flex-1 min-w-0 h-9 text-[13px] rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] px-2 outline-none">
+          {!selected ? (
+            teams.length > 0 && <p className="text-[15px] text-[var(--color-text-muted)]">Pick a team to set its supervisor, libraries and people.</p>
+          ) : (
+            <section className="min-w-0" aria-label={`Team ${selected.name}`}>
+              <div className="flex flex-wrap items-center gap-3 mb-2.5">
+                <span aria-hidden className="w-3 h-3 rounded-sm shrink-0" style={{ backgroundColor: selected.color ?? "#64748b" }} />
+                <input key={selected.id} defaultValue={selected.name} aria-label="Team name" onBlur={(e) => { if (e.target.value.trim() && e.target.value !== selected.name) { void rename(selected, e.target.value.trim()); } }}
+                  className="font-display text-[22px] font-semibold text-[var(--color-text)] bg-transparent min-w-0 flex-1 rounded-md px-1.5 -ml-1.5 border border-transparent hover:border-[var(--color-border-strong)] focus:border-[var(--color-accent)] focus:bg-[var(--color-surface)] outline-none" />
+                <span className="text-[14px] text-[var(--color-text-muted)]">{plural(teamMemberIds.length, "person", "people")} in this team</span>
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+                <div className={sheet}>
+                  <FormRow label="Supervisor" htmlFor="team-supervisor" hint="Owns this department's libraries, unless a library names its own owner.">
+                    <select id="team-supervisor" value={selected.supervisorUserId ?? ""} onChange={(e) => void setSupervisor(e.target.value || null)} className={field}>
                       <option value="">None</option>
                       {members.map((m) => <option key={m.uid} value={m.uid}>{m.display_name || m.email || m.uid}</option>)}
                     </select>
-                  </div>
-                  <div className="text-[12px] text-[var(--color-text-muted)]">The supervisor owns any library this department owns, unless that library names its own owner.</div>
-                  <div>
-                    <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Owns libraries</div>
+                  </FormRow>
+                  <div className="border-t border-[var(--color-border)]" />
+                  <FormRow label="Owns libraries" hint="Tap a library to give it to this department.">
                     <div className="flex flex-wrap gap-1.5">
                       {libraries.map((l) => {
                         const owned = l.owner_team_id === selected.id;
@@ -250,44 +280,47 @@ export default function AdminTeamsPage() {
                         return (
                           <button key={l.id} type="button" onClick={() => void toggleLibrary(l.id, owned)} disabled={otherTeam} aria-pressed={owned}
                             title={otherTeam ? "Owned by another department" : undefined}
-                            className={`px-2.5 py-1 rounded-full text-[12px] font-semibold border transition-colors disabled:opacity-40 ${owned ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>
-                            {l.name}{otherTeam ? " · other" : ""}
+                            className={`inline-flex items-center gap-1 h-8 px-2.5 rounded-md text-[13px] border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${owned ? "font-semibold bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]"}`}>
+                            {owned && <Check className="w-3.5 h-3.5" />}{l.name}{otherTeam ? " (another team)" : ""}
                           </button>
                         );
                       })}
-                      {libraries.length === 0 && <span className="text-[11px] text-[var(--color-text-muted)]">No libraries yet.</span>}
+                      {libraries.length === 0 && <span className="text-[14px] text-[var(--color-text-muted)]">No libraries yet.</span>}
                     </div>
-                  </div>
+                  </FormRow>
                 </div>
 
-                <div className="px-5 py-3 border-b border-[var(--color-border)]">
-                  <div className="relative">
-                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
-                    <input value={memberSearch} onChange={(e) => setMemberSearch(e.target.value)} placeholder="Search people…" aria-label="Search people"
-                      className="w-full h-10 pl-9 pr-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[14px] text-[var(--color-text)]" />
+                <div className={`${sheet} overflow-hidden`}>
+                  <div className="p-3 border-b border-[var(--color-border)]">
+                    <div className="relative">
+                      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
+                      <input value={memberSearch} onChange={(e) => setMemberSearch(e.target.value)} placeholder="Find a person" aria-label="Find a person"
+                        className={`${field} pl-9`} />
+                    </div>
+                  </div>
+                  <div className="max-h-[480px] overflow-auto divide-y divide-[var(--color-border)]">
+                    {filteredMembers.map((m) => {
+                      const inTeam = teamMemberIds.includes(m.uid);
+                      return (
+                        <button key={m.uid} type="button" onClick={() => toggleMember(m.uid)} aria-pressed={inTeam} className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-surface-2)] text-left">
+                          <span aria-hidden className={`w-5 h-5 rounded grid place-items-center shrink-0 ${inTeam ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)]"}`}>
+                            {inTeam && <Check className="w-3.5 h-3.5" />}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block font-semibold text-[var(--color-text)] truncate">{m.display_name || m.email || m.uid}</span>
+                            <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{m.email}</span>
+                          </span>
+                          <span className="text-[13px] text-[var(--color-text-muted)] shrink-0">{m.role}</span>
+                        </button>
+                      );
+                    })}
+                    {filteredMembers.length === 0 && <div className="px-4 py-8 text-center text-[var(--color-text-muted)]">No matching people.</div>}
                   </div>
                 </div>
-                <div className="max-h-[480px] overflow-auto divide-y divide-[var(--color-border)]">
-                  {filteredMembers.map((m) => {
-                    const inTeam = teamMemberIds.includes(m.uid);
-                    return (
-                      <button key={m.uid} type="button" onClick={() => toggleMember(m.uid)} aria-pressed={inTeam} className="w-full flex items-center gap-3 px-5 py-2.5 hover:bg-[var(--color-surface-2)] text-left">
-                        <span aria-hidden className={`w-5 h-5 rounded-md grid place-items-center shrink-0 ${inTeam ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "border border-[var(--color-border-strong)]"}`}>
-                          {inTeam && <Check className="w-3.5 h-3.5" />}
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <div className="text-[14px] font-semibold text-[var(--color-text)] truncate">{m.display_name || m.email || m.uid}</div>
-                          <div className="text-[13px] text-[var(--color-text-muted)] truncate">{m.email} · {m.role}</div>
-                        </div>
-                      </button>
-                    );
-                  })}
-                  {filteredMembers.length === 0 && <div className="px-5 py-8 text-center text-[14px] text-[var(--color-text-muted)]">No matching people.</div>}
-                </div>
-              </>
-            )}
-          </Card>
-        </div>
+              </div>
+            </section>
+          )}
+        </>
       )}
       </PageBody>
     </PageShell>

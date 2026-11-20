@@ -32,13 +32,13 @@ function DeleteSafetyModalBody({
     <Modal onClose={onClose} size="sm" zIndex={60} dismissable={!isLoading}>
       <ModalHeader
         icon={AlertTriangle}
-        iconClassName="bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-400"
+        iconClassName="bg-[var(--color-surface-2)] text-[var(--state-overdue)]"
         title="Delete Library?"
         onClose={isLoading ? undefined : onClose}
       />
       <ModalBody className="space-y-4">
         <p className="text-sm text-[var(--color-text-muted)] leading-relaxed">
-          This <span className="font-bold text-red-700 dark:text-red-400">can&apos;t be undone</span>. It
+          This <span className="font-semibold text-[var(--state-overdue)]">can&apos;t be undone</span>. It
           permanently deletes the <strong className="text-[var(--color-text)]">{libraryName}</strong> library setup.
           Documents inside it may be left without a library if they aren&apos;t moved first.
         </p>
@@ -56,7 +56,7 @@ function DeleteSafetyModalBody({
             value={confirmText}
             onChange={(e) => setConfirmText(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && isMatch && !isLoading) void onConfirm(); }}
-            className="w-full p-3 border border-[var(--color-border-strong)] rounded-lg text-sm font-bold bg-[var(--color-surface)] text-[var(--color-text)] focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-all placeholder:font-normal"
+            className="w-full p-3 border border-[var(--color-border-strong)] rounded-lg text-sm font-semibold bg-[var(--color-surface)] text-[var(--color-text)] focus:ring-2 focus:ring-[var(--state-overdue)] focus:border-red-500 outline-none transition-all placeholder:font-normal"
             placeholder="Type the library name…"
             autoFocus
           />
@@ -65,7 +65,7 @@ function DeleteSafetyModalBody({
       <ModalFooter>
         <button
           onClick={onClose}
-          className="px-4 py-2 text-sm font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)] border border-transparent hover:border-[var(--color-border)] rounded-lg transition-all"
+          className="px-4 py-2 text-sm font-semibold text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)] border border-transparent hover:border-[var(--color-border)] rounded-lg transition-all"
           disabled={isLoading}
         >
           Cancel
@@ -73,7 +73,7 @@ function DeleteSafetyModalBody({
         <button
           onClick={onConfirm}
           disabled={!isMatch || isLoading}
-          className="px-4 py-2 bg-red-600 text-white text-sm font-bold rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center"
+          className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-md bg-[var(--state-overdue)] text-white text-[15px] font-semibold hover:brightness-95 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           {isLoading ? (
             <Loader2 className="w-4 h-4 mr-2 animate-spin" />

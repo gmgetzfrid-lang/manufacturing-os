@@ -4,26 +4,12 @@ import React, { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
-import { 
-  TrendingUp, 
-  AlertTriangle, 
-  CheckCircle2, 
-  Clock, 
-  FileText, 
-  Users, 
-  Server,
-  ArrowUpRight,
-  UserCircle,
-  HelpCircle,
-  X,
-  ExternalLink,
-  ChevronRight,
-  MousePointerClick
-} from 'lucide-react';
+import { AlertTriangle, ChevronRight, X } from 'lucide-react';
 import { Ticket, DocumentRecord } from '@/types/schema';
 import { PageShell } from '@/components/ui/PageShell';
-import { PageHero, PageBody, Card } from '@/components/ui/PageHero';
-import { plural } from '@/components/admin/band';
+import { PageHero, PageBody } from '@/components/ui/PageHero';
+import { tbl, sheet, btnQuiet, btnIcon, StatusTag, Section, Problem } from '@/components/admin/kit';
+import { plural, bandSeg, bandSegItem } from '@/components/admin/band';
 import UserAvatar from '@/components/ui/UserAvatar';
 import LoadingBlock from '@/components/ui/LoadingBlock';
 import { Modal, ModalHeader, ModalBody, ModalFooter } from '@/components/ui/Modal';
@@ -366,366 +352,243 @@ export default function AnalyticsPage() {
   const answer = metrics.staleTickets > 0
     ? `${plural(metrics.staleTickets, "request")} untouched for a week.`
     : metrics.totalTickets === 0 ? "No requests yet."
-    : `${plural(metrics.totalTickets, "request")}, none stalled.`;
+    : "No request has stalled.";
+  const people = viewMode === 'drafter' ? metrics.drafterStats : metrics.requesterStats;
+  const maxVol = Math.max(...metrics.volumeData.map(v => v.count), 1);
+  const totalRevisions = metrics.rootCauseData.reduce((acc, curr) => acc + curr.count, 0);
 
   return (
     <PageShell width="work">
-      
-      {/* --------------------------------------------------------------------------- */}
-      {/* MODAL 1: ROOT CAUSE DRILL DOWN */}
-      {/* --------------------------------------------------------------------------- */}
+
+      {/* Drill down: one reason's tickets */}
       {selectedReason && (
         <Modal onClose={() => setSelectedReason(null)} size="xl" zIndex={50}>
-          <ModalHeader icon={AlertTriangle} title={selectedReason} subtitle={`Found ${selectedTickets.length} occurrences across tickets.`} onClose={() => setSelectedReason(null)} />
-            <ModalBody className="bg-[var(--color-surface-2)]">
+          <ModalHeader icon={AlertTriangle} title={selectedReason} subtitle={plural(selectedTickets.length, "time")} onClose={() => setSelectedReason(null)} />
+            <ModalBody>
               {selectedTickets.length === 0 ? (
-                <div className="text-center py-12 text-[var(--color-text-faint)]">No details found.</div>
+                <div className="text-center py-12 text-[var(--color-text-muted)]">No details found.</div>
               ) : (
-                <div className="space-y-4">
-                  {selectedTickets.map((item, idx) => (
-                    <div key={idx} className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow group">
-                      <div className="flex justify-between items-start mb-2">
-                        <div className="flex items-center">
-                          <span className="font-mono text-xs font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-2 py-1 rounded mr-3">{item.ticketId}</span>
-                          <h4 className="text-sm font-bold text-[var(--color-text)]">{item.ticketTitle}</h4>
-                        </div>
-                        <Link href={`/requests/${item.id}`} target="_blank">
-                          <button className="text-xs font-bold text-[var(--color-text)] flex items-center hover:underline bg-[var(--color-surface-2)] px-3 py-1.5 rounded-lg border border-[var(--color-border)] group-hover:border-[var(--color-border)] transition-colors">
-                            View Ticket <ExternalLink className="w-3 h-3 ml-1" />
-                          </button>
-                        </Link>
-                      </div>
-                      
-                      <div className="ml-1 pl-4 border-l-2 border-[var(--color-border)] py-1">
-                        <p className="text-xs text-[var(--color-text-muted)] italic">&ldquo;{item.commentText}&rdquo;</p>
-                      </div>
-                      
-                      <div className="mt-3 flex items-center text-[13px] text-[var(--color-text-faint)] font-medium">
-                        <span className="flex items-center mr-4"><UserCircle className="w-3 h-3 mr-1" /> {item.reportedBy.split('@')[0]}</span>
-                        <span className="flex items-center"><Clock className="w-3 h-3 mr-1" /> {item.date}</span>
-                      </div>
-                    </div>
-                  ))}
+                <div className={tbl.wrap}>
+                  <table className={tbl.table}>
+                    <thead className={`${tbl.thead} max-sm:hidden`}>
+                      <tr><th className={tbl.th}>Request</th><th className={tbl.th}>What was said</th><th className={tbl.th}>Who, when</th></tr>
+                    </thead>
+                    <tbody className={tbl.tbody}>
+                      {selectedTickets.map((item, idx) => (
+                        <tr key={idx} className={`${tbl.tr} max-sm:flex max-sm:flex-col`}>
+                          <td className={`${tbl.td} align-top max-sm:pb-1`}>
+                            <Link href={`/requests/${item.id}`} target="_blank" className="group block">
+                              <span className="font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)] group-hover:text-[var(--color-accent-text)]">{item.ticketId}</span>
+                              <span className="block text-[14px] text-[var(--color-text-muted)] line-clamp-2">{item.ticketTitle}</span>
+                            </Link>
+                          </td>
+                          <td className={`${tbl.td} align-top max-sm:py-1 text-[15px] text-[var(--color-text)]`}>&ldquo;{item.commentText}&rdquo;</td>
+                          <td className={`${tbl.td} align-top max-sm:pt-1 text-[14px] text-[var(--color-text-muted)] whitespace-nowrap`}>{item.reportedBy.split('@')[0]}<br className="max-sm:hidden" /><span className="sm:hidden">, </span>{item.date}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               )}
             </ModalBody>
           <ModalFooter>
-            <button onClick={() => setSelectedReason(null)} className="px-6 py-2 bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] font-bold rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">Close</button>
+            <button type="button" onClick={() => setSelectedReason(null)} className={btnQuiet}>Close</button>
           </ModalFooter>
         </Modal>
       )}
 
-      {/* --------------------------------------------------------------------------- */}
-      {/* MODAL 2: USER PERFORMANCE PROFILE */}
-      {/* --------------------------------------------------------------------------- */}
+      {/* One person's profile */}
       {userProfile && (
         <Modal onClose={() => setSelectedUser(null)} size="2xl" zIndex={50}>
-
-            {/* HEADER */}
-            <div className="relative px-6 sm:px-8 py-6 pr-16 border-b border-[var(--color-border)] rounded-t-2xl flex justify-between items-start gap-4 flex-wrap shrink-0">
-              <div className="flex items-center">
-                <UserAvatar uid={userProfile.metric.uid} name={userProfile.metric.name} size={48} rounded="full" className="shadow-lg mr-4" />
+            <div className="relative px-5 sm:px-6 py-5 pr-14 border-b border-[var(--color-border)] flex justify-between items-center gap-4 flex-wrap shrink-0">
+              <div className="flex items-center gap-3">
+                <UserAvatar uid={userProfile.metric.uid} name={userProfile.metric.name} size={44} rounded="full" />
                 <div>
-                  <h2 className="text-[28px] leading-none font-black tracking-[-0.02em] text-[var(--color-text)]">{userProfile.metric.name}</h2>
-                  <p className="text-sm text-[var(--color-text-muted)] font-medium uppercase tracking-wide">{viewMode === 'drafter' ? 'Drafter Profile' : 'Requester Profile'}</p>
+                  <h2 className="font-display text-[26px] leading-none font-semibold text-[var(--color-text)]">{userProfile.metric.name}</h2>
+                  <p className="mt-1 text-[14px] text-[var(--color-text-muted)]">{viewMode === 'drafter' ? 'Drafter' : 'Requester'}</p>
                 </div>
               </div>
-              <div className="flex flex-col items-end">
-                 <div className="flex items-center space-x-4">
-                    <div className="text-right">
-                      <p className="text-[13px] font-semibold text-[var(--color-text-faint)] ">Avg Revisions</p>
-                      <p className="text-[15px] font-bold text-[var(--color-text)]">{userProfile.metric.avgRevisions.toFixed(2)}</p>
-                    </div>
-                    <div className="w-px h-8 bg-[var(--color-border-strong)] mx-2" />
-                    <div className="text-right">
-                      <p className="text-[13px] font-semibold text-[var(--color-text-faint)] ">Revision Rate</p>
-                      <p className={`text-[15px] font-bold ${userProfile.metric.revisionRate > 0.3 ? 'text-red-600' : 'text-emerald-600'}`}>{formatPercent(userProfile.metric.revisionRate)}</p>
-                    </div>
-                 </div>
-              </div>
-              <button onClick={() => setSelectedUser(null)} aria-label="Close" className="absolute top-4 right-4 p-2 hover:bg-[var(--color-border)] rounded-full text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] transition-colors">
-                <X className="w-6 h-6" />
+              <dl className="flex">
+                <div className="px-4 border-l border-[var(--color-border-strong)]">
+                  <dt className="text-[13px] text-[var(--color-text-muted)]">Average revisions</dt>
+                  <dd className="font-display text-[24px] leading-tight font-semibold tabular-nums text-[var(--color-text)]">{userProfile.metric.avgRevisions.toFixed(2)}</dd>
+                </div>
+                <div className="px-4 border-l border-[var(--color-border-strong)]">
+                  <dt className="text-[13px] text-[var(--color-text-muted)]">Sent back</dt>
+                  <dd className={`font-display text-[24px] leading-tight font-semibold tabular-nums ${userProfile.metric.revisionRate > 0.3 ? 'text-[var(--state-held)]' : 'text-[var(--color-text)]'}`}>{formatPercent(userProfile.metric.revisionRate)}</dd>
+                </div>
+              </dl>
+              <button type="button" onClick={() => setSelectedUser(null)} aria-label="Close" className={`absolute top-4 right-4 ${btnIcon}`}>
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-8 custom-scrollbar bg-[var(--color-surface-2)]">
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                
-                {/* COLUMN 1: ROOT CAUSE BREAKDOWN */}
-                <div className="lg:col-span-1">
-                  <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-5 shadow-sm h-full">
-                    <h3 className="font-bold text-[var(--color-text)] mb-4 flex items-center text-sm uppercase tracking-wide">
-                      <AlertTriangle className="w-4 h-4 mr-2 text-[var(--color-text-muted)]" />
-                      Primary Issue Drivers
-                    </h3>
+            <div className="flex-1 overflow-y-auto p-5 sm:p-6 bg-[var(--color-canvas)]">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <Section label="Why it came back" className="lg:col-span-1">
+                  <div className={`${sheet} p-4`}>
                     {userProfile.causes.length === 0 ? (
-                      <p className="text-sm text-[var(--color-text-faint)] italic">No revisions recorded.</p>
+                      <p className="text-[15px] text-[var(--color-text-muted)]">No revisions recorded.</p>
                     ) : (
-                      <div className="space-y-4">
+                      <div className="space-y-3">
                         {userProfile.causes.map((c, idx) => (
                           <div key={idx}>
-                            <div className="flex justify-between text-xs font-bold text-[var(--color-text)] mb-1">
+                            <div className="flex justify-between text-[14px] text-[var(--color-text)] mb-1">
                               <span className="truncate pr-2">{c.reason}</span>
-                              <span className="shrink-0">{formatPercent(c.percent)}</span>
+                              <span className="shrink-0 tabular-nums font-semibold">{formatPercent(c.percent)}</span>
                             </div>
-                            <div className="w-full bg-[var(--color-surface-2)] h-2 rounded-full overflow-hidden">
-                              <div className="bg-[var(--color-text)] h-full rounded-full" style={{ width: `${c.percent * 100}%` }} />
+                            <div className="w-full bg-[var(--color-surface-2)] h-2 rounded-sm overflow-hidden">
+                              <div className="bg-[var(--color-text-muted)] h-full" style={{ width: `${c.percent * 100}%` }} />
                             </div>
                           </div>
                         ))}
                       </div>
                     )}
-                    <p className="mt-6 text-[11px] text-[var(--color-text-muted)] leading-relaxed">
-                      {viewMode === 'drafter' ? "Why this person's work was sent back for revision." : "Why this person's requests were sent back."}
-                    </p>
                   </div>
-                </div>
+                </Section>
 
-                {/* COLUMN 2: PROBLEMATIC TICKETS */}
-                <div className="lg:col-span-2">
-                  <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-5 shadow-sm h-full flex flex-col">
-                    <h3 className="font-bold text-[var(--color-text)] mb-4 flex items-center text-sm uppercase tracking-wide">
-                      <FileText className="w-4 h-4 mr-2 text-[var(--color-text-muted)]" />
-                      Tickets Requiring Attention
-                    </h3>
-                    <div className="flex-1 overflow-hidden">
-                      {userProfile.tickets.length === 0 ? (
-                        <div className="h-full flex flex-col items-center justify-center text-[var(--color-text-faint)]">
-                          <CheckCircle2 className="w-12 h-12 mb-3 text-[var(--color-text-faint)]" />
-                          <p>No revisions found.</p>
-                        </div>
-                      ) : (
-                        <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                <Section label="Requests sent back" className="lg:col-span-2">
+                  {userProfile.tickets.length === 0 ? (
+                    <div className={`${sheet} p-6 text-center`}><StatusTag tone="good">No revisions found.</StatusTag></div>
+                  ) : (
+                    <div className={`${tbl.wrap} max-h-[420px] overflow-y-auto`}>
+                      <table className={tbl.table}>
+                        <thead className={tbl.thead}>
+                          <tr><th className={tbl.th}>Request</th><th className={`${tbl.th} max-sm:hidden`}>Status</th><th className={`${tbl.th} text-right`}>Revisions</th></tr>
+                        </thead>
+                        <tbody className={tbl.tbody}>
                           {userProfile.tickets.map(t => (
-                            <div key={t.id} className="flex items-center justify-between p-3 border border-[var(--color-border)] rounded-lg hover:border-[var(--color-accent-ring)] hover:bg-[var(--color-surface-2)] transition-all group">
-                              <div className="min-w-0">
-                                <div className="flex items-center mb-1">
-                                  <span className="text-xs font-mono font-bold text-[var(--color-text-muted)] mr-2">{t.ticketId}</span>
-                                  <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded border ${t.status === 'CLOSED' ? 'bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]' : 'bg-green-100 text-green-700 border-green-200'}`}>{t.status}</span>
-                                </div>
-                                <p className="text-sm font-bold text-[var(--color-text)] truncate pr-4">{t.title}</p>
-                              </div>
-                              <div className="flex items-center space-x-4 shrink-0">
-                                <div className="text-right">
-                                  <p className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase">Revisions</p>
-                                  <p className="text-[15px] font-bold text-[var(--color-text)]">{t.revisionCount}</p>
-                                </div>
-                                <Link href={`/requests/${t.id}`} target="_blank">
-                                  <button className="p-2 bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-faint)] hover:text-[var(--color-accent-text)] hover:border-[var(--color-accent-ring)] rounded-lg shadow-sm transition-all">
-                                    <ExternalLink className="w-4 h-4" />
-                                  </button>
+                            <tr key={t.id} className={tbl.tr}>
+                              <td className={tbl.td}>
+                                <Link href={`/requests/${t.id}`} target="_blank" className="group block min-w-0">
+                                  <span className="font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)] group-hover:text-[var(--color-accent-text)]">{t.ticketId}</span>
+                                  <span className="block text-[14px] text-[var(--color-text-muted)] truncate max-w-[40ch]">{t.title}</span>
                                 </Link>
-                              </div>
-                            </div>
+                              </td>
+                              <td className={`${tbl.td} max-sm:hidden`}><StatusTag tone={t.status === 'CLOSED' ? 'none' : 'warn'}>{t.status === 'CLOSED' ? 'Closed' : 'Open'}</StatusTag></td>
+                              <td className={`${tbl.td} text-right font-display text-[16px] font-semibold tabular-nums`}>{t.revisionCount}</td>
+                            </tr>
                           ))}
-                        </div>
-                      )}
+                        </tbody>
+                      </table>
                     </div>
-                  </div>
-                </div>
-
+                  )}
+                </Section>
               </div>
             </div>
         </Modal>
       )}
 
-
-      {/* HEADER */}
       <PageHero
         kicker="Admin · Analytics"
         title={answer}
-        sub={`${plural(metrics.totalTickets, "request")} · ${plural(metrics.totalDocs, "document")}. First-time quality ${formatPercent(1 - metrics.globalRevisionRate)}.`}
+        sub={`${metrics.totalDocs.toLocaleString()} documents: ${metrics.issuedDocs.toLocaleString()} issued, ${metrics.supersededDocs.toLocaleString()} superseded. ${metrics.volumeData[metrics.volumeData.length - 1]?.count || 0} requests in the latest period.`}
+        facts={[
+          { label: "Requests", value: metrics.totalTickets.toLocaleString() },
+          { label: "Right first time", value: formatPercent(1 - metrics.globalRevisionRate), tone: metrics.globalRevisionRate > 0.3 ? "warn" : undefined },
+          { label: "Stalled", value: metrics.staleTickets, tone: metrics.staleTickets > 0 ? "warn" : undefined },
+        ]}
       />
 
       <PageBody>
-      {/* At a glance: one compact row instead of big-number tiles. */}
-      <Card label="At a glance">
-        {loadError && (
-          <p role="alert" className="mb-3 text-[13px] text-red-700 dark:text-red-400">
-            Couldn&apos;t load the numbers, so these may be empty: {loadError}
-          </p>
-        )}
-        <dl className="grid grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-4">
-          <div>
-            <dt className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center gap-1.5"><FileText className="w-3.5 h-3.5" /> Requests</dt>
-            <dd className="mt-1 text-[15px] font-bold text-[var(--color-text)]">{metrics.totalTickets.toLocaleString()}</dd>
-            <dd className="text-[12px] text-[var(--color-text-muted)] flex items-center"><ArrowUpRight className="w-3 h-3 mr-0.5 text-emerald-600" /> {metrics.volumeData[metrics.volumeData.length - 1]?.count || 0} in the latest period</dd>
-          </div>
-          <div>
-            <dt className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center gap-1.5"><Server className="w-3.5 h-3.5" /> Documents</dt>
-            <dd className="mt-1 text-[15px] font-bold text-[var(--color-text)]">{metrics.totalDocs.toLocaleString()}</dd>
-            <dd className="text-[12px] text-[var(--color-text-muted)]">{metrics.issuedDocs} issued · {metrics.supersededDocs} superseded</dd>
-          </div>
-          <div>
-            <dt className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5" /> First-time quality</dt>
-            <dd className={`mt-1 text-[15px] font-bold ${metrics.globalRevisionRate > 0.3 ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text)]"}`}>{formatPercent(1 - metrics.globalRevisionRate)}</dd>
-            <dd className="mt-1.5 w-full max-w-[10rem] bg-[var(--color-surface-2)] h-1.5 rounded-full overflow-hidden"><div className={`h-full rounded-full ${metrics.globalRevisionRate > 0.3 ? 'bg-amber-500' : 'bg-green-500'}`} style={{ width: `${(1 - metrics.globalRevisionRate) * 100}%` }} /></dd>
-          </div>
-          <div>
-            <dt className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" /> Stalled</dt>
-            <dd className={`mt-1 text-[15px] font-bold ${metrics.staleTickets > 0 ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text)]"}`}>{metrics.staleTickets}</dd>
-            <dd className="text-[12px] text-[var(--color-text-muted)]">Active, untouched for over 7 days</dd>
-          </div>
-        </dl>
-      </Card>
+      {loadError && <Problem>Couldn&apos;t load the numbers, so these may be empty: {loadError}</Problem>}
 
-      {/* SECTION 2: CHARTS & LISTS */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        
-        {/* CHART: DYNAMIC VOLUME */}
-        <div className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] p-5 lg:col-span-2">
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center"><TrendingUp className="w-3.5 h-3.5 mr-2" /> Request volume</h3>
-            <div className="flex bg-[var(--color-surface-2)] rounded-lg p-1 space-x-1">
-              {(['1M', '3M', '6M', '1Y'] as TimeRange[]).map(r => (
-                <button 
-                  key={r} 
-                  type="button"
-                  aria-pressed={timeRange === r}
-                  onClick={() => setTimeRange(r)}
-                  className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${timeRange === r ? 'bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}`}
-                >
-                  {r}
-                </button>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-x-6 gap-y-8">
+        <Section label="Request volume" className="lg:col-span-2" action={
+          <div className={bandSeg} role="group" aria-label="Time range">
+            {(['1M', '3M', '6M', '1Y'] as TimeRange[]).map(r => (
+              <button key={r} type="button" aria-pressed={timeRange === r} onClick={() => setTimeRange(r)} className={bandSegItem(timeRange === r)}>
+                {r === '1M' ? '1 month' : r === '3M' ? '3 months' : r === '6M' ? '6 months' : '1 year'}
+              </button>
+            ))}
+          </div>
+        }>
+          <div className={`${sheet} p-4 sm:p-5`}>
+            <div className="h-56 flex items-end gap-1.5 sm:gap-2 border-b border-[var(--color-border-strong)]">
+              {metrics.volumeData.map((d, i) => (
+                <div key={i} className="flex-1 min-w-0 h-full flex flex-col justify-end items-center group" title={`${d.label}: ${d.count}`}>
+                  <span className="text-[12px] font-semibold tabular-nums text-[var(--color-text-muted)] mb-1">{d.count > 0 ? d.count : ""}</span>
+                  <div className="w-full max-w-[44px] bg-[var(--color-text-muted)] group-hover:bg-[var(--color-text)] transition-colors min-h-[2px]" style={{ height: `${(d.count / maxVol) * 85}%` }} />
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-1.5 sm:gap-2 mt-1.5">
+              {metrics.volumeData.map((d, i) => (
+                <span key={i} className="flex-1 min-w-0 text-center text-[12px] text-[var(--color-text-muted)] truncate">{d.label}</span>
               ))}
             </div>
           </div>
-          <div className="h-64 flex items-end justify-between space-x-2 px-4 pt-8 border-b border-[var(--color-border)] pb-2">
-            {metrics.volumeData.map((d, i) => {
-              const max = Math.max(...metrics.volumeData.map(v => v.count), 1); 
-              const height = (d.count / max) * 100;
-              return (
-                <div key={i} className="flex flex-col items-center flex-1 group min-w-[20px]">
-                  <div className="w-full bg-[var(--color-surface-2)] rounded-t-sm relative flex items-end justify-center transition-all group-hover:bg-[var(--color-border)]" style={{ height: '100%' }}>
-                    <div 
-                      className="w-full mx-0.5 bg-[var(--color-text-muted)] rounded-t-sm transition-all duration-500 ease-out group-hover:bg-[var(--color-text)] relative min-h-[4px]" 
-                      style={{ height: `${height}%` }}
-                    >
-                       <span className="absolute -top-6 left-1/2 -translate-x-1/2 text-xs font-bold text-[var(--color-text-muted)] opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity bg-[var(--color-surface)] px-2 py-1 rounded shadow-sm z-10 border border-[var(--color-border)]">{d.count}</span>
-                    </div>
-                  </div>
-                  <span className="text-[13px] font-semibold text-[var(--color-text-faint)] mt-2 truncate w-full text-center">{d.label}</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        </Section>
 
-        {/* WIDGET: ROOT CAUSE ANALYSIS */}
-        <div className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] p-5 flex flex-col">
-          <div className="mb-6">
-            <div className="flex justify-between items-start">
-              <div>
-                <h3 className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center"><HelpCircle className="w-3.5 h-3.5 mr-2" /> Why work came back</h3>
-                <p className="text-[13px] text-[var(--color-text-muted)] mt-1">Tap a reason to see its tickets.</p>
-              </div>
-            </div>
-          </div>
-          
-          <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
-            {metrics.rootCauseData.length === 0 ? (
-               <div className="flex flex-col items-center justify-center h-48 text-center">
-                 <AlertTriangle className="w-8 h-8 text-[var(--color-text-faint)] mb-2" />
-                 <p className="text-xs text-[var(--color-text-faint)]">No revision data available yet.</p>
-               </div>
-            ) : (
-               <div className="space-y-4">
-                  {metrics.rootCauseData.map((item, i) => (
-                    <div 
-                      key={i} 
-                      onClick={() => setSelectedReason(item.reason)}
-                      className="cursor-pointer hover:bg-[var(--color-surface-2)] p-2 rounded-lg transition-colors group"
-                    >
-                      <div className="flex justify-between text-xs font-bold text-[var(--color-text)] mb-1 group-hover:text-[var(--color-text)]">
-                        <span className="flex items-center">
-                          {item.reason}
-                          <ChevronRight className="w-3 h-3 ml-1 opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity text-[var(--color-text-muted)]" />
-                        </span>
-                        <span>{item.count} ({formatPercent(item.percentage)})</span>
-                      </div>
-                      <div className="w-full bg-[var(--color-surface-2)] h-2 rounded-full overflow-hidden">
-                        <div 
-                          className={`h-full rounded-full transition-colors ${
-                            item.reason.includes('Drafter') || item.reason.includes('Drafting') ? 'bg-[var(--color-text-muted)] group-hover:bg-[var(--color-text)]' :
-                            item.reason.includes('Requester') || item.reason.includes('Info') ? 'bg-[var(--color-text-muted)] group-hover:bg-[var(--color-text)]' :
-                            'bg-[var(--color-text-faint)] group-hover:bg-[var(--color-text)]'
-                          }`} 
-                          style={{ width: `${item.percentage * 100}%` }} 
-                        />
-                      </div>
+        <Section label="Why work came back" action={<span className="text-[13px] text-[var(--color-text-muted)]">{plural(totalRevisions, "revision")}</span>}>
+          {metrics.rootCauseData.length === 0 ? (
+            <div className={`${sheet} px-4 py-8 text-center text-[15px] text-[var(--color-text-muted)]`}>No revisions recorded yet.</div>
+          ) : (
+            <ul className={`${sheet} divide-y divide-[var(--color-border)] overflow-hidden`}>
+              {metrics.rootCauseData.map((item, i) => (
+                <li key={i}>
+                  <button type="button" onClick={() => setSelectedReason(item.reason)} className="w-full text-left px-4 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors group">
+                    <div className="flex justify-between gap-2 text-[15px] text-[var(--color-text)] mb-1.5">
+                      <span className="inline-flex items-center gap-1 min-w-0"><span className="truncate group-hover:text-[var(--color-accent-text)]">{item.reason}</span><ChevronRight className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" /></span>
+                      <span className="shrink-0 tabular-nums"><b className="font-semibold">{item.count}</b> <span className="text-[var(--color-text-muted)]">({formatPercent(item.percentage)})</span></span>
                     </div>
-                  ))}
-               </div>
-            )}
-          </div>
-          <div className="mt-6 pt-4 border-t border-[var(--color-border)]">
-             <div className="flex items-center justify-between text-[13px] text-[var(--color-text-faint)] font-semibold">
-               <span>Total Revisions Logged</span>
-               <span>{metrics.rootCauseData.reduce((acc, curr) => acc + curr.count, 0)}</span>
-             </div>
-          </div>
-        </div>
+                    <div className="w-full bg-[var(--color-surface-2)] h-2 rounded-sm overflow-hidden">
+                      <div className="h-full bg-[var(--color-text-muted)] group-hover:bg-[var(--color-text)]" style={{ width: `${item.percentage * 100}%` }} />
+                    </div>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Section>
       </div>
 
-      {/* SECTION 3: PERFORMANCE TABLE */}
-      <div className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden">
-        <div className="px-5 py-4 border-b border-[var(--color-border)] flex justify-between items-center gap-3 flex-wrap">
-          <div>
-            <h3 className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center"><Users className="w-3.5 h-3.5 mr-2" /> {viewMode === 'drafter' ? 'Drafter performance' : 'Requester quality'}</h3>
-            <p className="text-[13px] text-[var(--color-text-muted)] mt-1 flex items-center"><MousePointerClick className="w-3 h-3 mr-1" /> Tap a person to see why their work came back.</p>
-          </div>
-          <div className="flex bg-[var(--color-border)] rounded-lg p-1 space-x-1">
-             <button type="button" aria-pressed={viewMode === 'drafter'} onClick={() => setViewMode('drafter')} className={`px-3 py-1.5 text-xs font-bold rounded transition-all ${viewMode === 'drafter' ? 'bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm' : 'text-[var(--color-text-muted)]'}`}>Drafters</button>
-             <button type="button" aria-pressed={viewMode === 'requester'} onClick={() => setViewMode('requester')} className={`px-3 py-1.5 text-xs font-bold rounded transition-all ${viewMode === 'requester' ? 'bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm' : 'text-[var(--color-text-muted)]'}`}>Requesters</button>
-          </div>
+      <Section label={viewMode === 'drafter' ? 'Drafters' : 'Requesters'} action={
+        <div className={bandSeg} role="group" aria-label="Whose work">
+          <button type="button" aria-pressed={viewMode === 'drafter'} onClick={() => setViewMode('drafter')} className={bandSegItem(viewMode === 'drafter')}>Drafters</button>
+          <button type="button" aria-pressed={viewMode === 'requester'} onClick={() => setViewMode('requester')} className={bandSegItem(viewMode === 'requester')}>Requesters</button>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm text-left">
-            <thead className="text-[var(--color-text-muted)] font-semibold text-[13px] ">
+      }>
+        <div className={tbl.wrap}>
+          <table className={tbl.table}>
+            <thead className={tbl.thead}>
               <tr>
-                <th className="px-6 py-3">{viewMode === 'drafter' ? 'Drafter' : 'Requester'}</th>
-                <th className="px-6 py-3">Assigned Load</th>
-                <th className="px-6 py-3">Completed</th>
-                <th className="px-6 py-3">Avg Revisions</th>
-                <th className="px-6 py-3">Revision Rate</th>
-                <th className="px-6 py-3 text-right">Efficiency Score</th>
+                <th className={tbl.th}>{viewMode === 'drafter' ? 'Drafter' : 'Requester'}</th>
+                <th className={`${tbl.th} text-right`}>Assigned</th>
+                <th className={`${tbl.th} text-right max-sm:hidden`}>Completed</th>
+                <th className={`${tbl.th} max-md:hidden`}>Average revisions</th>
+                <th className={`${tbl.th} text-right`}>Sent back</th>
+                <th className={`${tbl.th} text-right max-md:hidden`}>Score</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[var(--color-border)]">
-              {(viewMode === 'drafter' ? metrics.drafterStats : metrics.requesterStats).length === 0 ? (
-                <tr><td colSpan={6} className="px-6 py-8 text-center text-[var(--color-text-faint)] italic">No data available for this view.</td></tr>
-              ) : (viewMode === 'drafter' ? metrics.drafterStats : metrics.requesterStats).map((d) => {
-                // Efficiency Score Calculation
+            <tbody className={tbl.tbody}>
+              {people.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-[var(--color-text-muted)]">No requests to measure yet.</td></tr>
+              ) : people.map((d) => {
+                // Efficiency score: 100, less half the sent-back rate and ten per average revision.
                 const score = Math.max(0, 100 - (d.revisionRate * 100 * 0.5) - (d.avgRevisions * 10));
-                
                 return (
-                  <tr 
-                    key={d.uid} 
-                    onClick={() => setSelectedUser(d.uid)}
-                    className="hover:bg-[var(--color-surface-2)] transition-colors cursor-pointer group"
-                  >
-                    <td className="px-6 py-4 font-bold text-[var(--color-text)] flex items-center group-hover:text-[var(--color-text)] transition-colors">
-                      <UserAvatar uid={d.uid} name={d.name} size={32} rounded="full" className="mr-3" />
-                      {d.name}
+                  <tr key={d.uid} onClick={() => setSelectedUser(d.uid)} className={`${tbl.tr} cursor-pointer`}>
+                    <td className={tbl.td}>
+                      <button type="button" onClick={(e) => { e.stopPropagation(); setSelectedUser(d.uid); }} className="inline-flex items-center gap-3 font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)] text-left">
+                        <UserAvatar uid={d.uid} name={d.name} size={30} rounded="full" />
+                        {d.name}
+                      </button>
                     </td>
-                    <td className="px-6 py-4 font-mono text-[var(--color-text-muted)]">{d.totalAssigned}</td>
-                    <td className="px-6 py-4 font-mono text-[var(--color-text-muted)]">{d.completed}</td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center">
-                        <span className={`font-bold mr-2 ${d.avgRevisions > 2 ? 'text-amber-500' : 'text-[var(--color-text)]'}`}>{d.avgRevisions.toFixed(1)}</span>
-                        <div className="w-16 h-1.5 bg-[var(--color-surface-2)] rounded-full overflow-hidden">
-                           <div className={`h-full rounded-full ${d.avgRevisions > 2 ? 'bg-amber-400' : 'bg-[var(--color-text-muted)]'}`} style={{ width: `${Math.min(100, d.avgRevisions * 20)}%` }} />
+                    <td className={`${tbl.td} text-right tabular-nums`}>{d.totalAssigned}</td>
+                    <td className={`${tbl.td} text-right tabular-nums max-sm:hidden`}>{d.completed}</td>
+                    <td className={`${tbl.td} max-md:hidden`}>
+                      <div className="flex items-center gap-2">
+                        <span className={`tabular-nums w-8 ${d.avgRevisions > 2 ? 'font-semibold text-[var(--state-held)]' : 'text-[var(--color-text)]'}`}>{d.avgRevisions.toFixed(1)}</span>
+                        <div className="w-20 h-1.5 bg-[var(--color-surface-2)] rounded-sm overflow-hidden">
+                          <div className={`h-full ${d.avgRevisions > 2 ? 'bg-[var(--state-held)]' : 'bg-[var(--color-text-muted)]'}`} style={{ width: `${Math.min(100, d.avgRevisions * 20)}%` }} />
                         </div>
                       </div>
                     </td>
-                    <td className="px-6 py-4">
-                       <span className={`px-2 py-1 rounded text-xs font-bold ${d.revisionRate > 0.3 ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'}`}>
-                         {formatPercent(d.revisionRate)}
-                       </span>
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                       <span className="font-bold text-[var(--color-text)] text-[15px]">{score.toFixed(0)}</span>
-                       <span className="text-xs text-[var(--color-text-faint)] ml-1">/ 100</span>
+                    <td className={`${tbl.td} text-right tabular-nums ${d.revisionRate > 0.3 ? 'font-semibold text-[var(--state-held)]' : ''}`}>{formatPercent(d.revisionRate)}</td>
+                    <td className={`${tbl.td} text-right max-md:hidden`}>
+                      <span className="font-display text-[16px] font-semibold tabular-nums">{score.toFixed(0)}</span>
+                      <span className="text-[13px] text-[var(--color-text-muted)]"> / 100</span>
                     </td>
                   </tr>
                 );
@@ -733,7 +596,7 @@ export default function AnalyticsPage() {
             </tbody>
           </table>
         </div>
-      </div>
+      </Section>
       </PageBody>
 
     </PageShell>

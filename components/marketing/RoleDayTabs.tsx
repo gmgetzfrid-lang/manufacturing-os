@@ -6,9 +6,8 @@
 // whether the site runs crude, cereal, or cement.
 
 import React, { useState } from "react";
-import {
-  FolderKanban, HardHat, Wrench, LineChart, XCircle, CheckCircle2,
-} from "lucide-react";
+import { FolderKanban, HardHat, Wrench, LineChart } from "lucide-react";
+import { bandSeg, bandSegItem } from "@/components/admin/band";
 
 type Moment = { before: string; after: string };
 type Role = {
@@ -28,7 +27,7 @@ const ROLES: Role[] = [
     moments: [
       {
         before: "Five PDFs named “FINAL_rev3” on the shared drive. Which one is current? Nobody is certain.",
-        after: "One current revision per document. Superseded copies are marked, stamped - and recalled from everyone who downloaded them.",
+        after: "One current revision per document. Superseded copies are marked, stamped and recalled from everyone who downloaded them.",
       },
       {
         before: "Importing 200 legacy drawings means a week of retyping title blocks into a spreadsheet.",
@@ -52,11 +51,11 @@ const ROLES: Role[] = [
       },
       {
         before: "A change went out with a sign-off from someone who wasn't qualified to give it.",
-        after: "Approval physically routes through a qualified engineer. The workflow enforces it - there is no way around.",
+        after: "Approval physically routes through a qualified engineer. The workflow enforces it; there is no way around it.",
       },
       {
         before: "Which drawings, equipment, and open tickets does this change actually touch?",
-        after: "Open the impact panel or the site graph - everything wired to that tag, on one screen, before you commit.",
+        after: "Open the impact panel or the site graph: everything wired to that tag, on one screen, before you commit.",
       },
     ],
   },
@@ -68,15 +67,15 @@ const ROLES: Role[] = [
     moments: [
       {
         before: "“What does that vessel even look like?” means a walk across the site to find out.",
-        after: "Tap the equipment tag wherever it appears - date-stamped photo gallery, linked drawings, current status.",
+        after: "Tap the equipment tag wherever it appears: dated photos, linked drawings, current status.",
       },
       {
         before: "Is the drawing in your hand still current? Honestly, who knows.",
-        after: "Scan the QR stamped on the print. Your phone answers: current, or superseded - instantly, no login needed.",
+        after: "Scan the QR stamped on the print. Your phone answers current or superseded, with no login.",
       },
       {
         before: "The job's paperwork is a folder of loose printouts assembled by hand.",
-        after: "Work packages bundle every document for the job - and acknowledged distribution proves who received what, when.",
+        after: "Work packages bundle every document for the job, and acknowledged distribution proves who got what, and when.",
       },
     ],
   },
@@ -84,11 +83,11 @@ const ROLES: Role[] = [
     key: "biz",
     label: "Leadership & quality",
     icon: <LineChart className="w-4 h-4" />,
-    intro: "The state of the program at a glance - and leverage that stays with you.",
+    intro: "The state of the program at a glance, and leverage that stays with you.",
     moments: [
       {
         before: "“Are we audit-ready?” The honest answer is that nobody knows until the audit.",
-        after: "Live dashboards: past-due requests, unacknowledged distributions, the protection record - visible every day, not once a year.",
+        after: "Live dashboards show past-due requests and unacknowledged distributions every day, not once a year.",
       },
       {
         before: "The vendor doubles the price at renewal and your data is hostage in their format.",
@@ -96,7 +95,7 @@ const ROLES: Role[] = [
       },
       {
         before: "Contractor onboarding is weeks of IT tickets and over-broad access.",
-        after: "Scoped project membership and a tokened intake portal - external teams submit work without ever seeing the rest of your library.",
+        after: "Scoped project membership and a tokened intake portal: outside teams submit work without seeing the rest of your library.",
       },
     ],
   },
@@ -107,46 +106,39 @@ export function RoleDayTabs() {
   const role = ROLES.find((r) => r.key === active) ?? ROLES[0];
   return (
     <div>
-      {/* On a phone the jobs keep going sideways (the last one is cut off,
-          so it's plain there's more). */}
-      <div className="-mx-4 sm:mx-0 px-4 sm:px-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <div role="tablist" aria-label="Pick your job"
-          className="inline-flex items-center gap-1 p-1 rounded-xl bg-[var(--color-surface)] shadow-[var(--shadow-card)]">
-          {ROLES.map((r) => (
-            <button key={r.key} type="button" role="tab" aria-selected={r.key === active} onClick={() => setActive(r.key)}
-              className={`shrink-0 whitespace-nowrap inline-flex items-center gap-2 h-10 px-4 rounded-lg text-[14px] font-bold transition-colors ${
-                r.key === active
-                  ? "bg-[var(--color-ink)] text-white"
-                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-              }`}>
-              {r.icon} {r.label}
-            </button>
-          ))}
-        </div>
+      {/* On a phone the jobs keep going sideways (the strip scrolls). */}
+      <div role="tablist" aria-label="Pick your job" className={bandSeg}>
+        {ROLES.map((r) => (
+          <button key={r.key} type="button" role="tab" aria-selected={r.key === active} onClick={() => setActive(r.key)}
+            className={`${bandSegItem(r.key === active)} h-9 px-3.5`}>
+            {r.icon} {r.label}
+          </button>
+        ))}
       </div>
-      <p key={`intro-${role.key}`} className="mt-6 mb-4 text-[15px] font-bold text-[var(--color-text)]"
-        style={{ animation: "rise 0.4s var(--ease-fluid) both" }}>
+      <p key={`intro-${role.key}`} className="mt-4 mb-2.5 font-display text-[19px] font-semibold text-[var(--color-text)]"
+        style={{ animation: "rise 0.35s var(--ease-fluid) both" }}>
         {role.intro}
       </p>
-      <div role="tabpanel" aria-live="polite" className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {role.moments.map((m, i) => (
-          <div key={`${role.key}-${i}`}
-            className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden"
-            style={{ animation: `rise 0.5s var(--ease-fluid) ${i * 90}ms both` }}>
-            <div className="p-5">
-              <div className="flex items-center gap-1.5 text-[13px] font-semibold text-rose-700 dark:text-rose-400 mb-2">
-                <XCircle className="w-3.5 h-3.5" /> Before
+      <div role="tabpanel" aria-live="polite" className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+        <div className="max-md:hidden grid grid-cols-2 bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text-muted)]">
+          <div className="px-4 sm:px-5 h-10 flex items-center">Before</div>
+          <div className="px-4 sm:px-5 h-10 flex items-center border-l border-[var(--color-border)]">With Manufacturing OS</div>
+        </div>
+        <ul className="divide-y divide-[var(--color-border)]">
+          {role.moments.map((m, i) => (
+            <li key={`${role.key}-${i}`} className="grid grid-cols-1 md:grid-cols-2"
+              style={{ animation: `rise 0.4s var(--ease-fluid) ${i * 60}ms both` }}>
+              <div className="px-4 sm:px-5 py-3.5 text-[15px] leading-snug text-[var(--color-text-muted)]">
+                <span className="md:hidden block text-[13px] font-semibold mb-0.5">Before</span>
+                {m.before}
               </div>
-              <p className="text-[14px] text-[var(--color-text-muted)] leading-relaxed">{m.before}</p>
-            </div>
-            <div className="p-5 border-t border-[var(--color-border)]">
-              <div className="flex items-center gap-1.5 text-[13px] font-semibold text-emerald-700 dark:text-emerald-400 mb-2">
-                <CheckCircle2 className="w-3.5 h-3.5" /> After
+              <div className="px-4 sm:px-5 py-3.5 max-md:pt-0 md:border-l border-[var(--color-border)] text-[15px] leading-snug text-[var(--color-text)]">
+                <span className="md:hidden block text-[13px] font-semibold text-[var(--color-text-muted)] mb-0.5">With Manufacturing OS</span>
+                {m.after}
               </div>
-              <p className="text-[14px] text-[var(--color-text)] font-medium leading-relaxed">{m.after}</p>
-            </div>
-          </div>
-        ))}
+            </li>
+          ))}
+        </ul>
       </div>
     </div>
   );

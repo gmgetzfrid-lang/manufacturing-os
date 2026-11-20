@@ -15,7 +15,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
   Loader2, Plus, ChevronRight, ChevronDown, Archive, Pencil,
-  Factory, Layers, Cpu, AlertTriangle, Save, X,
+  Factory, Layers, Cpu, Save, X,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import {
@@ -28,11 +28,12 @@ import type { Plant, Unit, PlantSystem } from "@/types/schema";
 import DuplicateAwareInput from "@/components/ui/DuplicateAwareInput";
 import { translatePostgresError } from "@/lib/inputValidation";
 import { PageShell } from "@/components/ui/PageShell";
-import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
+import { PageHero, PageBody, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
+import { tbl, sheet, field, btnIcon, btnQuiet, StatusTag, Problem } from "@/components/admin/kit";
+import LoadingBlock from "@/components/ui/LoadingBlock";
 import { plural } from "@/components/admin/band";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Field";
-import { Spinner } from "@/components/ui/Spinner";
 import { appConfirm } from "@/components/providers/DialogProvider";
 
 const ADMIN_ROLES = new Set(["Admin", "Manager", "Supervisor", "DocCtrl"]);
@@ -133,8 +134,8 @@ export default function ScopePage() {
 
   if (!activeOrgId) {
     return (
-      <PageShell width="form">
-        <PageHero kicker="Admin · Operational scope" title="Operational scope" sub="No active organization." size="md" overlap={false} />
+      <PageShell width="work">
+        <PageHero kicker="Admin · Operational scope" title="Operational scope" sub="No active organization." overlap={false} />
       </PageShell>
     );
   }
@@ -142,22 +143,25 @@ export default function ScopePage() {
   const unitTotal = tree.reduce((n, p) => n + p.units.length, 0);
   const answer = loading ? "Operational scope"
     : tree.length === 0 ? "No scope defined yet."
-    : `${plural(tree.length, "plant")}, ${plural(unitTotal, "unit")}.`;
+    : `${plural(tree.length, "plant")} in scope.`;
 
   return (
-    <PageShell width="form">
+    <PageShell width="work">
       <PageHero
         kicker="Admin · Operational scope"
         title={answer}
-        size="md"
-        sub={<>Plants, units and systems that documents and equipment can belong to. Scope is optional on each one.{!canEdit && " Read only: Admin, Manager, Supervisor or DocCtrl edit the scope."}</>}
+        sub={canEdit ? "Plants, units and systems that documents and equipment can belong to." : "Read only: Admin, Manager, Supervisor or DocCtrl edit the scope."}
+        facts={tree.length > 0 ? [
+          { label: "Units", value: unitTotal },
+          { label: "Systems", value: tree.reduce((n, t) => n + t.units.reduce((m, u) => m + u.systems.length, 0), 0) },
+        ] : undefined}
         tools={
           <label className={`${heroQuiet} cursor-pointer`}>
             <input
               type="checkbox"
               checked={showArchived}
               onChange={(e) => setShowArchived(e.target.checked)}
-              className="accent-[var(--color-ink-fg)]"
+              className="w-4 h-4 accent-[var(--color-text)]"
             />
             Show archived
           </label>
@@ -170,13 +174,7 @@ export default function ScopePage() {
       />
 
       <PageBody>
-      {error && (
-        <Card>
-          <p role="alert" className="flex items-center gap-2 text-[14px] text-red-700 dark:text-red-400">
-            <AlertTriangle className="w-4 h-4 shrink-0" /> {error}
-          </p>
-        </Card>
-      )}
+      {error && <Problem>{error}</Problem>}
 
       {/* New-plant inline form */}
       {addingChildOf?.kind === "root" && (
@@ -191,22 +189,19 @@ export default function ScopePage() {
 
       {/* Tree */}
       {loading ? (
-        <Card>
-          <div className="flex items-center gap-2 text-[13px] text-[var(--color-text-muted)] py-6 justify-center">
-            <Spinner size="xs" /> Loading the scope tree…
-          </div>
-        </Card>
+        <LoadingBlock what="the scope tree" />
       ) : tree.length === 0 ? (
-        <Card className="text-[14px] text-[var(--color-text-muted)] py-10 text-center space-y-2">
-          <div className="font-bold text-[var(--color-text)]">Start with one plant</div>
-          <div className="max-w-md mx-auto">
-            Define your <b>plants</b> (sites), <b>units</b> (process units inside each plant), and <b>systems</b> (logical sub-groups like &ldquo;Overhead System&rdquo;).
-            Documents and equipment can then be scoped to this tree so searches like &ldquo;all P&IDs in the FCC&rdquo; just work.
-            {canEdit && " Press Add plant to start."}
-          </div>
-        </Card>
+        <div className={`${sheet} py-10 px-5 text-center`}>
+          <div className="font-display text-[19px] font-semibold text-[var(--color-text)]">Start with one plant</div>
+          <p className="mt-1 text-[15px] text-[var(--color-text-muted)] max-w-lg mx-auto">
+            Plants hold units (crude, FCC), units hold systems (overhead). Then a search like &ldquo;all P&amp;IDs in the FCC&rdquo; just works.
+          </p>
+        </div>
       ) : (
-        <Card pad={false} className="overflow-hidden divide-y divide-[var(--color-border)]">
+        <div className={`${tbl.wrap} divide-y divide-[var(--color-border)]`}>
+          <div className="max-sm:hidden flex items-center gap-2 px-3 h-10 bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text-muted)]">
+            <span className="flex-1 pl-14">Name</span><span className="w-24 text-right">Holds</span>{canEdit && <span className="w-[120px]" />}
+          </div>
           {tree.map(({ plant, units }) => {
             const plantOpen = expandedPlants.has(plant.id!);
             return (
@@ -235,7 +230,7 @@ export default function ScopePage() {
                 {addingChildOf?.kind === "plant" && addingChildOf.parentId === plant.id && (
                   <div className="px-4 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)]">
                     <NewScopeRowForm
-                      title={`New Unit in ${plant.name}`}
+                      title={`New unit in ${plant.name}`}
                       fields={["name", "code", "description"]}
                       onCancel={() => setAddingChildOf(null)}
                       onSave={(values) => onAddUnit(plant.id!, values as { name: string; code: string; description: string })}
@@ -246,9 +241,9 @@ export default function ScopePage() {
 
                 {/* Units */}
                 {plantOpen && (
-                  <div className="border-t border-[var(--color-border)] bg-[var(--color-surface-2)]">
+                  <div className="border-t border-[var(--color-border)]">
                     {units.length === 0 ? (
-                      <div className="text-xs text-[var(--color-text-muted)] px-4 py-3">No units in this plant.</div>
+                      <div className="text-[14px] text-[var(--color-text-muted)] pl-16 py-3">No units in this plant.</div>
                     ) : (
                       units.map(({ unit, systems }) => {
                         const unitOpen = expandedUnits.has(unit.id!);
@@ -277,7 +272,7 @@ export default function ScopePage() {
                             {addingChildOf?.kind === "unit" && addingChildOf.parentId === unit.id && (
                               <div className="px-4 py-3 ml-6 bg-[var(--color-surface-2)] border-t border-[var(--color-border)]">
                                 <NewScopeRowForm
-                                  title={`New System in ${unit.name}`}
+                                  title={`New system in ${unit.name}`}
                                   fields={["name", "code", "description"]}
                                   onCancel={() => setAddingChildOf(null)}
                                   onSave={(values) => onAddSystem(unit.id!, plant.id!, values as { name: string; code: string; description: string })}
@@ -292,7 +287,7 @@ export default function ScopePage() {
                                   <ScopeRow
                                     key={sys.id}
                                     indent={2}
-                                    icon={<Cpu className="w-4 h-4 text-emerald-600" />}
+                                    icon={<Cpu className="w-4 h-4 text-[var(--color-text-muted)]" />}
                                     name={sys.name}
                                     code={sys.code}
                                     archived={!!sys.archived}
@@ -312,7 +307,7 @@ export default function ScopePage() {
               </div>
             );
           })}
-        </Card>
+        </div>
       )}
       </PageBody>
 
@@ -343,38 +338,38 @@ function ScopeRow({
 }) {
   return (
     <div
-      className={`flex items-center gap-2 px-3 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors ${archived ? "opacity-50" : ""}`}
-      style={{ paddingLeft: 12 + indent * 24 }}
+      className={`flex items-center gap-2 px-3 py-2 hover:bg-[var(--color-surface-2)] transition-colors ${archived ? "opacity-60" : ""}`}
+      style={{ paddingLeft: 12 + indent * 28 }}
     >
       {onToggle ? (
-        <button onClick={onToggle} className="p-0.5 hover:bg-[var(--color-border)] rounded transition-colors">
-          {open ? <ChevronDown className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> : <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />}
+        <button type="button" onClick={onToggle} aria-expanded={open} aria-label={open ? `Collapse ${name}` : `Expand ${name}`} className={btnIcon}>
+          {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
         </button>
-      ) : <div className="w-4" />}
+      ) : <div className="w-8" />}
       <div className="shrink-0">{icon}</div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-bold text-[var(--color-text)] truncate">{name}</span>
-          {code && <span className="text-[11px] font-mono text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{code}</span>}
-          {archived && <span className="text-[11px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded uppercase">Archived</span>}
+          {code && <span className="font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)] shrink-0">{code}</span>}
+          <span className={`${indent === 0 ? "font-semibold" : ""} text-[15px] text-[var(--color-text)] truncate`}>{name}</span>
+          {archived && <StatusTag tone="none">Archived</StatusTag>}
         </div>
       </div>
-      {badge && <span className="text-[11px] text-[var(--color-text-muted)] font-mono shrink-0">{badge}</span>}
+      {badge && <span className="w-24 text-right text-[14px] text-[var(--color-text-muted)] shrink-0 tabular-nums">{badge}</span>}
       {canEdit && (
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="flex items-center justify-end gap-1 shrink-0 w-[120px]">
           {onAdd && addLabel && (
-            <button onClick={onAdd} title={addLabel} className="p-1.5 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
-              <Plus className="w-3.5 h-3.5" />
+            <button type="button" onClick={onAdd} title={addLabel} aria-label={`${addLabel} to ${name}`} className={btnIcon}>
+              <Plus className="w-4 h-4" />
             </button>
           )}
           {onEdit && (
-            <button onClick={onEdit} title="Edit" className="p-1.5 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
-              <Pencil className="w-3.5 h-3.5" />
+            <button type="button" onClick={onEdit} title="Edit" aria-label={`Edit ${name}`} className={btnIcon}>
+              <Pencil className="w-4 h-4" />
             </button>
           )}
           {onArchive && !archived && (
-            <button onClick={onArchive} title="Archive" aria-label="Archive" className="p-1.5 rounded text-[var(--color-text-muted)] hover:text-red-600 hover:bg-[var(--color-surface-2)] transition-colors">
-              <Archive className="w-3.5 h-3.5" />
+            <button type="button" onClick={onArchive} title="Archive" aria-label={`Archive ${name}`} className={`${btnIcon} hover:text-[var(--state-overdue)]`}>
+              <Archive className="w-4 h-4" />
             </button>
           )}
         </div>
@@ -412,8 +407,8 @@ function NewScopeRowForm({
   };
 
   return (
-    <form onSubmit={onSubmit} className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] p-4 space-y-2.5">
-      <div className="text-[13px] font-semibold text-[var(--color-text-muted)] ">{title}</div>
+    <form onSubmit={onSubmit} className={`${sheet} p-4 space-y-3`}>
+      <div className="font-display text-[17px] font-semibold text-[var(--color-text)]">{title}</div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         {fields.map((f) => {
           if (f === "code" && codeCheck) {
@@ -426,7 +421,6 @@ function NewScopeRowForm({
                 check={{ table: codeCheck.table, column: "code", scope: codeCheck.scope }}
                 fieldLabel="code"
                 placeholder="Code (optional)"
-                className="text-xs"
               />
             );
           }
@@ -437,20 +431,16 @@ function NewScopeRowForm({
               value={values[f] ?? ""}
               onChange={(e) => setValues((v) => ({ ...v, [f]: e.target.value }))}
               aria-label={f === "name" ? "Name" : f[0].toUpperCase() + f.slice(1)}
-              className="h-9 text-[13px] border border-[var(--color-border-strong)] rounded-lg px-2.5 bg-[var(--color-surface)] text-[var(--color-text)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-ring)]"
+              className={field}
             />
           );
         })}
       </div>
       <div className="flex items-center justify-end gap-2 pt-1">
-        <button type="button" onClick={onCancel} className="text-xs px-2 py-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors">Cancel</button>
-        <Button
-          type="submit"
-          size="sm"
-          disabled={!values.name?.trim() || submitting || codeConflict}
-        >
-          {submitting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Save
-        </Button>
+        <button type="button" onClick={onCancel} className={btnQuiet}>Cancel</button>
+        <button type="submit" className={btnQuiet} disabled={!values.name?.trim() || submitting || codeConflict}>
+          {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Save
+        </button>
       </div>
     </form>
   );
@@ -490,21 +480,21 @@ function EditScopeRowModal({
   const kindLabel = target.kind === "plant" ? "Plant" : target.kind === "unit" ? "Unit" : "System";
 
   return (
-    <div role="dialog" aria-modal="true" className="fixed inset-0 z-[200] bg-[var(--color-ink)]/60 animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <form onSubmit={onSubmit} className="bg-[var(--color-surface)] rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-3 animate-in fade-in zoom-in-95">
+    <div role="dialog" aria-modal="true" aria-label={`Edit ${kindLabel.toLowerCase()}`} className="fixed inset-0 z-[200] bg-[var(--color-ink)]/60 animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+      <form onSubmit={onSubmit} className="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] shadow-2xl w-full max-w-md p-5 space-y-3 animate-in fade-in zoom-in-95">
         <div className="flex items-center justify-between">
-          <h2 className="font-black text-[var(--color-text)]">Edit {kindLabel}</h2>
-          <button type="button" onClick={onCancel} aria-label="Close" className="p-1 rounded hover:bg-[var(--color-surface-2)] transition-colors"><X className="w-4 h-4" /></button>
+          <h2 className="font-display text-[19px] font-semibold text-[var(--color-text)]">Edit {kindLabel.toLowerCase()}</h2>
+          <button type="button" onClick={onCancel} aria-label="Close" className={btnIcon}><X className="w-4 h-4" /></button>
         </div>
         <div className="space-y-2">
           <Field label="Name (required)"><Input value={name} onChange={(e) => setName(e.target.value)} /></Field>
-          <Field label="Code"><Input value={code} onChange={(e) => setCode(e.target.value)} className="font-mono" /></Field>
+          <Field label="Code"><Input value={code} onChange={(e) => setCode(e.target.value)} /></Field>
           <Field label="Description"><Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} /></Field>
         </div>
         <div className="flex items-center justify-end gap-2 pt-2">
-          <button type="button" onClick={onCancel} className="text-sm px-3 py-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors">Cancel</button>
+          <button type="button" onClick={onCancel} className={btnQuiet}>Cancel</button>
           <Button type="submit" disabled={!name.trim() || submitting}>
-            {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Save
+            {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save
           </Button>
         </div>
       </form>
@@ -515,7 +505,7 @@ function EditScopeRowModal({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="text-[13px] font-semibold text-[var(--color-text-muted)] ">{label}</span>
+      <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">{label}</span>
       <div className="mt-1">{children}</div>
     </label>
   );

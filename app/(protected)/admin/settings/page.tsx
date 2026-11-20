@@ -12,14 +12,15 @@
 // org-wide categories from here directly.
 
 import React, { useEffect, useState } from "react";
-import { Loader2, AlertTriangle, Zap, Mail, Briefcase, Users, CheckCircle2, XCircle, ExternalLink, RefreshCw, Hash, Save } from "lucide-react";
+import { Loader2, CheckCircle2, RefreshCw, Hash, Save } from "lucide-react";
 import Link from "next/link";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { kickEmailDrain } from "@/lib/notifications";
 import { formatTicketNumber, getTicketNumberConfig, TICKET_NUMBER_DEFAULTS, type TicketNumberConfig } from "@/lib/ticketNumber";
 import { PageShell } from "@/components/ui/PageShell";
-import { PageHero, PageBody, Card } from "@/components/ui/PageHero";
+import { PageHero, PageBody } from "@/components/ui/PageHero";
+import { tbl, sheet, field, link, btnPrimary, btnQuiet, FormRow, Section, StatusTag, Problem } from "@/components/admin/kit";
 import { plural } from "@/components/admin/band";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import { appAlert } from "@/components/providers/DialogProvider";
@@ -132,165 +133,115 @@ export default function WorkspaceSettingsPage() {
 
   if (!canRead) {
     return (
-      <PageShell width="form">
-        <PageHero kicker="Admin · Workspace settings" title="Admin and Doc Control only." sub="Only Admin and Doc Control see workspace settings." size="md" overlap={false} />
+      <PageShell width="work">
+        <PageHero kicker="Admin · Workspace settings" title="Admin and Doc Control only." sub="Only Admin and Doc Control see workspace settings." overlap={false} />
       </PageShell>
     );
   }
 
   if (loading) {
-    return <PageShell width="form"><PageHero kicker="Admin · Workspace settings" title="Workspace settings" size="md" overlap={false} /><LoadingBlock what="workspace settings" /></PageShell>;
+    return <PageShell width="work"><PageHero kicker="Admin · Workspace settings" title="Workspace settings" overlap={false} /><LoadingBlock what="workspace settings" /></PageShell>;
   }
 
-  // The answer: what needs attention here, else what the workspace holds.
+  // The answer: what needs attention here, else which workspace this is.
   const answer = loadError && !org ? "Couldn't load the settings."
     : failedEmails ? `${plural(failedEmails, "email")} didn't send.`
     : emailQueueStatus === "no-key" ? "Email isn't set up yet."
-    : memberCount == null || libraryCount == null ? "Workspace settings"
-    : `${plural(memberCount, "member")}, ${plural(libraryCount, "library", "libraries")}.`;
+    : org?.name ?? "Workspace settings";
+  const preview = formatTicketNumber(numbering, new Date().getFullYear(), 1);
 
   return (
-    <PageShell width="form">
+    <PageShell width="work">
       <PageHero
-        kicker={<>Admin · Workspace settings{org?.name ? ` · ${org.name}` : ""}</>}
+        kicker="Admin · Workspace settings"
         title={answer}
-        size="md"
-        sub="Request numbering, email delivery and the database check. Saved changes apply to everyone in the workspace."
+        sub="Saved changes apply to everyone in the workspace."
+        facts={memberCount != null && libraryCount != null ? [
+          { label: "Members", value: memberCount },
+          { label: "Libraries", value: libraryCount },
+          ...(failedEmails != null ? [{ label: "Emails not sent", value: failedEmails, tone: failedEmails > 0 ? "bad" as const : undefined }] : []),
+        ] : undefined}
       />
 
       <PageBody>
-        {/* Identity */}
-        <Card label="Workspace">
-          {loadError && (
-            <p role="alert" className="mb-3 text-[13px] text-red-700 dark:text-red-400">
-              Couldn&apos;t load the workspace settings: {loadError}{" "}
-              <button type="button" onClick={() => setReloadTick((n) => n + 1)} className="font-bold underline">Try again</button>
-            </p>
-          )}
-          <Row icon={Briefcase} label="Name" value={org?.name ?? "-"} />
-          <Row icon={Users} label="Members" value={memberCount?.toString() ?? "-"} />
-          <Row icon={Briefcase} label="Libraries" value={libraryCount?.toString() ?? "-"} />
-          {org?.subscribed_plan && <Row icon={Briefcase} label="Plan" value={org.subscribed_plan} />}
-          {org?.subscription_status && <Row icon={Briefcase} label="Status" value={org.subscription_status} />}
-        </Card>
+        {loadError && (
+          <Problem retry={() => setReloadTick((n) => n + 1)}>Couldn&apos;t load the workspace settings: {loadError}</Problem>
+        )}
 
-        {/* Request numbering */}
-        <Card label={<span className="inline-flex items-center gap-1.5"><Hash className="w-3.5 h-3.5" /> Request numbering</span>}>
-          <p className="text-[13px] text-[var(--color-text-muted)] mb-4">
-            How new request numbers are built. The count restarts each year and never repeats, even when two are sent at once.
-          </p>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <label className="block">
-              <span className="text-[13px] font-semibold text-[var(--color-text-muted)] ">Workspace code</span>
-              <input
-                value={numbering.prefix}
-                onChange={(e) => { setNumbering((n) => ({ ...n, prefix: e.target.value.toUpperCase() })); setNumSaved(false); }}
-                placeholder="e.g. KE"
-                maxLength={8}
-                className="mt-1 w-full h-10 px-3 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-lg text-[14px] font-semibold text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
-              />
-            </label>
-            <label className="block">
-              <span className="text-[13px] font-semibold text-[var(--color-text-muted)] ">Record code</span>
-              <input
-                value={numbering.recordCode}
-                onChange={(e) => { setNumbering((n) => ({ ...n, recordCode: e.target.value.toUpperCase() })); setNumSaved(false); }}
-                placeholder="DDRT"
-                maxLength={10}
-                className="mt-1 w-full h-10 px-3 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-lg text-[14px] font-semibold text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
-              />
-            </label>
-            <label className="block">
-              <span className="text-[13px] font-semibold text-[var(--color-text-muted)] ">Number digits</span>
-              <input
-                type="number" min={1} max={9}
-                value={numbering.pad}
-                onChange={(e) => { setNumbering((n) => ({ ...n, pad: Math.min(9, Math.max(1, parseInt(e.target.value || "4", 10))) })); setNumSaved(false); }}
-                className="mt-1 w-full h-10 px-3 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-lg text-[14px] font-semibold text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
-              />
-            </label>
-          </div>
-          <div className="mt-4 flex items-center justify-between">
-            <div className="text-[13px] text-[var(--color-text-muted)]">
-              Preview:{" "}
-              <span className="font-mono font-bold text-[var(--color-text)]">{formatTicketNumber(numbering, new Date().getFullYear(), 1)}</span>
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-x-6 gap-y-8 items-start">
+          {/* Identity */}
+          <Section label="Workspace">
+            <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
+              <FormRow label="Name"><div className="@xl:pt-2 text-[15px] text-[var(--color-text)]">{org?.name ?? "-"}</div></FormRow>
+              {org?.subscribed_plan && <FormRow label="Plan"><div className="@xl:pt-2 text-[15px] text-[var(--color-text)] capitalize">{org.subscribed_plan}</div></FormRow>}
+              {org?.subscription_status && <FormRow label="Subscription"><div className="@xl:pt-2 text-[15px] text-[var(--color-text)] capitalize">{org.subscription_status}</div></FormRow>}
+              <FormRow label="AI assistance" hint="Set providers in Knowledge, AI settings.">
+                <p className="@xl:pt-2 text-[15px] text-[var(--color-text)]">Runs only in Knowledge Libraries, on each person&apos;s own key, with a monthly spend limit.</p>
+              </FormRow>
             </div>
-            <button
-              onClick={() => void saveNumbering()}
-              disabled={savingNum}
-              type="button"
-              className="inline-flex items-center gap-1.5 h-10 px-4 rounded-xl text-[14px] font-extrabold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] shadow-[0_12px_24px_-12px_var(--color-accent)] disabled:opacity-50"
-            >
-              {savingNum ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : numSaved ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
-              {numSaved ? "Saved" : "Save numbering"}
-            </button>
-          </div>
-        </Card>
+          </Section>
 
-        {/* AI status */}
-        <Card label="AI assistance">
-          <div className="flex items-start gap-3">
-            <div className="p-2.5 rounded-lg border bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text-muted)]">
-              <Zap className="w-4 h-4" />
+          {/* Request numbering */}
+          <Section label={<span className="inline-flex items-center gap-1.5"><Hash className="w-4 h-4" /> Request numbering</span>}>
+            <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
+              <FormRow label="Workspace code" htmlFor="num-prefix">
+                <input id="num-prefix" value={numbering.prefix}
+                  onChange={(e) => { setNumbering((n) => ({ ...n, prefix: e.target.value.toUpperCase() })); setNumSaved(false); }}
+                  placeholder="e.g. KE" maxLength={8} className={`${field} max-w-[220px]`} />
+              </FormRow>
+              <FormRow label="Record code" htmlFor="num-code">
+                <input id="num-code" value={numbering.recordCode}
+                  onChange={(e) => { setNumbering((n) => ({ ...n, recordCode: e.target.value.toUpperCase() })); setNumSaved(false); }}
+                  placeholder="DDRT" maxLength={10} className={`${field} max-w-[220px]`} />
+              </FormRow>
+              <FormRow label="Number digits" htmlFor="num-pad">
+                <input id="num-pad" type="number" min={1} max={9} value={numbering.pad}
+                  onChange={(e) => { setNumbering((n) => ({ ...n, pad: Math.min(9, Math.max(1, parseInt(e.target.value || "4", 10))) })); setNumSaved(false); }}
+                  className={`${field} max-w-[120px]`} />
+              </FormRow>
+              <FormRow label="Next number looks like" hint="The count restarts each year and never repeats.">
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
+                  <span className="font-display text-[22px] font-semibold tabular-nums text-[var(--color-text)]">{preview}</span>
+                  <button onClick={() => void saveNumbering()} disabled={savingNum} type="button" className={`${btnPrimary} ml-auto`}>
+                    {savingNum ? <Loader2 className="w-4 h-4 animate-spin" /> : numSaved ? <CheckCircle2 className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+                    {numSaved ? "Saved" : "Save numbering"}
+                  </button>
+                </div>
+              </FormRow>
             </div>
-            <div className="flex-1">
-              <span className="text-[14px] font-bold text-[var(--color-text)]">Per-user keys in Knowledge Libraries</span>
-              <p className="text-[13px] text-[var(--color-text-muted)] mt-1">
-                AI runs only inside Knowledge Libraries, with a key each person connects and only
-                after they accept the data-use agreement. Use is counted per person with a monthly
-                spend limit. Nothing runs over your data on its own. Set providers in Knowledge, AI settings.
-              </p>
-            </div>
-          </div>
-        </Card>
+          </Section>
+        </div>
 
         {/* Email delivery */}
-        <Card label="Email delivery">
-          <div className="flex items-start gap-3">
-            <div className={`p-2.5 rounded-lg border ${
-              emailQueueStatus === "ok" ? "bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-950/40 dark:border-emerald-900 dark:text-emerald-300"
-              : emailQueueStatus === "no-key" ? "bg-amber-50 border-amber-200 text-amber-700 dark:bg-amber-950/40 dark:border-amber-900 dark:text-amber-300"
-              : "bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text-muted)]"
-            }`}>
-              <Mail className="w-4 h-4" />
-            </div>
-            <div className="flex-1">
-              <div className="text-[14px] font-bold text-[var(--color-text)] inline-flex items-center gap-2 flex-wrap">
-                Outbound email
-                {emailQueueStatus === "ok" && <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-400"><CheckCircle2 className="w-3 h-3" /> Set up</span>}
-                {emailQueueStatus === "no-key" && <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 dark:text-amber-400"><XCircle className="w-3 h-3" /> No RESEND_API_KEY</span>}
+        <Section label="Email delivery" action={<Link href="/settings/notifications" className={`text-[14px] ${link}`}>My notification preferences</Link>}>
+          <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
+            <FormRow label="Outbound email" hint="Sent through Resend. Each person picks what they get.">
+              <div className="@xl:pt-2">
+                {emailQueueStatus === "ok" && <StatusTag tone="good">Set up</StatusTag>}
+                {emailQueueStatus === "no-key" && (
+                  <>
+                    <StatusTag tone="warn">Not set up: no RESEND_API_KEY</StatusTag>
+                    <p className="mt-1 text-[14px] text-[var(--color-text-muted)]">Emails wait as <code className="font-mono text-[13px]">queued</code> until <code className="font-mono text-[13px]">RESEND_API_KEY</code> and <code className="font-mono text-[13px]">RESEND_FROM_EMAIL</code> are set on the server, then all go out.</p>
+                  </>
+                )}
+                {emailQueueStatus === "unknown" && <span className="text-[15px] text-[var(--color-text-muted)]">Not checked yet</span>}
               </div>
-              <p className="text-[13px] text-[var(--color-text-muted)] mt-1">
-                Resend sends outbound email. Without RESEND_API_KEY, emails wait as <code className="text-[11px] bg-[var(--color-surface-2)] px-1 rounded">queued</code> and all go out once the key is set.
-                {emailQueueStatus === "no-key" && <> Set <code className="text-[11px] bg-[var(--color-surface-2)] px-1 rounded">RESEND_API_KEY</code> and <code className="text-[11px] bg-[var(--color-surface-2)] px-1 rounded">RESEND_FROM_EMAIL</code> in the server settings.</>} Each person picks what they get on their own notification settings page.
-              </p>
-              <Link href="/settings/notifications" className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-text)] underline underline-offset-2 mt-2">
-                Open my notification preferences <ExternalLink className="w-2.5 h-2.5" />
-              </Link>
-            </div>
+            </FormRow>
+            {/* Dead-letter requeue — failed past the auto-retry cap. */}
+            {failedEmails !== null && (
+              <FormRow label="Didn't send" hint={failedEmails > 0 ? "Each was tried 5 times. Send them again once the cause is fixed." : undefined}>
+                <div className="@xl:pt-1 flex flex-wrap items-center gap-4">
+                  <span className={`font-display text-[22px] font-semibold tabular-nums ${failedEmails > 0 ? "text-[var(--state-overdue)]" : "text-[var(--color-text)]"}`}>{failedEmails}</span>
+                  {failedEmails > 0 ? (
+                    <button type="button" onClick={() => void requeueFailed()} disabled={requeuing} className={btnQuiet}>
+                      <RefreshCw className={`w-3.5 h-3.5 ${requeuing ? "animate-spin" : ""}`} /> Send again
+                    </button>
+                  ) : <span className="text-[15px] text-[var(--color-text-muted)]">Nothing failed to send.</span>}
+                </div>
+              </FormRow>
+            )}
           </div>
-
-          {/* Dead-letter requeue — failed past the auto-retry cap. */}
-          {failedEmails !== null && failedEmails > 0 && (
-            <div className="mt-4 border-l-2 border-rose-500 pl-3 flex items-center gap-3">
-              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-              <div className="flex-1 min-w-0">
-                <div className="text-xs font-bold text-rose-700 dark:text-rose-400">{failedEmails} email{failedEmails === 1 ? "" : "s"} didn&apos;t send</div>
-                <div className="text-[11px] text-[var(--color-text-muted)]">Each was tried 5 times. Send them again once the cause is fixed (for example RESEND_API_KEY).</div>
-              </div>
-              <button
-                onClick={() => void requeueFailed()}
-                disabled={requeuing}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 shrink-0"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${requeuing ? "animate-spin" : ""}`} /> Try again
-              </button>
-            </div>
-          )}
-          {failedEmails === 0 && (
-            <div className="mt-3 text-[13px] text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" /> Nothing failed to send.</div>
-          )}
-        </Card>
+        </Section>
 
         {/* Database health: are the hand-applied migrations actually applied? */}
         <SchemaHealthCard orgId={activeOrgId} />
@@ -336,63 +287,44 @@ function SchemaHealthCard({ orgId }: { orgId: string | null }) {
 
   useEffect(() => { void check(); }, [check]);
 
+  const missing = state.phase === "done" ? state.missingTables.length + state.missingColumns.length : 0;
   return (
-    <Card label="Database health" action={
-        <button
-          type="button"
-          onClick={() => void check()}
-          disabled={state.phase === "loading"}
-          className="inline-flex items-center gap-1 text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-50"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${state.phase === "loading" ? "animate-spin" : ""}`} /> Re-check
+    <Section label="Database health" action={
+        <button type="button" onClick={() => void check()} disabled={state.phase === "loading"} className={btnQuiet}>
+          <RefreshCw className={`w-3.5 h-3.5 ${state.phase === "loading" ? "animate-spin" : ""}`} /> Check again
         </button>
       }>
-
       {state.phase === "loading" || state.phase === "idle" ? (
-        <div className="text-xs text-[var(--color-text-muted)] inline-flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking every table the app expects…</div>
+        <div className={`${sheet} px-4 py-3 text-[15px] text-[var(--color-text-muted)] inline-flex w-full items-center gap-2`}><Loader2 className="w-4 h-4 animate-spin" /> Checking every table the app expects…</div>
       ) : state.phase === "error" ? (
-        <div role="alert" className="text-xs text-rose-700 dark:text-rose-400 inline-flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" /> Couldn&apos;t check: {state.message}</div>
+        <Problem>Couldn&apos;t check: {state.message}</Problem>
       ) : state.healthy ? (
-        <div className="text-xs text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1.5">
-          <CheckCircle2 className="w-3.5 h-3.5" /> All {state.checkedTables} expected tables are there.
-        </div>
+        <div className={`${sheet} px-4 py-3`}><StatusTag tone="good">All {state.checkedTables} expected tables are there.</StatusTag></div>
       ) : (
-        <div className="space-y-3">
-          <div className="text-xs font-bold text-amber-800 dark:text-amber-300 inline-flex items-center gap-1.5">
-            <AlertTriangle className="w-3.5 h-3.5" />
-            {state.missingTables.length + state.missingColumns.length} missing piece{state.missingTables.length + state.missingColumns.length === 1 ? "" : "s"}. Features that use them show nothing until their migration runs.
+        <div className={tbl.wrap}>
+          <div className="px-4 py-3 border-b border-[var(--color-border)]">
+            <StatusTag tone="warn">{missing} missing piece{missing === 1 ? "" : "s"}</StatusTag>
+            <span className="ml-2 text-[14px] text-[var(--color-text-muted)]">Features that use them show nothing until their migration runs.</span>
           </div>
-          {state.missingTables.length > 0 && (
-            <div className="border-l-2 border-amber-500 pl-3 text-[11px] text-[var(--color-text)] space-y-1">
+          <table className={tbl.table}>
+            <thead className={tbl.thead}>
+              <tr><th className={tbl.th}>Missing</th><th className={`${tbl.th} max-sm:hidden`}>Used by</th><th className={tbl.th}>Run this migration</th></tr>
+            </thead>
+            <tbody className={`${tbl.tbody} text-[14px]`}>
               {state.missingTables.map((t) => (
-                <div key={t.table}><code className="bg-[var(--color-surface-2)] px-1 rounded">{t.table}</code>: run <code className="bg-[var(--color-surface-2)] px-1 rounded">{t.migration}</code></div>
+                <tr key={t.table}><td className={tbl.td}><code className="font-mono text-[13px]">{t.table}</code></td><td className={`${tbl.td} max-sm:hidden text-[var(--color-text-muted)]`}>Table</td><td className={tbl.td}><code className="font-mono text-[13px]">{t.migration}</code></td></tr>
               ))}
-            </div>
-          )}
-          {state.missingColumns.length > 0 && (
-            <div className="border-l-2 border-amber-500 pl-3 text-[11px] text-[var(--color-text)] space-y-1">
               {state.missingColumns.map((c) => (
-                <div key={`${c.table}.${c.column}`}>
-                  <code className="bg-[var(--color-surface-2)] px-1 rounded">{c.table}.{c.column}</code> ({c.feature}): run <code className="bg-[var(--color-surface-2)] px-1 rounded">{c.migration}</code>
-                </div>
+                <tr key={`${c.table}.${c.column}`}><td className={tbl.td}><code className="font-mono text-[13px]">{c.table}.{c.column}</code></td><td className={`${tbl.td} max-sm:hidden text-[var(--color-text-muted)]`}>{c.feature}</td><td className={tbl.td}><code className="font-mono text-[13px]">{c.migration}</code></td></tr>
               ))}
-            </div>
-          )}
-          <p className="text-[11px] text-[var(--color-text-muted)]">
-            Paste the named files from <code className="bg-[var(--color-surface-2)] px-1 rounded">supabase/migrations/</code> into the Supabase SQL editor in filename order, then re-check.
+            </tbody>
+          </table>
+          <p className={`${tbl.foot} text-[var(--color-text-muted)]`}>
+            Paste the files from supabase/migrations/ into the Supabase SQL editor in filename order, then check again.
           </p>
         </div>
       )}
-    </Card>
+    </Section>
   );
 }
 
-function Row({ icon: Icon, label, value }: { icon: React.ComponentType<{ className?: string }>; label: string; value: string }) {
-  return (
-    <div className="flex items-center gap-3 py-1.5">
-      <Icon className="w-4 h-4 text-[var(--color-text-faint)]" />
-      <span className="text-[13px] font-semibold text-[var(--color-text-muted)] w-24">{label}</span>
-      <span className="text-[14px] text-[var(--color-text)]">{value}</span>
-    </div>
-  );
-}
