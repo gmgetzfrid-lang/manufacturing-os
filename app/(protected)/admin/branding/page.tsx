@@ -4,13 +4,15 @@
 // org-enforced color palette. Saved to org_configurations and applied to
 // every member (light/dark mode stays personal). Admin only.
 
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useRole } from "@/components/providers/RoleContext";
 import { useOrgBranding } from "@/components/providers/OrgBrandingProvider";
-import { PALETTE_PRESETS, type Palette } from "@/components/providers/ThemeProvider";
+import { PALETTE_PRESETS, useTheme, type Palette } from "@/components/providers/ThemeProvider";
 import { extractLogoColors } from "@/lib/logoTheme";
+import { rolesFromLogo } from "@/lib/themeRoles";
+import PalettePicker from "@/components/branding/PalettePicker";
 import { uploadToPath, getSignedUrlForPath } from "@/lib/storage";
-import { Palette as PaletteIcon, Upload, Check, Loader2, ShieldAlert, Zap, Trash2 } from "lucide-react";
+import { Upload, Check, Loader2, ShieldAlert, Trash2 } from "lucide-react";
 import { appAlert } from "@/components/providers/DialogProvider";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import FileThumb from "@/components/ui/FileThumb";
@@ -20,18 +22,25 @@ import { PageHero, PageBody, Card, heroPrimary } from "@/components/ui/PageHero"
 import { formatBytes } from "@/lib/formatBytes";
 
 
-function hexToRgb(hex: string): [number, number, number] {
-  const h = hex.replace("#", ""); const n = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
-  const i = parseInt(n, 16); return [(i >> 16) & 255, (i >> 8) & 255, i & 255];
-}
-const dist = (a: string, b: string) => { const [r1, g1, b1] = hexToRgb(a); const [r2, g2, b2] = hexToRgb(b); return Math.hypot(r1 - r2, g1 - g2, b1 - b2); };
-const isHex = (s: string) => /^#[0-9a-fA-F]{6}$/.test(s);
-
 export default function AdminBrandingPage() {
   const { activeOrgId, activeRole } = useRole();
   const { branding, logoUrl, save } = useOrgBranding();
+  const { applyOrgPalette, palette: showing } = useTheme();
 
-  const [palette, setPalette] = useState<Palette>(branding?.palette ?? PALETTE_PRESETS[0]);
+  // Start from what the app shows now: the workspace's saved colors, or
+  // your own if the workspace has none yet.
+  const [palette, setPaletteState] = useState<Palette>(branding?.palette ?? showing ?? PALETTE_PRESETS[0]);
+  const [touched, setTouched] = useState(false);
+  const [logoNote, setLogoNote] = useState<string | null>(null);
+  // The whole app shows the colors while you pick; leaving without saving
+  // puts the saved ones back.
+  const setPalette = (p: Palette) => { setPaletteState(p); setTouched(true); applyOrgPalette(p); };
+  const savedPalette = useRef<Palette | null>(branding?.palette ?? null);
+  useEffect(() => { savedPalette.current = branding?.palette ?? null; }, [branding]);
+  useEffect(() => {
+    if (!touched && branding?.palette) setPaletteState(branding.palette);
+  }, [branding, touched]);
+  useEffect(() => () => applyOrgPalette(savedPalette.current), [applyOrgPalette]);
   const [logoPath, setLogoPath] = useState<string | undefined>(branding?.logoPath);
   const [logoPreview, setLogoPreview] = useState<string | null>(logoUrl);
   const [logoShape, setLogoShape] = useState<"mark" | "full">(branding?.logoShape ?? "full");
@@ -65,14 +74,11 @@ export default function AdminBrandingPage() {
     try {
       // Local preview immediately.
       setLogoPreview(URL.createObjectURL(file));
-      // Derive a palette suggestion from the logo.
+      // Suggest all three colors from the logo.
       try {
-        const colors = await extractLogoColors(file);
-        if (colors[0]) {
-          const primary = colors[0].hex;
-          const secondary = colors.slice(1).sort((a, b) => dist(primary, b.hex) - dist(primary, a.hex))[0]?.hex ?? primary;
-          setPalette({ id: "logo", name: "From logo", primary, secondary });
-        }
+        const r = rolesFromLogo((await extractLogoColors(file)).map((c) => c.hex));
+        if (r) { setPalette({ id: "logo", name: "From your logo", base: r.base, primary: r.main, accent: r.action, secondary: r.action }); setLogoNote("Colors set from your logo. Change any of them below."); }
+        else setLogoNote("No clear brand color in the logo, so the colors stay as they are.");
       } catch { /* keep current palette */ }
       // Upload to durable storage.
       const ext = (file.name.split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -94,6 +100,8 @@ export default function AdminBrandingPage() {
     setSaving(true);
     try {
       await save({ palette, logoPath, logoShape });
+      savedPalette.current = palette;
+      setTouched(false);
       setSavedAt(Date.now());
     } catch (e) {
       await appAlert({ message: `Save failed: ${e instanceof Error ? e.message : "unknown"}`, tone: "danger" });
@@ -104,8 +112,8 @@ export default function AdminBrandingPage() {
     <PageShell width="work">
       <PageHero
         kicker="Admin · Branding"
-        title={savedAt ? "Saved for everyone." : logoPreview ? "Your logo is set." : "No logo yet."}
-        sub={savedAt ? "Everyone in the workspace sees it now." : `${palette.name} colors. Your logo and colors apply to everyone in this workspace; members keep their own light or dark preference.`}
+        title={savedAt && !touched ? "Saved for everyone." : logoPreview ? "Your logo is set." : "No logo yet."}
+        sub={savedAt && !touched ? "Everyone in the workspace sees it now." : `${palette.name}. Your logo and colors go to everyone in this workspace. Light or dark stays each person's choice.`}
         primary={
           <button type="button" onClick={handleSave} disabled={saving || uploading} className={heroPrimary}>
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save branding
@@ -168,42 +176,16 @@ export default function AdminBrandingPage() {
               ))}
             </div>
           </div>
-          <p className="text-[12px] text-[var(--color-text-muted)] mt-3">Uploading a logo also suggests a palette from its colors.</p>
+          <p className="text-[12px] text-[var(--color-text-muted)] mt-3">{logoNote ?? "Uploading a logo also sets the colors from it."}</p>
         </Card>
 
-        {/* PALETTE */}
-        <Card label={<span className="inline-flex items-center gap-1.5"><PaletteIcon className="w-3.5 h-3.5" /> Color palette</span>}>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
-            {PALETTE_PRESETS.map((p) => {
-              const on = p.primary.toLowerCase() === palette.primary.toLowerCase() && p.secondary.toLowerCase() === palette.secondary.toLowerCase();
-              return (
-                <button key={p.id} type="button" onClick={() => setPalette(p)} title={p.name} aria-label={p.name} aria-pressed={on}
-                  className={`h-10 rounded-lg border-2 overflow-hidden ${on ? "border-[var(--color-text)]" : "border-transparent"}`}
-                  style={{ background: `linear-gradient(135deg, ${p.primary}, ${p.secondary})` }}>
-                  {on && <Check className="w-4 h-4 text-white mx-auto drop-shadow" />}
-                </button>
-              );
-            })}
-          </div>
-          <div className="flex items-center gap-4">
-            <label className="flex items-center gap-2 text-xs font-bold text-[var(--color-text-muted)]">
-              Primary
-              <input type="color" value={isHex(palette.primary) ? palette.primary : "#4f46e5"}
-                onChange={(e) => setPalette((p) => ({ ...p, id: "custom", name: "Custom", primary: e.target.value }))}
-                className="w-8 h-8 rounded border border-[var(--color-border)] bg-transparent" />
-            </label>
-            <label className="flex items-center gap-2 text-xs font-bold text-[var(--color-text-muted)]">
-              Secondary
-              <input type="color" value={isHex(palette.secondary) ? palette.secondary : "#a855f7"}
-                onChange={(e) => setPalette((p) => ({ ...p, id: "custom", name: "Custom", secondary: e.target.value }))}
-                className="w-8 h-8 rounded border border-[var(--color-border)] bg-transparent" />
-            </label>
-          </div>
-          <div className="mt-4 rounded-lg h-12" style={{ background: `linear-gradient(135deg, ${palette.primary}, ${palette.secondary})` }} />
-          <p className="text-[12px] text-[var(--color-text-muted)] mt-3 flex items-center gap-1.5"><Zap className="w-3 h-3" /> Saving applies these colors across the app for everyone.</p>
+        {/* COLORS */}
+        <Card label="Colors">
+          <PalettePicker value={palette} onChange={setPalette} logoButton={false} />
+          <p className="text-[12px] text-[var(--color-text-muted)] mt-3">The app shows them as you pick. Save to give them to everyone.</p>
         </Card>
       </div>
-      {savedAt && <p role="status" className="px-1 text-[14px] text-emerald-700 dark:text-emerald-400 font-semibold">Saved. Everyone in the workspace sees it now.</p>}
+      {savedAt && !touched && <p role="status" className="px-1 text-[14px] text-emerald-700 dark:text-emerald-400 font-semibold">Saved. Everyone in the workspace sees it now.</p>}
       </PageBody>
     </PageShell>
   );

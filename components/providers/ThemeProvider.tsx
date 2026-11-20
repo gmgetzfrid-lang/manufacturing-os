@@ -12,31 +12,31 @@
 // distinct brand colors. ONE source of truth for brand color.
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { rolesOf, bandFor, sideTokens, onColor, mix, luminance, actionText, DEFAULT_ROLES } from "@/lib/themeRoles";
 
 export type ThemeMode = "light" | "dark";
 
-export interface Palette { id: string; name: string; primary: string; secondary: string }
+/** A workspace's colors in three roles (see lib/themeRoles): `base` the
+ *  side menu, `primary` the main color (the page band), `accent` the action
+ *  color kept small (buttons, links). `secondary` is kept for palettes
+ *  saved by older versions. */
+export interface Palette { id: string; name: string; primary: string; secondary: string; base?: string; accent?: string }
 
-// Designer-grade coordinated palettes (primary + harmonious secondary).
-// [0] is the DEFAULT — the ManufacturingOS brand orange, matching the logo
-// and chrome so a fresh workspace is cohesive out of the box. The rest stay
-// available in the theme picker.
+// A pair that sets the mood plus one action color that stands out. [0] is
+// the default: charcoal and royal blue, with the brand orange on buttons.
 export const PALETTE_PRESETS: Palette[] = [
-  { id: "industrial", name: "Industrial Orange", primary: "#ea580c", secondary: "#f59e0b" },
-  { id: "indigo",   name: "Indigo Nebula", primary: "#4f46e5", secondary: "#a855f7" },
-  { id: "ocean",    name: "Ocean",         primary: "#2563eb", secondary: "#06b6d4" },
-  { id: "teal",     name: "Lagoon",        primary: "#0d9488", secondary: "#22c55e" },
-  { id: "forest",   name: "Forest",        primary: "#059669", secondary: "#84cc16" },
-  { id: "sunset",   name: "Sunset",        primary: "#ea580c", secondary: "#e11d48" },
-  { id: "magma",    name: "Magma",         primary: "#dc2626", secondary: "#f59e0b" },
-  { id: "berry",    name: "Berry",         primary: "#db2777", secondary: "#7c3aed" },
-  { id: "graphite", name: "Graphite",      primary: "#475569", secondary: "#0ea5e9" },
+  { id: "royal",    name: "Charcoal, royal blue, orange", base: "#11141a", primary: "#1c3fbd", accent: "#ea580c", secondary: "#ea580c" },
+  { id: "jade",     name: "Midnight, jade, pink",         base: "#0f1b2d", primary: "#0f766e", accent: "#db2777", secondary: "#db2777" },
+  { id: "violet",   name: "White, violet, pink",          base: "#f6f5f2", primary: "#5b21b6", accent: "#db2777", secondary: "#db2777" },
+  { id: "steel",    name: "Navy, steel blue, safety yellow", base: "#0b1526", primary: "#2f4a6d", accent: "#eab308", secondary: "#eab308" },
+  { id: "forest",   name: "Graphite, forest green, orange", base: "#1c1f23", primary: "#166534", accent: "#f97316", secondary: "#f97316" },
+  { id: "teal",     name: "Ink, teal, coral",             base: "#111827", primary: "#115e59", accent: "#e11d48", secondary: "#e11d48" },
 ];
 
 interface ThemeCtx {
   mode: ThemeMode;
   palette: Palette;
-  accent: string;                 // = palette.primary (back-compat)
+  accent: string;                 // the action color (buttons, links)
   /** True when the active palette is enforced by the organization. */
   paletteLocked: boolean;
   setMode: (m: ThemeMode) => void;
@@ -54,52 +54,46 @@ const LS_MODE = "mfgos.theme.mode";
 const LS_PALETTE = "mfgos.theme.palette";   // JSON {primary,secondary}
 const LS_ACCENT = "mfgos.theme.accent";     // legacy single hex
 
-// ── color helpers ───────────────────────────────────────────────
-function hexToRgb(hex: string): [number, number, number] {
-  const h = hex.replace("#", "");
-  const n = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
-  const int = parseInt(n, 16);
-  return [(int >> 16) & 255, (int >> 8) & 255, int & 255];
-}
-function rgbToHex(r: number, g: number, b: number): string {
-  const c = (v: number) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0");
-  return `#${c(r)}${c(g)}${c(b)}`;
-}
-function mix(hex: string, withHex: string, t: number): string {
-  const [r1, g1, b1] = hexToRgb(hex); const [r2, g2, b2] = hexToRgb(withHex);
-  return rgbToHex(r1 + (r2 - r1) * t, g1 + (g2 - g1) * t, b1 + (b2 - b1) * t);
-}
-function contrastFg(hex: string): string {
-  const [r, g, b] = hexToRgb(hex);
-  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-  return lum > 0.6 ? "#0f172a" : "#ffffff";
-}
 const isHex = (s: string) => /^#[0-9a-fA-F]{6}$/.test(s);
 
 function applyTheme(mode: ThemeMode, p: Palette) {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
   root.classList.toggle("dark", mode === "dark");
+  const set = (k: string, v: string) => root.style.setProperty(k, v);
+  const r = rolesOf(p);
 
-  // primary
-  root.style.setProperty("--color-accent", p.primary);
-  root.style.setProperty("--color-accent-hover", mix(p.primary, "#000000", 0.15));
-  root.style.setProperty("--color-accent-fg", contrastFg(p.primary));
-  root.style.setProperty("--color-accent-ring", mix(p.primary, "#ffffff", 0.35));
-  // secondary
-  root.style.setProperty("--color-accent-2", p.secondary);
-  root.style.setProperty("--color-accent-2-hover", mix(p.secondary, "#000000", 0.15));
-  root.style.setProperty("--color-accent-2-fg", contrastFg(p.secondary));
-  // gradient stops for hero/brand surfaces
-  root.style.setProperty("--brand-gradient", `linear-gradient(135deg, ${p.primary}, ${p.secondary})`);
+  // The pair: the band (main color) and the side menu (base).
+  const band = bandFor(mode, r.main);
+  set("--color-band", band);
+  // Softer white for the line and labels on the band, tinted by the band.
+  set("--color-ink-text", mix("#ffffff", band, 0.16));
+  set("--color-ink-muted", mix("#ffffff", band, 0.28));
+  const side = sideTokens(mode === "dark" && luminance(r.base) >= 0.35 ? mix(r.base, "#000000", 0.85) : r.base);
+  set("--side-bg", side.bg); set("--side-surface", side.surface); set("--side-text", side.text);
+  set("--side-muted", side.muted); set("--side-faint", side.faint);
+  set("--side-border", side.border); set("--side-border-strong", side.borderStrong);
+  // The menu's "you are here" sits on the band color; on a light menu it
+  // needs white text, which the band always carries.
 
-  // soft tints differ by mode (light wash vs dark glow)
+  // The third: the action color, small and only on what you tap.
+  set("--color-accent", r.action);
+  set("--color-accent-text", actionText(mode, r.action));
+  set("--color-accent-hover", mix(r.action, "#000000", 0.15));
+  set("--color-accent-fg", onColor(r.action));
+  set("--color-accent-ring", mix(r.action, "#ffffff", 0.35));
+  set("--color-accent-2", r.action);
+  set("--color-accent-2-hover", mix(r.action, "#000000", 0.15));
+  set("--color-accent-2-fg", onColor(r.action));
+  // Folder and cover fills that used the brand gradient: the main color, flat.
+  set("--brand-gradient", `linear-gradient(135deg, ${r.main}, ${r.main})`);
+
   if (mode === "light") {
-    root.style.setProperty("--color-accent-soft", mix(p.primary, "#ffffff", 0.88));
-    root.style.setProperty("--color-accent-2-soft", mix(p.secondary, "#ffffff", 0.88));
+    set("--color-accent-soft", mix(r.action, "#ffffff", 0.88));
+    set("--color-accent-2-soft", mix(r.action, "#ffffff", 0.88));
   } else {
     root.style.removeProperty("--color-accent-soft"); // computed in .dark rule
-    root.style.setProperty("--color-accent-2-soft", mix(p.secondary, "#0b1120", 0.78));
+    set("--color-accent-2-soft", mix(r.action, "#0b1120", 0.78));
   }
 
   let meta = document.querySelector('meta[name="theme-color"]');
@@ -119,11 +113,12 @@ function initialPalette(): Palette {
     const raw = localStorage.getItem(LS_PALETTE);
     if (raw) {
       const o = JSON.parse(raw);
-      if (o && isHex(o.primary) && isHex(o.secondary)) return { id: o.id ?? "custom", name: o.name ?? "Custom", primary: o.primary, secondary: o.secondary };
+      if (o && isHex(o.primary) && isHex(o.secondary)) return { id: o.id ?? "custom", name: o.name ?? "Custom", primary: o.primary, secondary: o.secondary, ...(isHex(o.base ?? "") ? { base: o.base } : {}), ...(isHex(o.accent ?? "") ? { accent: o.accent } : {}) };
     }
     // migrate a legacy single accent → palette (primary + derived secondary)
     const legacy = localStorage.getItem(LS_ACCENT);
-    if (legacy && isHex(legacy)) return { id: "custom", name: "Custom", primary: legacy, secondary: mix(legacy, "#ffffff", 0) };
+    // An older single color was the button color: keep it as the action color.
+    if (legacy && isHex(legacy)) return { id: "custom", name: "Custom", base: DEFAULT_ROLES.base, primary: DEFAULT_ROLES.main, accent: legacy, secondary: legacy };
   } catch { /* noop */ }
   return PALETTE_PRESETS[0];
 }
@@ -188,12 +183,12 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     setPaletteState(p); persistPalette(p);
   }, []);
   const setAccent = useCallback((hex: string) => {
-    setPaletteState((prev) => { const p = { ...prev, id: "custom", name: "Custom", primary: hex }; persistPalette(p); return p; });
+    setPaletteState((prev) => { const r = rolesOf(prev); const p = { ...prev, id: "custom", name: "Custom", base: r.base, primary: r.main, accent: hex, secondary: hex }; persistPalette(p); return p; });
   }, []);
   const applyOrgPalette = useCallback((p: Palette | null) => { setOrgPalette(p); }, []);
 
   const value = useMemo(
-    () => ({ mode, palette: effective, accent: effective.primary, paletteLocked: !!orgPalette, setMode, toggleMode, setPalette, setAccent, applyOrgPalette }),
+    () => ({ mode, palette: effective, accent: rolesOf(effective).action, paletteLocked: !!orgPalette, setMode, toggleMode, setPalette, setAccent, applyOrgPalette }),
     [mode, effective, orgPalette, setMode, toggleMode, setPalette, setAccent, applyOrgPalette],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
@@ -209,8 +204,6 @@ export function useTheme(): ThemeCtx {
 // paint to avoid a flash. Injected in <head> in layout.tsx.
 export const THEME_PREPAINT = `(function(){try{
   var m=localStorage.getItem('${LS_MODE}'); if(m==='dark'){document.documentElement.classList.add('dark');}
-  var pal=localStorage.getItem('${LS_PALETTE}'); var prim=null;
-  if(pal){try{var o=JSON.parse(pal); if(o&&/^#[0-9a-fA-F]{6}$/.test(o.primary)){prim=o.primary;}}catch(e){}}
-  if(!prim){var a=localStorage.getItem('${LS_ACCENT}'); if(a&&/^#[0-9a-fA-F]{6}$/.test(a)){prim=a;}}
-  if(prim){document.documentElement.style.setProperty('--color-accent',prim);}
+  var pal=localStorage.getItem('${LS_PALETTE}'); var H=/^#[0-9a-fA-F]{6}$/; var st=document.documentElement.style;
+  if(pal){try{var o=JSON.parse(pal); if(o&&H.test(o.primary)&&H.test(o.accent)){st.setProperty('--color-band',o.primary);st.setProperty('--color-accent',o.accent);if(H.test(o.base)){st.setProperty('--side-bg',o.base);}}}catch(e){}}
 }catch(e){}})();`;
