@@ -14,6 +14,7 @@
 // the canvas, so the floor color is identical on every screen.
 
 import React from "react";
+import { PageHero } from "@/components/ui/PageHero";
 
 const WIDTHS = {
   /** Dense work surfaces: tables, boards, dashboards. */
@@ -40,45 +41,42 @@ export function PageShell({
   );
 }
 
+/** The older header API, now drawn as the shared page band (PageHero):
+ *  the title is the big line, the eyebrow the small label above it. Pages
+ *  that pass an `answer` show that as the big line and the title as the
+ *  label. */
 export function PageHeaderBar({
-  icon: Icon,
   eyebrow,
   title,
+  answer,
   subtitle,
   actions,
+  primary,
   className = "",
 }: {
   icon?: React.ComponentType<{ className?: string }>;
-  /** Tiny all-caps kicker above the title, e.g. "Mission control · live". */
+  /** Tiny all-caps kicker above the title. */
   eyebrow?: React.ReactNode;
   title: React.ReactNode;
+  /** What matters on this page right now; shown big, with the title as the label. */
+  answer?: React.ReactNode;
   subtitle?: React.ReactNode;
+  /** Small controls (top right of the band). */
   actions?: React.ReactNode;
+  /** The one orange action. */
+  primary?: React.ReactNode;
   className?: string;
 }) {
   return (
-    <header className={`relative isolate flex flex-wrap items-center justify-between gap-4 mb-6 ${className}`}>
-      {/* Faint accent wash + hairline gives every page header presence and
-          a touch of luster, instead of a flat title floating on the canvas. */}
-      <div aria-hidden className="header-wash pointer-events-none absolute -inset-x-4 -top-6 bottom-[-0.75rem] -z-10 sm:-inset-x-6 lg:-inset-x-8" />
-      <div className="flex items-center gap-3.5 min-w-0">
-        {Icon && (
-          <div className="grid place-items-center w-11 h-11 rounded-2xl bg-[var(--color-surface-2)] text-[var(--color-text)] shrink-0 shadow-sm">
-            <Icon className="w-5.5 h-5.5" />
-          </div>
-        )}
-        <div className="min-w-0">
-          {eyebrow && (
-            <div className="text-[11px] font-black uppercase tracking-[0.2em] text-[var(--color-text-muted)] mb-0.5">
-              {eyebrow}
-            </div>
-          )}
-          <h1 className="text-2xl font-black text-[var(--color-text)] tracking-tight truncate">{title}</h1>
-          {subtitle && <p className="text-sm text-[var(--color-text-muted)] mt-0.5">{subtitle}</p>}
-        </div>
-      </div>
-      {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
-    </header>
+    <PageHero
+      kicker={answer ? (eyebrow ? <>{eyebrow} · {title}</> : title) : eyebrow}
+      title={answer ?? title}
+      sub={subtitle}
+      tools={actions}
+      primary={primary}
+      overlap={false}
+      className={className}
+    />
   );
 }
 

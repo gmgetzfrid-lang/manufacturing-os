@@ -108,9 +108,9 @@ const TONE_ICON: Record<Tone, string> = {
 };
 // The page you're on: dark ink on a neutral wash. Orange is for things you
 // tap, never for where you are.
-const ACCENT_ICON_STYLE: React.CSSProperties = { color: 'var(--color-text)' };
-const ACTIVE_BG_STYLE: React.CSSProperties = { backgroundColor: 'var(--color-surface-2)' };
-const ACTIVE_BAR_STYLE: React.CSSProperties = { backgroundColor: 'var(--color-text)' };
+const ACCENT_ICON_STYLE: React.CSSProperties = { color: '#ffffff' };
+// Where you are: an ink pill on the paper.
+const ACTIVE_BG_STYLE: React.CSSProperties = { backgroundColor: 'var(--color-ink)' };
 
 export default function Sidebar({
   mobileOpen = false,
@@ -311,7 +311,7 @@ export default function Sidebar({
       )}
       <aside
         aria-hidden={isMobile && !mobileOpen}
-        className={`${collapsed ? 'w-16' : 'w-64'}    h-full flex flex-col border-r border-[var(--color-border)] text-[var(--color-text-muted)] shrink-0 md:shadow-[10px_0_30px_-22px_rgba(2,6,23,0.35)] fixed inset-y-0 left-0 z-[70] md:relative md:inset-auto md:z-auto transition-[transform,width] duration-200 ease-out bg-[var(--color-surface-2)] ${mobileOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'} md:translate-x-0`}
+        className={`${collapsed ? 'w-16' : 'w-64'}    h-full flex flex-col text-[var(--color-text-muted)] shrink-0 fixed inset-y-0 left-0 z-[70] md:relative md:inset-auto md:z-auto transition-[transform,width] duration-200 ease-out bg-[var(--color-canvas)] ${mobileOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'} md:translate-x-0`}
       >
         {/* Warm brand seam down the trailing edge — a quiet accent that ties
             the rail to the brand in either theme. */}
@@ -427,7 +427,7 @@ export default function Sidebar({
       </nav>
 
       {/* USER FOOTER — the person, not the role. */}
-      <div className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface)] p-2">
+      <div className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-canvas)] p-2">
         {collapsed ? (
           <div className="flex flex-col items-center gap-1.5">
             <Link href="/profile" title={`${userEmail ?? 'Profile'} · ${activeRole ?? ''}`} className="hover:opacity-90 transition-opacity">
@@ -520,13 +520,10 @@ function SidebarLeaf({
         collapsed ? 'h-10 justify-center' : 'h-9 px-2.5'
       } ${
         active
-          ? 'text-[var(--color-text)] font-semibold'
-          : 'text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]'
+          ? 'text-white font-semibold'
+          : 'text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)]'
       }`}
     >
-      {active && !collapsed && (
-        <span className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r" style={ACTIVE_BAR_STYLE} aria-hidden />
-      )}
       <Icon className={`w-[17px] h-[17px] shrink-0 ${active ? '' : TONE_ICON[leaf.tone]}`} style={active ? ACCENT_ICON_STYLE : undefined} />
       {!collapsed && (
         <span className="text-[13px] truncate flex-1 leading-none">{leaf.label}</span>
