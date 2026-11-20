@@ -143,7 +143,8 @@ export function Card({
  *  the edge, so it's plain there's more (it scrolls). */
 export function CardStrip({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={`-mr-2 sm:-mr-5 flex gap-3 sm:gap-4 overflow-x-auto overscroll-x-contain pb-1 pr-10 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${className}`}>
+    // Room above and below so the cards' shadows aren't cut by the scroller.
+    <div className={`-mr-2 sm:-mr-5 flex gap-3 sm:gap-4 overflow-x-auto overscroll-x-contain pt-1 pb-7 -mb-5 pr-10 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${className}`}>
       {children}
     </div>
   );
