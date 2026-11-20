@@ -320,6 +320,38 @@ export function fitTablePt(head: string[], rows: string[][], widths: number[], w
   return 9;
 }
 
+/** Every column wide enough for its longest word at this size (no word
+ *  broken across lines). */
+export function wordsFit(head: string[], rows: string[][], widths: number[], w: number, pt: number): boolean {
+  const total = widths.reduce((a, c) => a + c, 0);
+  return widths.every((c, i) => {
+    const room = (c / total) * w - 12 / 72;
+    const longest = Math.max(0, ...[head[i] ?? "", ...rows.map((r) => r[i] ?? "")].flatMap((t) => t.split(/\s+/)).map((x) => x.length));
+    return longest * pt * 0.56 / 72 <= room;
+  });
+}
+/** The share of a slide's width the pictures take beside a table. */
+export const PIC_SIDE = 0.3;
+/** The height of pictures in a strip under a table, inches. */
+export const PIC_STRIP = 1.55;
+/** Where a table slide's pictures go: down the right while the table still
+ *  reads beside them (10 pt or more, no word broken), else in a strip under
+ *  it while the table still reads at 11 pt above, else nowhere: the table
+ *  needs the whole slide. */
+/** The room under a slide's title, inches at the standard slide size: the
+ *  plain slides' (a template's is measured from its layout). */
+export const PLAIN_AREA = { w: 12.1, h: 5.25 };
+export function picPlace(spec: SlideSpec, area: { w: number; h: number } = PLAIN_AREA): "right" | "below" | null {
+  const b = spec.body;
+  if (b.k !== "table") return null;
+  const h = area.h - (b.lead ? 0.48 : 0) - (b.tally?.length ? 0.55 : 0) - (b.foot ? 0.44 : 0) + (area === PLAIN_AREA && b.foot ? 0.44 : 0);
+  const tw = area.w * (1 - PIC_SIDE) - 0.25;
+  const right = fitTablePt(b.head, b.rows, b.widths, tw, h - (b.lead ? 0.2 : 0), b.tags, b.span);
+  if (right >= 10 && wordsFit(b.head, b.rows, b.widths, tw, right)) return "right";
+  if (fitTablePt(b.head, b.rows, b.widths, area.w, h - PIC_STRIP - 0.45, b.tags, b.span) >= 11) return "below";
+  return null;
+}
+
 export const tablePt = (rows: string[][]) => { const c = rows.reduce((n, r) => n + r.join("").length, 0) + rows.length * 30; return c > 1900 ? 10 : c > 1550 ? 11 : c > 1250 ? 12 : c > 1000 ? 13 : c > 780 ? 14 : 15; };
 export const TONE_HEX: Record<Tone, { fg: string; bg: string }> = { bad: { fg: "A3200F", bg: "F8DFD9" }, warn: { fg: "7A4D00", bg: "F6E6C2" }, good: { fg: "1C6240", bg: "DCECDF" }, none: { fg: "5D6675", bg: "E2DED4" } };
 const VERDICT_TONE: Record<Verdict, Tone> = { met: "good", missed: "bad", unmeasured: "none", untargeted: "warn", open: "none" };
@@ -329,8 +361,15 @@ const guideMore = (g: Guide): SlideMore => ({ title: g.title, sections: [{ title
 export type SlidePane = { title: string; items?: SlideItem[]; table?: { head: string[]; rows: string[][]; widths: number[]; title?: string } };
 type Item = SlideItem;
 type Pane = SlidePane;
+/** A picture on a slide, made ready (lib/slidePictures readyPic). */
+export interface SlidePicture { url: string; bytes: Uint8Array; w: number; h: number; caption: string }
 export interface SlideSpec {
   kicker: string; title: string; notes: string;
+  /** Which slide it is, steady from one viewing to the next ("score",
+   *  "areas-1"): the pictures a person picks are kept under it. */
+  key?: string;
+  /** Its pictures (the cover one, a table slide up to two, beside the table). */
+  pics?: SlidePicture[];
   /** Which part of the meeting the slide is in, for decks that open each part on its own slide. */
   part?: { n: number; of: number; name: string };
   body:
@@ -352,7 +391,9 @@ export interface SlideSpec {
         /** Rows grouped under shared first cells (an area, then each finding in it). */
         span?: SlideSpan;
         /** The column whose last line says where the line came from, set quieter. */
-        source?: number }
+        source?: number;
+        /** The finding each row was written from (null: a measure from the records). */
+        rowKeys?: Array<string | null> }
     | { k: "split"; left: Pane; right: Pane; ratio?: number; foot?: string };
 }
 
@@ -369,14 +410,14 @@ export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
   const PARTS = ["The score: plan against actual", "What went well, what did not, and why", "What we do about it"];
   const partOf = (n: number) => ({ n, of: PARTS.length, name: PARTS[n - 1] });
   const byKey = new Map(r.findings.map((f) => [f.key, f]));
-  s.push({ kicker: "Post-event review", title: dates ? `${eventName(o)}: ${dates}` : eventName(o), notes: "The score, then what went well and what did not by area, then what we do about it.",
+  s.push({ key: "cover", kicker: "Post-event review", title: dates ? `${eventName(o)}: ${dates}` : eventName(o), notes: "The score, then what went well and what did not by area, then what we do about it.",
     body: { k: "cover", sub: projectLine(o), meta: [o.preparedBy, `Written ${o.date}`].filter(Boolean).join("  ·  "), agenda: PARTS,
       table: { head: ["Category", "What is measured", "Where it is addressed"], rows: bk.categories.map((c) => [c.name, c.measures, c.where]), widths: [1.3, 4.2, 2.3] } } });
 
   // 1. The score.
   const sc = bk.score;
   s.push({
-    kicker: "1 · The score: plan against actual", title: pt.headline, notes: [pt.headline, sc.line].filter(Boolean).join(" "), part: partOf(1),
+    key: "score", kicker: "1 · The score: plan against actual", title: pt.headline, notes: [pt.headline, sc.line].filter(Boolean).join(" "), part: partOf(1),
     body: {
       k: "table", head: ["Measure", "Target", "Actual", "Result"], widths: [1.4, 2.4, 3.4, 1.7], lead: bk.delay,
       rows: sc.rows.map((x) => [measureCell(x), x.plan, x.actual, x.result]),
@@ -403,9 +444,12 @@ export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
   const areasTitle = costly.length ? `${costly.map((a, i) => (i === 0 ? `${a.name} cost ${a.hours}${late ? ` of the ${late}` : ""} h` : `${a.name} ${a.hours} h`)).join(", ")}.`
     : (bk.actions.length ? "Where the event can do better, by area" : bk.pending ? "No finding has been accepted yet" : "Nothing in the records calls for a change");
   const AREA_HEAD = ["Area", "What went well", "What did not go well", "Root cause", "Action"], AREA_W = [1.35, 2.3, 3.85, 2.75, 0.75];
+  // The finding each row was written from, so its words can be changed from the slide.
+  const keyOf = new Map<string[], string>();
+  const keyed = (row: string[], key: string) => { keyOf.set(row, key); return row; };
   const areaGroups = bk.areas.map((a) => {
     const own: string[][] = [
-      ...a.items.map((it) => [it.where ? `${it.didNot}\n${it.where}.` : it.didNot, it.rootCause || NOT_WRITTEN, `No. ${it.action}`]),
+      ...a.items.map((it) => keyed([it.where ? `${it.didNot}\n${it.where}.` : it.didNot, it.rootCause || NOT_WRITTEN, `No. ${it.action}`], it.key)),
       ...a.measured.map((t) => [`${t}\nFrom the records.`, NOT_WRITTEN, "None"]),
       ...(a.pending ? [[`${a.pending === 1 ? "1 finding waits" : `${a.pending} findings wait`} for your call in the review.`, "", ""]] : []),
     ];
@@ -426,7 +470,7 @@ export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
   const units: Unit[] = [];
   for (const g of areaGroups) {
     let part: string[][] = [], first = true;
-    const unit = (rows: string[][]): Unit => ({ rows: rows.map((x, i) => [i ? "" : first ? g.a.name : `${g.a.name}, continued`, i || !first ? "" : g.a.well.join("\n"), ...x]), tag: first ? g.tag : null, more: g.more });
+    const unit = (rows: string[][]): Unit => ({ rows: rows.map((x, i) => { const row = [i ? "" : first ? g.a.name : `${g.a.name}, continued`, i || !first ? "" : g.a.well.join("\n"), ...x]; const k = keyOf.get(x); if (k) keyOf.set(row, k); return row; }), tag: first ? g.tag : null, more: g.more });
     for (const x of g.own) {
       if (part.length && !reads([unit([...part, x])])) { units.push(unit(part)); part = []; first = false; }
       part.push(x);
@@ -439,11 +483,12 @@ export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
     if (cur.length && !reads([...cur, u])) areaSlides.push([u]); else cur.push(u);
   }
   areaSlides.forEach((gs, i) => s.push({
-    kicker: `2 · What went well, what did not, and why${part(i, areaSlides.length)}`, title: areasTitle, part: partOf(2),
+    key: `areas-${i + 1}`, kicker: `2 · What went well, what did not, and why${part(i, areaSlides.length)}`, title: areasTitle, part: partOf(2),
     notes: bk.areas.filter((a) => gs.some((g) => g.rows[0][0] === a.name)).map((a) => `${a.name}: ${AREA_STATE_WORD[a.state].toLowerCase()}.`).join(" ") || `${gs[0].rows[0][0]}.`,
     body: {
       k: "table", head: AREA_HEAD, widths: AREA_W, span: { cols: 2, rows: gs.flatMap((g) => g.rows.map((_, j) => (j ? 0 : g.rows.length))) }, source: 2,
       rows: gs.flatMap((g) => g.rows),
+      rowKeys: gs.flatMap((g) => g.rows.map((row) => keyOf.get(row) ?? null)),
       tags: gs.flatMap((g) => g.rows.map((_, j) => (j ? null : g.tag))),
       more: gs.flatMap((g) => g.rows.map((_, j) => (j ? null : g.more))),
       foot: i === areaSlides.length - 1 && bk.pending ? `${bk.pending === 1 ? "1 finding waits" : `${bk.pending} findings wait`} for a decision in the review and ${bk.pending === 1 ? "is" : "are"} not shown.` : "",
@@ -453,12 +498,13 @@ export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
   // 3. The action plan, seven to a slide.
   const groups: Array<typeof bk.actions> = [];
   for (let i = 0; i < bk.actions.length; i += 7) groups.push(bk.actions.slice(i, i + 7));
-  if (!groups.length) s.push({ kicker: "3 · What we do about it", part: partOf(3), title: bk.pending ? "No actions accepted yet" : "No actions for the next event", notes: bk.pending ? `${bk.pending} findings wait for a decision in the review.` : "Nothing in the records calls for a change.", body: { k: "asks", items: [], foot: "" } });
+  if (!groups.length) s.push({ key: "actions-1", kicker: "3 · What we do about it", part: partOf(3), title: bk.pending ? "No actions accepted yet" : "No actions for the next event", notes: bk.pending ? `${bk.pending} findings wait for a decision in the review.` : "Nothing in the records calls for a change.", body: { k: "asks", items: [], foot: "" } });
   groups.forEach((g, i) => s.push({
-    kicker: `3 · What we do about it${part(i, groups.length)}`, part: partOf(3), title: `${bk.actions.length === 1 ? "1 action" : `${bk.actions.length} actions`} for the next event`, notes: g.map((a) => `${a.n}. ${a.what}${a.benefit ? ` Benefit: ${a.benefit}` : ""}`).join(" "),
+    key: `actions-${i + 1}`, kicker: `3 · What we do about it${part(i, groups.length)}`, part: partOf(3), title: `${bk.actions.length === 1 ? "1 action" : `${bk.actions.length} actions`} for the next event`, notes: g.map((a) => `${a.n}. ${a.what}${a.benefit ? ` Benefit: ${a.benefit}` : ""}`).join(" "),
     body: {
       k: "table", head: ["What we will do", "How it will be done", "Benefit", "Who", "By", "Cost"], widths: [2.7, 3.0, 2.6, 1.2, 0.95, 0.95],
       rows: g.map((a) => [`${a.n}. ${a.what}\n${a.areaName} · ${appliesWord(a.applies, o.kind)}`, a.how, a.benefit || NOT_WRITTEN, a.who || NOT_SET, a.by || NOT_SET, a.cost || NOT_SET]),
+      rowKeys: g.map((a) => a.keys[0] ?? null),
       // Behind each action: how it will be done, then each finding it came from, with its own root cause.
       more: g.map((a) => {
         const fs = a.keys.map((k) => byKey.get(k)).filter((f): f is Finding => !!f);
@@ -478,15 +524,24 @@ export interface SlidesOpts {
   /** The company template, when the workspace has one: the slides go onto its layouts. */
   template?: { data: ArrayBuffer | Uint8Array; info: TemplateInfo; pick?: Partial<Record<LayoutRole, string>> } | null;
   out?: "blob" | "nodebuffer";
+  /** The slides, when they've been made already (with their pictures). */
+  specs?: SlideSpec[];
 }
 
+/** Bytes as base64, in the browser or on the server. */
+export function base64Of(bytes: Uint8Array): string {
+  if (typeof Buffer !== "undefined") return Buffer.from(bytes).toString("base64");
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
 /** The meeting slides as an editable PowerPoint: on the company template
  *  when there is one, otherwise in the workspace's colors. */
 export async function reviewPptx(r: Review, o: ReviewFileOpts, opts: SlidesOpts = {}): Promise<Blob | Uint8Array> {
   const look = opts.look ?? DEFAULT_LOOK;
   if (opts.template) {
     const { deckOnTemplate } = await import("@/lib/reviewTemplateDeck");
-    return deckOnTemplate(deckSlides(r, o), { info: opts.template.info, data: opts.template.data, look, pick: opts.template.pick, title: `${eventName(o)} post-event review` });
+    return deckOnTemplate(opts.specs ?? deckSlides(r, o), { info: opts.template.info, data: opts.template.data, look, pick: opts.template.pick, title: `${eventName(o)} post-event review` });
   }
   const Pptx = (await import("pptxgenjs")).default;
   const p = new Pptx();
@@ -495,18 +550,42 @@ export async function reviewPptx(r: Review, o: ReviewFileOpts, opts: SlidesOpts 
   const BG = look.bg, INK = look.ink, KICK = look.kicker, SOFT = look.soft, HEAD = look.heading;
   const face = look.font;
   const T = (v: string) => noEmDash(v);
-  for (const spec of deckSlides(r, o)) {
+  for (const spec of opts.specs ?? deckSlides(r, o)) {
     const s = p.addSlide();
     s.background = { color: BG };
     const b = spec.body;
+    // A picture filling its box (cut evenly from its long sides), with what it shows under it.
+    const picture = (pic: SlidePicture, x: number, y: number, w: number, h: number, caption = true) => {
+      const k = Math.max(w / pic.w, h / pic.h);
+      s.addImage({ data: `data:image/jpeg;base64,${base64Of(pic.bytes)}`, x, y, w: pic.w * k, h: pic.h * k, sizing: { type: "cover", w, h } });
+      if (caption && pic.caption) s.addText(T(pic.caption), { x, y: y + h + 0.03, w, h: 0.24, fontFace: face, fontSize: 9, color: SOFT, valign: "top", margin: 0 });
+    };
+    /** A table slide's pictures, where the slide has room for them: down
+     *  the right, or in a strip at the bottom. Returns the table's width and
+     *  how far down it may go. */
+    const side = (pics: SlidePicture[] | undefined, top: number): { tw: number; bottom: number } => {
+      const where = pics?.length ? picPlace(spec) : null;
+      if (!pics?.length || !where) return { tw: 12.1, bottom: 6.8 };
+      const n = Math.min(2, pics.length);
+      if (where === "below") {
+        const h = PIC_STRIP, w = h * 4 / 3, y = 6.8 - h - 0.28;
+        pics.slice(0, n).forEach((pic, i) => picture(pic, 0.6 + i * (w + 0.3), y, w, h));
+        return { tw: 12.1, bottom: y - 0.15 };
+      }
+      const tw = 12.1 * (1 - PIC_SIDE) - 0.25, x = 0.6 + tw + 0.25, w = 12.1 - tw - 0.25;
+      const each = (6.8 - top - (n - 1) * 0.2) / n - 0.28;
+      const h = Math.min(each, w * 0.75);
+      pics.slice(0, n).forEach((pic, i) => picture(pic, x, top + i * (h + 0.48), w, h));
+      return { tw, bottom: 6.8 };
+    };
     // The accent: one short bar above the label, the mark that draws the eye.
     const mark = (x: number, y: number) => s.addShape("rect", { x, y, w: 0.55, h: 0.07, fill: { color: look.accent }, line: { color: look.accent, width: 0 } });
     const bullets = (items: Item[], x: number, y: number, w: number, h: number, size: number) =>
       s.addText(items.map((it) => { const o = typeof it === "string" ? { text: it } : it; return { text: T(o.text), options: { bullet: o.bold ? false : { indent: 14 }, bold: !!o.bold, indentLevel: o.sub ? 1 : 0, breakLine: true, paraSpaceBefore: o.bold ? 6 : 0, paraSpaceAfter: 5 } }; }), { x, y, w, h, fontFace: face, fontSize: size, color: INK, valign: "top" });
-    const table = (head: string[], rows: string[][], widths: number[], x: number, y: number, w: number, size?: number, tags?: Array<SlideTag | null>, span?: SlideSpan, source?: number) => {
+    const table = (head: string[], rows: string[][], widths: number[], x: number, y: number, w: number, size?: number, tags?: Array<SlideTag | null>, span?: SlideSpan, source?: number, bottom = 6.8) => {
       const total = widths.reduce((a, c) => a + c, 0);
-      // Sized to end above the footnote line (6.8 in).
-      const fs = size ?? fitTablePt(head, rows, widths, w, 6.8 - y, tags, span);
+      // Sized to end above the footnote line (6.8 in), or above the pictures under it.
+      const fs = size ?? fitTablePt(head, rows, widths, w, bottom - y, tags, span);
       // Rows band by group when rows share their first cells.
       let band = -1;
       const bands = rows.map((_, ri) => (!span || (span.rows[ri] ?? 1) > 0 ? ++band : band));
@@ -548,16 +627,21 @@ export async function reviewPptx(r: Review, o: ReviewFileOpts, opts: SlidesOpts 
       // The cover: a band of the deep color down the left, the accent mark, the title.
       s.addShape("rect", { x: 0, y: 0, w: 0.28, h: 7.5, fill: { color: look.head }, line: { color: look.head, width: 0 } });
       if (b.table) {
+        // The cover's picture sits top right; the words beside it make room.
+        const pic = spec.pics?.[0], tw = pic ? 8.75 : 12.1;
+        if (pic) picture(pic, 9.65, 0.32, 3.05, 1.52, false);
         mark(0.6, 0.32);
-        s.addText(T(spec.kicker), { x: 0.6, y: 0.42, w: 12.1, h: 0.3, fontFace: face, fontSize: 13, bold: true, color: KICK });
-        s.addText(T(spec.title), { x: 0.6, y: 0.72, w: 12.1, h: 0.6, fontFace: face, fontSize: 28, bold: true, color: HEAD });
-        s.addText(T(b.sub), { x: 0.6, y: 1.32, w: 12.1, h: 0.35, fontFace: face, fontSize: 14, color: SOFT });
-        s.addText(T(b.tableTitle ?? "What this review measures"), { x: 0.6, y: 1.8, w: 12.1, h: 0.3, fontFace: face, fontSize: 12, bold: true, color: KICK });
+        s.addText(T(spec.kicker), { x: 0.6, y: 0.42, w: tw, h: 0.3, fontFace: face, fontSize: 13, bold: true, color: KICK });
+        s.addText(T(spec.title), { x: 0.6, y: 0.72, w: tw, h: 0.6, fontFace: face, fontSize: pic && spec.title.length > 48 ? 24 : 28, bold: true, color: HEAD });
+        s.addText(T(b.sub), { x: 0.6, y: 1.32, w: tw, h: 0.35, fontFace: face, fontSize: 14, color: SOFT });
+        s.addText(T(b.tableTitle ?? "What this review measures"), { x: 0.6, y: 1.8, w: tw, h: 0.3, fontFace: face, fontSize: 12, bold: true, color: KICK });
         table(b.table.head, b.table.rows, b.table.widths, 0.6, 2.12, 12.1, 12);
         s.addText(T(b.meta), { x: 0.6, y: 6.95, w: 12.1, h: 0.35, fontFace: face, fontSize: 11, color: SOFT });
       } else {
+        const pic = spec.pics?.[0];
+        if (pic) picture(pic, 8.6, 1.5, 4.1, 3.08);
         mark(0.9, 1.4);
-        s.addText(T(spec.kicker), { x: 0.9, y: 1.5, w: 11.5, h: 0.4, fontFace: face, fontSize: 15, bold: true, color: KICK });
+        s.addText(T(spec.kicker), { x: 0.9, y: 1.5, w: pic ? 7.4 : 11.5, h: 0.4, fontFace: face, fontSize: 15, bold: true, color: KICK });
         s.addText(T(spec.title), { x: 0.9, y: 1.95, w: 11.5, h: 1.1, fontFace: face, fontSize: 38, bold: true, color: HEAD });
         s.addText(T(b.sub), { x: 0.9, y: 3.05, w: 11.5, h: 0.5, fontFace: face, fontSize: 18, color: SOFT });
         s.addText(b.agenda.map((t, i) => ({ text: T(`${i + 1}.  ${t}`), options: { breakLine: true, paraSpaceAfter: 4 } })), { x: 0.9, y: 3.9, w: 8, h: 2.3, fontFace: face, fontSize: 15, color: INK, valign: "top" });
@@ -580,11 +664,13 @@ export async function reviewPptx(r: Review, o: ReviewFileOpts, opts: SlidesOpts 
       });
       foot(b.foot);
     } else if (b.k === "table") {
+      // Pictures down the right; the lead, the tally and the table beside them.
+      const { tw, bottom } = side(spec.pics, 1.55);
       // The tally sits in a line above the table: "1 met · 1 missed · 4 not measured".
       let y = 1.5;
-      if (b.lead) { s.addText(T(b.lead), { x: 0.6, y, w: 12.1, h: 0.42, fontFace: face, fontSize: 16, bold: true, color: KICK, valign: "middle" }); y += 0.48; }
-      if (b.tally?.length) { s.addText(b.tally.flatMap((t, i) => [{ text: `${i ? "     " : ""}${t.n} `, options: { bold: true, fontSize: 20, color: TONE_HEX[t.tone].fg } }, { text: T(t.label), options: { fontSize: 13, color: SOFT } }]), { x: 0.6, y, w: 12.1, h: 0.45, fontFace: face, valign: "middle" }); y += 0.55; }
-      table(b.head, b.rows, b.widths, 0.6, y === 1.5 ? 1.55 : y, 12.1, undefined, b.tags, b.span, b.source);
+      if (b.lead) { s.addText(T(b.lead), { x: 0.6, y, w: tw, h: tw < 12 ? 0.62 : 0.42, fontFace: face, fontSize: tw < 12 ? 14 : 16, bold: true, color: KICK, valign: "middle" }); y += tw < 12 ? 0.68 : 0.48; }
+      if (b.tally?.length) { s.addText(b.tally.flatMap((t, i) => [{ text: `${i ? "     " : ""}${t.n} `, options: { bold: true, fontSize: 20, color: TONE_HEX[t.tone].fg } }, { text: T(t.label), options: { fontSize: 13, color: SOFT } }]), { x: 0.6, y, w: tw, h: 0.45, fontFace: face, valign: "middle" }); y += 0.55; }
+      table(b.head, b.rows, b.widths, 0.6, y === 1.5 ? 1.55 : y, tw, undefined, b.tags, b.span, b.source, bottom);
       foot(b.foot);
     } else if (b.k === "split") {
       const lw = 12.1 * (b.ratio ?? 0.5) - 0.15;

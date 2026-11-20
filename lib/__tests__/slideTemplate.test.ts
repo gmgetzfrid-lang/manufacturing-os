@@ -182,3 +182,23 @@ describe("the slides on screen are the file's slides", () => {
     expect(view.slides[0]).not.toContain("<img src=x");
   });
 });
+
+describe("pictures on the template's slides", () => {
+  it("carries each picture into the file, linked from its slide, and draws it on screen", async () => {
+    const { renderDeck } = await import("@/lib/slideRender");
+    const { data, info } = await leanTemplate(await companyTemplate());
+    // A tiny real JPEG (1x1).
+    const jpeg = Uint8Array.from(atob("/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q=="), (c) => c.charCodeAt(0));
+    const specs = testSlides(info).map((s) => (s.body.k === "table" ? { ...s, pics: [{ url: "", bytes: jpeg, w: 1, h: 1, caption: "E-12 · Oct 29, 2026" }] } : s));
+    const out = await deckOnTemplate(specs, { info, data, look: lookFromPalette({ primary: "#0b1f6b", secondary: "#d4a017" }), title: "t" });
+    const z = await JSZip.loadAsync(out);
+    const media = Object.keys(z.files).filter((n) => /^ppt\/media\/review-s\d+-\d+\.jpg$/.test(n));
+    expect(media.length).toBe(1);
+    const n = media[0].match(/review-s(\d+)-/)![1];
+    expect(await z.file(`ppt/slides/_rels/slide${n}.xml.rels`)!.async("string")).toContain(media[0].replace("ppt/", "../"));
+    expect(await z.file(`ppt/slides/slide${n}.xml`)!.async("string")).toContain("E-12 · Oct 29, 2026");
+    expect(await z.file("[Content_Types].xml")!.async("string")).toMatch(/Extension="jpg"/i);
+    const view = await renderDeck(out, (part) => `blob:${part}`);
+    expect(view.slides[Number(n) - 1]).toContain(`blob:${media[0]}`);
+  });
+});

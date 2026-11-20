@@ -12,12 +12,16 @@
 
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, ChevronRight, Download, Loader2, Maximize2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, Loader2, Maximize2, Pencil, X } from "lucide-react";
 import { noEmDash } from "@/lib/noEmDash";
-import { DEFAULT_LOOK, TONE_HEX, tablePt, type SlideItem, type SlideMore, type SlidePane, type SlideSpan, type SlideSpec, type SlideTag } from "@/lib/reviewFiles";
+import { DEFAULT_LOOK, PIC_SIDE, PIC_STRIP, picPlace, TONE_HEX, tablePt, type SlidePicture, type SlideItem, type SlideMore, type SlidePane, type SlideSpan, type SlideSpec, type SlideTag } from "@/lib/reviewFiles";
 import type { DeckLook } from "@/lib/deckLook";
 import type { ScreenDeck } from "@/lib/slidePreview";
 import SlideFrame from "@/components/slides/SlideFrame";
+import SlideEditPanel, { type SlideEdit } from "@/components/projects/SlideEditPanel";
+
+/** In Edit mode, a tapped table line is picked to change its words (not opened). */
+const PickCtx = React.createContext<{ pick?: (row: number) => void; picked: number | null }>({ picked: null });
 
 // The slide in its own pixels: 13.33 x 7.5 in at 96 to the inch, so a point
 // size here is the point size in the PowerPoint.
@@ -46,7 +50,7 @@ const cell = (t: string, first: boolean) => {
   return first && more.length ? <><b>{T(lead)}</b><br /><span style={{ fontWeight: 400 }}>{T(more.join(" "))}</span></> : T(t);
 };
 
-export default function ReviewSlides({ slides, name, onClose, onDownload, downloading, ready, look = DEFAULT_LOOK, template = null, deck = null, deckState = null, choice = null }: {
+export default function ReviewSlides({ slides, name, onClose, onDownload, downloading, ready, look = DEFAULT_LOOK, template = null, deck = null, deckState = null, choice = null, edit = null }: {
   slides: SlideSpec[]; name: string; onClose: () => void;
   /** The colors and fonts the download is set in. */
   look?: DeckLook;
@@ -58,6 +62,8 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
   deckState?: "loading" | { error: string } | null;
   /** The project's switch: the company template or plain slides. */
   choice?: { on: boolean; set: (on: boolean) => void } | null;
+  /** Edit mode: pictures and words, for a person who can change the review. */
+  edit?: SlideEdit | null;
   onDownload: () => void; downloading: boolean;
   /** The file is made and the browser wants a tap to hand it over. */
   ready: { name: string; onSave: () => void } | null;
@@ -66,6 +72,9 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
   const [box, setBox] = useState<{ w: number; h: number } | null>(null);
   const [full, setFull] = useState(false);
   const [more, setMore] = useState<SlideMore | null>(null);
+  const [editing, setEditing] = useState(false);
+  // The line tapped in Edit mode, on the slide it was tapped on.
+  const [sel, setSel] = useState<{ at: number; row: number } | null>(null);
   const moreRef = useRef<SlideMore | null>(null);
   useEffect(() => { moreRef.current = more; }, [more]);
   const shell = useRef<HTMLDivElement>(null);
@@ -75,7 +84,7 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
   // part openers); each points back to the slide it was made from.
   const onTpl = !!(choice?.on && template);
   const count = onTpl && deck ? deck.slides.length : slides.length;
-  const go = useCallback((d: number) => { setMore(null); setAt((i) => Math.max(0, Math.min(count - 1, i + d))); }, [count]);
+  const go = useCallback((d: number) => { setMore(null); setSel(null); setAt((i) => Math.max(0, Math.min(count - 1, i + d))); }, [count]);
   const at = Math.min(atRaw, Math.max(0, count - 1));
 
   useEffect(() => {
@@ -104,7 +113,14 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
   const specAt = onTpl && deck ? deck.slideOf[at] : Math.min(at, slides.length - 1);
   const spec = specAt == null ? null : slides[specAt] ?? null;
   if (!slides.length) return null;
-  const openRow = (r: number) => { const b = spec?.body; const m = b?.k === "table" ? b.more?.[r] : null; if (m) setMore(m); };
+  const openRow = (r: number) => { if (editing) { setSel({ at, row: r }); return; } const b = spec?.body; const m = b?.k === "table" ? b.more?.[r] : null; if (m) setMore(m); };
+  const picked = sel?.at === at ? sel.row : null;
+  const pickCtx = { pick: editing ? (r: number) => setSel({ at, row: r }) : undefined, picked };
+  // What the tapped line is: a finding's words, a count from the records, or the same in every review.
+  const sb = spec?.body;
+  const rowKeys = sb?.k === "table" ? sb.rowKeys : undefined;
+  const rowKey = picked != null && rowKeys ? rowKeys[picked] ?? null : null;
+  const rowKind: "finding" | "record" | "score" | "fixed" = rowKey ? "finding" : spec?.key === "score" ? "score" : rowKeys ? "record" : "fixed";
   const wide = !!box && box.w >= 820;
   const pad = full ? 0 : 16;
   const scale = box ? Math.min((box.w - pad * 2) / W, (box.h - pad * 2) / H) : 1;
@@ -127,6 +143,7 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
             </div>
           )}
           <span className="text-[13px] font-bold text-white/60 tabular-nums whitespace-nowrap" data-slide-count>{at + 1} / {count}</span>
+          {edit && !editing && <button type="button" onClick={() => { setEditing(true); setMore(null); }} className={bar} data-slide-edit-open><Pencil className="w-4 h-4" /> Edit</button>}
           <button type="button" onClick={onDownload} disabled={downloading} className={bar}>{downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}<span className="hidden sm:inline">Download </span>PowerPoint</button>
           {canFull && wide && <button type="button" onClick={toggleFull} className={bar}><Maximize2 className="w-4 h-4" /> Full screen</button>}
           <button type="button" onClick={onClose} aria-label="Close" className="p-2 rounded-md hover:bg-white/10"><X className="w-5 h-5" /></button>
@@ -138,6 +155,8 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
           <button type="button" onClick={ready.onSave} className="h-9 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] font-semibold hover:bg-[var(--color-accent-hover)]">Save file</button>
         </div>
       )}
+      <PickCtx.Provider value={pickCtx}>
+      <div className="flex-1 min-h-0 flex flex-col md:flex-row">
       <div ref={stage} className="relative flex-1 min-h-0 overflow-hidden"
         onTouchStart={(e) => { const t = e.touches[0]; touch.current = { x: t.clientX, y: t.clientY }; }}
         onTouchEnd={(e) => { const s = touch.current, t = e.changedTouches[0]; touch.current = null; if (!s) return; const dx = t.clientX - s.x, dy = t.clientY - s.y; if (Math.abs(dx) > 60 && Math.abs(dx) > 2 * Math.abs(dy)) go(dx < 0 ? 1 : -1); }}>
@@ -152,22 +171,30 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
           </div>
         ) : box && onTpl && deck ? (wide ? (
           <div className="absolute" style={{ inset: pad }} data-slide={at} data-slide-template onClick={full ? (e) => { if (!(e.target as HTMLElement).closest("tr[data-row]")) go(e.clientX > box.w / 2 ? 1 : -1); } : undefined}>
-            <SlideFrame key={at} fit html={deck.slides[at]} w={deck.w} h={deck.h} onRow={full ? undefined : openRow} />
+            <SlideFrame key={at} fit html={deck.slides[at]} w={deck.w} h={deck.h} onRow={full ? undefined : openRow} highlightRow={picked} />
           </div>
         ) : (
           <div key={at} data-slide={at} data-slide-template className="absolute inset-0 overflow-y-auto" style={{ background: C.bg, color: C.ink }}>
-            <div className="p-3"><SlideFrame html={deck.slides[at]} w={deck.w} h={deck.h} onRow={openRow} label={`Slide ${at + 1}`} /></div>
-            {spec && <Page spec={spec} open={setMore} />}
+            <div className="p-3"><SlideFrame html={deck.slides[at]} w={deck.w} h={deck.h} onRow={openRow} highlightRow={picked} label={`Slide ${at + 1}`} /></div>
+            {spec && <Page spec={spec} open={editing ? undefined : setMore} />}
           </div>
         )) : box && spec && (wide ? (
           <div data-slide={at} onClick={full ? (e) => go(e.clientX > box.w / 2 ? 1 : -1) : undefined}
             style={{ position: "absolute", left: (box.w - W * scale) / 2, top: (box.h - H * scale) / 2, width: W, height: H, transform: `scale(${scale})`, transformOrigin: "top left", background: C.bg, color: C.ink, fontFamily: `"${look.font}", Arial, Helvetica, sans-serif`, overflow: "hidden", cursor: full ? "pointer" : undefined }}>
-            <Canvas spec={spec} open={full ? undefined : setMore} mark />
+            <Canvas spec={spec} open={full || editing ? undefined : setMore} mark />
           </div>
         ) : (
-          <div key={at} data-slide={at} className="absolute inset-0 overflow-y-auto" style={{ background: C.bg, color: C.ink }}><Page spec={spec} open={setMore} /></div>
+          <div key={at} data-slide={at} className="absolute inset-0 overflow-y-auto" style={{ background: C.bg, color: C.ink }}><Page spec={spec} open={editing ? undefined : setMore} /></div>
         ))}
       </div>
+      {editing && edit && !full && (
+        <div className="w-full md:w-[380px] h-[52%] md:h-auto shrink-0 border-t md:border-t-0 md:border-l border-white/10 overflow-hidden">
+          <SlideEditPanel edit={edit} slideKey={spec?.key ?? null} slideNo={at + 1} rowKey={rowKey} rowKind={rowKind} rowPicked={picked != null}
+            onClearRow={() => setSel(null)} onDone={() => { setEditing(false); setSel(null); }} />
+        </div>
+      )}
+      </div>
+      </PickCtx.Provider>
       {!full && (
         <div className="flex items-center justify-between gap-2 px-3 sm:px-5 py-2 border-t border-white/10">
           <button type="button" disabled={at === 0} onClick={() => go(-1)} className={bar}><ChevronLeft className="w-5 h-5" /> Back</button>
@@ -201,8 +228,28 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
 
 // ─── The slide as drawn (a computer) ───────────────────────────────
 
+/** A slide's pictures, as the download sets them: down the right of a
+ *  table ("col"), or in a strip under it ("row"). */
+function SlidePics({ pics, dir }: { pics: SlidePicture[]; dir: "col" | "row" }) {
+  const list = pics.slice(0, 2);
+  return (
+    <div style={{ display: "flex", flexDirection: dir === "col" ? "column" : "row", gap: dir === "col" ? 16 : 29, height: dir === "col" ? "100%" : undefined }} data-slide-pics>
+      {list.map((p, i) => (
+        <figure key={i} style={{ margin: 0, width: dir === "row" ? (PIC_STRIP * 96 * 4) / 3 : "100%", minHeight: 0 }}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={p.url} alt={p.caption} style={{ display: "block", width: "100%", height: dir === "row" ? PIC_STRIP * 96 : undefined, aspectRatio: dir === "col" ? "4 / 3" : undefined, maxHeight: dir === "col" ? (list.length > 1 ? 225 : 300) : undefined, objectFit: "cover" }} />
+          {p.caption && <figcaption style={{ fontSize: pt(9), color: C.soft, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{T(p.caption)}</figcaption>}
+        </figure>
+      ))}
+    </div>
+  );
+}
+
 function Canvas({ spec, open, mark }: { spec: SlideSpec; open?: Open; mark?: boolean }) {
   const b = spec.body;
+  const coverPic = b.k === "cover" ? spec.pics?.[0] : undefined;
+  // eslint-disable-next-line @next/next/no-img-element
+  const coverImg = coverPic ? <img src={coverPic.url} alt={coverPic.caption} style={{ position: "absolute", right: 58, top: 31, width: 293, height: 146, objectFit: "cover" }} data-slide-pics /> : null;
   // The accent: one short bar above the label, as on the downloaded slide.
   const bar = mark ? <div aria-hidden style={{ width: 53, height: 7, background: C.accent, marginBottom: 4 }} /> : null;
   // The cover's band of the deep color down the left.
@@ -210,10 +257,10 @@ function Canvas({ spec, open, mark }: { spec: SlideSpec; open?: Open; mark?: boo
   if (b.k === "cover" && b.table) {
     return (
       <div style={{ position: "absolute", inset: 0, padding: "28px 58px 0", display: "flex", flexDirection: "column" }}>
-        {side}{bar}
-        <div style={{ fontSize: pt(13), fontWeight: 700, color: C.acc }}>{T(spec.kicker)}</div>
-        <div style={{ fontSize: pt(28), fontWeight: 700, lineHeight: 1.1, marginTop: 6, color: C.heading }}>{T(spec.title)}</div>
-        <div style={{ fontSize: pt(14), color: C.soft, marginTop: 6 }}>{T(b.sub)}</div>
+        {side}{bar}{coverImg}
+        <div style={{ fontSize: pt(13), fontWeight: 700, color: C.acc, maxWidth: coverPic ? 840 : undefined }}>{T(spec.kicker)}</div>
+        <div style={{ fontSize: pt(coverPic && spec.title.length > 48 ? 24 : 28), fontWeight: 700, lineHeight: 1.1, marginTop: 6, color: C.heading, maxWidth: coverPic ? 840 : undefined }}>{T(spec.title)}</div>
+        <div style={{ fontSize: pt(14), color: C.soft, marginTop: 6, maxWidth: coverPic ? 840 : undefined }}>{T(b.sub)}</div>
         <div style={{ fontSize: pt(11), fontWeight: 700, color: C.acc, marginTop: 22, marginBottom: 6 }}>{T(b.tableTitle ?? "What this review measures")}</div>
         <div style={{ flex: 1, minHeight: 0 }}><FitTable key={spec.title} body={{ k: "table", head: b.table.head, rows: b.table.rows, widths: b.table.widths }} /></div>
         <div style={{ height: 44, paddingTop: 10, fontSize: pt(11), color: C.soft }}>{T(b.meta)}</div>
@@ -251,7 +298,13 @@ function Canvas({ spec, open, mark }: { spec: SlideSpec; open?: Open; mark?: boo
               </div>
             ))}
           </div>
-        ) : b.k === "table" ? <FitTable key={`${spec.kicker}|${spec.title}`} body={b} open={open} /> : (
+        ) : b.k === "table" ? (() => {
+          const table = <FitTable key={`${spec.kicker}|${spec.title}|${spec.pics?.length ?? 0}`} body={b} open={open} />;
+          const where = spec.pics?.length ? picPlace(spec) : null;
+          if (where === "right") return <div style={{ display: "flex", gap: 24, height: "100%" }}><div style={{ flex: `0 0 calc(${(1 - PIC_SIDE) * 100}% - 24px)`, minWidth: 0, height: "100%" }}>{table}</div><div style={{ flex: 1, minWidth: 0, height: "100%" }}><SlidePics pics={spec.pics!} dir="col" /></div></div>;
+          if (where === "below") return <div style={{ display: "flex", flexDirection: "column", height: "100%" }}><div style={{ flex: 1, minHeight: 0 }}>{table}</div><div style={{ paddingTop: 12 }}><SlidePics pics={spec.pics!} dir="row" /></div></div>;
+          return table;
+        })() : (
           <div style={{ display: "flex", gap: 29, height: "100%" }}>
             <div style={{ flex: `0 0 calc(${(b.ratio ?? 0.5) * 100}% - 15px)`, minWidth: 0 }}><PaneView pane={b.left} /></div>
             {(b.right.title || b.right.items?.length || b.right.table) && <div style={{ flex: 1, minWidth: 0 }}><PaneView pane={b.right} /></div>}
@@ -315,6 +368,7 @@ function FitTable({ body: b, open }: { body: Extract<SlideSpec["body"], { k: "ta
   );
 }
 function SlideTable({ head, rows, widths, size, tags, more, open, span, source }: { head: string[]; rows: string[][]; widths: number[]; size?: number; tags?: Array<SlideTag | null>; more?: Array<SlideMore | null>; open?: Open; span?: SlideSpan; source?: number }) {
+  const pickCtx = React.useContext(PickCtx);
   const total = widths.reduce((a, c) => a + c, 0);
   const fs = size ?? tablePt(rows);
   const gs = groupsOf(rows.length, span);
@@ -324,11 +378,12 @@ function SlideTable({ head, rows, widths, size, tags, more, open, span, source }
       <thead><tr>{head.map((h) => <th key={h} style={{ background: C.head, color: C.headText, textAlign: "left", padding: "0.4em 8px", fontWeight: 700, fontSize: "0.85em" }}>{T(h)}</th>)}</tr></thead>
       <tbody>{rows.map((r, ri) => {
         const m = open ? more?.[gs[ri].start] ?? null : null;
+        const pickRow = pickCtx.pick, isPicked = pickCtx.picked === ri;
         const bg = gs[ri].band % 2 ? C.band : C.bg;
         // A row under the one above (another finding in the same area): a rule between them.
         const under = !!span && (span.rows[ri] ?? 1) === 0;
         return (
-          <tr key={ri} style={{ background: bg, cursor: m ? "pointer" : undefined }} onClick={m ? (e) => { e.stopPropagation(); open!(m); } : undefined} data-row-more={m ? "" : undefined} data-row-group={gs[ri].band}>
+          <tr key={ri} style={{ background: bg, cursor: m || pickRow ? "pointer" : undefined, outline: isPicked ? "3px solid #f5b301" : undefined, outlineOffset: -2 }} onClick={pickRow ? (e) => { e.stopPropagation(); pickRow(ri); } : m ? (e) => { e.stopPropagation(); open!(m); } : undefined} data-row-more={m ? "" : undefined} data-row-group={gs[ri].band} data-row={ri}>
             {head.map((_, i) => {
               const down = span && i < span.cols ? span.rows[ri] ?? 1 : 1;
               if (down === 0) return null;
@@ -353,6 +408,17 @@ function Page({ spec, open }: { spec: SlideSpec; open?: Open }) {
     <div className="px-4 py-5">
       <div className="text-[13px] font-semibold " style={{ color: C.acc }}>{T(spec.kicker)}</div>
       <h2 className="mt-1 text-[21px] font-semibold leading-tight" style={{ color: C.heading }}>{T(spec.title)}</h2>
+      {spec.pics && spec.pics.length > 0 && (
+        <div className={`mt-3 grid gap-2 ${spec.pics.length > 1 ? "grid-cols-2" : "grid-cols-1"}`} data-slide-pics>
+          {spec.pics.slice(0, 2).map((p, i) => (
+            <figure key={i} className="m-0">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={p.url} alt={p.caption} className="w-full aspect-[4/3] object-cover rounded-lg" />
+              {p.caption && <figcaption className="mt-1 text-[12px] truncate" style={{ color: C.soft }}>{T(p.caption)}</figcaption>}
+            </figure>
+          ))}
+        </div>
+      )}
       {b.k === "cover" && <>
         {b.sub && <p className="mt-2 text-[14px]" style={{ color: C.soft }}>{T(b.sub)}</p>}
         {b.table && <><div className="mt-5 text-[13px] font-semibold " style={{ color: C.acc }}>{T(b.tableTitle ?? "What this review measures")}</div><div className="mt-2"><Rows head={b.table.head} rows={b.table.rows} /></div></>}
@@ -399,6 +465,7 @@ function PanePage({ pane }: { pane: SlidePane }) {
  *  heading. Rows under shared first cells (an area's findings) are one card,
  *  each row its own block under a rule. */
 function Rows({ head, rows, tags, more, open, span, source }: { head: string[]; rows: string[][]; tags?: Array<SlideTag | null>; more?: Array<SlideMore | null>; open?: Open; span?: SlideSpan; source?: number }) {
+  const pickCtx = React.useContext(PickCtx);
   const shared = span?.cols ?? 1;
   const starts = groupsOf(rows.length, span).map((g, i) => (g.start === i ? i : -1)).filter((i) => i >= 0);
   // A short answer ("Not set", "No. 4") sits on its heading's line; a longer one goes under it.
@@ -416,7 +483,7 @@ function Rows({ head, rows, tags, more, open, span, source }: { head: string[]; 
         const m = open ? more?.[i] ?? null : null;
         const r = rows[i], own = span ? rows.slice(i, i + Math.max(1, span.rows[i] ?? 1)) : [r];
         return (
-          <li key={i} className="rounded-xl px-3 py-2.5 text-[14px] leading-snug" style={{ background: gi % 2 ? C.band : C.bg, border: `1px solid ${C.line}`, cursor: m ? "pointer" : undefined }} onClick={m ? () => open!(m) : undefined} data-row-more={m ? "" : undefined} data-row-group={gi}>
+          <li key={i} className="rounded-xl px-3 py-2.5 text-[14px] leading-snug" style={{ background: gi % 2 ? C.band : C.bg, border: pickCtx.picked === i ? "3px solid #f5b301" : `1px solid ${C.line}`, cursor: m || pickCtx.pick ? "pointer" : undefined }} onClick={pickCtx.pick ? () => pickCtx.pick!(i) : m ? () => open!(m) : undefined} data-row-more={m ? "" : undefined} data-row-group={gi}>
             <div className="flex items-baseline gap-2 flex-wrap font-bold text-[15px]"><span className="min-w-0">{cell(r[0] ?? "", true)}</span>{tags?.[i] && <Tag tag={tags[i]!} size="11.5px" />}</div>
             {r.slice(1, shared).map((c, n) => field(c, n + 1, `s${n}`))}
             {own.map((row, k) => row.slice(shared).some(Boolean) && (

@@ -82,6 +82,22 @@ export function cleanSaved(v: unknown): ReviewSaved {
   if (r.targets && typeof r.targets === "object") {
     for (const [k, x] of Object.entries(r.targets as Record<string, unknown>)) { const t = str(x, 200)?.trim(); if (t) out.targets[k] = t; }
   }
+  // Pictures chosen per slide: stored files in the workspace only, two at most.
+  if (r.slides && typeof r.slides === "object") {
+    for (const [k, x] of Object.entries(r.slides as Record<string, unknown>)) {
+      const list = x && typeof x === "object" && Array.isArray((x as { pics?: unknown }).pics) ? (x as { pics: unknown[] }).pics : null;
+      if (!list || k.length > 80) continue;
+      const pics = list.map((p) => {
+        if (!p || typeof p !== "object") return null;
+        const o = p as Record<string, unknown>;
+        const path = str(o.path, 500);
+        if (!path || !/^orgs\/[0-9a-f-]{36}\//i.test(path) || path.includes("..")) return null;
+        const tag = str(o.tag, 40)?.trim();
+        return { path, caption: str(o.caption, 120)?.trim() ?? "", ...(tag ? { tag } : {}) };
+      }).filter((p): p is { path: string; caption: string; tag?: string } => !!p).slice(0, 2);
+      out.slides[k] = { pics };
+    }
+  }
   return out;
 }
 

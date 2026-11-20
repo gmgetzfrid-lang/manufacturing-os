@@ -7,8 +7,8 @@
 // template's slide size, so a wide 20 inch template reads the same as a
 // standard one.
 
-import { fitTablePt, TONE_HEX, type SlideItem, type SlidePane, type SlideSpan, type SlideSpec, type SlideTag } from "@/lib/reviewFiles";
-import { bodyBoxes, EMU, fitPt, layoutFor, lineCount, SlideDraft, titleBox, writeDeck, type Cell, type LayoutInfo, type LayoutRole, type Para, type Rect, type TemplateInfo } from "@/lib/slideTemplate";
+import { fitTablePt, PIC_SIDE, PIC_STRIP, picPlace, TONE_HEX, type SlidePicture, type SlideItem, type SlidePane, type SlideSpan, type SlideSpec, type SlideTag } from "@/lib/reviewFiles";
+import { bodyBoxes, EMU, fitPt, layoutFor, lineCount, pictureBox, SlideDraft, titleBox, writeDeck, type Cell, type LayoutInfo, type LayoutRole, type Para, type Rect, type TemplateInfo } from "@/lib/slideTemplate";
 import type { DeckLook } from "@/lib/deckLook";
 
 export interface TemplateDeckOpts {
@@ -104,6 +104,31 @@ export async function deckOnTemplate(specs: SlideSpec[], o: TemplateDeckOpts): P
     return used;
   };
 
+  /** Pictures down the right of the room, each with what it shows under it;
+   *  returns the room left for the table. */
+  const side = (d: SlideDraft, R: Rect, pics: SlidePicture[] | undefined, spec: SlideSpec, area: { w: number; h: number }): Rect => {
+    const where = pics?.length ? picPlace(spec, area) : null;
+    if (!pics?.length || !where) return R;
+    const n = Math.min(2, pics.length), cap = IN(0.3);
+    if (where === "below") {
+      const h = IN(PIC_STRIP), w = h * 4 / 3, y = R.y + R.h - h - cap;
+      pics.slice(0, n).forEach((pic, i) => {
+        const x = R.x + i * (w + IN(0.3));
+        d.picture({ x, y, w, h }, pic);
+        if (pic.caption) d.text({ x, y: y + h + IN(0.04), w, h: cap - IN(0.04) }, [{ runs: [run(pic.caption, PT(9), { color: look.soft })] }], { name: "Caption" });
+      });
+      return { ...R, h: y - R.y - IN(0.15) };
+    }
+    const gap = IN(0.25), tw = R.w * (1 - PIC_SIDE) - gap, x = R.x + tw + gap, w = R.w - tw - gap;
+    const h = Math.min(w * 0.75, (R.h - (n - 1) * IN(0.2)) / n - cap);
+    pics.slice(0, 2).forEach((pic, i) => {
+      const y = R.y + i * (h + cap + IN(0.2));
+      d.picture({ x, y, w, h }, pic);
+      if (pic.caption) d.text({ x, y: y + h + IN(0.04), w, h: cap - IN(0.04) }, [{ runs: [run(pic.caption, PT(9), { color: look.soft })] }], { name: "Caption" });
+    });
+    return { ...R, w: tw };
+  };
+
   const bullets = (items: SlideItem[], pt: number): Para[] => items.map((it) => {
     const x = typeof it === "string" ? { text: it } : it;
     return { runs: [run(x.text, pt, { b: !!x.bold })], bullet: !x.bold, level: x.sub ? 1 : 0, before: x.bold ? 6 * k : 0, after: 5 * k };
@@ -147,6 +172,9 @@ export async function deckOnTemplate(specs: SlideSpec[], o: TemplateDeckOpts): P
         d.text(r, lines.map((t, i) => ({ runs: [run(t, PT(i ? 13 : 16), { color: look.soft })], after: 4 * k })), { name: "Subtitle" });
       }
       if (!tb?.rect) head(d, spec.kicker, spec.title, PT(36));
+      // The cover's picture goes in the layout's own picture box.
+      const pb = pictureBox(cover), pic = spec.pics?.[0];
+      if (pb && pic) d.fillPicture(pb, pic);
       d.notes = spec.notes;
       slides.push(d); o.slideOf?.push(si);
       // What the review measures, on a slide of its own.
@@ -172,7 +200,9 @@ export async function deckOnTemplate(specs: SlideSpec[], o: TemplateDeckOpts): P
         d.text({ x: room.x + IN(0.65), y, w: room.w - IN(0.65), h: rowH - IN(0.05) }, [{ runs: [run(it.ask, PT(big ? 20 : 17), { b: true })] }, { runs: [run(it.because, PT(big ? 15 : 13), { color: look.soft })] }], { name: "Action" });
       });
     } else if (b.k === "table") {
+      const area = { w: room.w / EMU / k, h: room.h / EMU / k };
       room = foot(d, room, b.foot);
+      room = side(d, room, spec.pics, spec, area);
       let y = room.y;
       if (b.lead) { d.text({ x: room.x, y, w: room.w, h: IN(0.42) }, [{ runs: [run(b.lead, PT(16), { b: true, color: look.kicker })] }], { anchor: "ctr", name: "Lead" }); y += IN(0.48); }
       if (b.tally?.length) {
@@ -190,6 +220,20 @@ export async function deckOnTemplate(specs: SlideSpec[], o: TemplateDeckOpts): P
   }
   return writeDeck(o.data, info, slides, o.title, { forScreen: o.forScreen });
 }
+
+/** The room under a content slide's title on this template, in inches at
+ *  the standard slide size (what picPlace measures against). */
+export function templateArea(info: TemplateInfo, pick?: Partial<Record<LayoutRole, string>>): { w: number; h: number } {
+  const l = layoutFor(info, "content", pick) ?? layoutFor(info, "cover", pick) ?? info.layouts[0];
+  const k = info.slide.w / (13.333 * EMU);
+  const r = l?.room ?? { x: 0, y: 0, w: info.slide.w * 0.88, h: info.slide.h * 0.72 };
+  // The label above the title takes room from the body when it can't sit above it.
+  const tb = l ? titleBox(l) : null;
+  const label = tb?.rect && tb.rect.y >= 0.42 * EMU * k ? 0 : 0.38;
+  return { w: r.w / EMU / k, h: r.h / EMU / k - label };
+}
+/** Whether the template's cover has a spot for a picture. */
+export const coverHasPicture = (info: TemplateInfo, pick?: Partial<Record<LayoutRole, string>>) => { const c = layoutFor(info, "cover", pick); return !!(c && pictureBox(c)); };
 
 /** A short deck that shows each kind of slide on the layout picked for it,
  *  for checking a template before a real review goes on it. */

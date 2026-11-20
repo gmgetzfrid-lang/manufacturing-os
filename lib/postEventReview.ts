@@ -146,8 +146,11 @@ export interface ReviewSaved {
   readyAfter: Record<string, string>;
   /** What a person entered on the score (by line key). */
   score: Record<string, ScoreEntry>;
+  /** The pictures a person chose for a slide (by slide key), in place of
+   *  the app's picks. An empty list: no pictures on that slide. */
+  slides: Record<string, { pics: Array<{ path: string; caption: string; tag?: string }> }>;
 }
-export const emptySaved = (): ReviewSaved => ({ items: {}, added: [], answers: {}, targets: {}, readyAfter: {}, score: {} });
+export const emptySaved = (): ReviewSaved => ({ items: {}, added: [], answers: {}, targets: {}, readyAfter: {}, score: {}, slides: {} });
 
 // ─── What comes out ────────────────────────────────────────────────
 

@@ -53,6 +53,12 @@ import { lookFromPalette, lookFromTemplate } from "@/lib/deckLook";
 import { loadSlideTemplate } from "@/lib/slideTemplateStore";
 import { saveSlidesChoice, useSlidesChoice } from "@/lib/slidesChoice";
 import type { ScreenDeck } from "@/lib/slidePreview";
+import { PLAIN_AREA } from "@/lib/reviewFiles";
+import { coverHasPicture, templateArea } from "@/lib/reviewTemplateDeck";
+import { autoPictures, captionOf, equipmentFor, loadEquipmentPhotos, picRoom, readyPic, slideTags, type PhotoOption, type SlidePicChoice } from "@/lib/slidePictures";
+import { resolveFileUrl, uploadToPath } from "@/lib/storage";
+import { createPhotoRecord, invalidateAssetCache, parseCapturedAtFromFilename } from "@/lib/assets";
+import type { SlideEdit } from "@/components/projects/SlideEditPanel";
 import type { SlideSpec } from "@/lib/reviewFiles";
 import { useProjectFindings, useProjectUnit } from "@/components/projects/Findings";
 import { categoriesOf, guessCategories, isLive, leadTag, type Category } from "@/lib/findings";
@@ -319,21 +325,94 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
       const o = fileOpts();
       const made = kind === "word"
         ? { data: await reviewDocx(review, o, wordLook), name: `${fileStem(o)}.docx`, mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }
-        : { data: await reviewPptx(review, o, { look: slideLook, template: useTpl && tpl ? { ...(await loadSlideTemplate(tpl)), pick: tpl.pick } : null }), name: `${fileStem(o)} slides.pptx`, mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation" };
+        : { data: await reviewPptx(review, o, { specs: (await picturesOn(deckSlides(review, o))).specs, look: slideLook, template: useTpl && tpl ? { ...(await loadSlideTemplate(tpl)), pick: tpl.pick } : null }), name: `${fileStem(o)} slides.pptx`, mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation" };
       if (!(await saveFile(made.data, made.name, made.mime))) setHeld(made);
     } catch (e) { setErr(`The file couldn't be made: ${(e as Error).message}`); }
     finally { setBusy(null); }
   };
   const saveHeld = async () => { if (held && (await saveFile(held.data, held.name, held.mime))) setHeld(null); };
   // The slides on show, made once when the viewer opens (and again when the review changes).
-  const viewSpecs = useMemo<SlideSpec[] | null>(() => (viewing && review ? deckSlides(review, fileOpts()) : null),
+  const baseSpecs = useMemo<SlideSpec[] | null>(() => (viewing && review ? deckSlides(review, fileOpts()) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [viewing, review]);
+
+  // ── Pictures ──
+  // Each slide that names equipment shows its photo, when it has one; a
+  // person's own choice for a slide (saved with the review) wins. The room
+  // a slide has depends on the look: the plain slides, or the template's.
+  const [photoTick, setPhotoTick] = useState(0);
+  const [pics, setPics] = useState<{ specs: SlideSpec[]; photos: Map<string, PhotoOption[]>; auto: Record<string, SlidePicChoice[]>; area: { w: number; h: number }; coverSpot: boolean; base: SlideSpec[] } | null>(null);
+  const picturesOn = async (base: SlideSpec[]) => {
+    const info = useTpl && tpl ? (await loadSlideTemplate(tpl)).info : null;
+    const area = info ? templateArea(info, tpl?.pick) : PLAIN_AREA;
+    const coverSpot = info ? coverHasPicture(info, tpl?.pick) : true;
+    const tags = [...new Set(base.flatMap(slideTags))];
+    const photos = orgId ? await loadEquipmentPhotos(orgId, tags, unit?.code ?? null, { from: review?.metrics.start ?? null, to: review?.metrics.actualFinish ?? null }).catch(() => new Map<string, PhotoOption[]>()) : new Map<string, PhotoOption[]>();
+    const auto = autoPictures(base, photos, coverSpot, area);
+    const specs = await Promise.all(base.map(async (sp) => {
+      if (!sp.key) return sp;
+      const list = (saved?.slides[sp.key]?.pics ?? auto[sp.key] ?? []).slice(0, picRoom(sp, coverSpot, area));
+      const ready = (await Promise.allSettled(list.map((p) => readyPic(p.path, p.caption, () => resolveFileUrl(p.path))))).flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+      return ready.length ? { ...sp, pics: ready } : sp;
+    }));
+    return { specs, photos, auto, area, coverSpot, base };
+  };
+  useEffect(() => {
+    if (!viewing || !baseSpecs) return;
+    let live = true;
+    void picturesOn(baseSpecs).then((r) => { if (live) setPics(r); }).catch(() => { /* the slides show without pictures */ });
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewing, baseSpecs, useTpl, tpl, photoTick]);
+  const viewSpecs = pics && pics.base === baseSpecs ? pics.specs : baseSpecs;
+  const scoreSpec = baseSpecs?.find((x) => x.key === "score");
+  const slideEdit: SlideEdit | null = canManage && baseSpecs && review ? {
+    picsOf: (key) => {
+      const sp = baseSpecs.find((x) => x.key === key);
+      if (!sp || !pics) return { pics: [], chosen: false, room: 0, why: sp ? "Reading the equipment photos…" : "This slide has no room for pictures." };
+      const room = picRoom(sp, pics.coverSpot, pics.area);
+      const own = saved?.slides[key];
+      const shownPics = viewSpecs?.find((x) => x.key === key)?.pics ?? [];
+      const list = (own?.pics ?? pics.auto[key] ?? []).slice(0, room).map((p) => ({ ...p, url: shownPics.find((q) => (q as { path?: string }).path === p.path)?.url }));
+      const why = room ? null : sp.body.k === "cover" ? "Your template's cover has no spot for a picture." : sp.body.k === "table" ? "This slide's table needs the whole slide, so it has no room for a picture." : "This slide has no room for pictures.";
+      return { pics: list, chosen: !!own, room, why };
+    },
+    options: pics ? [...pics.photos.values()].flat() : [],
+    tagsOf: (key) => { const sp = baseSpecs.find((x) => x.key === key); return sp ? slideTags(sp.body.k === "cover" && scoreSpec ? scoreSpec : sp) : []; },
+    setPics: async (key, list) => {
+      const next = await changeReview(projectId, scope, (st) => { if (list) st.slides[key] = { pics: list }; else delete st.slides[key]; });
+      setSaved(next);
+    },
+    upload: async (file, tag) => {
+      const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+      const type = file.type || "image/jpeg";
+      const taken = parseCapturedAtFromFilename(file.name) ?? (file.lastModified ? new Date(file.lastModified).toISOString() : null);
+      // A photo of a piece of equipment is kept with it, for every slide and screen that shows it.
+      const eq = tag && orgId ? await equipmentFor(orgId, tag, unit?.code ?? null) : null;
+      if (eq && orgId) {
+        const path = `orgs/${orgId}/assets/${eq.id}/photos/${Date.now()}-${file.name.replace(/[^\w.-]+/g, "_")}`;
+        await uploadToPath(file, path, { contentType: type });
+        await createPhotoRecord({ orgId, assetId: eq.id, fileUrl: path, fileSize: file.size, contentType: type, capturedAt: taken ?? undefined, uploadedBy: actor.uid });
+        invalidateAssetCache();
+        setPhotoTick((t) => t + 1);
+        return { path, caption: captionOf(eq.tag, taken), tag: eq.tag };
+      }
+      const id = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : String(Date.now());
+      const path = `orgs/${orgId}/projects/${projectId}/review-pictures/${id}.${ext}`;
+      await uploadToPath(file, path, { contentType: type });
+      return { path, caption: captionOf("Photo", taken) };
+    },
+    words: (rowKey, close) => {
+      const f = review.findings.find((x) => x.key === rowKey);
+      if (!f) return <p className="text-[14px] text-[var(--color-text-muted)]">That line&apos;s finding isn&apos;t in this review any more.</p>;
+      return <FindingForm key={f.key} title={`Change: ${f.title}`} init={f} pickCategory={f.source === "person"} busy={busy === `edit:${f.key}`} onCancel={close} onSave={(e, cat) => { saveEdit(f, e, cat); close(); }} />;
+    },
+  } : null;
   // On the template: the same file the download writes, drawn for the screen.
   useEffect(() => {
     let live = true;
     const want = viewing && useTpl && tpl && viewSpecs;
-    queueMicrotask(() => { if (live) setScreen({ deck: null, state: want ? "loading" : null }); });
+    queueMicrotask(() => { if (live) setScreen((x) => ({ deck: want ? x.deck : null, state: want ? "loading" : null })); });
     if (!want) return () => { live = false; };
     void (async () => {
       try {
@@ -422,7 +501,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
       {held && !viewing && <div role="status" className="mt-2 flex items-center gap-2 flex-wrap text-[13px] font-semibold text-[var(--color-text)]" data-file-ready><span className="min-w-0 flex-1 basis-40">The file is ready.</span><button type="button" onClick={() => void saveHeld()} className={pri}><Download className="w-4 h-4" /> Save file</button></div>}
       </Card>
       {viewing && viewSpecs && <ReviewSlides slides={viewSpecs} name={`${phase?.name ?? projectName} post-event review`} onClose={() => setViewing(false)} onDownload={() => void download("slides")} downloading={busy === "slides"} ready={held ? { name: held.name, onSave: () => void saveHeld() } : null} look={slideLook} template={tpl?.name ?? null}
-        deck={useTpl ? screen.deck : null} deckState={useTpl ? screen.state : null} choice={tpl ? { on: useTpl, set: (on) => void chooseSlides(on) } : null} />}
+        deck={useTpl ? screen.deck : null} deckState={useTpl ? screen.state : null} choice={tpl ? { on: useTpl, set: (on) => void chooseSlides(on) } : null} edit={slideEdit} />}
 
       {carried.map(({ phase: p, actions }) => (
         <section key={p.id} className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] p-4 sm:p-5" data-review-carried={p.id}>

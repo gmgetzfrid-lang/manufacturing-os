@@ -414,11 +414,35 @@ const xfrm = (r: Rect) => `<a:xfrm><a:off x="${Math.round(r.x)}" y="${Math.round
 
 export interface Cell { paras: Para[]; fill?: string; rowSpan?: number; merged?: boolean; ruleTop?: { color: string; pt: number } }
 
+/** How much to cut from each edge (0 to 1) so a picture fills a box. */
+export function fillCrop(w: number, h: number, boxW: number, boxH: number): { l: number; t: number; r: number; b: number } {
+  const img = w / h, box = boxW / boxH;
+  if (img > box) { const cut = (1 - box / img) / 2; return { l: cut, r: cut, t: 0, b: 0 }; }
+  const cut = (1 - img / box) / 2;
+  return { l: 0, r: 0, t: cut, b: cut };
+}
+const srcRect = (c: { l: number; t: number; r: number; b: number }) => `<a:srcRect l="${Math.round(c.l * 100000)}" t="${Math.round(c.t * 100000)}" r="${Math.round(c.r * 100000)}" b="${Math.round(c.b * 100000)}"/>`;
+
 /** One slide on one layout: placeholders filled, shapes drawn. */
 export class SlideDraft {
   private n = 1;
   readonly parts: string[] = [];
+  /** Pictures the slide carries (JPEG), by relationship id. */
+  readonly media: Array<{ rid: string; bytes: Uint8Array }> = [];
   notes = "";
+  private addMedia(bytes: Uint8Array) { const rid = `rIdPic${this.media.length + 1}`; this.media.push({ rid, bytes }); return rid; }
+  /** A picture filling a box, cut evenly from its long sides. */
+  picture(r: Rect, pic: { bytes: Uint8Array; w: number; h: number }, name = "Picture") {
+    const id = this.id(), rid = this.addMedia(pic.bytes);
+    this.parts.push(`<p:pic><p:nvPicPr><p:cNvPr id="${id}" name="${xa(name)} ${id}"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="${rid}"/>${srcRect(fillCrop(pic.w, pic.h, r.w, r.h))}<a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr>${xfrm(r)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`);
+  }
+  /** A picture in the layout's own picture box (it keeps the layout's frame). */
+  fillPicture(ph: PhInfo, pic: { bytes: Uint8Array; w: number; h: number }) {
+    if (!ph.rect) return;
+    const id = this.id(), rid = this.addMedia(pic.bytes);
+    const at = `${ph.type ? ` type="${ph.type}"` : ""}${ph.idx != null ? ` idx="${ph.idx}"` : ""}`;
+    this.parts.push(`<p:pic><p:nvPicPr><p:cNvPr id="${id}" name="Picture ${id}"/><p:cNvPicPr><a:picLocks noGrp="1" noChangeAspect="1"/></p:cNvPicPr><p:nvPr><p:ph${at}/></p:nvPr></p:nvPicPr><p:blipFill><a:blip r:embed="${rid}"/>${srcRect(fillCrop(pic.w, pic.h, ph.rect.w, ph.rect.h))}<a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr/></p:pic>`);
+  }
   constructor(readonly layout: LayoutInfo) {}
   private id() { return ++this.n; }
   /** Fill one of the layout's own boxes (title, subtitle, body). */
@@ -500,6 +524,11 @@ export async function writeDeck(template: ArrayBuffer | Uint8Array, info: Templa
     if (numPh) tree += `<p:sp><p:nvSpPr><p:cNvPr id="999" name="Slide Number"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="sldNum"${numPh.idx != null ? ` idx="${numPh.idx}"` : ""}/></p:nvPr></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:fld id="{B6F15528-21DE-4FAA-801E-634DDDAF4B2B}" type="slidenum"><a:rPr lang="en-US"/><a:t>${n}</a:t></a:fld><a:endParaRPr lang="en-US"/></a:p></p:txBody></p:sp>`;
     zip.file(part, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<p:sld ${NS}><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>${tree}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>`);
     const rels = [`<Relationship Id="rId1" Type="${REL}/slideLayout" Target="../slideLayouts/${d.layout.file.replace(/^.*\//, "")}"/>`];
+    d.media.forEach((m, i) => {
+      const name = `review-s${n}-${i + 1}.jpg`;
+      zip.file(`ppt/media/${name}`, m.bytes);
+      rels.push(`<Relationship Id="${m.rid}" Type="${REL}/image" Target="../media/${name}"/>`);
+    });
     if (d.notes && info.notesMaster) {
       const np = `ppt/notesSlides/notesSlide${n}.xml`;
       zip.file(np, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<p:notes ${NS}><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/><p:sp><p:nvSpPr><p:cNvPr id="2" name="Slide Image"/><p:cNvSpPr><a:spLocks noGrp="1" noRot="1" noChangeAspect="1"/></p:cNvSpPr><p:nvPr><p:ph type="sldImg"/></p:nvPr></p:nvSpPr><p:spPr/></p:sp><p:sp><p:nvSpPr><p:cNvPr id="3" name="Notes"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/>${d.notes.split("\n").map((l) => `<a:p><a:r><a:rPr lang="en-US" dirty="0"/><a:t>${xt(l)}</a:t></a:r></a:p>`).join("")}</p:txBody></p:sp></p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:notes>`);
@@ -519,6 +548,7 @@ export async function writeDeck(template: ArrayBuffer | Uint8Array, info: Templa
   pres = /<p:sldSz\b/.test(pres) ? pres.replace(/<p:sldSz\b/, `${list}<p:sldSz`) : pres.replace(/(<\/p:sldMasterIdLst>)/, `$1${list}`);
   types = types.replace("</Types>", `${addTypes.join("")}</Types>`);
   if (!/Extension="xml"/i.test(types)) types = types.replace("</Types>", '<Default Extension="xml" ContentType="application/xml"/></Types>');
+  if (slides.some((d) => d.media.length) && !/Extension="jpg"/i.test(types)) types = types.replace("</Types>", '<Default Extension="jpg" ContentType="image/jpeg"/></Types>');
   zip.file("ppt/presentation.xml", pres);
   zip.file(presRelsPath, presRels);
   zip.file("[Content_Types].xml", types);
@@ -538,5 +568,7 @@ export function layoutFor(info: TemplateInfo, role: LayoutRole, pick?: Partial<R
 }
 
 export const titleBox = (l: LayoutInfo) => l.phs.find((p) => isTitle(p) && p.rect) ?? null;
+/** The layout's own picture box, when it has one. */
+export const pictureBox = (l: LayoutInfo) => l.phs.find((p) => p.type === "pic" && p.rect) ?? null;
 /** The layout's body boxes, largest first. */
 export const bodyBoxes = (l: LayoutInfo) => l.phs.filter((p) => isBody(p) && !isTitle(p) && p.rect).sort((a, b) => area(b.rect!) - area(a.rect!));
