@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Field";
 import { EmptyState } from "@/components/ui/EmptyState";
 import AiSettingsModal from "@/components/knowledge/AiSettingsModal";
+import { StatusTag } from "@/components/documents/StatusTag";
 import {
   listKnowledgeLibraries, createKnowledgeLibrary, getAiConnections,
   type KnowledgeLibrary,
@@ -178,10 +179,7 @@ export default function KnowledgePage() {
                     </td>
                     <td className="px-4 py-3 text-right font-display text-[17px] font-semibold tabular-nums text-[var(--color-text)]">{n.toLocaleString()}</td>
                     <td className="px-4 py-3 hidden sm:table-cell whitespace-nowrap">
-                      <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]">
-                        <span aria-hidden className={`w-2 h-2 rounded-full ${n === 0 ? "bg-[var(--state-held)]" : "bg-[var(--state-released)]"}`} />
-                        {n === 0 ? "Empty" : "Has documents"}
-                      </span>
+                      <StatusTag tone={n === 0 ? "warn" : "good"}>{n === 0 ? "Empty" : "Has documents"}</StatusTag>
                     </td>
                     <td className="px-4 py-3 hidden md:table-cell whitespace-nowrap text-[var(--color-text-muted)]">{when(lib.createdAt)}</td>
                     <td className="px-4 py-3 hidden lg:table-cell whitespace-nowrap text-[var(--color-text-muted)]">{lib.createdByName ? lib.createdByName.split("@")[0] : ""}</td>

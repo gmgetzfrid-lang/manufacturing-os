@@ -88,7 +88,7 @@ export default function EstateReadiness({ orgId, onConnect, connecting }: { orgI
       .catch((e) => { if (alive) setErr((e as Error).message); });
     return () => { alive = false; };
   }, [orgId, tick]);
-  if (err) return <div className="text-[13px] text-red-700">{err}</div>;
+  if (err) return <div className="text-[13px] text-[var(--state-overdue)]">{err}</div>;
   if (!r) return <div className="text-xs text-[var(--color-text-muted)] inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Checking what the estate has to work with…</div>;
   const list = steps(r);
   const next = list.find((s) => s.state !== "done");
@@ -96,7 +96,7 @@ export default function EstateReadiness({ orgId, onConnect, connecting }: { orgI
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-2.5 space-y-2">
       <div className="flex items-center justify-between">
         <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Is the estate ready to connect?</div>
-        <button onClick={() => setTick((t) => t + 1)} className="text-[11px] inline-flex items-center gap-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><RefreshCw className="w-3 h-3" /> recheck</button>
+        <button onClick={() => setTick((t) => t + 1)} className="text-[13px] inline-flex items-center gap-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><RefreshCw className="w-3 h-3" /> recheck</button>
       </div>
       {next
         ? (
@@ -110,11 +110,11 @@ export default function EstateReadiness({ orgId, onConnect, connecting }: { orgI
             <button onClick={() => setByHand((v) => !v)} className="text-[13px] text-[var(--color-text-muted)] hover:underline">{byHand ? "Hide the by-hand steps" : "Or see the by-hand steps"}</button>
           </div>
         )
-        : <div className="text-[13px] text-emerald-700 font-semibold">Every step is in place. Search a tag and the unit, equipment, sheets and photos come together.</div>}
+        : <div className="text-[13px] text-[var(--state-released)] font-semibold">Every step is in place. Search a tag and the unit, equipment, sheets and photos come together.</div>}
       <ol className="space-y-1.5">
         {list.map((s, i) => {
           const I = s.state === "done" ? CheckCircle2 : s.state === "partial" ? AlertCircle : Circle;
-          const tone = s.state === "done" ? "text-emerald-600" : s.state === "partial" ? "text-amber-600" : "text-rose-600";
+          const tone = s.state === "done" ? "text-[var(--state-released)]" : s.state === "partial" ? "text-[var(--state-held)]" : "text-[var(--state-overdue)]";
           return (
             <li key={s.title} className="text-[13px]">
               <div className="flex items-start gap-1.5">

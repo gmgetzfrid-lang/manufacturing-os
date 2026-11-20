@@ -235,7 +235,7 @@ export default function AssetPhotoUploader({
         </div>
 
         {error && (
-          <p role="alert" className="mx-5 mt-3 border-l-2 border-red-500 pl-3 text-[13px] text-red-700 dark:text-red-400 flex items-start gap-2">
+          <p role="alert" className="mx-5 mt-3 border-l-2 border-[var(--state-overdue)] pl-3 text-[13px] text-[var(--state-overdue)] flex items-start gap-2">
             <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
           </p>
         )}
@@ -277,7 +277,7 @@ export default function AssetPhotoUploader({
                       </div>
                     </div>
                     {p.status === "error" && (
-                      <div className="flex items-center gap-2 text-[13px] text-red-700 dark:text-red-400">
+                      <div className="flex items-center gap-2 text-[13px] text-[var(--state-overdue)]">
                         <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
                         <span className="truncate flex-1" title={p.error}>Didn&apos;t upload: {p.error}</span>
                         <button type="button" onClick={() => void retryOne(p.id)} disabled={submitting}
@@ -289,12 +289,12 @@ export default function AssetPhotoUploader({
                   </div>
                   <div className="shrink-0">
                     {(p.status === "pending" || p.status === "error") && (
-                      <button onClick={() => removePending(p.id)} aria-label={`Remove ${p.file.name}`} className="p-1.5 text-[var(--color-text-faint)] hover:text-red-600 hover:bg-[var(--color-surface)] rounded">
+                      <button onClick={() => removePending(p.id)} aria-label={`Remove ${p.file.name}`} className="p-1.5 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] hover:bg-[var(--color-surface)] rounded">
                         <X className="w-3.5 h-3.5" />
                       </button>
                     )}
-                    {p.status === "uploading" && <span className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Sending</span>}
-                    {p.status === "done" && <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-400"><CheckCircle2 className="w-4 h-4" /> Added</span>}
+                    {p.status === "uploading" && <span className="inline-flex items-center gap-1 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Sending</span>}
+                    {p.status === "done" && <span className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--state-released)]"><CheckCircle2 className="w-4 h-4" /> Added</span>}
                   </div>
                 </div>
               ))}
@@ -310,8 +310,8 @@ export default function AssetPhotoUploader({
             ) : (
               <>
                 {pending.length} photo{pending.length === 1 ? "" : "s"} staged
-                {doneCount > 0 && <span className="text-emerald-700 dark:text-emerald-400 font-bold"> · {doneCount} uploaded</span>}
-                {errorCount > 0 && <span className="text-red-700 dark:text-red-400 font-bold"> · {errorCount} didn&apos;t upload</span>}
+                {doneCount > 0 && <span className="text-[var(--state-released)] font-bold"> · {doneCount} uploaded</span>}
+                {errorCount > 0 && <span className="text-[var(--state-overdue)] font-bold"> · {errorCount} didn&apos;t upload</span>}
               </>
             )}
           </div>

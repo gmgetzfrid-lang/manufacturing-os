@@ -180,12 +180,12 @@ export default function AssetCsvImportModal({
         <div className="px-5 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
           <StepPath steps={STEPS} current={STEP_INDEX[step]} onPick={busy || step === "done" ? undefined : (i) => setStep(i === 0 ? "paste" : i === 1 ? "map" : "preview")} />
           {error && (
-            <p role="alert" className="border-l-2 border-red-500 pl-3 text-[13px] text-red-700 dark:text-red-400 flex items-start gap-2">
+            <p role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 text-[13px] text-[var(--state-overdue)] flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
             </p>
           )}
           {typesFailed && step !== "done" && (
-            <p className="border-l-2 border-amber-500 pl-3 text-[13px] text-amber-800 dark:text-amber-300">
+            <p className="border-l-2 border-[var(--state-held)] pl-3 text-[13px] text-[var(--state-held)]">
               Couldn&apos;t load the equipment types, so the type column will be left blank.
             </p>
           )}
@@ -201,7 +201,7 @@ export default function AssetCsvImportModal({
                 rows={10}
                 className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-xs font-mono"
               />
-              <div className="text-[11px] text-[var(--color-text-muted)]">First row = headers. The <code>type</code> column matches an existing asset-type by name (case-insensitive); unmatched types are left blank.</div>
+              <div className="text-[13px] text-[var(--color-text-muted)]">First row = headers. The <code>type</code> column matches an existing asset-type by name (case-insensitive); unmatched types are left blank.</div>
             </div>
           )}
 
@@ -259,12 +259,12 @@ export default function AssetCsvImportModal({
 
           {step === "done" && result && (
             <div className="space-y-2">
-              <p className="text-sm text-emerald-700 dark:text-emerald-400 flex items-start gap-2">
+              <p className="text-sm text-[var(--state-released)] flex items-start gap-2">
                 <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />
                 <span>Added <b>{result.ok}</b> piece{result.ok === 1 ? "" : "s"} of equipment.</span>
               </p>
               {result.failed.length > 0 && (
-                <div className="border-l-2 border-red-500 pl-3 text-[13px] text-red-700 dark:text-red-400">
+                <div className="border-l-2 border-[var(--state-overdue)] pl-3 text-[13px] text-[var(--state-overdue)]">
                   <div className="font-bold flex items-center gap-1.5 mb-1"><AlertTriangle className="w-4 h-4" /> {result.failed.length} not added. Fix these rows and paste them again.</div>
                   <ul className="ml-5 list-disc space-y-0.5">
                     {result.failed.slice(0, 8).map((f, i) => (

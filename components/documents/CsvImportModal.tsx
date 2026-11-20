@@ -219,7 +219,7 @@ export default function CsvImportModal({
 
         <div className="px-5 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
           {error && (
-            <div className="text-[13px] flex items-start gap-2 border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
+            <div className="text-[13px] flex items-start gap-2 border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
             </div>
           )}
@@ -292,12 +292,12 @@ export default function CsvImportModal({
 
           {step === "done" && result && (
             <div className="space-y-2">
-              <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3 text-[13px] text-emerald-800 flex items-start gap-2">
+              <div className="rounded-lg bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] p-3 text-[13px] text-[var(--state-released)] flex items-start gap-2">
                 <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />
                 Imported <b>{result.ok}</b> document record{result.ok === 1 ? "" : "s"}.
               </div>
               {result.failed.length > 0 && (
-                <div className="text-[13px] border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
+                <div className="text-[13px] border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
                   <div className="font-bold flex items-center gap-1.5 mb-1"><AlertTriangle className="w-4 h-4" /> {result.failed.length} failed</div>
                   <ul className="ml-5 list-disc space-y-0.5">
                     {result.failed.slice(0, 8).map((f, i) => (

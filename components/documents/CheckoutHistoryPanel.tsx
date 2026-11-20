@@ -49,15 +49,15 @@ interface EpisodeSessionRow {
  *  positive PSI-accuracy record; discrepancy is its counterpart. */
 const OUTCOME_LABEL: Record<string, { label: string; cls: string }> = {
   all_clear: { label: "No change needed", cls: "text-[var(--color-text-muted)]" },
-  field_verified: { label: "Field verified ✓", cls: "text-emerald-700" },
-  discrepancy: { label: "Field discrepancy reported", cls: "text-amber-700" },
+  field_verified: { label: "Field verified ✓", cls: "text-[var(--state-released)]" },
+  discrepancy: { label: "Field discrepancy reported", cls: "text-[var(--state-held)]" },
   correction_requested: { label: "Minor correction requested", cls: "text-[var(--color-text)]" },
   revision_requested: { label: "Revision requested", cls: "text-[var(--color-text)]" },
   published: { label: "Published a revision", cls: "text-[var(--color-text)]" },
   submitted_for_review: { label: "Submitted for review", cls: "text-[var(--color-text)]" },
   sent_to_owner: { label: "Sent to owner", cls: "text-[var(--color-text)]" },
   handoff: { label: "Handed off", cls: "text-[var(--color-text-muted)]" },
-  auto_released: { label: "Auto-released", cls: "text-amber-600" },
+  auto_released: { label: "Auto-released", cls: "text-[var(--state-held)]" },
 };
 
 interface EpisodeVersionRow {
@@ -74,9 +74,9 @@ interface EpisodeDetail {
 }
 
 const CLOSE_REASON_LABEL: Record<string, { label: string; cls: string }> = {
-  checked_in: { label: "Checked in", cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
-  force_released: { label: "Force released", cls: "bg-rose-50 text-rose-700 border-rose-200" },
-  expired: { label: "Auto-expired", cls: "bg-amber-50 text-amber-700 border-amber-200" },
+  checked_in: { label: "Checked in", cls: "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)] border-[color-mix(in_srgb,var(--state-released)_35%,transparent)]" },
+  force_released: { label: "Force released", cls: "bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)] border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)]" },
+  expired: { label: "Auto-expired", cls: "bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] text-[var(--state-held)] border-[color-mix(in_srgb,var(--state-held)_40%,transparent)]" },
   reconciled: { label: "Closed by cleanup", cls: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" },
 };
 
@@ -222,7 +222,7 @@ export default function CheckoutHistoryPanel({ orgId, documentId, activeEpisodeI
                           {ep.openedByName || "Unknown"} · {fmtRange(ep.openedAt, ep.closedAt)}
                         </span>
                       </span>
-                      <span className={`shrink-0 text-[11px] font-bold px-1.5 py-0.5 rounded-full border ${reason.cls}`}>
+                      <span className={`shrink-0 text-[13px] font-bold px-1.5 py-0.5 rounded-full border ${reason.cls}`}>
                         {reason.label}
                       </span>
                       {expandedId === ep.id
@@ -272,7 +272,7 @@ function EpisodeDetailView({ detail, loading }: { detail: EpisodeDetail | null; 
     );
   }
   return (
-    <div className="px-5 py-3 bg-slate-50/70 border-t border-[var(--color-border)] space-y-3">
+    <div className="px-5 py-3 bg-[var(--color-surface-2)]/70 border-t border-[var(--color-border)] space-y-3">
       {/* Participants */}
       {detail.sessions.length > 0 && (
         <div>
@@ -299,7 +299,7 @@ function EpisodeDetailView({ detail, loading }: { detail: EpisodeDetail | null; 
                       );
                     }
                     return s.status === "abandoned"
-                      ? <span className="text-amber-600 font-bold"> · abandoned</span>
+                      ? <span className="text-[var(--state-held)] font-bold"> · abandoned</span>
                       : null;
                   })()}
                 </div>
@@ -316,7 +316,7 @@ function EpisodeDetailView({ detail, loading }: { detail: EpisodeDetail | null; 
           <div className="space-y-1">
             {detail.versions.map((v) => (
               <div key={v.id} className="flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]">
-                <FileText className="w-3 h-3 text-emerald-500 shrink-0" />
+                <FileText className="w-3 h-3 text-[var(--state-released)] shrink-0" />
                 <span className="font-bold text-[var(--color-text)]">Rev {v.revisionLabel || "?"}</span>
                 <span>by {v.createdByName || "unknown"}</span>
                 <span className="text-[var(--color-text-faint)]">{fmtShort(v.createdAt)}</span>
@@ -340,7 +340,7 @@ function EpisodeDetailView({ detail, loading }: { detail: EpisodeDetail | null; 
                 {m.kind === "system" ? (
                   <div className="text-[var(--color-text-faint)] italic flex items-start gap-1.5">
                     <Shield className="w-3 h-3 mt-0.5 shrink-0" />
-                    <span>{m.text} <span className="not-italic text-slate-300">· {fmtShort(m.createdAt)}</span></span>
+                    <span>{m.text} <span className="not-italic text-[var(--color-text-faint)]">· {fmtShort(m.createdAt)}</span></span>
                   </div>
                 ) : (
                   <div className="text-[var(--color-text)]">
@@ -349,8 +349,8 @@ function EpisodeDetailView({ detail, loading }: { detail: EpisodeDetail | null; 
                       <span className="ml-1 text-[13px] font-semibold text-[var(--color-text-faint)]">[{m.kind}]</span>
                     )}
                     <span>: {m.text}</span>
-                    <span className="text-slate-300"> · {fmtShort(m.createdAt)}</span>
-                    {m.resolvedAt && <CheckCircle2 className="w-3 h-3 text-emerald-500 inline ml-1" />}
+                    <span className="text-[var(--color-text-faint)]"> · {fmtShort(m.createdAt)}</span>
+                    {m.resolvedAt && <CheckCircle2 className="w-3 h-3 text-[var(--state-released)] inline ml-1" />}
                   </div>
                 )}
               </div>

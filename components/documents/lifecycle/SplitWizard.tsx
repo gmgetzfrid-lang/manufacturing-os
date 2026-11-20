@@ -200,7 +200,7 @@ export default function SplitWizard(props: SplitWizardProps) {
           )}
 
           {error && (
-            <div className="flex items-start gap-2 text-[13px] border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
+            <div className="flex items-start gap-2 text-[13px] border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
             </div>
           )}
@@ -263,11 +263,11 @@ function Step1Targets({
 
       <div className="space-y-2">
         {targets.map((t, i) => (
-          <div key={i} className="border border-[var(--color-border)] rounded-lg p-3 bg-slate-50/40">
+          <div key={i} className="border border-[var(--color-border)] rounded-lg p-3 bg-[var(--color-surface-2)]/40">
             <div className="flex items-center justify-between mb-2">
               <div className="text-[13px] font-semibold text-[var(--color-text)] ">Target {i + 1}</div>
               {targets.length > 2 && (
-                <button onClick={() => onRemove(i)} className="text-[13px] text-red-600 hover:text-red-800 inline-flex items-center gap-1">
+                <button onClick={() => onRemove(i)} className="text-[13px] text-[var(--state-overdue)] hover:text-[var(--state-overdue)] inline-flex items-center gap-1">
                   <Trash2 className="w-3 h-3" /> Remove
                 </button>
               )}
@@ -311,7 +311,7 @@ function Step1Targets({
                   <span className="inline-flex items-center gap-2 text-[13px] text-[var(--color-text)] text-left min-w-0">
                     <FileThumb file={t.file} size={28} />
                     <span className="min-w-0">
-                      <span className="block font-mono truncate">{t.file.name}</span>
+                      <span className="block truncate">{t.file.name}</span>
                       <span className="block text-[var(--color-text-muted)]">{formatSize(t.file.size)}</span>
                     </span>
                   </span>
@@ -425,7 +425,7 @@ function Step3Confirm({
         <ul className="list-disc ml-5 space-y-1 text-[var(--color-text)]">
           <li>
             <span className="font-display tabular-nums">{doc.documentNumber || doc.title}</span> Rev {doc.rev || "-"} →{" "}
-            <span className="text-amber-700 font-bold">Superseded</span>
+            <span className="text-[var(--state-held)] font-bold">Superseded</span>
           </li>
           {targets.map((t, i) => (
             <li key={i}>

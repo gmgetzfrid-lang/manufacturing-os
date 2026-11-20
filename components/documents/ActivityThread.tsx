@@ -278,13 +278,13 @@ export default function ActivityThread({
       )}
 
       {/* Feed */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-3 bg-slate-50/30">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-3 bg-[var(--color-surface-2)]/30">
         {loading ? (
           <div className="text-center text-[var(--color-text-faint)] text-[13px] mt-10">
             <Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Loading the thread…
           </div>
         ) : loadErr ? (
-          <div role="alert" className="text-center text-rose-700 dark:text-rose-300 text-[13px] mt-10 px-4">
+          <div role="alert" className="text-center text-[var(--state-overdue)] text-[13px] mt-10 px-4">
             Couldn&apos;t load the thread: {loadErr}
           </div>
         ) : composingDisabled ? (
@@ -386,7 +386,7 @@ function MessageRow({ msg, meIsAuthor, replies, onReply, onMarkResolved, isReply
   if (msg.kind === "system") {
     return (
       <div className="text-center">
-        <span className="inline-block px-3 py-1 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text-muted)] text-[11px] italic border border-[var(--color-border)]">
+        <span className="inline-block px-3 py-1 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text-muted)] text-[13px] italic border border-[var(--color-border)]">
           {msg.text}
         </span>
       </div>
@@ -421,13 +421,13 @@ function MessageRow({ msg, meIsAuthor, replies, onReply, onMarkResolved, isReply
 
   if (msg.kind === "question") {
     return (
-      <div className="rounded-lg border border-[var(--color-border)] border-l-2 border-l-amber-500 bg-[var(--color-surface)] p-3">
+      <div className="rounded-lg border border-[var(--color-border)] border-l-2 border-l-[var(--state-held)] bg-[var(--color-surface)] p-3">
         <div className="flex items-center justify-between mb-1">
-          <div className="text-[13px] font-semibold text-amber-800 dark:text-amber-300 flex items-center gap-1">
+          <div className="text-[13px] font-semibold text-[var(--state-held)] flex items-center gap-1">
             <HelpCircle className="w-3 h-3" /> Question · {msg.userName}
           </div>
           {msg.resolvedAt ? (
-            <span className="inline-flex items-center gap-1 text-[13px] font-bold text-emerald-700">
+            <span className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--state-released)]">
               <CheckCircle2 className="w-3 h-3" /> Resolved
             </span>
           ) : (

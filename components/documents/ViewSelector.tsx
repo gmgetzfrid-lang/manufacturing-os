@@ -162,12 +162,12 @@ function ViewRow({ v, active, onApply, onDelete }: {
       <div className="flex-1 min-w-0">
         <div className="text-[13px] font-bold text-[var(--color-text)] truncate flex items-center gap-1">
           {v.name}
-          {v.is_default && <Star className="w-3 h-3 text-amber-500 fill-amber-400" />}
+          {v.is_default && <Star className="w-3 h-3 text-[var(--state-held)] fill-current" />}
         </div>
         {v.description && <div className="text-[13px] text-[var(--color-text-muted)] truncate">{v.description}</div>}
       </div>
       {onDelete && (
-        <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="p-1 text-[var(--color-text-faint)] hover:text-red-600 hover:bg-red-50 rounded">
+        <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="p-1 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] rounded">
           <Trash2 className="w-3 h-3" />
         </button>
       )}
@@ -245,7 +245,7 @@ function SaveViewModal({
             <input type="checkbox" checked={isDefault} onChange={(e) => setIsDefault(e.target.checked)} />
             Set as default {scope === "org" ? "for the team" : "for me"}
           </label>
-          {error && <div className="text-[13px] border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">{error}</div>}
+          {error && <div className="text-[13px] border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">{error}</div>}
         </div>
         <div className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>

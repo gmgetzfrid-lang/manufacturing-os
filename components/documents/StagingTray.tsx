@@ -29,7 +29,7 @@ export default function StagingTray({ docs, onRemove, onClear, onOpen }: Staging
                   key={doc.id}
                   className="flex items-center gap-2 bg-[var(--color-surface-2)] rounded-lg px-3 py-2 border border-[var(--color-border)] group"
                 >
-                  <span className="w-5 h-5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)] flex items-center justify-center text-[11px] font-semibold shrink-0">
+                  <span className="w-5 h-5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)] flex items-center justify-center text-[13px] font-semibold shrink-0">
                     {idx + 1}
                   </span>
                   <span className="text-[13px] font-display font-semibold tabular-nums text-[var(--color-text)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded border border-[var(--color-border)] shrink-0 truncate max-w-[80px]">
@@ -40,7 +40,7 @@ export default function StagingTray({ docs, onRemove, onClear, onOpen }: Staging
                   </span>
                   <button aria-label="Remove"
                     onClick={() => onRemove(doc.id!)}
-                    className="shrink-0 text-slate-300 hover:text-red-500 transition-colors opacity-60 sm:opacity-0 group-hover:opacity-100"
+                    className="shrink-0 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] transition-colors opacity-60 sm:opacity-0 group-hover:opacity-100"
                   >
                     <X className="w-3.5 h-3.5" />
                   </button>
@@ -53,7 +53,7 @@ export default function StagingTray({ docs, onRemove, onClear, onOpen }: Staging
         {/* Tray bar */}
         <div className="bg-slate-900 text-white flex items-center gap-3 px-5 py-2.5 shadow-2xl border-t border-slate-700">
           <div className="flex items-center gap-2.5 flex-1 min-w-0">
-            <BookOpen className="w-4 h-4 text-slate-400 shrink-0" />
+            <BookOpen className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
             <span className="text-sm font-bold text-white whitespace-nowrap">Reference Stack</span>
             <span className="text-xs font-semibold bg-slate-700 text-white px-2 py-0.5 rounded-full shrink-0">
               {badgeText(docs.length)}
@@ -63,14 +63,14 @@ export default function StagingTray({ docs, onRemove, onClear, onOpen }: Staging
               {docs.slice(0, 6).map((doc) => (
                 <span
                   key={doc.id}
-                  className="text-[11px] font-mono bg-slate-800 px-2 py-0.5 rounded text-slate-300 whitespace-nowrap border border-slate-700"
+                  className="text-[13px] font-mono bg-slate-800 px-2 py-0.5 rounded text-[var(--color-text-faint)] whitespace-nowrap border border-slate-700"
                   title={doc.title || doc.name}
                 >
                   {doc.documentNumber || (doc.title || "").slice(0, 10) || "-"}
                 </span>
               ))}
               {docs.length > 6 && (
-                <span className="text-[13px] text-slate-400 whitespace-nowrap">+{docs.length - 6} more</span>
+                <span className="text-[13px] text-[var(--color-text-faint)] whitespace-nowrap">+{docs.length - 6} more</span>
               )}
             </div>
           </div>
@@ -78,7 +78,7 @@ export default function StagingTray({ docs, onRemove, onClear, onOpen }: Staging
           <div className="flex items-center gap-1 shrink-0">
             <button
               onClick={() => setExpanded((v) => !v)}
-              className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors text-slate-400 hover:text-white"
+              className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors text-[var(--color-text-faint)] hover:text-white"
               title={expanded ? "Hide the list" : "Show the list"}
               aria-label={expanded ? "Hide the list" : "Show the list"}
               aria-expanded={expanded}
@@ -87,7 +87,7 @@ export default function StagingTray({ docs, onRemove, onClear, onOpen }: Staging
             </button>
             <button
               onClick={onClear}
-              className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors text-slate-400 hover:text-red-400"
+              className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors text-[var(--color-text-faint)] hover:text-[var(--state-overdue)]"
               title="Empty the stack"
               aria-label="Empty the stack"
             >

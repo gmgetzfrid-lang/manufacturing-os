@@ -96,12 +96,12 @@ export default function FolderDeleteModal({
   const option = (value: "all" | "lift", Icon: typeof FolderX, t: string, children: React.ReactNode, disabled?: boolean) => (
     <label className={`flex items-start gap-3 rounded-xl border-2 p-3 cursor-pointer transition-colors ${
       mode === value
-        ? value === "all" ? "border-rose-500 bg-rose-50/70 dark:bg-rose-950/20" : "border-[var(--color-border-strong)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]"
+        ? value === "all" ? "border-[var(--state-overdue)] bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]"
         : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
     } ${disabled ? "opacity-60 cursor-not-allowed" : ""}`}>
       <input type="radio" name="folder-delete-mode" className="mt-1" checked={mode === value} disabled={disabled || !!running}
         onChange={() => setMode(value)} />
-      <Icon className={`w-5 h-5 shrink-0 mt-0.5 ${value === "all" ? "text-rose-600" : "text-[var(--color-text-muted)]"}`} />
+      <Icon className={`w-5 h-5 shrink-0 mt-0.5 ${value === "all" ? "text-[var(--state-overdue)]" : "text-[var(--color-text-muted)]"}`} />
       <span className="min-w-0">
         <span className="block text-sm font-semibold text-[var(--color-text)]">{t}</span>
         <span className="block text-[13px] text-[var(--color-text-muted)] mt-0.5">{children}</span>
@@ -114,11 +114,11 @@ export default function FolderDeleteModal({
       onMouseDown={(e) => { if (e.target === e.currentTarget && !running) onClose(); }}>
       <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-t-2xl sm:rounded-lg shadow-2xl border border-[var(--color-border)] overflow-hidden">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-start gap-3">
-          <div className="p-2 rounded-lg bg-rose-100 dark:bg-rose-950/40"><Trash2 className="w-5 h-5 text-rose-700 dark:text-rose-400" /></div>
+          <div className="p-2 rounded-lg bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)]"><Trash2 className="w-5 h-5 text-[var(--state-overdue)]" /></div>
           <div className="min-w-0 flex-1">
             <div className="text-sm font-semibold text-[var(--color-text)] truncate">{title}</div>
             <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">
-              {loadError ? <span className="text-rose-600">{loadError}</span>
+              {loadError ? <span className="text-[var(--state-overdue)]">{loadError}</span>
                 : previews === null ? <span className="inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Counting what&apos;s inside…</span>
                 : empty ? (one ? "This folder is empty." : "These folders are empty.")
                 : <>Contains <b className="text-[var(--color-text)]">{docs.toLocaleString()} document{docs === 1 ? "" : "s"}</b>
@@ -133,7 +133,7 @@ export default function FolderDeleteModal({
         {previews !== null && !empty && (
           <div className="p-5 space-y-2.5">
             {option("all", FolderX, "Delete the folder and everything in it", held > 0
-                ? <span className="text-rose-700 dark:text-rose-400 font-bold">{held} document{held === 1 ? " is" : "s are"} under a legal hold inside - release the hold or move those records out first.</span>
+                ? <span className="text-[var(--state-overdue)] font-bold">{held} document{held === 1 ? " is" : "s are"} under a legal hold inside - release the hold or move those records out first.</span>
                 : <>All {docs.toLocaleString()} document{docs === 1 ? "" : "s"} are <b>permanently deleted</b>
                     {subfolders > 0 ? `, and all ${subfolders.toLocaleString()} subfolder${subfolders === 1 ? "" : "s"} go with ${one ? "it" : "them"}` : ""}.
                     {" "}The empty folder structure can be restored from Recently deleted for 30 days; the documents can&apos;t.</>,
@@ -146,17 +146,17 @@ export default function FolderDeleteModal({
             {needsTyping && held === 0 && (
               <div className="pt-1">
                 <label className="block text-[13px] font-bold text-[var(--color-text-muted)] mb-1">
-                  Type <span className="font-semibold text-rose-700 dark:text-rose-400">DELETE</span> to permanently delete {docs.toLocaleString()} documents
+                  Type <span className="font-semibold text-[var(--state-overdue)]">DELETE</span> to permanently delete {docs.toLocaleString()} documents
                 </label>
                 <input value={typed} onChange={(e) => setTyped(e.target.value)} autoFocus disabled={!!running}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm focus:outline-none focus:border-rose-400" />
+                  className="w-full h-9 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm focus:outline-none focus:border-[var(--state-overdue)]" />
               </div>
             )}
           </div>
         )}
 
         {error && (
-          <div className="mx-5 mb-3 text-[13px] flex gap-2 border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
+          <div className="mx-5 mb-3 text-[13px] flex gap-2 border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
             <AlertTriangle className="w-4 h-4 shrink-0" /> {error}
           </div>
         )}
@@ -176,7 +176,7 @@ export default function FolderDeleteModal({
             </button>
             <button onClick={() => void go()} disabled={!canGo}
               className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-[13px] font-semibold text-white disabled:opacity-40 ${
-                mode === "all" || empty ? "bg-rose-600 hover:bg-rose-700" : "bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]"}`}>
+                mode === "all" || empty ? "bg-[var(--state-overdue)] hover:bg-[var(--state-overdue)]" : "bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]"}`}>
               {running ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
               {running ? "Deleting…"
                 : empty ? (one ? "Delete folder" : `Delete ${folders.length} folders`)

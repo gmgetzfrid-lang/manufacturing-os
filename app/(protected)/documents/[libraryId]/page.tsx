@@ -4366,7 +4366,7 @@ export default function LibraryExplorerPage() {
                                 Set as <b>my</b> default here
                                 <span className="block text-[13px] font-normal text-[var(--color-text-muted)]">Only you: wins over the org default</span>
                               </span>
-                              {viewDefaults.hasUserRow && <Check className="w-3.5 h-3.5 text-emerald-600" />}
+                              {viewDefaults.hasUserRow && <Check className="w-3.5 h-3.5 text-[var(--state-released)]" />}
                             </button>
                             {isController && (
                               <button
@@ -4378,7 +4378,7 @@ export default function LibraryExplorerPage() {
                                   Set as <b>org-wide</b> default here
                                   <span className="block text-[13px] font-normal text-[var(--color-text-muted)]">Everyone opens this folder like this</span>
                                 </span>
-                                {viewDefaults.hasOrgRow && <Check className="w-3.5 h-3.5 text-emerald-600" />}
+                                {viewDefaults.hasOrgRow && <Check className="w-3.5 h-3.5 text-[var(--state-released)]" />}
                               </button>
                             )}
                             {viewDefaults.hasUserRow && (
@@ -4432,7 +4432,7 @@ export default function LibraryExplorerPage() {
                   </div>
                 )}
                 {docFetchHitCap && !loadingDocs && docStreamProgress === null && (
-                  <div className="mx-4 mt-2 border-l-2 border-amber-500 pl-3 py-0.5 text-[13px] text-amber-800 dark:text-amber-300">
+                  <div className="mx-4 mt-2 border-l-2 border-[var(--state-held)] pl-3 py-0.5 text-[13px] text-[var(--state-held)]">
                     Showing the first <b>10,000</b> documents, newest first. This folder holds more: filter or open a subfolder to narrow it.
                   </div>
                 )}
@@ -4962,12 +4962,12 @@ export default function LibraryExplorerPage() {
             <span className="text-[13px] font-bold">{selectedFolderIds.size} folder{selectedFolderIds.size === 1 ? "" : "s"} selected</span>
             <div className="h-4 w-px bg-slate-700 mx-1" />
             <button onClick={() => setSelectedFolderIds(new Set())}
-              className="px-2.5 py-1 text-[13px] font-bold text-slate-300 hover:text-white hover:bg-slate-700/60 rounded-lg transition-colors">
+              className="px-2.5 py-1 text-[13px] font-bold text-[var(--color-text-faint)] hover:text-white hover:bg-slate-700/60 rounded-lg transition-colors">
               Deselect
             </button>
             <button
               onClick={() => setDeleteFolders([...selectedFolderIds].map((x) => ({ id: x, name: folderMap.get(x)?.name ?? "Folder" })))}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-[13px] font-bold text-rose-300 hover:text-white hover:bg-rose-600/80 rounded-lg transition-colors"
+              className="flex items-center gap-1.5 px-2.5 py-1 text-[13px] font-bold text-rose-300 hover:text-white hover:bg-[var(--state-overdue)]/80 rounded-lg transition-colors"
               title="Delete the selected folders (Delete key)">
               <Trash2 className="w-3 h-3" /> Delete…
             </button>
@@ -4992,7 +4992,7 @@ export default function LibraryExplorerPage() {
           <div className="h-4 w-px bg-slate-700 mx-1" />
           <button
             onClick={() => setSelectedDocIds(new Set())}
-            className="px-2.5 py-1 text-[13px] font-bold text-slate-300 hover:text-white hover:bg-slate-700/60 rounded-lg transition-colors"
+            className="px-2.5 py-1 text-[13px] font-bold text-[var(--color-text-faint)] hover:text-white hover:bg-slate-700/60 rounded-lg transition-colors"
           >
             Deselect
           </button>
@@ -5050,7 +5050,7 @@ export default function LibraryExplorerPage() {
                     </button>
                     <div className="my-1 h-px bg-[var(--color-border)]" />
                     <button role="menuitem" onClick={() => { setBulkMoreOpen(false); void handleBulkDelete(); }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-[13px] font-semibold text-rose-700 dark:text-rose-400 hover:bg-[var(--color-surface-2)]">
+                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-[13px] font-semibold text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)]">
                       <Trash2 className="w-3.5 h-3.5" /> Delete…
                     </button>
                   </div>
@@ -5476,7 +5476,7 @@ export default function LibraryExplorerPage() {
                 className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm"
                 autoFocus
               />
-              {folderErr && <p role="alert" className="mt-2 text-[13px] text-rose-700 dark:text-rose-300">{folderErr}</p>}
+              {folderErr && <p role="alert" className="mt-2 text-[13px] text-[var(--state-overdue)]">{folderErr}</p>}
             </ModalBody>
             <ModalFooter>
               <Button type="button" variant="secondary" onClick={() => setCreatingFolder(false)}>Cancel</Button>
@@ -5502,7 +5502,7 @@ export default function LibraryExplorerPage() {
                     <div className="text-[13px] font-bold text-[var(--color-text)] truncate">{f.name}</div>
                     <div className="text-[13px] text-[var(--color-text-muted)] truncate">
                       {f.pathNames.length > 1 ? `${f.pathNames.slice(0, -1).join(" / ")} · ` : ""}
-                      deleted {new Date(f.deletedAt).toLocaleDateString()} · purges {new Date(f.purgeAt).toLocaleDateString()}
+                      deleted {new Date(f.deletedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })} · purges {new Date(f.purgeAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                     </div>
                   </div>
                   <button
@@ -5532,7 +5532,7 @@ export default function LibraryExplorerPage() {
                 className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm"
                 autoFocus
               />
-              {folderErr && <p role="alert" className="mt-2 text-[13px] text-rose-700 dark:text-rose-300">{folderErr}</p>}
+              {folderErr && <p role="alert" className="mt-2 text-[13px] text-[var(--state-overdue)]">{folderErr}</p>}
             </ModalBody>
             <ModalFooter>
               <Button type="button" variant="secondary" onClick={() => setRenameFolderId(null)}>Cancel</Button>
@@ -5581,7 +5581,7 @@ function LibraryNumberingModal({ orgId, libraryId, onClose }: {
     <Modal onClose={onClose} size="sm" zIndex={95}>
         <ModalHeader icon={Hash} title="Auto-numbering" subtitle="Uploads with a blank number get the next one. A typed number always wins." onClose={onClose} />
         {loadErr ? (
-          <p role="alert" className="m-5 border-l-2 border-rose-500 pl-3 text-sm text-rose-700 dark:text-rose-300">{loadErr}</p>
+          <p role="alert" className="m-5 border-l-2 border-[var(--state-overdue)] pl-3 text-sm text-[var(--state-overdue)]">{loadErr}</p>
         ) : cfg === null ? (
           <div className="p-6 text-center text-sm text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline" /> Loading the numbering settings…</div>
         ) : (
@@ -5596,7 +5596,7 @@ function LibraryNumberingModal({ orgId, libraryId, onClose }: {
               <div className="col-span-1">
                 <label className="text-[13px] font-semibold text-[var(--color-text)]">Prefix</label>
                 <input value={cfg.prefix} onChange={(e) => setCfg({ ...cfg, prefix: e.target.value })}
-                  placeholder="PROC-" className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm font-mono" />
+                  placeholder="PROC-" className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm font-display tabular-nums" />
               </div>
               <div>
                 <label className="text-[13px] font-semibold text-[var(--color-text)]">Digits</label>
@@ -5614,7 +5614,7 @@ function LibraryNumberingModal({ orgId, libraryId, onClose }: {
             <div className="text-[13px] text-[var(--color-text-muted)]">
               Next issued number: <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{preview}</span>
             </div>
-            {err && <p role="alert" className="text-[13px] text-rose-700 dark:text-rose-300">{err}</p>}
+            {err && <p role="alert" className="text-[13px] text-[var(--state-overdue)]">{err}</p>}
           </div>
         )}
         <ModalFooter>
@@ -5641,7 +5641,7 @@ function ReadingHint({ startedAt }: { startedAt: number }) {
     <div className="mt-2 text-[13px] text-[var(--color-text-muted)]">
       <div>{secs}s. The upload window opens once every file is found.</div>
       {secs >= 15 && (
-        <p className="mt-2 text-left border-l-2 border-amber-500 pl-2.5 text-amber-800 dark:text-amber-300">
+        <p className="mt-2 text-left border-l-2 border-[var(--state-held)] pl-2.5 text-[var(--state-held)]">
           Slow? OneDrive or SharePoint files that are online-only must download first. Right-click the folder, pick <b>Always keep on this device</b>, wait for it to sync, then drop it again.
         </p>
       )}

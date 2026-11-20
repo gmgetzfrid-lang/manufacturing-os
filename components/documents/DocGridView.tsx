@@ -59,7 +59,7 @@ export default function DocGridView({
       ? "bg-[var(--color-surface-2)] border-[var(--color-border)] ring-1 ring-[var(--color-border-strong)]"
       : focused
         ? "bg-[var(--color-surface-2)] border-[var(--color-border-strong)]"
-        : "bg-[var(--color-surface)] border-[var(--color-border)] hover:border-[var(--color-border-strong)] hover:bg-slate-50/60"
+        : "bg-[var(--color-surface)] border-[var(--color-border)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]/60"
     } border cursor-pointer transition-colors select-none`;
 
   const commonHandlers = (doc: DocumentRecord) => ({

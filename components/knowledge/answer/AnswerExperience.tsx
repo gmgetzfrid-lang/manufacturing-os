@@ -11,6 +11,7 @@
 // and the card that fills in while an answer streams.
 
 import React, { useEffect, useMemo, useState } from "react";
+import { pillClass, type DocTone } from "@/components/documents/StatusTag";
 import {
   BookOpen, Sparkles, Send, FileText, AlertTriangle, ExternalLink, History, Globe,
   ChevronRight, ChevronDown, Copy, Check, PenLine, Eye,
@@ -43,7 +44,10 @@ export type DocLink = NonNullable<KnowledgeAnswer["mentionedDocs"]>[number];
 /** The small name of a group (13 px, muted, sentence case). */
 const LABEL = "text-[13px] font-semibold text-[var(--color-text-muted)]";
 /** The direct answer: the one big line, in the condensed display face. */
-const HERO = "font-display text-[24px] sm:text-[30px] leading-[1.15] font-semibold text-[var(--color-text)]";
+const HERO = "font-display text-[24px] sm:text-[28px] leading-[1.15] font-semibold text-[var(--color-text)]";
+/** A longer direct answer (a sentence or two): still the display face, at a
+ *  size that reads as a paragraph, not a poster. */
+const HERO_LONG = "font-display text-[19px] sm:text-[20px] leading-normal font-medium text-[var(--color-text)]";
 /** Body text of the answer. */
 const BODY = "text-[15px] leading-relaxed text-[var(--color-text)]";
 /** A secondary button: white, ruled, graphite text. */
@@ -145,7 +149,7 @@ function ProofQuote({ c, context, className }: { c: KnowledgeCitation; context?:
       {win ? (
         <>
           <span className="text-[var(--color-text-muted)]">{win.clippedStart ? "… " : ""}{win.before}</span>
-          <mark className="rounded px-0.5 bg-amber-200 dark:bg-amber-700/60 text-[var(--color-text)] font-semibold">{win.hit}</mark>
+          <mark className="rounded px-0.5 bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] text-[var(--color-text)] font-semibold">{win.hit}</mark>
           <span className="text-[var(--color-text-muted)]">{win.after}{win.clippedEnd ? " …" : ""}</span>
         </>
       ) : segs.map((sg, i) => sg.hit
@@ -171,36 +175,35 @@ const VERDICT_STYLE: Record<Verdict, { label: string; dot: string }> = {
   undetermined: { label: "Can't determine", dot: DOT_PLAIN },
 };
 
-/** A small, quiet status tag: an 8 px dot in the status color, the words in
- *  graphite. */
+/** The soft pill for a status color: a tint behind the word in that color. */
+const toneOfDot = (dot: string): DocTone => dot === DOT_GOOD ? "good" : dot === DOT_WARN ? "warn" : dot === DOT_BAD ? "bad" : "none";
+
+/** A status as a soft pill: green done, amber a condition, red a problem,
+ *  grey anything else. */
 function StatusTag({ dot, children, title }: { dot: string; children: React.ReactNode; title?: string }) {
-  return (
-    <span title={title} className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]">
-      <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} aria-hidden />{children}
-    </span>
-  );
+  return <span title={title} className={pillClass(toneOfDot(dot))}>{children}</span>;
 }
 
-/** The verdict as a tag — the yes/no lands before a single word is read. */
+/** The verdict as a soft pill: the yes/no lands before a word is read. */
 function VerdictBadge({ verdict }: { verdict: Verdict }) {
   const v = VERDICT_STYLE[verdict];
-  return (
-    <span className="inline-flex items-center gap-2 text-[15px] font-semibold text-[var(--color-text)]">
-      <span className={`w-2.5 h-2.5 rounded-full ${v.dot}`} aria-hidden />{v.label}
-    </span>
-  );
+  return <span className={`${pillClass(toneOfDot(v.dot))} !text-[14px] !px-2.5 !py-1`}>{v.label}</span>;
 }
 
 /** The answer line once its verdict word is split off starts mid-sentence
  *  ("test the line at…"): give it its capital back. */
 const capFirst = (t: string) => t.replace(/^([^A-Za-z0-9]*)([a-z])/, (_, pre: string, ch: string) => pre + ch.toUpperCase());
 
-/** The direct answer: its verdict, then the one big line. */
-function DirectAnswer({ verdict, children }: { verdict: Verdict | null; children: React.ReactNode }) {
+/** How long the answer reads, without its citation and bold marks. */
+const plainLength = (t: string) => t.replace(/\[\d{1,3}\]|\*\*|`/g, "").trim().length;
+
+/** The direct answer: its verdict, then the answer line. A short answer
+ *  is set big; a longer one at paragraph size, so it never shouts. */
+function DirectAnswer({ verdict, length, children }: { verdict: Verdict | null; length: number; children: React.ReactNode }) {
   return (
     <div>
-      {verdict && <div className="mb-2"><VerdictBadge verdict={verdict} /></div>}
-      <div className={HERO}>{children}</div>
+      {verdict && <div className="mb-2.5"><VerdictBadge verdict={verdict} /></div>}
+      <div className={length < 90 ? HERO : HERO_LONG}>{children}</div>
     </div>
   );
 }
@@ -307,9 +310,9 @@ export function InlineAnswer({ text, citations, onCite }: {
   };
   const linkFor = (s: string) => links.find((d) => d.mention === s);
   const docChip = (d: DocLink, label: string, key: number) => (
-    <button key={key} onClick={() => open?.(d)} title={`Open ${d.name} · p.${d.page}`}
-      className="inline-flex items-center gap-1 align-baseline mx-0.5 px-1.5 py-0.5 rounded border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-accent-text)] font-display font-semibold text-[0.92em] leading-none hover:bg-[var(--color-surface-2)] transition-colors cursor-pointer">
-      <FileText className="w-3 h-3 shrink-0" />{label}
+    <button key={key} type="button" onClick={() => open?.(d)} title={`Open ${d.name}, page ${d.page}`}
+      className="inline align-baseline font-semibold text-[var(--color-accent-text)] underline decoration-[color-mix(in_srgb,var(--color-accent-text)_35%,transparent)] underline-offset-[3px] hover:decoration-[var(--color-accent-text)] transition-colors cursor-pointer">
+      {label}
     </button>
   );
   return (
@@ -605,7 +608,7 @@ export function AnswerView({ answer, citations, onCite }: {
   return (
     <div className="space-y-4">
       {hero && heroV && (
-        <DirectAnswer verdict={heroV.verdict}>
+        <DirectAnswer verdict={heroV.verdict} length={plainLength(heroV.text)}>
           <InlineAnswer text={heroV.verdict ? capFirst(heroV.text) : heroV.text} citations={citations} onCite={onCite} />
         </DirectAnswer>
       )}
@@ -1510,7 +1513,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
 
           {/* The answer first, in the biggest type on the page. */}
           {heroV ? (
-            <DirectAnswer verdict={heroV.verdict}>{inline(heroV.verdict ? capFirst(heroV.text) : heroV.text)}</DirectAnswer>
+            <DirectAnswer verdict={heroV.verdict} length={plainLength(heroV.text)}>{inline(heroV.verdict ? capFirst(heroV.text) : heroV.text)}</DirectAnswer>
           ) : (
             <AnswerView answer={answer.answer} citations={answer.citations} onCite={onCite} />
           )}
@@ -1978,7 +1981,7 @@ export function StreamingAnswer({ status, draft }: { status: string; draft: stri
       <div className="grid @min-[760px]:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
         <div className="min-w-0 space-y-6 @min-[760px]:pr-8">
           {heroV ? (
-            <div style={reveal}><DirectAnswer verdict={heroV.verdict}>{inline(heroV.verdict ? capFirst(heroV.text) : heroV.text)}</DirectAnswer></div>
+            <div style={reveal}><DirectAnswer verdict={heroV.verdict} length={plainLength(heroV.text)}>{inline(heroV.verdict ? capFirst(heroV.text) : heroV.text)}</DirectAnswer></div>
           ) : (
             <div className="space-y-3" aria-hidden>
               <Shimmer className="h-6 w-11/12" />

@@ -15,7 +15,7 @@ import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
 type Info = { own: FolderMarkState; inherited: FolderMarkState; units: Array<{ code: string; label: string }>; types: string[]; suggestion: { kind: MarkKind; value: string; ref?: string } | null };
 
-const chip = "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold";
+const chip = "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[13px] font-semibold";
 
 export function FolderMarkBar({ orgId, folderId, onChanged }: { orgId: string; folderId: string; onChanged?: () => void }) {
   const [info, setInfo] = useState<{ id: string; data: Info } | null>(null);
@@ -46,7 +46,7 @@ export function FolderMarkBar({ orgId, folderId, onChanged }: { orgId: string; f
     finally { setBusy(false); }
   };
 
-  if (!data) return error ? <span className="text-[13px] text-red-700">{error}</span> : null;
+  if (!data) return error ? <span className="text-[13px] text-[var(--state-overdue)]">{error}</span> : null;
   const own = data.own, inh = data.inherited;
   const inside = [inh.area?.label, inh.type, inh.equipment?.tag].filter(Boolean).join(" › ");
   return (
@@ -54,7 +54,7 @@ export function FolderMarkBar({ orgId, folderId, onChanged }: { orgId: string; f
       <span className="font-bold">This folder is</span>
       {own.area && <span className={`${chip} border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]`}><Factory className="w-3 h-3" /> {own.area.label}<button title="Unmark" onClick={() => void send({ kind: "clear", which: "area" })}><X className="w-3 h-3" /></button></span>}
       {own.type && <span className={`${chip} border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]`}><Layers className="w-3 h-3" /> {own.type}<button title="Unmark" onClick={() => void send({ kind: "clear", which: "type" })}><X className="w-3 h-3" /></button></span>}
-      {own.equipment && <span className={`${chip} border-emerald-300 bg-emerald-50 text-emerald-800`}><Cpu className="w-3 h-3" /> {own.equipment.tag}<button title="Unmark" onClick={() => void send({ kind: "clear", which: "equipment" })}><X className="w-3 h-3" /></button></span>}
+      {own.equipment && <span className={`${chip} border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)]`}><Cpu className="w-3 h-3" /> {own.equipment.tag}<button title="Unmark" onClick={() => void send({ kind: "clear", which: "equipment" })}><X className="w-3 h-3" /></button></span>}
       {!own.area && !own.type && !own.equipment && <span className="text-[var(--color-text-muted)]">not marked{inside ? ` · inside ${inside}` : ""}</span>}
       {!own.area && !own.type && !own.equipment && data.suggestion && !editing && (
         <button disabled={busy} onClick={() => void send(data.suggestion!.kind === "area" ? { kind: "area", unitCode: data.suggestion!.ref } : { kind: "equipment", tag: data.suggestion!.ref ?? data.suggestion!.value })}
@@ -72,7 +72,7 @@ export function FolderMarkBar({ orgId, folderId, onChanged }: { orgId: string; f
         data.units.length
           ? <><select value={unit} onChange={(e) => setUnit(e.target.value)} className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-[13px]">{data.units.map((u) => <option key={u.code} value={u.code}>{u.label} ({u.code})</option>)}</select>
             <button disabled={busy || !unit} onClick={() => void send({ kind: "area", unitCode: unit })} className="rounded bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-2 py-0.5 font-bold disabled:opacity-50">Mark</button></>
-          : <span className="text-amber-700">No operating areas in the Site Codebook yet (Intelligence › Setup).</span>
+          : <span className="text-[var(--state-held)]">No operating areas in the Site Codebook yet (Intelligence › Setup).</span>
       )}
       {editing === "type" && (
         <><input list="eqtypes" value={text} onChange={(e) => setText(e.target.value)} placeholder="e.g. Heaters" className="w-28 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-[13px]" />
@@ -86,7 +86,7 @@ export function FolderMarkBar({ orgId, folderId, onChanged }: { orgId: string; f
       )}
       {editing && <button onClick={() => setEditing(null)} className="text-[var(--color-text-muted)] hover:underline">cancel</button>}
       {busy && <Loader2 className="w-3 h-3 animate-spin" />}
-      {error && <span className="text-red-700">{error}</span>}
+      {error && <span className="text-[var(--state-overdue)]">{error}</span>}
     </div>
   );
 }
@@ -147,8 +147,8 @@ export function LibrarySetup({ orgId, libraryId, libraryName, onDone, onClose }:
             {rows && <button onClick={() => void apply()} disabled={!!busy || !counts || counts.area + counts.type + counts.eq === 0} className="rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1 font-bold disabled:opacity-50">Apply</button>}
             {busy && <span className="inline-flex items-center gap-1 text-[var(--color-text-muted)]"><Loader2 className="w-3 h-3 animate-spin" /> {busy}</span>}
           </div>
-          {error && <div className="text-red-700">{error}</div>}
-          {result && <div className="text-emerald-700">{result}</div>}
+          {error && <div className="text-[var(--state-overdue)]">{error}</div>}
+          {result && <div className="text-[var(--state-released)]">{result}</div>}
           {counts && <div className="font-semibold">{counts.area} operating areas · {counts.type} equipment types · {counts.eq} equipment ({counts.made} new to the registry){counts.no ? ` · ${counts.no} folders nothing matched` : ""}</div>}
         </div>
         {rows && (
@@ -159,8 +159,8 @@ export function LibrarySetup({ orgId, libraryId, libraryName, onDone, onClose }:
                   <tr key={r.folderId} className="border-b border-[var(--color-border)]">
                     <td className="px-3 py-1 truncate max-w-[260px]" title={r.path}>{r.path}</td>
                     <td className="px-2 py-1 whitespace-nowrap text-[var(--color-text-muted)]">{MEANING[r.kind]}</td>
-                    <td className="px-2 py-1">{r.value ?? <span className="text-amber-700">{r.note}</span>}</td>
-                    <td className="px-2 py-1 whitespace-nowrap">{r.status === "match" ? <span className="text-emerald-700">matches</span> : r.status === "new" ? <span className="text-[var(--color-text)]">new</span> : <span className="text-amber-700">skipped</span>}</td>
+                    <td className="px-2 py-1">{r.value ?? <span className="text-[var(--state-held)]">{r.note}</span>}</td>
+                    <td className="px-2 py-1 whitespace-nowrap">{r.status === "match" ? <span className="text-[var(--state-released)]">matches</span> : r.status === "new" ? <span className="text-[var(--color-text)]">new</span> : <span className="text-[var(--state-held)]">skipped</span>}</td>
                   </tr>
                 ))}
                 {!rows.length && <tr><td className="px-3 py-3 text-[var(--color-text-muted)]">No folders at those levels.</td></tr>}

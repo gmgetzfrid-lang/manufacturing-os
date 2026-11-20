@@ -622,7 +622,7 @@ function GraphPageInner() {
       {/* Map */}
       <div className="relative flex-1 min-h-0">
         {error ? (
-          <div className="flex items-center justify-center h-full text-sm text-rose-600 px-6 text-center">{error}</div>
+          <div className="flex items-center justify-center h-full text-sm text-[var(--state-overdue)] px-6 text-center">{error}</div>
         ) : !view ? (
           <div className="flex flex-col items-center justify-center h-full gap-2">
             <Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-faint)]" />
@@ -636,7 +636,7 @@ function GraphPageInner() {
             ) : settings.mode === "3d" ? (
               <Suspense fallback={
                 <div className="absolute inset-0 flex items-center justify-center bg-[#0b1020]">
-                  <div className="text-[13px] font-semibold text-slate-400">Loading the 3D engine…</div>
+                  <div className="text-[13px] font-semibold text-[var(--color-text-faint)]">Loading the 3D engine…</div>
                 </div>
               }>
                 <OrgGraph3D
@@ -702,8 +702,8 @@ function GraphPageInner() {
                 <div className="w-72 max-w-[calc(100vw-1.5rem)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl overflow-hidden flex flex-col min-h-0">
                   <div className="flex border-b border-[var(--color-border)]">
                     {([
-                      { key: "orphans" as const, label: "Orphans", icon: CircleDashed, count: insights.orphans.length, tone: "text-rose-600" },
-                      { key: "hubs" as const, label: "Hubs", icon: Flame, count: insights.hubs.length, tone: "text-amber-600" },
+                      { key: "orphans" as const, label: "Orphans", icon: CircleDashed, count: insights.orphans.length, tone: "text-[var(--state-overdue)]" },
+                      { key: "hubs" as const, label: "Hubs", icon: Flame, count: insights.hubs.length, tone: "text-[var(--state-held)]" },
                       { key: "bridges" as const, label: "Bridges", icon: Spline, count: insights.bridges.length, tone: "text-[var(--color-text-muted)]" },
                     ]).map((t) => (
                       <button key={t.key}
@@ -779,7 +779,7 @@ function GraphPageInner() {
                               <div className="flex items-center gap-1.5 min-w-0">
                                 <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: NODE_COLORS[b.a.type] }} />
                                 <span className="text-[13px] font-semibold text-[var(--color-text)] truncate">{b.a.label}</span>
-                                <span className="text-[13px] text-amber-600 font-semibold shrink-0">↔</span>
+                                <span className="text-[13px] text-[var(--state-held)] font-semibold shrink-0">↔</span>
                                 <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: NODE_COLORS[b.b.type] }} />
                                 <span className="text-[13px] font-semibold text-[var(--color-text)] truncate">{b.b.label}</span>
                               </div>
@@ -814,7 +814,7 @@ function GraphPageInner() {
                     From <b className="text-[var(--color-text)]">{pathEnds.from.label}</b> - now click the second node.
                   </div>
                 ) : path && path.ids.length === 0 ? (
-                  <div className="text-[13px] text-amber-700">
+                  <div className="text-[13px] text-[var(--state-held)]">
                     Nothing connects <b>{pathEnds.from.label}</b> and <b>{pathEnds.to.label}</b> within 8 hops in this view.
                     Try turning filters back on.
                   </div>
@@ -859,7 +859,7 @@ function GraphPageInner() {
 
             {view.ghosts.length > 0 && (
               <Link href="/admin/proposed-links"
-                className="absolute bottom-3 left-3 inline-flex items-center gap-1 text-[13px] font-semibold text-amber-700 dark:text-amber-400 bg-[var(--color-surface)]/95 border border-[var(--color-border)] rounded-full px-2 py-1 hover:bg-[var(--color-surface-2)] z-10">
+                className="absolute bottom-3 left-3 inline-flex items-center gap-1 text-[13px] font-semibold text-[var(--state-held)] bg-[var(--color-surface)]/95 border border-[var(--color-border)] rounded-full px-2 py-1 hover:bg-[var(--color-surface-2)] z-10">
                 <Sparkles className="w-3 h-3" />
                 {view.ghosts.length} dashed connection{view.ghosts.length === 1 ? "" : "s"} awaiting review
               </Link>
@@ -936,9 +936,9 @@ function GraphPageInner() {
                 picture instead of a tool. */}
             {/* Connect panel — the manual edge, drawn where the map is. */}
             {connect && (
-              <div className="absolute bottom-3 right-3 w-72 max-w-[calc(100%-1.5rem)] rounded-xl border border-emerald-300 dark:border-emerald-900 bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl p-3 space-y-2 z-10">
+              <div className="absolute bottom-3 right-3 w-72 max-w-[calc(100%-1.5rem)] rounded-xl border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl p-3 space-y-2 z-10">
                 <div className="flex items-center gap-1.5">
-                  <Link2 className="w-3.5 h-3.5 text-emerald-600" />
+                  <Link2 className="w-3.5 h-3.5 text-[var(--state-released)]" />
                   <span className="text-[13px] font-semibold text-[var(--color-text)] flex-1">Draw a connection</span>
                   <button onClick={() => setConnect(null)} aria-label="Done connecting"
                     className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
@@ -946,12 +946,12 @@ function GraphPageInner() {
                   </button>
                 </div>
                 {connect.done && (
-                  <div className="text-[13px] font-semibold text-emerald-700 dark:text-emerald-300">
+                  <div className="text-[13px] font-semibold text-[var(--state-released)]">
                     Connected {connect.done.a} ↔ {connect.done.b} ✓
                   </div>
                 )}
                 {connect.error && (
-                  <div className="text-[13px] text-rose-600 leading-snug">{connect.error}</div>
+                  <div className="text-[13px] text-[var(--state-overdue)] leading-snug">{connect.error}</div>
                 )}
                 {connect.status === "saving" ? (
                   <div className="flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]">

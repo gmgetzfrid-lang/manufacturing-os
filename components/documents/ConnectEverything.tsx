@@ -200,15 +200,15 @@ export function ConnectProgress({ status, running, error, reading, onCancel, onC
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]/95 px-3 py-2 text-[13px] shadow-md space-y-1.5 max-w-md">
       <div className="flex items-center justify-between gap-2">
         <div className="font-semibold inline-flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {running ? "Connecting the estate" : error ? "Stopped" : status?.more ? "Paused - press again to continue" : "Connected"}</div>
-        {running ? <button onClick={onCancel} className="text-[11px] opacity-70 hover:opacity-100">stop</button> : <button onClick={onClose} className="opacity-60 hover:opacity-100"><X className="w-3.5 h-3.5" /></button>}
+        {running ? <button onClick={onCancel} className="text-[13px] opacity-70 hover:opacity-100">stop</button> : <button onClick={onClose} className="opacity-60 hover:opacity-100"><X className="w-3.5 h-3.5" /></button>}
       </div>
-      {error && <div className="text-red-700">{error}</div>}
+      {error && <div className="text-[var(--state-overdue)]">{error}</div>}
       {!status && running && <div className="text-[var(--color-text-muted)] inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Looking at units, libraries and drawings…</div>}
       {status && (
         <ol className="space-y-1">
           {status.steps.map((s) => {
             const I = s.state === "done" ? CheckCircle2 : s.state === "working" ? Loader2 : s.state === "waiting" ? Clock : AlertCircle;
-            const tone = s.state === "done" ? "text-emerald-600" : s.state === "working" ? "text-[var(--color-text)] animate-spin" : s.state === "waiting" ? "text-[var(--color-text-faint)]" : "text-rose-600";
+            const tone = s.state === "done" ? "text-[var(--state-released)]" : s.state === "working" ? "text-[var(--color-text)] animate-spin" : s.state === "waiting" ? "text-[var(--color-text-faint)]" : "text-[var(--state-overdue)]";
             const detail = s.key === "index" && reading && running ? `${s.detail} · reading in this browser: ${reading.done} of ${reading.total}${reading.visionPages ? ` · ${reading.visionPages} page${reading.visionPages === 1 ? "" : "s"} read with AI vision` : ""}${reading.reusedPages ? ` · ${reading.reusedPages} reused from earlier reads (not billed)` : ""}` : s.detail;
             return (
               <li key={s.key} className="flex items-start gap-1.5">
@@ -219,13 +219,13 @@ export function ConnectProgress({ status, running, error, reading, onCancel, onC
           })}
         </ol>
       )}
-      {reading?.visionSkip && running && <div className="text-[13px] text-amber-700">{reading.visionSkip}</div>}
+      {reading?.visionSkip && running && <div className="text-[13px] text-[var(--state-held)]">{reading.visionSkip}</div>}
       {bulk && (
         <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] px-2 py-1.5 text-[13px] space-y-0.5">
-          <div className="font-bold inline-flex items-center gap-1">{!bulk.finished ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3 text-emerald-600" />} Drawings read with your AI model: {bulk.done} of {bulk.total}</div>
+          <div className="font-bold inline-flex items-center gap-1">{!bulk.finished ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3 text-[var(--state-released)]" />} Drawings read with your AI model: {bulk.done} of {bulk.total}</div>
           {bulk.current && <div className="text-[var(--color-text-muted)] truncate">Now: {bulk.current}</div>}
           <div className="text-[var(--color-text-muted)]">{bulk.equipment} equipment callouts found · {bulk.added} tags put on drawings · {bulk.removed} wrong tags taken off · {bulk.created} new in the registry{bulk.failed ? ` · ${bulk.failed} failed` : ""}</div>
-          {bulk.lastError && <div className="text-red-700">{bulk.lastError}</div>}
+          {bulk.lastError && <div className="text-[var(--state-overdue)]">{bulk.lastError}</div>}
           {bulk.finished && bulk.total === 0 && <div>Every drawing is already read this way.</div>}
         </div>
       )}
@@ -261,13 +261,13 @@ export function UndoRunBox({ runId, journaled, undo, onUndo }: {
   onUndo: () => void;
 }) {
   if (!runId) return null;
-  if (!journaled) return <div className="text-[13px] text-amber-700">Undo is not available for this run: apply migration 20261021_ai_boundary_runs.sql to record runs.</div>;
+  if (!journaled) return <div className="text-[13px] text-[var(--state-held)]">Undo is not available for this run: apply migration 20261021_ai_boundary_runs.sql to record runs.</div>;
   const r = undo?.result;
   return (
     <div className="text-[13px] space-y-0.5">
-      {!r && <button onClick={onUndo} disabled={undo?.busy} className="rounded-full border border-rose-300 bg-rose-50 text-rose-700 px-2 py-0.5 font-semibold hover:bg-rose-100 disabled:opacity-50 inline-flex items-center gap-1">{undo?.busy ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Undo this run</button>}
-      {undo?.error && <div className="text-red-700">{undo.error}</div>}
-      {r && <div className="text-emerald-700">Undone: {r.drawings} drawing{r.drawings === 1 ? "" : "s"} put back · {r.columnsRestored} equipment columns · {r.edgesRestored + r.edgesRemoved} links · {r.readingsRestored} readings · {r.assetsRemoved} registry items removed{r.assetsKept.length ? ` · kept ${r.assetsKept.join(", ")} (someone added to them)` : ""}{r.skipped.length ? ` · ${r.skipped.length} left as a person changed them since` : ""}.</div>}
+      {!r && <button onClick={onUndo} disabled={undo?.busy} className="rounded-full border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)] px-2 py-0.5 font-semibold hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] disabled:opacity-50 inline-flex items-center gap-1">{undo?.busy ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Undo this run</button>}
+      {undo?.error && <div className="text-[var(--state-overdue)]">{undo.error}</div>}
+      {r && <div className="text-[var(--state-released)]">Undone: {r.drawings} drawing{r.drawings === 1 ? "" : "s"} put back · {r.columnsRestored} equipment columns · {r.edgesRestored + r.edgesRemoved} links · {r.readingsRestored} readings · {r.assetsRemoved} registry items removed{r.assetsKept.length ? ` · kept ${r.assetsKept.join(", ")} (someone added to them)` : ""}{r.skipped.length ? ` · ${r.skipped.length} left as a person changed them since` : ""}.</div>}
     </div>
   );
 }

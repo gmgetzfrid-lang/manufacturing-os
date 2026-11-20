@@ -209,7 +209,7 @@ export default function GraphShapeWizard({
           {stage !== "thinking" && (
             <>
               {error && (
-                <div className="flex items-start gap-2 text-[13px] border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
+                <div className="flex items-start gap-2 text-[13px] border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
                   <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
                 </div>
               )}
@@ -219,7 +219,7 @@ export default function GraphShapeWizard({
 
               {stage === "done" ? (
                 <div className="py-8 flex flex-col items-center gap-3 text-center">
-                  <CheckCircle2 className="w-9 h-9 text-emerald-600" style={{ animation: "pop 0.3s var(--ease-fluid) both" }} />
+                  <CheckCircle2 className="w-9 h-9 text-[var(--state-released)]" style={{ animation: "pop 0.3s var(--ease-fluid) both" }} />
                   <div className="text-sm font-semibold text-[var(--color-text)]">
                     {written} connection{written === 1 ? "" : "s"} written to the graph
                   </div>

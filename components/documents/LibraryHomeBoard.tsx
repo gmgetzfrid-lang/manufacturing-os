@@ -174,7 +174,7 @@ export default function LibraryHomeBoard({
           </button>
         </div>
       </div>
-      {saveErr && <p role="alert" className="mb-3 border-l-2 border-rose-500 pl-3 text-[13px] text-rose-700 dark:text-rose-300">{saveErr}</p>}
+      {saveErr && <p role="alert" className="mb-3 border-l-2 border-[var(--state-overdue)] pl-3 text-[13px] text-[var(--state-overdue)]">{saveErr}</p>}
 
       {/* add-part palette */}
       <div className="flex flex-wrap gap-1.5 mb-3">

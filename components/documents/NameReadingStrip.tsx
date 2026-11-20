@@ -15,8 +15,8 @@ import { ROLE_LABEL, type NameReading, type NameRole } from "@/lib/filenameRoles
 
 const TONE: Record<NameRole, string> = {
   number: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)] dark:border-[var(--color-border)]",
-  title: "bg-slate-100 text-slate-800 border-slate-200 dark:bg-slate-800/60 dark:text-slate-200 dark:border-slate-700",
-  rev: "bg-emerald-100 text-emerald-900 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-200 dark:border-emerald-900",
+  title: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
+  rev: "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)] border-[color-mix(in_srgb,var(--state-released)_35%,transparent)]",
   sheet: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)] dark:border-[var(--color-border)]",
   date: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)] dark:border-[var(--color-border)]",
   skip: "bg-transparent text-[var(--color-text-faint)] border-dashed border-[var(--color-border)] line-through",
@@ -43,12 +43,12 @@ export default function NameReadingStrip({ readings, onChange }: {
   const shown = unsure > 0 || open ? groups.filter((g) => open || g.unsure > 0).slice(0, 6) : groups.slice(0, 1);
 
   return (
-    <div className={`mb-3 rounded-xl border px-3 py-2 text-[13px] ${unsure ? "border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20" : "border-[var(--color-border)] bg-[var(--color-surface-2)]/40"}`}>
+    <div className={`mb-3 rounded-xl border px-3 py-2 text-[13px] ${unsure ? "border-[color-mix(in_srgb,var(--state-held)_40%,transparent)] bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)]" : "border-[var(--color-border)] bg-[var(--color-surface-2)]/40"}`}>
       <div className="flex items-center gap-1.5 text-[var(--color-text-muted)]">
-        {unsure ? <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" /> : <Wand2 className="w-3.5 h-3.5 shrink-0" />}
+        {unsure ? <AlertTriangle className="w-3.5 h-3.5 text-[var(--state-held)] shrink-0" /> : <Wand2 className="w-3.5 h-3.5 shrink-0" />}
         <span className="flex-1">
           {unsure
-            ? <><b className="text-amber-900 dark:text-amber-200">Part of {unsure} file name{unsure === 1 ? "" : "s"} could be read two ways.</b> Pick what the highlighted piece is, it applies to every file named the same way, and is remembered for this library.</>
+            ? <><b className="text-[var(--state-held)]">Part of {unsure} file name{unsure === 1 ? "" : "s"} could be read two ways.</b> Pick what the highlighted piece is, it applies to every file named the same way, and is remembered for this library.</>
             : <>File names read as{groups.length > 1 ? ` (${groups.length} naming patterns)` : ""} - click a piece to change what it is.</>}
         </span>
         {groups.length > 1 && (
@@ -61,7 +61,7 @@ export default function NameReadingStrip({ readings, onChange }: {
         {shown.map((g) => (
           <div key={g.shape} className="flex items-center gap-1 flex-wrap">
             {g.example.parts.map((p, i) => (
-              <label key={i} className={`relative inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 ${TONE[p.role]} ${p.sure ? "" : "ring-2 ring-amber-400"}`} title={`“${p.text}” is read as ${ROLE_LABEL[p.role]}`}>
+              <label key={i} className={`relative inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 ${TONE[p.role]} ${p.sure ? "" : "ring-2 ring-[var(--state-held)]"}`} title={`“${p.text}” is read as ${ROLE_LABEL[p.role]}`}>
                 <span className="font-display tabular-nums">{p.text}</span>
                 <span className="text-[13px] font-semibold opacity-70">{ROLE_LABEL[p.role]}</span>
                 <select

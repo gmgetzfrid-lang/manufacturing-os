@@ -87,9 +87,9 @@ export default function AiBoundaryChip({
         ? "Held back from AI: this document is inside an indexed source, but excluded - it is not mirrored, chunked, or retrievable in answers."
         : "AI-readable: this document is inside an indexed knowledge source and can be cited in answers." +
           (canManage ? " Click to hold it back." : "")}
-      className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-bold transition-colors ${
+      className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[13px] font-bold transition-colors ${
         excluded
-          ? "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
+          ? "bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] text-[var(--state-held)]"
           : "bg-[var(--color-surface-2)] text-[var(--color-text)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)]"
       } ${canManage ? "hover:opacity-80 cursor-pointer" : "cursor-default"}`}
     >
@@ -97,7 +97,7 @@ export default function AiBoundaryChip({
         : excluded ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
       {excluded ? "Held from AI" : "AI-readable"}
     </button>
-    {failed && <span className="text-[13px] font-bold text-rose-600" title={failed}>failed</span>}
+    {failed && <span className="text-[13px] font-bold text-[var(--state-overdue)]" title={failed}>failed</span>}
     </span>
   );
 }

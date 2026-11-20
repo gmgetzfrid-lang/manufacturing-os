@@ -69,7 +69,7 @@ export default function OriginSection({ doc, orgId, canManage }: {
       </div>
 
       {loading ? (
-        <div className="flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading…</div>
+        <div className="flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading…</div>
       ) : editing ? (
         <div className="space-y-2">
           <div className="flex gap-1">
@@ -87,7 +87,7 @@ export default function OriginSection({ doc, orgId, canManage }: {
           )}
           <div className="flex justify-end gap-2">
             <button onClick={() => { setEditing(false); void load(); }} className="px-2.5 py-1.5 rounded-lg text-[13px] font-bold text-[var(--color-text-muted)]">Cancel</button>
-            <button onClick={() => void save()} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[11px] font-bold disabled:opacity-50">{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Save</button>
+            <button onClick={() => void save()} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[13px] font-bold disabled:opacity-50">{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Save</button>
           </div>
         </div>
       ) : origin === "external" && (edition || url) ? (

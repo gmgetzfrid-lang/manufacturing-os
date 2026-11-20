@@ -319,7 +319,7 @@ function ToolsTurn({ m, payload, actions, onConfirm, latest }: {
               </span>
             )}
             {payload.stoppedBecause && (
-              <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]"><span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-held)]" />Stopped early: {payload.stoppedBecause}</span>
+              <span className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[13px] font-semibold whitespace-nowrap leading-[18px] bg-[color-mix(in_srgb,var(--state-held)_16%,transparent)] text-[var(--state-held)]">Stopped early: {payload.stoppedBecause}</span>
             )}
             <span className="ml-auto inline-flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]">
               {payload.model}

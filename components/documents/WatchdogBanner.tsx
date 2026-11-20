@@ -18,7 +18,7 @@ export default function WatchdogBanner({ suggestions, busyId, onLink, onDismiss,
   return (
     <section className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] px-4 sm:px-5 py-3">
       <div className="py-1 flex items-center justify-between gap-3">
-        <h2 className="text-[14px] font-bold text-[var(--color-text)] inline-flex items-center gap-2"><ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" /> {suggestions.length === 1 ? "This looks like it belongs somewhere else" : `${suggestions.length} of these look like they belong somewhere else`}</h2>
+        <h2 className="text-[14px] font-bold text-[var(--color-text)] inline-flex items-center gap-2"><ShieldAlert className="w-4 h-4 text-[var(--state-held)] shrink-0" /> {suggestions.length === 1 ? "This looks like it belongs somewhere else" : `${suggestions.length} of these look like they belong somewhere else`}</h2>
         <button aria-label="Dismiss" onClick={onClose} className="p-1 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)]" title="Dismiss"><X className="w-4 h-4" /></button>
       </div>
       <ul className="divide-y divide-[var(--color-border)]">

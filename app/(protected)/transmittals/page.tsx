@@ -586,7 +586,7 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
                     <span className="font-display tabular-nums text-[13px] font-bold text-[var(--color-text)]">{it.number}</span>
                     {it.rev && <span className="text-[13px] font-bold bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-muted)] px-1 rounded">R{it.rev}</span>}
                     {it.title && it.title !== it.number && <span className="text-[13px] text-[var(--color-text-muted)] truncate">{it.title}</span>}
-                    <button aria-label="Remove" onClick={() => removeItem(it.documentId)} className="ml-auto text-[var(--color-text-faint)] hover:text-rose-600 transition-colors"><X className="w-3.5 h-3.5" /></button>
+                    <button aria-label="Remove" onClick={() => removeItem(it.documentId)} className="ml-auto text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] transition-colors"><X className="w-3.5 h-3.5" /></button>
                   </li>
                 ))}
               </ul>

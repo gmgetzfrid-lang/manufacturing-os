@@ -535,9 +535,9 @@ export default function CheckInPanel({
   return (
     <div className="space-y-4">
       <h3 className="text-sm font-bold text-[var(--color-text)] flex items-center">
-        <CheckCircle2 className="w-4 h-4 mr-2 text-green-600" /> You are checked out
+        <CheckCircle2 className="w-4 h-4 mr-2 text-[var(--state-released)]" /> You are checked out
         {mySession.purpose && (
-          <span className="ml-2 text-[11px] font-bold px-2 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)]">
+          <span className="ml-2 text-[13px] font-bold px-2 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)]">
             {mySession.purpose}
           </span>
         )}
@@ -591,7 +591,7 @@ export default function CheckInPanel({
       {selected?.moc === "required" && (
         <div className="space-y-1.5 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-2.5">
           <div className="text-[13px] font-semibold text-[var(--color-text-muted)] ">
-            Management of Change <span className="text-rose-500">*</span>
+            Management of Change <span className="text-[var(--state-overdue)]">*</span>
           </div>
           <div className="flex bg-[var(--color-surface)] p-1 rounded-md border border-[var(--color-border)]">
             {MOC_STATES.map((opt) => (
@@ -615,7 +615,7 @@ export default function CheckInPanel({
             />
           )}
           {mocStatus === "none" && (
-            <p className="flex items-start gap-1.5 border-l-2 border-amber-500 pl-2 text-[13px] text-amber-800 dark:text-amber-300">
+            <p className="flex items-start gap-1.5 border-l-2 border-[var(--state-held)] pl-2 text-[13px] text-[var(--state-held)]">
               <ShieldAlert className="w-3.5 h-3.5 shrink-0 mt-0.5" />
               <span>
                 This goes to Document Control flagged as an <b>undocumented field change</b>. Reporting it is right: it is never blocked.
@@ -641,7 +641,7 @@ export default function CheckInPanel({
             type="button"
             {...fileDrag.bind}
             onClick={() => fileInputRef.current?.click()}
-            className={`w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-dashed border-[var(--color-border-strong)] text-[13px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-slate-400 transition-colors ${fileDrag.ring}`}
+            className={`w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-dashed border-[var(--color-border-strong)] text-[13px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] transition-colors ${fileDrag.ring}`}
           >
             <Upload className="w-3.5 h-3.5" /> {fileDrag.over ? fileDrag.say : "Drop or attach redline photos or marked-up files"}
           </button>
@@ -657,8 +657,8 @@ export default function CheckInPanel({
                       <span className="block">
                         {formatSize(f.size)}
                         {st?.s === "up" && <> · <Loader2 className="inline w-3 h-3 animate-spin" /> Uploading…</>}
-                        {st?.s === "done" && <span className="text-emerald-700 dark:text-emerald-400"> · <Check className="inline w-3 h-3" /> Uploaded</span>}
-                        {st?.s === "failed" && <span className="text-rose-700 dark:text-rose-300"> · Didn&apos;t upload{st.error ? `: ${st.error}` : ""}</span>}
+                        {st?.s === "done" && <span className="text-[var(--state-released)]"> · <Check className="inline w-3 h-3" /> Uploaded</span>}
+                        {st?.s === "failed" && <span className="text-[var(--state-overdue)]"> · Didn&apos;t upload{st.error ? `: ${st.error}` : ""}</span>}
                       </span>
                     </span>
                     {st?.s === "failed" && ticketNoRef.current && (

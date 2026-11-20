@@ -136,11 +136,11 @@ export default function RetentionSection({ doc, orgId, canManage }: {
       </div>
 
       {loading ? (
-        <div className="flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading retention…</div>
+        <div className="flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading retention…</div>
       ) : (
         <>
           {hold.on && (
-            <div className="text-[13px] text-rose-700 dark:text-rose-300">
+            <div className="text-[13px] text-[var(--state-overdue)]">
               <div className="flex items-center gap-1.5 font-bold"><ShieldAlert className="w-3.5 h-3.5" /> Legal hold{hold.matter ? `: ${hold.matter}` : ""}</div>
               {hold.reason && <div className="mt-0.5">{hold.reason}</div>}
               <div className="mt-0.5">It can&apos;t be deleted or disposed of until the hold is released.</div>
@@ -156,12 +156,12 @@ export default function RetentionSection({ doc, orgId, canManage }: {
           {canManage && mode === "view" && (
             <div className="flex flex-wrap items-center gap-2 pt-1">
               {hold.on
-                ? <button onClick={() => void release()} disabled={busy} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] text-[11px] font-bold hover:bg-[var(--color-surface-2)]"><Unlock className="w-3.5 h-3.5" /> Release hold</button>
-                : <button onClick={() => void placeHold()} disabled={busy} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-red-300 text-red-700 text-[11px] font-bold hover:bg-red-50"><Lock className="w-3.5 h-3.5" /> Legal hold</button>}
+                ? <button onClick={() => void release()} disabled={busy} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] text-[13px] font-bold hover:bg-[var(--color-surface-2)]"><Unlock className="w-3.5 h-3.5" /> Release hold</button>
+                : <button onClick={() => void placeHold()} disabled={busy} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] text-[var(--state-overdue)] text-[13px] font-bold hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)]"><Lock className="w-3.5 h-3.5" /> Legal hold</button>}
               {eligible && !hold.on && (
-                <button onClick={() => void dispose()} disabled={busy} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[11px] font-bold"><Archive className="w-3.5 h-3.5" /> Dispose</button>
+                <button onClick={() => void dispose()} disabled={busy} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[13px] font-bold"><Archive className="w-3.5 h-3.5" /> Dispose</button>
               )}
-              <button onClick={beginEdit} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] text-[11px] font-bold hover:bg-[var(--color-surface-2)]"><Pencil className="w-3.5 h-3.5" /> {eff ? "Edit" : "Set policy"}</button>
+              <button onClick={beginEdit} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] text-[13px] font-bold hover:bg-[var(--color-surface-2)]"><Pencil className="w-3.5 h-3.5" /> {eff ? "Edit" : "Set policy"}</button>
             </div>
           )}
 
@@ -193,10 +193,10 @@ export default function RetentionSection({ doc, orgId, canManage }: {
                 </div>
               )}
               <div className="flex justify-between gap-2 pt-1">
-                <button onClick={() => void clearPolicy()} disabled={busy} className="px-2.5 py-1.5 rounded-lg text-[13px] font-bold text-red-600 hover:bg-red-50 disabled:opacity-50">Remove</button>
+                <button onClick={() => void clearPolicy()} disabled={busy} className="px-2.5 py-1.5 rounded-lg text-[13px] font-bold text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] disabled:opacity-50">Remove</button>
                 <div className="flex gap-2">
                   <button onClick={() => setMode("view")} className="px-2.5 py-1.5 rounded-lg text-[13px] font-bold text-[var(--color-text-muted)]">Cancel</button>
-                  <button onClick={() => void saveEdit()} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[11px] font-bold disabled:opacity-50">{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Save</button>
+                  <button onClick={() => void saveEdit()} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[13px] font-bold disabled:opacity-50">{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Save</button>
                 </div>
               </div>
             </div>

@@ -23,8 +23,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import {
-  BrainCircuit, Loader2, AlertTriangle, Check, ChevronRight, X, Sparkles,
-  FolderOpen, BookOpen, RefreshCw, Plus, Trash2, FileText, ExternalLink,
+  Loader2, Check, ChevronRight, X,
+  FolderOpen, BookOpen, RefreshCw, Plus, Trash2, ExternalLink,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
@@ -32,6 +32,9 @@ import {
   removeKnowledgeSource, browseKnowledgeContainers, type SourceBrowseResult,
 } from "@/lib/knowledge";
 import { listProcessFlows } from "@/lib/processFlows";
+import { sheet, btnQuiet, btnRow, btnIcon, btnPrimary, link, label, fieldBox } from "@/components/admin/kit";
+import { StatusTag } from "@/components/documents/StatusTag";
+import { Note, Cells } from "@/components/knowledge/panelKit";
 
 /** Bind the area server-side — the same controller bar as every other
  *  knowledge mutation, and a denied write is a loud error, never a silent
@@ -210,154 +213,138 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
     children: React.ReactNode;
     action?: React.ReactNode;
   }) => (
-    <div className="flex items-start gap-3 py-2.5">
-      <span className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-[11px] font-semibold mt-0.5 ${
-        state === "done" ? "bg-emerald-500 text-white"
-        : state === "review" ? "bg-amber-400 text-amber-950"
-        : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border border-[var(--color-border-strong)]"
+    <li className="flex flex-wrap sm:flex-nowrap items-start gap-x-3 gap-y-2 px-4 sm:px-5 py-3">
+      <span aria-hidden className={`w-6 h-6 rounded-full grid place-items-center shrink-0 font-display text-[13px] font-semibold mt-0.5 ${
+        state === "done" ? "bg-[var(--state-released)] text-white"
+        : state === "review" ? "bg-[var(--state-held)] text-white"
+        : "text-[var(--color-text-muted)] border-2 border-[var(--color-border-strong)]"
       }`}>
         {state === "done" ? <Check className="w-3.5 h-3.5" /> : state === "loading" ? <Loader2 className="w-3 h-3 animate-spin" /> : n}
       </span>
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 basis-[220px]">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[13px] font-semibold text-[var(--color-text)]">{title}</span>
-          {state === "review" && (
-            <span className="text-[13px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">
-              needs review
-            </span>
-          )}
+          <span className="text-[15px] font-semibold text-[var(--color-text)]">{title}</span>
+          {state === "done" && <span className="sr-only">(done)</span>}
+          {state === "review" && <StatusTag tone="warn">Needs review</StatusTag>}
         </div>
-        <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{children}</div>
+        <div className="text-[14px] text-[var(--color-text-muted)] mt-0.5">{children}</div>
       </div>
-      {action && <div className="shrink-0 mt-0.5">{action}</div>}
-    </div>
+      {action && <div className="shrink-0 max-sm:pl-9">{action}</div>}
+    </li>
   );
 
   return (
-    <section className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] p-4 sm:p-5"
-      style={{ animation: "rise 0.4s var(--ease-fluid) both" }}>
-      <div className="flex items-center gap-2.5 mb-1">
-        <span className="w-8 h-8 rounded-[10px] bg-[var(--color-surface-2)] flex items-center justify-center shrink-0">
-          <BrainCircuit className="w-4 h-4 text-[var(--color-text-muted)]" />
-        </span>
-        <div className="flex-1 min-w-0">
-          <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)]">This area&apos;s knowledge</h2>
-          <div className="text-[13px] text-[var(--color-text-muted)]">
-            {status?.boundLibrary ? (
-              <>
-                Backed by <Link href={`/knowledge/${status.boundLibrary.id}`} className="text-[var(--color-accent-text)] dark:text-[var(--color-text)] hover:underline">{status.boundLibrary.name}</Link>
-                {" · "}{status.counts.ready} readable{status.counts.pending > 0 ? ` · ${status.counts.pending} indexing` : ""}
-                {" · "}{status.sources.length} watched source{status.sources.length === 1 ? "" : "s"}
-              </>
-            ) : "Four steps to set up this area. Each one shows where it stands."}
-          </div>
-        </div>
+    <section className="min-w-0">
+      <div className="flex flex-wrap items-end gap-x-3 gap-y-2 mb-2.5 min-h-8">
+        <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">This area&apos;s knowledge</h2>
+        <div className="flex-1" />
         {status?.boundLibrary && status.canManage && (
-          <button type="button" onClick={() => void syncNow()} disabled={syncing}
-            className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] disabled:opacity-50 shrink-0">
-            <RefreshCw className={`w-3 h-3 ${syncing ? "animate-spin" : ""}`} /> Sync
+          <button type="button" onClick={() => void syncNow()} disabled={syncing} className={btnQuiet}>
+            <RefreshCw className={`w-4 h-4 ${syncing ? "animate-spin" : ""}`} /> Sync now
           </button>
         )}
       </div>
 
-      {error && (
-        <p role="alert" className="mt-1 flex items-start gap-2 border-l-2 border-rose-500 pl-2.5 text-[13px] text-rose-700 dark:text-rose-300">
-          <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-          <span>Couldn&apos;t load this area&apos;s knowledge: {error} <button type="button" onClick={() => void loadStatus()} className="font-bold underline">Try again</button></span>
-        </p>
-      )}
-      {note && (
-        <p role={note.bad ? "alert" : "status"} className={`mt-1 border-l-2 pl-2.5 text-[13px] font-bold ${note.bad ? "border-rose-500 text-rose-700 dark:text-rose-300" : "border-emerald-500 text-emerald-700 dark:text-emerald-300"}`}>
-          {note.text}
-        </p>
-      )}
-      {countsFailed && (
-        <p className="mt-1 border-l-2 border-amber-500 pl-2.5 text-[13px] text-amber-800 dark:text-amber-300">
-          Couldn&apos;t count every link and marker, so the numbers in step 3 may be low.
-        </p>
-      )}
-
-      {/* Drift — doc control was reorganized after linking. Said HERE, on
-          open, with the fix one click away — never a silent sync surprise. */}
-      {hasDrift && drift && (
-        <div className="mt-2 border-l-2 border-amber-500 pl-3 py-0.5 space-y-1.5 text-[13px] text-amber-900 dark:text-amber-300">
-          <div className="font-semibold flex items-center gap-1.5">
-            <AlertTriangle className="w-3.5 h-3.5" /> Document control changed since this area was linked
+      <div className={`${sheet} overflow-hidden`}>
+        {status?.boundLibrary && (
+          <div className="border-b border-[var(--color-border)]">
+            <Cells size="sm" cells={[
+              { label: "Knowledge library", value: <Link href={`/knowledge/${status.boundLibrary.id}`} className="text-[var(--color-accent-text)] hover:underline underline-offset-2 break-words">{status.boundLibrary.name}</Link> },
+              { label: "Readable", value: status.counts.ready.toLocaleString() },
+              { label: "Indexing", value: status.counts.pending.toLocaleString() },
+              { label: "Watched sources", value: status.sources.length.toLocaleString() },
+            ]} />
           </div>
-          {drift.deadSources.map((s) => (
-            <div key={s.id} className="flex items-center gap-2">
-              <span className="flex-1 min-w-0 truncate">Watched folder no longer exists: <b>{s.sourceName}</b></span>
-              {status?.canManage && (
-                <button type="button" onClick={() => void dropDeadSource(s.id)} disabled={syncing}
-                  className="inline-flex items-center gap-1 text-[13px] font-semibold px-2 py-0.5 rounded-md border border-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/50 disabled:opacity-50">
-                  <Trash2 className="w-3 h-3" /> Remove link
-                </button>
-              )}
-            </div>
-          ))}
-          {drift.movedOutTotal > 0 && (
-            <div>
-              {drift.movedOutTotal} document{drift.movedOutTotal === 1 ? " was" : "s were"} moved out of the
-              watched folders ({drift.movedOut.slice(0, 3).map((d) => d.name).join(", ")}
-              {drift.movedOutTotal > 3 ? "…" : ""}). The next sync will drop {drift.movedOutTotal === 1 ? "it" : "them"} from
-              this area&apos;s knowledge. Link {drift.movedOutTotal === 1 ? "its" : "their"} new folder below to keep {drift.movedOutTotal === 1 ? "it" : "them"}.
-            </div>
-          )}
-          {drift.newMatches.map((f) => (
-            <div key={f.id} className="flex items-center gap-2">
-              <FolderOpen className="w-3 h-3 shrink-0" />
-              <span className="flex-1 min-w-0 truncate">
-                New folder looks like this area&apos;s: <b>{f.libraryName} / {f.pathNames.join(" / ")}</b> · {f.docCount} doc{f.docCount === 1 ? "" : "s"}
-              </span>
-              {status?.canManage && (
-                <button type="button" onClick={() => void linkNewMatch(f.id, f.name)} disabled={syncing}
-                  className="inline-flex items-center gap-1 text-[13px] font-semibold px-2 py-0.5 rounded-md border border-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/50 disabled:opacity-50">
-                  <Plus className="w-3 h-3" /> Link
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
+        )}
 
-      {/* The order of operations, live. */}
-      <div className="mt-1 divide-y divide-[var(--color-border)]/50">
-        <Step n={1} title="File this area's drawings in Documents"
-          state={status === null ? "loading" : drawingsDone ? "done" : "todo"}>
-          Type-first folders work best: <b>PFDs / {unit.label}</b>, <b>P&amp;IDs / {unit.label}</b>, <b>Plot Plans / {unit.label}</b>.
-          {" "}<Link href="/documents" className="font-bold text-[var(--color-text)] underline underline-offset-2">Open Documents <ExternalLink className="w-2.5 h-2.5 inline" /></Link>
-        </Step>
-        <Step n={2} title="Connect the area's knowledge"
-          state={status === null ? "loading" : knowledgeDone ? "done" : needsReview ? "review" : "todo"}
-          action={status?.canManage ? (
-            <button type="button" onClick={() => setWizardOpen(true)}
-              className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[13px] font-bold">
-              {status?.boundLibrary ? "Review links" : "Set up"} <ChevronRight className="w-3 h-3" />
-            </button>
-          ) : undefined}>
-          {status?.boundLibrary
-            ? <>Watching {status.sources.length} source{status.sources.length === 1 ? "" : "s"}. New files, revisions, and removals inside them track automatically.</>
-            : <>One library per area, so asking about {unit.label} only finds its own drawings. Setup finds this area&apos;s folders for you.</>}
-        </Step>
-        <Step n={3} title="Deep read the drawings"
-          state={status === null || flowCount === null ? "loading" : (flowCount > 0 ? "done" : "todo")}
-          action={
-            <button type="button" onClick={scrollToFlows}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)]">
-              Read flows <ChevronRight className="w-3 h-3" />
-            </button>
-          }>
-          <span className="inline-flex items-center gap-2 flex-wrap">
-            <span><b>{flowCount ?? "…"}</b> process flow{flowCount === 1 ? "" : "s"}</span>
-            <span>· <b>{docLinkCount ?? "…"}</b> linked document{docLinkCount === 1 ? "" : "s"}</span>
-            <span>· <b>{plotMarkCount ?? "…"}</b> plot marker{plotMarkCount === 1 ? "" : "s"}</span>
-            <Link href="/plot-plans" className="text-[var(--color-accent-text)] dark:text-[var(--color-text)] hover:underline">Plot plans <ExternalLink className="w-2.5 h-2.5 inline" /></Link>
-          </span>
-        </Step>
-        <Step n={4} title="Link equipment files to assets"
-          state={status === null || docLinkCount === null ? "loading" : docLinkCount > 0 ? "done" : "todo"}>
-          Open any asset below → <b>+ Link document</b> attaches its data sheets and files; drawings that print the tag link themselves.
-        </Step>
+        {(error || note || countsFailed || (hasDrift && drift)) && (
+          <div className="border-b border-[var(--color-border)] px-4 sm:px-5 py-3 space-y-2.5">
+            {error && (
+              <Note tone="bad" title="Couldn't load this area's knowledge.">
+                {error} <button type="button" onClick={() => void loadStatus()} className={link}>Try again</button>
+              </Note>
+            )}
+            {note && <Note tone={note.bad ? "bad" : "good"} title={note.text} />}
+            {countsFailed && <Note tone="warn" title="Some links and markers weren't counted.">The numbers in step 3 may be low.</Note>}
+
+            {/* Drift: doc control was reorganized after linking. Said HERE,
+                on open, with the fix one click away; never a silent sync surprise. */}
+            {hasDrift && drift && (
+              <Note tone="warn" title="Document control changed since this area was linked">
+                <ul className="mt-1 space-y-1.5">
+                  {drift.deadSources.map((s) => (
+                    <li key={s.id} className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <span className="flex-1 min-w-0">Watched folder no longer exists: <span className="font-semibold text-[var(--color-text)]">{s.sourceName}</span></span>
+                      {status?.canManage && (
+                        <button type="button" onClick={() => void dropDeadSource(s.id)} disabled={syncing} className={btnRow}>
+                          <Trash2 className="w-3.5 h-3.5" /> Remove link
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                  {drift.movedOutTotal > 0 && (
+                    <li>
+                      {drift.movedOutTotal} document{drift.movedOutTotal === 1 ? " was" : "s were"} moved out of the watched folders
+                      {" "}({drift.movedOut.slice(0, 3).map((d) => d.name).join(", ")}{drift.movedOutTotal > 3 ? "…" : ""}).
+                      {" "}The next sync drops {drift.movedOutTotal === 1 ? "it" : "them"}; link the new folder to keep {drift.movedOutTotal === 1 ? "it" : "them"}.
+                    </li>
+                  )}
+                  {drift.newMatches.map((f) => (
+                    <li key={f.id} className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <span className="flex-1 min-w-0">
+                        New folder looks like this area&apos;s: <span className="font-semibold text-[var(--color-text)]">{f.libraryName} / {f.pathNames.join(" / ")}</span>
+                        <span className="tabular-nums"> ({f.docCount} doc{f.docCount === 1 ? "" : "s"})</span>
+                      </span>
+                      {status?.canManage && (
+                        <button type="button" onClick={() => void linkNewMatch(f.id, f.name)} disabled={syncing} className={btnRow}>
+                          <Plus className="w-3.5 h-3.5" /> Link
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </Note>
+            )}
+          </div>
+        )}
+
+        {/* The order of operations, live. */}
+        <ol className="divide-y divide-[var(--color-border)]">
+          <Step n={1} title="File this area's drawings in Documents"
+            state={status === null ? "loading" : drawingsDone ? "done" : "todo"}
+            action={<Link href="/documents" className={`${btnRow} no-underline`}>Open Documents <ExternalLink className="w-3.5 h-3.5" /></Link>}>
+            Type-first folders work best: PFDs / {unit.label}, P&amp;IDs / {unit.label}, Plot Plans / {unit.label}.
+          </Step>
+          <Step n={2} title="Connect the area's knowledge"
+            state={status === null ? "loading" : knowledgeDone ? "done" : needsReview ? "review" : "todo"}
+            action={status?.canManage ? (
+              <button type="button" onClick={() => setWizardOpen(true)} className={btnRow}>
+                {status?.boundLibrary ? "Review links" : "Set up"} <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            ) : undefined}>
+            {status?.boundLibrary
+              ? <>Watching {status.sources.length} source{status.sources.length === 1 ? "" : "s"}. New files, revisions and removals track automatically.</>
+              : <>One library per area, so asking about {unit.label} finds only its own drawings. Setup finds the folders for you.</>}
+          </Step>
+          <Step n={3} title="Deep read the drawings"
+            state={status === null || flowCount === null ? "loading" : (flowCount > 0 ? "done" : "todo")}
+            action={
+              <button type="button" onClick={scrollToFlows} className={btnRow}>
+                Read flows <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            }>
+            <span className="inline-flex items-center gap-x-4 gap-y-0.5 flex-wrap">
+              <span><span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{flowCount ?? "…"}</span> process flow{flowCount === 1 ? "" : "s"}</span>
+              <span><span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{docLinkCount ?? "…"}</span> linked document{docLinkCount === 1 ? "" : "s"}</span>
+              <span><span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{plotMarkCount ?? "…"}</span> plot marker{plotMarkCount === 1 ? "" : "s"}</span>
+              <Link href="/plot-plans" className={link}>Plot plans</Link>
+            </span>
+          </Step>
+          <Step n={4} title="Link equipment files to assets"
+            state={status === null || docLinkCount === null ? "loading" : docLinkCount > 0 ? "done" : "todo"}>
+            Open an asset below and use Link document for its data sheets; drawings that print the tag link themselves.
+          </Step>
+        </ol>
       </div>
 
       {wizardOpen && status && (
@@ -518,44 +505,39 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
     <div role="dialog" aria-modal="true" className="fixed inset-0 z-[700] flex items-start justify-center bg-[var(--color-ink)]/60 pt-[6vh] p-4 overscroll-contain" onClick={onClose}>
       <div className="w-full max-w-lg max-h-[86vh] flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)] shrink-0">
-          <Sparkles className="w-4 h-4 text-[var(--color-text-muted)]" />
-          <div className="flex-1">
-            <div className="text-sm font-semibold text-[var(--color-text)]">
+        <div className="flex items-start gap-2 px-5 py-4 border-b border-[var(--color-border)] shrink-0">
+          <div className="flex-1 min-w-0">
+            <h2 className="font-display text-[19px] font-semibold text-[var(--color-text)]">
               {bound ? `Review ${unit.label}'s knowledge` : `Set up ${unit.label}'s knowledge`}
-            </div>
-            <div className="text-[13px] text-[var(--color-text-muted)]">
-              Pick the folders the AI should watch for this area. Folders matching
-              &ldquo;{unit.label}&rdquo; or code {unit.code} are pre-checked.
-            </div>
+            </h2>
+            <p className="text-[14px] text-[var(--color-text-muted)]">
+              Pick the folders to watch. Folders matching &ldquo;{unit.label}&rdquo; or {unit.code} are checked for you.
+            </p>
           </div>
-          <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
+          <button type="button" onClick={onClose} aria-label="Close" className={btnIcon}>
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
+        <div className="flex-1 overflow-y-auto p-5 space-y-5 min-h-0">
           {/* The area's library */}
           <div>
-            <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">
-              This area&apos;s knowledge library
-            </div>
-            <div className="space-y-1">
+            <div className={label}>This area&apos;s knowledge library</div>
+            <div className="rounded-md border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
               {status.knowledgeLibraries.map((l) => (
-                <label key={l.id} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-border)] cursor-pointer">
-                  <input type="radio" name="area-kl" checked={libChoice === l.id} onChange={() => setLibChoice(l.id)} />
-                  <BookOpen className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-                  <span className="text-[13px] font-bold text-[var(--color-text)]">{l.name}</span>
-                  {bound?.id === l.id && (
-                    <span className="text-[13px] font-semibold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]">current</span>
-                  )}
+                <label key={l.id} className="flex items-center gap-2.5 px-3 min-h-10 hover:bg-[var(--color-surface-2)] cursor-pointer">
+                  <input type="radio" name="area-kl" checked={libChoice === l.id} onChange={() => setLibChoice(l.id)} className="accent-[var(--color-accent)]" />
+                  <BookOpen className="w-4 h-4 text-[var(--color-text-muted)]" />
+                  <span className="text-[15px] font-semibold text-[var(--color-text)] flex-1 min-w-0 truncate">{l.name}</span>
+                  {bound?.id === l.id && <StatusTag tone="none">Current</StatusTag>}
                 </label>
               ))}
-              <label className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-border)] cursor-pointer">
-                <input type="radio" name="area-kl" checked={libChoice === "__new"} onChange={() => setLibChoice("__new")} />
-                <Plus className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
+              <label className="flex items-center gap-2.5 px-3 py-2 hover:bg-[var(--color-surface-2)] cursor-pointer">
+                <input type="radio" name="area-kl" checked={libChoice === "__new"} onChange={() => setLibChoice("__new")} className="accent-[var(--color-accent)]" />
+                <Plus className="w-4 h-4 text-[var(--color-text-muted)]" />
                 <input value={newName} onChange={(e) => { setNewName(e.target.value); setLibChoice("__new"); }}
-                  className="flex-1 px-2 py-1 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[13px] font-bold"
+                  aria-label="New library name"
+                  className={`flex-1 min-w-0 h-9 text-[14px] ${fieldBox}`}
                   placeholder={`${unit.label} Knowledge`} />
               </label>
             </div>
@@ -564,31 +546,27 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
           {/* Already watched (review mode) */}
           {status.sources.length > 0 && (
             <div>
-              <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">
-                Already watched
-              </div>
-              <div className="space-y-1">
+              <div className={label}>Already watched</div>
+              <ul className="rounded-md border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
                 {status.sources.map((s) => (
-                  <div key={s.id} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)]">
-                    <Check className="w-3 h-3 text-emerald-600 shrink-0" />
-                    <span className="flex-1 min-w-0 truncate font-bold">{s.name}</span>
-                    <span className="text-[13px] font-semibold">{s.type}</span>
-                  </div>
+                  <li key={s.id} className="flex items-center gap-2.5 px-3 min-h-10 text-[14px]">
+                    <Check className="w-4 h-4 text-[var(--state-released)] shrink-0" />
+                    <span className="flex-1 min-w-0 truncate font-semibold text-[var(--color-text)]">{s.name}</span>
+                    <span className="text-[13px] text-[var(--color-text-muted)]">{s.type === "library" ? "Whole library" : "Folder"}</span>
+                  </li>
                 ))}
-              </div>
+              </ul>
             </div>
           )}
 
           {/* Folder picker, grouped by DC library, suggestions pre-checked */}
           <div>
-            <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">
-              Watch these document-control folders
-            </div>
+            <div className={label}>Watch these folders</div>
             {browse === null ? (
-              <div className="flex justify-center items-center gap-2 py-4 text-[11px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Loading folders…</div>
+              <div className="flex items-center gap-2 py-3 text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Loading folders…</div>
             ) : foldersByLib.length === 0 ? (
-              <div className="text-[13px] text-[var(--color-text-muted)]">
-                No document libraries yet. <Link href="/documents" className="font-bold underline">create them in Documents</Link> first.
+              <div className="text-[14px] text-[var(--color-text-muted)]">
+                No document libraries yet. <Link href="/documents" className={link}>Make them in Documents</Link> first.
               </div>
             ) : (
               <div className="space-y-2.5">
@@ -596,39 +574,37 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
                   const libWatched = watchedIds.has(libId);
                   return (
                   <div key={libId}>
-                    <label className={`flex items-center gap-2 text-[13px] font-semibold text-[var(--color-text)] cursor-pointer ${libWatched ? "opacity-50" : ""}`}>
+                    <label className={`flex items-center gap-2.5 min-h-9 text-[15px] font-semibold text-[var(--color-text)] cursor-pointer ${libWatched ? "opacity-50" : ""}`}>
                       <input type="checkbox" disabled={libWatched}
                         checked={libWatched || checked.has(`library:${libId}`)}
-                        onChange={() => toggle(`library:${libId}`)} />
-                      <FolderOpen className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {g.libraryName}
-                      <span className="text-[13px] font-bold text-[var(--color-text-faint)] normal-case">
-                        {libWatched ? "(whole library, already watched)" : "(whole library)"}
+                        onChange={() => toggle(`library:${libId}`)} className="w-4 h-4 accent-[var(--color-accent)]" />
+                      <FolderOpen className="w-4 h-4 text-[var(--color-text-muted)]" /> {g.libraryName}
+                      <span className="text-[13px] font-normal text-[var(--color-text-muted)]">
+                        {libWatched ? "Whole library, already watched" : "Whole library"}
                       </span>
                     </label>
-                    <div className="ml-5 mt-1 space-y-0.5">
+                    <div className="ml-6 border-l border-[var(--color-border)] pl-3">
                       {g.folders.map((f) => {
                         // Watched by ID — folder renames must not resurrect a
                         // linked folder as "unwatched". A whole-library watch
                         // covers every folder inside it.
                         const watched = libWatched || watchedIds.has(f.id);
                         return (
-                          <label key={f.id} className={`flex items-center gap-2 text-[13px] cursor-pointer ${watched ? "opacity-50" : ""}`}>
+                          <label key={f.id} className={`flex items-center gap-2.5 min-h-8 text-[14px] cursor-pointer ${watched ? "opacity-50" : ""}`}>
                             <input type="checkbox" disabled={watched}
                               checked={watched || checked.has(`folder:${f.id}`)}
-                              onChange={() => toggle(`folder:${f.id}`)} />
+                              onChange={() => toggle(`folder:${f.id}`)} className="w-4 h-4 accent-[var(--color-accent)]" />
                             <span className="truncate text-[var(--color-text)]" style={{ paddingLeft: Math.max(0, f.pathNames.length - 1) * 10 }}>
                               {f.name}
                             </span>
                             {suggestedIds.has(f.id) && !watched && (
-                              <span className="text-[13px] font-semibold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]">
-                                suggested
-                              </span>
+                              <StatusTag tone="none">Suggested</StatusTag>
                             )}
                           </label>
                         );
                       })}
                       {g.folders.length === 0 && (
-                        <div className="text-[13px] text-[var(--color-text-faint)]">No folders. Link the whole library above.</div>
+                        <div className="text-[13px] text-[var(--color-text-muted)] py-1">No folders. Link the whole library above.</div>
                       )}
                     </div>
                   </div>
@@ -639,22 +615,19 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
           </div>
 
           {error && (
-            <p role="alert" className="flex items-start gap-2 border-l-2 border-rose-500 pl-2.5 text-[13px] text-rose-700 dark:text-rose-300">
-              <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
-            </p>
+            <Note tone="bad" title="Couldn't connect the area.">{error}</Note>
           )}
         </div>
 
-        <div className="px-4 py-3 border-t border-[var(--color-border)] shrink-0 flex items-center gap-2">
-          <span className="flex-1 text-[13px] text-[var(--color-text-muted)]">
-            <FileText className="w-3 h-3 inline mr-1" />
-            New files, revisions, and deletions inside watched folders sync automatically.
+        <div className="px-5 py-4 border-t border-[var(--color-border)] shrink-0 flex flex-wrap items-center gap-2">
+          <span className="flex-1 basis-[200px] text-[13px] text-[var(--color-text-muted)]">
+            New files, revisions and deletions in watched folders sync automatically.
           </span>
-          <button onClick={onClose} className="px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
-          <button onClick={() => void apply()}
+          <button type="button" onClick={onClose} className={btnQuiet}>Cancel</button>
+          <button type="button" onClick={() => void apply()}
             disabled={busy || (libChoice === "__new" && !newName.trim()) || (checked.size === 0 && !bound)}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-[13px] font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 shadow">
-            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+            className={btnPrimary}>
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
             {bound ? "Apply changes" : "Connect this area"}
           </button>
         </div>

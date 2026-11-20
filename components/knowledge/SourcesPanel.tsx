@@ -162,7 +162,7 @@ function AddSourcesModal({ orgId, libraryId, existing, onClose, onAdded }: {
           {already ? (
             <span className="shrink-0 text-[13px] font-semibold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]">Linked</span>
           ) : covered ? (
-            <span className="shrink-0 text-[13px] font-semibold px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-300 dark:border-emerald-800 text-[var(--state-released)]">Included</span>
+            <span className="shrink-0 text-[13px] font-semibold px-1.5 py-0.5 rounded bg-[var(--state-released)]/10 border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] text-[var(--state-released)]">Included</span>
           ) : selected.has(folderId) ? (
             <span className="shrink-0 text-[13px] font-semibold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text)]">With subfolders</span>
           ) : null}

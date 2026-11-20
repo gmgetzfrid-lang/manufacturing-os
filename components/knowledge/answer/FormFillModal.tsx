@@ -129,7 +129,7 @@ function FieldInput({ field: f, value, onChange, needsYou }: {
 }) {
   const id = `form-field-${f.name.replace(/[^A-Za-z0-9_-]/g, "_")}`;
   const ring = needsYou
-    ? "border-amber-400 dark:border-amber-700 bg-amber-50/40 dark:bg-amber-950/10"
+    ? "border-[var(--state-held)] bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)]"
     : "border-[var(--color-border)] bg-[var(--color-surface)]";
   const base = `w-full rounded-lg border px-3 py-2 text-[14px] text-[var(--color-text)] focus:outline-none focus:border-[var(--color-border-strong)] focus:ring-2 focus:ring-[var(--color-border)] ${ring}`;
   return (

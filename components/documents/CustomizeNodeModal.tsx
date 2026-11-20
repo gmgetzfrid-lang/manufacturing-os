@@ -128,7 +128,7 @@ export default function CustomizeNodeModal({
             <label className="text-[13px] font-semibold text-[var(--color-text-faint)]">Color</label>
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
               <button onClick={() => set({ color: undefined })} title="Match theme"
-                className={`px-2.5 h-7 rounded-full text-[11px] font-bold border ${!v.color ? "border-transparent ring-2 ring-offset-2 ring-[var(--color-text-muted)] ring-offset-[var(--color-surface)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`} style={!v.color ? { background: "var(--brand-gradient)", color: "#fff" } : undefined}>Theme</button>
+                className={`px-2.5 h-7 rounded-full text-[13px] font-bold border ${!v.color ? "border-transparent ring-2 ring-offset-2 ring-[var(--color-text-muted)] ring-offset-[var(--color-surface)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`} style={!v.color ? { background: "var(--brand-gradient)", color: "#fff" } : undefined}>Theme</button>
               {COLOR_SWATCHES.map((c) => (
                 <button key={c} onClick={() => set({ color: c })} title={c}
                   className={`w-7 h-7 rounded-full ${v.color === c ? "ring-2 ring-offset-2 ring-[var(--color-text-muted)] ring-offset-[var(--color-surface)]" : ""}`} style={{ backgroundColor: c }}>
@@ -257,7 +257,7 @@ export default function CustomizeNodeModal({
         </div>
 
         <div className="px-5 py-3.5 border-t border-[var(--color-border)] flex items-center justify-end gap-2">
-          {saveErr && <p role="alert" className="mr-auto text-[13px] text-rose-700 dark:text-rose-300">{saveErr}</p>}
+          {saveErr && <p role="alert" className="mr-auto text-[13px] text-[var(--state-overdue)]">{saveErr}</p>}
           <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Cancel</button>
           <button onClick={handleSave} disabled={saving} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold text-[var(--color-accent-fg)] disabled:opacity-50" style={{ background: "var(--color-main)" }}>
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save

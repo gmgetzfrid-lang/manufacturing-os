@@ -11,10 +11,10 @@ import { loadEquipmentHistory, type EquipmentHistory, type HistoryJob } from "@/
 import { fmtInTz } from "@/lib/scheduleTz";
 
 const STATUS: Record<string, { word: string; cls: string }> = {
-  completed: { word: "Done", cls: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300" },
+  completed: { word: "Done", cls: "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)]" },
   in_progress: { word: "Under way", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)]" },
-  on_hold: { word: "On hold", cls: "bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300" },
-  blocked: { word: "Blocked", cls: "bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300" },
+  on_hold: { word: "On hold", cls: "bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] text-[var(--state-held)]" },
+  blocked: { word: "Blocked", cls: "bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)]" },
 };
 
 export default function WorkHistoryPanel({ orgId, assetId, code, tag, unitCode }: { orgId: string; assetId: string; code?: string | null; tag?: string | null; unitCode?: string | null }) {
@@ -50,7 +50,7 @@ export default function WorkHistoryPanel({ orgId, assetId, code, tag, unitCode }
       {!ready ? (
         <div className="px-4 py-4 flex items-center gap-2 text-[12.5px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Reading the jobs…</div>
       ) : state.error ? (
-        <div className="px-4 py-4 text-[13px] text-rose-700 dark:text-rose-300">Couldn&apos;t read the jobs: {state.error}</div>
+        <div className="px-4 py-4 text-[13px] text-[var(--state-overdue)]">Couldn&apos;t read the jobs: {state.error}</div>
       ) : jobs.length === 0 ? (
         <div className="px-4 py-4 text-[13px] text-[var(--color-text-muted)]">
           No work orders on it yet. A project&apos;s work orders show here once they&apos;re linked to it in the project&apos;s Setup › Units &amp; equipment{code ? `, or carry its number ${code} in the schedule` : ""}.

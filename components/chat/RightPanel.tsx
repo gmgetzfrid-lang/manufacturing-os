@@ -228,7 +228,7 @@ function InstructionsPane({
   const field = "w-full px-3 py-2 text-[15px] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40";
   const label = "font-display text-[17px] font-semibold text-[var(--color-text)] mb-0.5";
   const quiet = "inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[14px] font-semibold hover:bg-[var(--color-surface-2)] disabled:opacity-40 transition-colors";
-  const savedTag = <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]"><span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-released)]" /> Saved</span>;
+  const savedTag = <span className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[13px] font-semibold whitespace-nowrap leading-[18px] bg-[color-mix(in_srgb,var(--state-released)_14%,transparent)] text-[var(--state-released)]">Saved</span>;
   const own = instructions.trim() ? 1 : 0;
   const total = own + standingCount;
 

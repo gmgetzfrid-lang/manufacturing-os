@@ -140,7 +140,7 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
                 </span>
                 {e.form && (
                   <span className={`shrink-0 text-[13px] font-bold px-2 py-0.5 rounded ${e.form.fillable
-                    ? "bg-emerald-100 dark:bg-emerald-950/40 text-[var(--state-released)]"
+                    ? "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)]"
                     : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
                     {e.form.fillable ? "fillable PDF" : "flat PDF"}
                   </span>
@@ -191,7 +191,7 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
                             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
                           </button>
                           <button type="button" onClick={() => void unmark(c)} disabled={busy} title="Unmark - it stays in the library as an ordinary document"
-                            className="p-1.5 rounded-lg hover:bg-rose-500/10 text-[var(--color-text-muted)] hover:text-[var(--state-overdue)]">
+                            className="p-1.5 rounded-lg hover:bg-[var(--state-overdue)]/10 text-[var(--color-text-muted)] hover:text-[var(--state-overdue)]">
                             <X className="w-3.5 h-3.5" />
                           </button>
                         </>

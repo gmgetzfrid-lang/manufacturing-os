@@ -187,7 +187,7 @@ export default function FolderTree({
           </div>
 
           {visibility !== "normal" && (
-            <span className="text-[11px] px-2 py-0.5 rounded-full border border-amber-200 bg-amber-50 text-amber-700">
+            <span className="text-[13px] px-2 py-0.5 rounded-full border border-[color-mix(in_srgb,var(--state-held)_40%,transparent)] bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] text-[var(--state-held)]">
               {visibility}
             </span>
           )}

@@ -126,7 +126,7 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
       )}
 
       {regressions.length > 0 && (
-        <div role="alert" className="mt-3 border-l-2 border-[var(--state-overdue)] pl-3 text-[13px] text-rose-900 flex gap-2">
+        <div role="alert" className="mt-3 border-l-2 border-[var(--state-overdue)] pl-3 text-[13px] text-[var(--state-overdue)] flex gap-2">
           <AlertTriangle className="w-4 h-4 shrink-0" />
           <span><b>Regression:</b> {regressions.length} critical test{regressions.length === 1 ? "" : "s"} passed on the baseline run and fail{regressions.length === 1 ? "s" : ""} now. Don&apos;t promote this version until they pass.</span>
         </div>
@@ -176,7 +176,7 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
                     <button onClick={() => setExpanded(isOpen ? null : c.id)} className="flex-1 min-w-0 text-left">
                       <div className="text-[13px] text-[var(--color-text)]">
                         {c.question}
-                        {c.tags.includes("critical") && <span className="ml-1.5 rounded bg-amber-100 dark:bg-amber-950/40 px-1 text-[13px] font-semibold text-[var(--state-held)]">critical</span>}
+                        {c.tags.includes("critical") && <span className="ml-1.5 rounded bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] px-1 text-[13px] font-semibold text-[var(--state-held)]">critical</span>}
                         {before === true && r?.pass === false && <span className="ml-1.5 text-[13px] font-bold text-[var(--state-overdue)]">was passing</span>}
                         {before === false && r?.pass === true && <span className="ml-1.5 text-[13px] font-bold text-[var(--state-released)]">now passing</span>}
                       </div>

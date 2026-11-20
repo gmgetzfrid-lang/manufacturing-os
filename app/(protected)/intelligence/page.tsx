@@ -20,6 +20,7 @@ import { countPendingProposals } from "@/lib/linkProposals";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, Card, heroPrimary } from "@/components/ui/PageHero";
 import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
+import { StatusTag } from "@/components/documents/StatusTag";
 
 interface Status {
   chatKey: string | null;          // last4 or null
@@ -342,12 +343,12 @@ function CheckLine({ c }: { c: CheckRow }) {
         {c.pending ? (
           <span className="inline-flex items-center gap-1.5 text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking…</span>
         ) : (
-          <span className={`inline-flex items-start gap-2 text-[14px] ${c.ok ? "text-[var(--color-text-muted)]" : "font-semibold text-[var(--color-text)]"}`}>
-            <span aria-hidden className={`mt-[7px] w-2 h-2 rounded-full shrink-0 ${c.ok ? "bg-[var(--state-released)]" : "bg-[var(--state-held)]"}`} />
-            {c.ok ? c.okText : c.fixText}
+          <span className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 text-[14px]">
+            <StatusTag tone={c.ok ? "good" : "warn"}>{c.ok ? "Ready" : "Needs you"}</StatusTag>
+            <span className={c.ok ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}>{c.ok ? c.okText : c.fixText}</span>
           </span>
         )}
-        {fix && <div className="sm:hidden mt-1 pl-4">{fix}</div>}
+        {fix && <div className="sm:hidden mt-1">{fix}</div>}
       </td>
       <td className="px-4 py-3 hidden sm:table-cell text-right">{fix}</td>
     </tr>

@@ -139,8 +139,8 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
 
         {/* Tabs */}
         <div className="flex items-center gap-1 px-3 pt-2 shrink-0">
-          <button onClick={() => setTab("browse")} className={`flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] font-bold transition-colors ${tab === "browse" ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}><Search className="w-3.5 h-3.5" /> Browse existing</button>
-          <button onClick={() => setTab("upload")} className={`flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] font-bold transition-colors ${tab === "upload" ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}><Upload className="w-3.5 h-3.5" /> Upload new</button>
+          <button onClick={() => setTab("browse")} className={`flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[13px] font-bold transition-colors ${tab === "browse" ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}><Search className="w-3.5 h-3.5" /> Browse existing</button>
+          <button onClick={() => setTab("upload")} className={`flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[13px] font-bold transition-colors ${tab === "upload" ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}><Upload className="w-3.5 h-3.5" /> Upload new</button>
         </div>
 
         {tab === "browse" ? (
@@ -168,7 +168,7 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
                       <div className="text-[13px] font-bold text-[var(--color-text)] truncate">{r.document_number || r.title || r.name || "Document"}</div>
                       <div className="text-[13px] text-[var(--color-text-muted)] truncate">{r.title || r.name || ""}{r.rev ? ` · Rev ${r.rev}` : ""}</div>
                     </div>
-                    {linking === r.id ? <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" /> : <Check className="w-4 h-4 text-emerald-600 opacity-60 sm:opacity-0 group-hover:opacity-100 shrink-0" />}
+                    {linking === r.id ? <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" /> : <Check className="w-4 h-4 text-[var(--state-released)] opacity-60 sm:opacity-0 group-hover:opacity-100 shrink-0" />}
                   </button>
                 ))
               )}
@@ -183,7 +183,7 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
                   <option value="">Choose a library…</option>
                   {libraries.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
                 </select>
-                {canManage && <button onClick={addLibrary} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><LibraryIcon className="w-3.5 h-3.5" /> New</button>}
+                {canManage && <button onClick={addLibrary} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><LibraryIcon className="w-3.5 h-3.5" /> New</button>}
               </div>
             </div>
 
@@ -194,7 +194,7 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
                   <option value="">{upLibraryId ? "Library root" : "Pick a library first"}</option>
                   {folders.map((f) => <option key={f.id} value={f.id}>{f.pathNames.join(" / ") || f.name}</option>)}
                 </select>
-                {canManage && <button onClick={addFolder} disabled={!upLibraryId} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"><FolderPlus className="w-3.5 h-3.5" /> New</button>}
+                {canManage && <button onClick={addFolder} disabled={!upLibraryId} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"><FolderPlus className="w-3.5 h-3.5" /> New</button>}
               </div>
             </div>
 
@@ -229,7 +229,7 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
               </div>
             </div>
 
-            {upError && <p role="alert" className="border-l-2 border-rose-500 pl-3 text-[13px] text-rose-700 dark:text-rose-300">{upError}</p>}
+            {upError && <p role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 text-[13px] text-[var(--state-overdue)]">{upError}</p>}
 
             <div className="flex justify-end pt-1">
               <button onClick={createAndLink} disabled={creating || !upLibraryId || !file || !docNum.trim()} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[13px] font-bold disabled:opacity-40 disabled:cursor-not-allowed">

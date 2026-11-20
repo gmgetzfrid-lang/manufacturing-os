@@ -21,9 +21,9 @@ export default function DocThumbCanvas({ url, width, onFail }: {
   return (
     <Document options={PDF_DOC_OPTIONS}
       file={url}
-      loading={<div className="absolute inset-0 flex items-center justify-center"><Loader2 className="w-3.5 h-3.5 animate-spin text-slate-300" /></div>}
+      loading={<div className="absolute inset-0 flex items-center justify-center"><Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-faint)]" /></div>}
       onLoadError={onFail}
-      error={<div className="absolute inset-0 flex items-center justify-center"><FileText className="w-4 h-4 text-slate-300" /></div>}
+      error={<div className="absolute inset-0 flex items-center justify-center"><FileText className="w-4 h-4 text-[var(--color-text-faint)]" /></div>}
     >
       <Page
         pageNumber={1}

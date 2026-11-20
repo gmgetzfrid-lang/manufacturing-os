@@ -61,7 +61,7 @@ function TagInput({
                 type="button"
                 onClick={() => onChange(values.filter((x) => x !== pill))}
                 title="Remove tag"
-                className="ml-0.5 -mb-1 p-0.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                className="ml-0.5 -mb-1 p-0.5 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] rounded transition-colors"
               >
                 <X className="w-3 h-3" />
               </button>
@@ -328,7 +328,7 @@ export default function MetadataEditor(props: {
               </div>
             )}
             {!canEdit && (
-              <span className="text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full shrink-0">
+              <span className="text-[13px] font-bold text-[var(--state-held)] bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] border border-[color-mix(in_srgb,var(--state-held)_40%,transparent)] px-2 py-0.5 rounded-full shrink-0">
                 View only
               </span>
             )}

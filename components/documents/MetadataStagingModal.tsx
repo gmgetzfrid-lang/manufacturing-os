@@ -641,7 +641,7 @@ export default function MetadataStagingModal({
                 <ul className="mt-2 grid gap-x-4 gap-y-0.5 text-[13px] sm:grid-cols-2 max-h-36 overflow-auto">
                   {folderSummary.top.slice(0, 40).map(([path, n]) => (
                     <li key={path} className="flex items-center gap-1.5 min-w-0">
-                      <span className="truncate font-mono text-[var(--color-text)]" title={path}>{path}/</span>
+                      <span className="truncate text-[var(--color-text)]" title={path}>{path}/</span>
                       <span className="shrink-0 text-[var(--color-text-faint)]">{n} file{n === 1 ? "" : "s"}</span>
                     </li>
                   ))}
@@ -672,13 +672,13 @@ export default function MetadataStagingModal({
         {/* Predictive uniqueness banner — only when a collision will actually
             hit the DB constraint */}
         {collisionPreview.collidingRows >= 2 && (
-          <div className="mx-4 sm:mx-6 my-2 border-l-2 border-amber-500 pl-3 shrink-0">
+          <div className="mx-4 sm:mx-6 my-2 border-l-2 border-[var(--state-held)] pl-3 shrink-0">
             <div className="flex items-start gap-2 flex-wrap sm:flex-nowrap">
               <div className="flex-1 min-w-0">
-                <div className="text-[13px] font-semibold text-amber-800 dark:text-amber-300">
+                <div className="text-[13px] font-semibold text-[var(--state-held)]">
                   {collisionPreview.collidingRows} files would be the same document here, so they won&apos;t upload
                 </div>
-                <div className="text-[13px] text-amber-800 dark:text-amber-300 mt-0.5">
+                <div className="text-[13px] text-[var(--state-held)] mt-0.5">
                   {sheetInUniqueness
                     ? "Give each row its own Sheet, or add -2, -3 to the numbers."
                     : "If they're sheets of one drawing, tell sheets apart. If they're different files, add -2, -3 to the numbers."}
@@ -724,7 +724,7 @@ export default function MetadataStagingModal({
           );
           if (!already.length && !twiceInBatch.length) return null;
           return (
-            <div className="mx-4 sm:mx-6 my-2 border-l-2 border-amber-500 pl-3 shrink-0 text-[13px] text-amber-800 dark:text-amber-300">
+            <div className="mx-4 sm:mx-6 my-2 border-l-2 border-[var(--state-held)] pl-3 shrink-0 text-[13px] text-[var(--state-held)]">
               <div className="flex items-start gap-2 flex-wrap sm:flex-nowrap">
                 <div className="flex-1 min-w-0">
                   {already.length > 0 && (
@@ -832,26 +832,26 @@ export default function MetadataStagingModal({
                 const rowErrors = validation.filter((e) => e.rowId === it.id);
                 const errFor = (field: string) => rowErrors.find((e) => e.field === field)?.msg;
                 return (
-                  <tr key={it.id} className={rowErrors.length ? "bg-red-50/40 dark:bg-red-950/20" : "hover:bg-[var(--color-surface-2)]"}>
+                  <tr key={it.id} className={rowErrors.length ? "bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)]" : "hover:bg-[var(--color-surface-2)]"}>
                     <td className="px-3 py-1.5">
                       <FileThumb file={it.file} size={28} />
                     </td>
                     <td className="px-3 py-1.5 max-w-[16ch]">
-                      <div className="text-[11px] text-[var(--color-text)] font-mono truncate" title={it.file.name}>{it.file.name}</div>
+                      <div className="text-[13px] text-[var(--color-text)] truncate" title={it.file.name}>{it.file.name}</div>
                       {folderUpload && (folderUpload.pathOf(it.file)?.length ?? 0) > 0 && (
-                        <div className="text-[11px] text-[var(--color-text-muted)] font-mono truncate" title={folderUpload.pathOf(it.file)!.join("/")}>
+                        <div className="text-[13px] text-[var(--color-text-muted)] truncate" title={folderUpload.pathOf(it.file)!.join("/")}>
                           {folderUpload.pathOf(it.file)!.join("/")}/
                         </div>
                       )}
                       <div className="text-[13px] text-[var(--color-text-faint)]">{formatBytes(it.file.size)}</div>
                       {/* This file's own state after a try: why it didn't go. */}
                       {failedReason.get(it.file) && (
-                        <div className="text-[13px] text-rose-700 dark:text-rose-300 truncate" title={failedReason.get(it.file)}>
+                        <div className="text-[13px] text-[var(--state-overdue)] truncate" title={failedReason.get(it.file)}>
                           Didn&apos;t upload: {failedReason.get(it.file)}
                         </div>
                       )}
                       {(copies.get(hashes.get(it.file) ?? "") ?? []).map((c) => (
-                        <a key={c.href} href={c.href} target="_blank" rel="noreferrer" title={`Already here: ${c.where}`} className="block text-[13px] font-bold text-amber-700 hover:underline truncate">
+                        <a key={c.href} href={c.href} target="_blank" rel="noreferrer" title={`Already here: ${c.where}`} className="block text-[13px] font-bold text-[var(--state-held)] hover:underline truncate">
                           Already in {c.where}
                         </a>
                       ))}
@@ -934,7 +934,7 @@ export default function MetadataStagingModal({
                             <select
                               value={value}
                               onChange={(e) => onChange(e.target.value)}
-                              className={`w-full text-[13px] border rounded-md px-1.5 py-1 bg-[var(--color-surface)] ${errFor(c.key) ? "border-red-400" : "border-[var(--color-border)]"}`}
+                              className={`w-full text-[13px] border rounded-md px-1.5 py-1 bg-[var(--color-surface)] ${errFor(c.key) ? "border-[var(--state-overdue)]" : "border-[var(--color-border)]"}`}
                             >
                               <option value=""></option>
                               {c.options.map((o) => <option key={o} value={o}>{o}</option>)}
@@ -956,7 +956,7 @@ export default function MetadataStagingModal({
                         <button onClick={() => duplicateRow(it.id)} title="Duplicate row" className="p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded">
                           <Copy className="w-3 h-3" />
                         </button>
-                        <button onClick={() => removeRow(it.id)} title="Remove from batch" className="p-1 text-[var(--color-text-faint)] hover:text-red-600 hover:bg-red-50 rounded">
+                        <button onClick={() => removeRow(it.id)} title="Remove from batch" className="p-1 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] rounded">
                           <Trash2 className="w-3 h-3" />
                         </button>
                       </div>
@@ -998,17 +998,17 @@ export default function MetadataStagingModal({
 
         {/* Error + actions */}
         {outcome && (
-          <div className="mx-4 sm:mx-6 my-2 border-l-2 border-amber-500 pl-3 text-[13px] text-amber-800 dark:text-amber-300 flex items-start gap-2 shrink-0">
+          <div className="mx-4 sm:mx-6 my-2 border-l-2 border-[var(--state-held)] pl-3 text-[13px] text-[var(--state-held)] flex items-start gap-2 shrink-0">
             <span className="min-w-0 flex-1">
               <b>{outcome}</b> Try again sends only the {items.length} file{items.length === 1 ? "" : "s"} still listed. Nothing already up is sent twice.
               {failedWhy.length > 0 && (
                 <ul className="mt-2 max-h-40 overflow-auto rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
                   {failedWhy.slice(0, 300).map((f, i) => (
                     <li key={i} className="px-2 py-1 flex gap-2 min-w-0">
-                      <span className="font-mono truncate max-w-[45%] text-[var(--color-text)]" title={(folderUpload?.pathOf(f.file) ?? []).concat(f.file.name).join("/")}>
+                      <span className="truncate max-w-[45%] text-[var(--color-text)]" title={(folderUpload?.pathOf(f.file) ?? []).concat(f.file.name).join("/")}>
                         {(folderUpload?.pathOf(f.file) ?? []).concat(f.file.name).join("/")}
                       </span>
-                      <span className="text-rose-700 dark:text-rose-300 truncate" title={f.reason}>{f.reason}</span>
+                      <span className="text-[var(--state-overdue)] truncate" title={f.reason}>{f.reason}</span>
                     </li>
                   ))}
                 </ul>
@@ -1017,7 +1017,7 @@ export default function MetadataStagingModal({
           </div>
         )}
         {error && (
-          <p role="alert" className="mx-4 sm:mx-6 my-2 border-l-2 border-rose-500 pl-3 text-[13px] text-rose-700 dark:text-rose-300 shrink-0">
+          <p role="alert" className="mx-4 sm:mx-6 my-2 border-l-2 border-[var(--state-overdue)] pl-3 text-[13px] text-[var(--state-overdue)] shrink-0">
             {error}
           </p>
         )}
@@ -1036,7 +1036,7 @@ export default function MetadataStagingModal({
               <>
                 <span className="font-bold text-[var(--color-text)]">Uploading {progress.done} of {progress.total}…</span>
                 <span className="w-32 h-1.5 rounded-full bg-[var(--color-border)] overflow-hidden">
-                  <span className="block h-full bg-emerald-500 transition-all" style={{ width: `${progress.total ? Math.round((progress.done / progress.total) * 100) : 0}%` }} />
+                  <span className="block h-full bg-[var(--state-released)] transition-all" style={{ width: `${progress.total ? Math.round((progress.done / progress.total) * 100) : 0}%` }} />
                 </span>
               </>
             ) : (
@@ -1049,7 +1049,7 @@ export default function MetadataStagingModal({
                 onClick={stopUpload}
                 disabled={stopping}
                 title="Stop the transfers and keep this list, so you can re-send what didn't land"
-                className="px-3 py-2 rounded-lg text-[13px] font-bold text-red-700 bg-[var(--color-surface)] border border-red-300 hover:bg-red-50 disabled:opacity-50"
+                className="px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--state-overdue)] bg-[var(--color-surface)] border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] disabled:opacity-50"
               >
                 {stopping ? "Stopping…" : "Stop upload"}
               </button>
@@ -1081,10 +1081,10 @@ function Cell({
       <input
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className={`${widthClass || "w-full"} text-[13px] border rounded-md px-1.5 py-1 bg-[var(--color-surface)] ${error ? "border-red-400 ring-1 ring-red-200" : "border-[var(--color-border)]"} ${center ? "text-center" : ""}`}
+        className={`${widthClass || "w-full"} text-[13px] border rounded-md px-1.5 py-1 bg-[var(--color-surface)] ${error ? "border-[var(--state-overdue)] ring-1 ring-[var(--state-overdue)]" : "border-[var(--color-border)]"} ${center ? "text-center" : ""}`}
       />
       {error && (
-        <span className="absolute right-1 top-1 text-[13px] font-semibold text-red-600">{error}</span>
+        <span className="absolute right-1 top-1 text-[13px] font-semibold text-[var(--state-overdue)]">{error}</span>
       )}
     </div>
   );

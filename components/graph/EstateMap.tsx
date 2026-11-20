@@ -39,16 +39,20 @@ interface Props {
 }
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
+// Structure is graphite, by shade: the map's color is kept for what you
+// pick and for state, never for the kind of thing.
 const GROUP: FileTypeInfo = { ...CONTAINER_TYPES.folder, color: "#64748b", label: "Group" };
-const CATEGORY: FileTypeInfo = { key: "equipment", label: "Equipment type", color: "#0d9488", ext: "" };
+const CATEGORY: FileTypeInfo = { key: "equipment", label: "Equipment type", color: "#4b5563", ext: "" };
+const EQUIPMENT: FileTypeInfo = { ...CONTAINER_TYPES.equipment, color: "#3e4a5a" };
+const PROJECT: FileTypeInfo = { ...CONTAINER_TYPES.project, color: "#525d6c" };
 
 function typeOf(t: TreeNode): { kind: FileGraphNode["kind"]; type: FileTypeInfo } {
   switch (t.kind) {
     case "area": return { kind: "library", type: CONTAINER_TYPES.unit };
     case "group": return { kind: "library", type: GROUP };
     case "category": return { kind: "folder", type: CATEGORY };
-    case "asset": return { kind: "folder", type: CONTAINER_TYPES.equipment };
-    case "project": return { kind: "folder", type: CONTAINER_TYPES.project };
+    case "asset": return { kind: "folder", type: EQUIPMENT };
+    case "project": return { kind: "folder", type: PROJECT };
     case "library": return { kind: "folder", type: CONTAINER_TYPES.library };
     case "folder": return { kind: "folder", type: CONTAINER_TYPES.folder };
     default: return { kind: "file", type: fileTypeOf(t.label) };

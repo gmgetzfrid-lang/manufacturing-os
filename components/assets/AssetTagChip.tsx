@@ -106,15 +106,12 @@ function PhotoTagChip({
   };
 
   if (size === "compact") {
-    const baseClasses = "inline-flex items-center h-6 px-1.5 rounded border font-display text-[14px] font-semibold tabular-nums whitespace-nowrap transition-colors";
-    let stateClasses: string;
-    if (hasPhotos) {
-      stateClasses = "text-[var(--color-text)] border-[var(--color-border)] hover:border-[var(--color-border-strong)] cursor-pointer bg-[var(--color-surface)]";
-    } else if (interactive) {
-      stateClasses = "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] cursor-pointer";
-    } else {
-      stateClasses = "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)]";
-    }
+    // A compact text tag: the number in the condensed face and the brand's
+    // link color, no box; a camera count when it has photos.
+    const baseClasses = "inline-flex items-center h-6 font-display text-[14px] font-semibold tabular-nums whitespace-nowrap transition-colors";
+    const stateClasses = interactive
+      ? "text-[var(--color-accent-text)] hover:underline underline-offset-2 cursor-pointer disabled:cursor-wait"
+      : "text-[var(--color-text)]";
 
     return (
       <>

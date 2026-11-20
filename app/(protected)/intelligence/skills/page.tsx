@@ -118,14 +118,14 @@ export default function SkillLibraryPage() {
     r.builtin_key ? "Built-in"
       : `${r.visibility === "org" ? "Org-wide" : "Private"}, by ${r.created_by === uid ? "you" : (r.created_by_name?.split("@")[0] ?? "a teammate")}`;
 
-  // On or off: a real switch, graphite when on.
+  // On or off: a real switch, in the accent color when on.
   const toggleButton = (opts: { id: string; name: string; enabled: boolean; mayManage: boolean; onToggle: () => Promise<void> }) =>
     opts.mayManage ? (
       <button type="button" role="switch" aria-checked={opts.enabled} onClick={() => void guard(opts.id, opts.onToggle)} disabled={busyId === opts.id}
         aria-label={`${opts.name}: ${opts.enabled ? "on" : "off"}`}
         title={opts.enabled ? "Turn off: it stops running" : "Turn on"}
         className="inline-flex items-center gap-2 text-[14px] font-semibold text-[var(--color-text)] disabled:opacity-50">
-        <span className={`relative inline-flex w-9 h-5 rounded-full transition-colors ${opts.enabled ? "bg-[var(--color-text)]" : "bg-[var(--color-border-strong)]"}`}>
+        <span className={`relative inline-flex w-9 h-5 rounded-full transition-colors ${opts.enabled ? "bg-[var(--color-accent)]" : "bg-[var(--color-border-strong)]"}`}>
           <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-[var(--color-surface)] shadow transition-transform ${opts.enabled ? "translate-x-4" : ""}`} />
         </span>
         <span className="max-sm:sr-only w-6 text-left">{busyId === opts.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : opts.enabled ? "On" : "Off"}</span>

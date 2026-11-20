@@ -20,6 +20,7 @@ import AckPill from "@/components/documents/AckPill";
 import EffectivePill from "@/components/documents/EffectivePill";
 import RetentionPill from "@/components/documents/RetentionPill";
 import OriginBadge from "@/components/documents/OriginBadge";
+import { StatusTag } from "@/components/documents/StatusTag";
 import {
   loadDocControlRegister, filterRegister, registerToCsv,
   type RegisterRow, type RegisterKpis, type RegisterFilter,
@@ -219,7 +220,7 @@ export default function RegisterPage() {
                       <span>Rev <span className="font-display tabular-nums font-semibold text-[var(--color-text)]">{r.rev || "-"}</span></span>
                       <span className={r.owned ? "text-[var(--color-text)]" : ""}>{r.ownerName || "Admin/DocCtrl"}</span>
                       {r.reviewStatus !== "none" && <ReviewPill nextReviewDate={r.nextReviewDate} compact />}
-                      {r.review?.inReview && <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--color-text)]"><span aria-hidden className={`w-2 h-2 rounded-full ${r.review.ready ? "bg-[var(--state-released)]" : "bg-[var(--state-held)]"}`} />In review</span>}
+                      {r.review?.inReview && <StatusTag tone={r.review.ready ? "good" : "warn"}>In review</StatusTag>}
                       {(r.legalHold || r.dispositionEligible) && <RetentionPill retentionUntil={r.retentionUntil} dispositionState={r.dispositionEligible ? "eligible" : null} legalHold={r.legalHold} compact />}
                     </div>
                   </td>
@@ -235,12 +236,12 @@ export default function RegisterPage() {
                   <td className="px-3 py-2 max-sm:hidden">{r.ack ? <AckPill summary={r.ack} compact /> : <span className="text-[var(--color-text-faint)]">-</span>}</td>
                   <td className="px-3 py-2 hidden lg:table-cell">
                     {r.distributionAcksOutstanding > 0
-                      ? <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold whitespace-nowrap" title={`${r.distributionAcksOutstanding} distribution confirmation${r.distributionAcksOutstanding === 1 ? "" : "s"} outstanding`}><span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-held)]" />{r.distributionAcksOutstanding} unconfirmed</span>
+                      ? <span title={`${r.distributionAcksOutstanding} distribution confirmation${r.distributionAcksOutstanding === 1 ? "" : "s"} outstanding`}><StatusTag tone="warn">{r.distributionAcksOutstanding} unconfirmed</StatusTag></span>
                       : <span className="text-[var(--color-text-faint)]">-</span>}
                   </td>
                   <td className="px-3 py-2 max-sm:hidden">
                     {r.review?.inReview
-                      ? <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-[13px] font-semibold"><span aria-hidden className={`w-2 h-2 rounded-full ${r.review.ready ? "bg-[var(--state-released)]" : "bg-[var(--state-held)]"}`} /><ShieldCheck className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {r.review.revisionLabel || "In review"}, <span className="tabular-nums">{r.review.signed} of {r.review.requiredPrimaries}</span> signed</span>
+                      ? <span className="inline-flex items-center gap-2 whitespace-nowrap text-[13px]"><StatusTag tone={r.review.ready ? "good" : "warn"}><ShieldCheck className="w-3.5 h-3.5" /> {r.review.revisionLabel || "In review"}</StatusTag><span className="tabular-nums text-[var(--color-text-muted)]">{r.review.signed} of {r.review.requiredPrimaries} signed</span></span>
                       : <span className="text-[var(--color-text-faint)]">-</span>}
                   </td>
                   <td className="px-3 py-2 max-sm:hidden">{(r.legalHold || r.dispositionEligible) ? <RetentionPill retentionUntil={r.retentionUntil} dispositionState={r.dispositionEligible ? "eligible" : null} legalHold={r.legalHold} compact /> : <span className="text-[var(--color-text-faint)]">-</span>}</td>

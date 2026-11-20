@@ -13,6 +13,7 @@ import {
   type SignatureIntent, type SigningReauth,
 } from "@/lib/eSignatures";
 import SignaturePad from "@/components/signatures/SignaturePad";
+import { heroPrimary as primaryBtn, heroQuiet as secondaryBtn } from "@/components/ui/PageHero";
 
 const INTENTS: SignatureIntent[] = ["Approved", "Reviewed", "Acknowledged", "Witnessed", "Rejected"];
 
@@ -91,122 +92,113 @@ export default function SignatureCeremony({
   // stale, no-longer-visible drawing can never be submitted as the signature.
   const switchMode = (m: "draw" | "type") => { setMode(m); setDrawn(null); };
 
-  const tabBtn = (m: "draw" | "type", label: string, Icon: typeof TypeIcon) => (
-    <button
-      onClick={() => switchMode(m)}
-      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-bold border transition-colors ${mode === m ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}
-    >
-      <Icon className="w-3.5 h-3.5" /> {label}
-    </button>
-  );
+  // One choice out of a few: a segmented control, the picked one ruled
+  // in graphite.
+  const seg = (on: boolean) =>
+    `inline-flex items-center gap-1.5 h-9 px-3 rounded-md border text-[14px] font-semibold transition-colors ${on
+      ? "border-[var(--color-text)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-[inset_0_0_0_1px_var(--color-text)]"
+      : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
+  const label = "block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5";
+  const input = "w-full h-11 px-3 rounded-md border bg-[var(--color-surface)] text-[var(--color-text)] outline-none focus:ring-2";
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="Electronic signature" className="fixed inset-0 z-[500] bg-[var(--color-ink)]/60 flex items-start sm:items-center justify-center p-4 overflow-y-auto" onClick={() => !busy && onCancel()}>
+    <div role="dialog" aria-modal="true" aria-labelledby="sig-ceremony-title" className="fixed inset-0 z-[500] bg-[var(--color-ink)]/60 flex items-start sm:items-center justify-center p-4 overflow-y-auto" onClick={() => !busy && onCancel()}>
       <div className="w-full max-w-md bg-[var(--color-surface)] rounded-lg shadow-2xl my-4" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center gap-2 px-5 py-4 border-b border-[var(--color-border)]">
+        <div className="flex items-center gap-2 px-5 h-14 border-b border-[var(--color-border)]">
           <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
-          <h2 className="text-sm font-semibold text-[var(--color-text)] flex-1">Electronic signature</h2>
-          <button onClick={() => !busy && onCancel()} aria-label="Close" className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+          <h2 id="sig-ceremony-title" className="font-display text-[19px] font-semibold text-[var(--color-text)] flex-1">Sign {resourceLabel ?? "this document"}</h2>
+          <button type="button" onClick={() => !busy && onCancel()} aria-label="Close" className="w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
 
-        <div className="p-5 space-y-4">
+        <div className="p-5 space-y-5">
           {!lockIntent && (
-            <div>
-              <label className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Intent</label>
-              <div className="flex flex-wrap gap-1.5">
+            <fieldset>
+              <legend className={label}>What you are signing for</legend>
+              <div className="flex flex-wrap gap-1.5" role="radiogroup">
                 {INTENTS.map((it) => (
-                  <button
-                    key={it}
-                    onClick={() => setIntent(it)}
-                    className={`px-3 py-1.5 rounded-lg text-[13px] font-bold border transition-colors ${intent === it ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}
-                  >
+                  <button key={it} type="button" role="radio" aria-checked={intent === it} onClick={() => setIntent(it)} className={seg(intent === it)}>
                     {it}
                   </button>
                 ))}
               </div>
-            </div>
+            </fieldset>
           )}
 
-          <div className="rounded-xl bg-[var(--color-surface-2)] border border-[var(--color-border)] p-3">
-            <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">You are affirming</div>
-            <p className="text-sm text-[var(--color-text)] leading-relaxed">{statement}</p>
+          <div className="border-l-[3px] border-[var(--color-border-strong)] pl-3">
+            <div className="text-[13px] text-[var(--color-text-muted)]">You are affirming</div>
+            <p className="text-[15px] text-[var(--color-text)] leading-snug">{statement}</p>
           </div>
 
           {allowDrawn && (
-            <div className="flex gap-1.5">
-              {tabBtn("draw", "Draw signature", Signature)}
-              {tabBtn("type", "Type name", TypeIcon)}
+            <div className="flex gap-1.5" role="radiogroup" aria-label="How to sign">
+              <button type="button" role="radio" aria-checked={mode === "draw"} onClick={() => switchMode("draw")} className={seg(mode === "draw")}><Signature className="w-4 h-4" /> Draw</button>
+              <button type="button" role="radio" aria-checked={mode === "type"} onClick={() => switchMode("type")} className={seg(mode === "type")}><TypeIcon className="w-4 h-4" /> Type your name</button>
             </div>
           )}
 
           {mode === "draw" ? (
             <div>
-              <label className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Sign your name</label>
+              <div className={label}>Sign your name</div>
               <SignaturePad onChange={setDrawn} />
             </div>
           ) : (
             <div>
-              <label className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Type your full name to sign</label>
+              <label htmlFor="sig-typed" className={label}>Type your full name to sign</label>
               <input
+                id="sig-typed"
                 value={typed}
                 onChange={(e) => setTyped(e.target.value)}
                 placeholder={signerName}
-                className={`w-full h-11 px-3 rounded-lg border bg-[var(--color-surface)] text-[var(--color-text)] outline-none focus:ring-2 ${typed.length > 0 && !nameMatches ? "border-rose-300 focus:ring-rose-300/40" : "border-[var(--color-border)] focus:ring-[var(--color-accent-ring)]"}`}
+                className={`${input} ${typed.length > 0 && !nameMatches ? "border-[var(--state-overdue)] focus:ring-[var(--state-overdue)]/30" : "border-[var(--color-border-strong)] focus:ring-[var(--color-accent-ring)]"}`}
                 style={{ fontFamily: "cursive", fontSize: "1.15rem" }}
                 autoFocus
               />
-              {typed.length > 0 && !nameMatches && <p className="text-[13px] text-rose-600 mt-1">Must match your account name exactly: {signerName}</p>}
+              {typed.length > 0 && !nameMatches && <p className="text-[13px] text-[var(--state-overdue)] mt-1">Must match your account name: {signerName}</p>}
             </div>
           )}
 
           {reauth === "loading" && (
-            <p className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]"><Loader2 className="w-3 h-3 animate-spin" /> Checking your sign-in…</p>
+            <p className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking your sign-in…</p>
           )}
           {reauth !== "loading" && reauth?.method === "password" && (
             <div>
-              <label className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">
-                <span className="inline-flex items-center gap-1"><KeyRound className="w-3 h-3" /> Confirm your password</span>
+              <label htmlFor="sig-password" className={label}>
+                <span className="inline-flex items-center gap-1"><KeyRound className="w-3.5 h-3.5" /> Confirm your password</span>
               </label>
               <input
+                id="sig-password"
                 type="password"
                 value={password}
                 onChange={(e) => { setPassword(e.target.value); setReauthError(null); }}
                 placeholder="Your account password"
                 autoComplete="current-password"
-                className={`w-full h-11 px-3 rounded-lg border bg-[var(--color-surface)] text-[var(--color-text)] outline-none focus:ring-2 ${reauthError ? "border-rose-300 focus:ring-rose-300/40" : "border-[var(--color-border)] focus:ring-[var(--color-accent-ring)]"}`}
+                className={`${input} ${reauthError ? "border-[var(--state-overdue)] focus:ring-[var(--state-overdue)]/30" : "border-[var(--color-border-strong)] focus:ring-[var(--color-accent-ring)]"}`}
               />
               {reauthError
-                ? <p className="text-[13px] text-rose-600 mt-1">{reauthError}</p>
-                : <p className="text-[13px] text-[var(--color-text-faint)] mt-1">Asked each time you sign, so nobody can sign from your unlocked screen.</p>}
+                ? <p className="text-[13px] text-[var(--state-overdue)] mt-1">{reauthError}</p>
+                : <p className="text-[13px] text-[var(--color-text-muted)] mt-1">Asked each time, so nobody can sign from your unlocked screen.</p>}
             </div>
           )}
           {reauth !== "loading" && reauth?.method === "sso" && !reauth.fresh && (
-            <div className="border-l-2 border-amber-500 pl-3">
-              <p className="text-[13px] text-amber-800 dark:text-amber-300">
-                Signing needs a recent sign-in. Sign in with Microsoft again, then finish signing. You&apos;ll come straight back here.
+            <div className="border-l-[3px] border-[var(--state-held)] pl-3">
+              <p className="text-[14px] text-[var(--color-text)]">
+                Signing needs a recent sign-in. Sign in with Microsoft again; you&apos;ll come straight back here.
               </p>
-              <button
-                onClick={() => void reauthWithProvider()}
-                className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[13px] font-bold hover:bg-[var(--color-surface-2)]"
-              >
-                <KeyRound className="w-3.5 h-3.5" /> Re-authenticate with Microsoft
+              <button type="button" onClick={() => void reauthWithProvider()} className={`mt-2 ${secondaryBtn}`}>
+                <KeyRound className="w-4 h-4" /> Sign in again
               </button>
             </div>
           )}
 
-          <label className="flex items-start gap-2 cursor-pointer">
-            <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} className="mt-0.5 accent-[var(--color-text)]" />
-            <span className="text-xs text-[var(--color-text-muted)]">I understand this electronic signature is legally binding and will be permanently recorded with my name, role, and timestamp.</span>
+          <label className="flex items-start gap-2.5 cursor-pointer">
+            <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} className="mt-0.5 w-4 h-4 shrink-0 accent-[var(--color-text)]" />
+            <span className="text-[14px] leading-snug text-[var(--color-text)]">I understand this signature is binding and is recorded with my name, role and the time.</span>
           </label>
         </div>
 
         <div className="flex justify-end gap-2 px-5 py-4 border-t border-[var(--color-border)]">
-          <button onClick={() => !busy && onCancel()} className="px-4 py-2 rounded-lg text-sm font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Cancel</button>
-          <button
-            onClick={submit}
-            disabled={!canSign}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-bold disabled:opacity-50"
-          >
+          <button type="button" onClick={() => !busy && onCancel()} className={secondaryBtn}>Cancel</button>
+          <button type="button" onClick={submit} disabled={!canSign} className={primaryBtn}>
             {busy || verifying ? <Loader2 className="w-4 h-4 animate-spin" /> : <PenLine className="w-4 h-4" />} Sign
           </button>
         </div>

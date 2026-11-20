@@ -220,7 +220,7 @@ export default function AssetPhotoPopover({
             <Loader2 className="w-4 h-4 animate-spin" /> Loading photos…
           </div>
         ) : loadFailed ? (
-          <div role="alert" className="text-[13px] text-rose-700 dark:text-rose-400 p-3 text-center">Couldn&apos;t load the photos. Close and open the tag again.</div>
+          <div role="alert" className="text-[13px] text-[var(--state-overdue)] p-3 text-center">Couldn&apos;t load the photos. Close and open the tag again.</div>
         ) : photos.length === 0 ? (
           <EmptyState canUpload={canManage && !!onUploadClick} onUpload={onUploadClick} />
         ) : (
@@ -258,12 +258,12 @@ export default function AssetPhotoPopover({
       {active && age && (
         <div className="px-3 py-1.5 border-t border-[var(--color-border)] flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]">
           <Calendar className="w-3 h-3 shrink-0" />
-          <span className="font-mono">{active.captured_at ? new Date(active.captured_at).toLocaleDateString() : "No date"}</span>
+          <span className="tabular-nums">{active.captured_at ? new Date(active.captured_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "No date"}</span>
           {age.category !== "unknown" && (
-            <span className={age.category === "stale" ? "text-red-700 dark:text-red-400 font-bold" : age.category === "aging" ? "text-amber-700 dark:text-amber-400 font-bold" : ""}>· {age.label}</span>
+            <span className={age.category === "stale" ? "text-[var(--state-overdue)] font-bold" : age.category === "aging" ? "text-[var(--state-held)] font-bold" : ""}>· {age.label}</span>
           )}
           {active.status !== "current" && (
-            <span className={`ml-auto font-bold ${active.status === "needs_verification" ? "text-amber-700 dark:text-amber-400" : "text-red-700 dark:text-red-400"}`}>
+            <span className={`ml-auto font-bold ${active.status === "needs_verification" ? "text-[var(--state-held)]" : "text-[var(--state-overdue)]"}`}>
               {active.status === "needs_verification" ? "Needs checking" : "Out of date"}
             </span>
           )}

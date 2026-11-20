@@ -201,7 +201,7 @@ export default function OutputTemplatesPage() {
                   <td className="px-4 py-2.5 hidden lg:table-cell">{g.createdBy ?? "-"}</td>
                   <td className="px-4 py-2.5 max-md:hidden">
                     {g.filedCount > 0
-                      ? <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold"><span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-released)]" />{g.filedCount} filed</span>
+                      ? <span className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[13px] font-semibold whitespace-nowrap leading-[18px] bg-[color-mix(in_srgb,var(--state-released)_14%,transparent)] text-[var(--state-released)]">{g.filedCount} filed</span>
                       : <span className="text-[var(--color-text-muted)]">-</span>}
                   </td>
                   <td className="px-4 py-2.5 text-[var(--color-text-muted)] whitespace-nowrap max-md:hidden">

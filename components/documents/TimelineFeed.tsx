@@ -80,46 +80,46 @@ function visualsFor(event: TimelineEvent): RowVisuals {
     if (event.action === "VERSION_REVERT") {
       return { Icon: Rewind, ringClass: "border-[var(--color-border-strong)]", bgClass: "bg-[var(--color-surface-2)]", iconColor: "text-[var(--color-text-muted)]" };
     }
-    return { Icon: GitCommitVertical, ringClass: "border-emerald-500", bgClass: "bg-emerald-100", iconColor: "text-emerald-700" };
+    return { Icon: GitCommitVertical, ringClass: "border-[var(--state-released)]", bgClass: "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)]", iconColor: "text-[var(--state-released)]" };
   }
   if (event.kind === "project_activity") {
     if (event.action === "comment") return { Icon: MessageSquare, ringClass: "border-[var(--color-border-strong)]", bgClass: "bg-[var(--color-surface-2)]", iconColor: "text-[var(--color-text-muted)]" };
-    return { Icon: Activity, ringClass: "border-slate-400", bgClass: "bg-[var(--color-surface-2)]", iconColor: "text-[var(--color-text-muted)]" };
+    return { Icon: Activity, ringClass: "border-[var(--color-border-strong)]", bgClass: "bg-[var(--color-surface-2)]", iconColor: "text-[var(--color-text-muted)]" };
   }
   if (event.kind === "hold") {
-    if (event.action === "HOLD_RELEASED") return { Icon: Check, ringClass: "border-emerald-500", bgClass: "bg-emerald-50", iconColor: "text-emerald-700" };
-    return { Icon: AlertOctagon, ringClass: "border-amber-500", bgClass: "bg-amber-50", iconColor: "text-amber-700" };
+    if (event.action === "HOLD_RELEASED") return { Icon: Check, ringClass: "border-[var(--state-released)]", bgClass: "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)]", iconColor: "text-[var(--state-released)]" };
+    return { Icon: AlertOctagon, ringClass: "border-[var(--state-held)]", bgClass: "bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)]", iconColor: "text-[var(--state-held)]" };
   }
   // audit kind
   switch (event.action) {
     case "VIEW":          return { Icon: Eye,         ringClass: "border-[var(--color-border-strong)]", bgClass: "bg-[var(--color-surface-2)]", iconColor: "text-[var(--color-text-muted)]" };
     case "DOWNLOAD":      return { Icon: DownloadIcon, ringClass: "border-[var(--color-border-strong)]", bgClass: "bg-[var(--color-surface-2)]",   iconColor: "text-[var(--color-text)]" };
-    case "CHECK_OUT":     return { Icon: LogOut,       ringClass: "border-amber-400", bgClass: "bg-amber-50", iconColor: "text-amber-700" };
-    case "CHECK_IN":      return { Icon: LogIn,        ringClass: "border-emerald-400", bgClass: "bg-emerald-50", iconColor: "text-emerald-700" };
+    case "CHECK_OUT":     return { Icon: LogOut,       ringClass: "border-[var(--state-held)]", bgClass: "bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)]", iconColor: "text-[var(--state-held)]" };
+    case "CHECK_IN":      return { Icon: LogIn,        ringClass: "border-[var(--state-released)]", bgClass: "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)]", iconColor: "text-[var(--state-released)]" };
     case "ABANDON":       return { Icon: AlertTriangle, ringClass: "border-[var(--color-border-strong)]", bgClass: "bg-[var(--color-surface-2)]", iconColor: "text-[var(--color-text)]" };
-    case "FORCE_RELEASE": return { Icon: AlertTriangle, ringClass: "border-red-400",   bgClass: "bg-red-50",   iconColor: "text-red-700" };
+    case "FORCE_RELEASE": return { Icon: AlertTriangle, ringClass: "border-[var(--state-overdue)]",   bgClass: "bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)]",   iconColor: "text-[var(--state-overdue)]" };
     case "JOIN":          return { Icon: LogIn,        ringClass: "border-[var(--color-border-strong)]", bgClass: "bg-[var(--color-surface-2)]", iconColor: "text-[var(--color-text-muted)]" };
-    case "REV_UP":        return { Icon: GitBranch,    ringClass: "border-emerald-500", bgClass: "bg-emerald-100", iconColor: "text-emerald-700" };
-    case "REV_BACKFILL":        return { Icon: HistoryIcon,  ringClass: "border-slate-400",   bgClass: "bg-[var(--color-surface-2)]",   iconColor: "text-[var(--color-text-muted)]" };
+    case "REV_UP":        return { Icon: GitBranch,    ringClass: "border-[var(--state-released)]", bgClass: "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)]", iconColor: "text-[var(--state-released)]" };
+    case "REV_BACKFILL":        return { Icon: HistoryIcon,  ringClass: "border-[var(--color-border-strong)]",   bgClass: "bg-[var(--color-surface-2)]",   iconColor: "text-[var(--color-text-muted)]" };
     case "REVERT":              return { Icon: Rewind,       ringClass: "border-[var(--color-border-strong)]", bgClass: "bg-[var(--color-surface-2)]",  iconColor: "text-[var(--color-text)]" };
     case "MILESTONE_CREATED":   return { Icon: Flag,         ringClass: "border-[var(--color-border)]", bgClass: "bg-[var(--color-surface-2)]",   iconColor: "text-[var(--color-text)]" };
     case "MILESTONE_UPDATED":   return { Icon: Flag,         ringClass: "border-[var(--color-border)]", bgClass: "bg-[var(--color-surface-2)]",   iconColor: "text-[var(--color-text-muted)]" };
-    case "MILESTONE_COMPLETED": return { Icon: Flag,         ringClass: "border-emerald-500", bgClass: "bg-emerald-100", iconColor: "text-emerald-700" };
-    case "MILESTONE_MISSED":    return { Icon: Flag,         ringClass: "border-red-500",    bgClass: "bg-red-50",      iconColor: "text-red-700" };
-    case "MILESTONE_BLOCKED":   return { Icon: Flag,         ringClass: "border-amber-500",  bgClass: "bg-amber-50",    iconColor: "text-amber-700" };
+    case "MILESTONE_COMPLETED": return { Icon: Flag,         ringClass: "border-[var(--state-released)]", bgClass: "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)]", iconColor: "text-[var(--state-released)]" };
+    case "MILESTONE_MISSED":    return { Icon: Flag,         ringClass: "border-[var(--state-overdue)]",    bgClass: "bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)]",      iconColor: "text-[var(--state-overdue)]" };
+    case "MILESTONE_BLOCKED":   return { Icon: Flag,         ringClass: "border-[var(--state-held)]",  bgClass: "bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)]",    iconColor: "text-[var(--state-held)]" };
     case "MILESTONE_DELETED":   return { Icon: Flag,         ringClass: "border-[var(--color-border-strong)]",  bgClass: "bg-[var(--color-surface-2)]",    iconColor: "text-[var(--color-text-muted)]" };
-    case "DOC_SPLIT":           return { Icon: Split,        ringClass: "border-amber-500",  bgClass: "bg-amber-50",    iconColor: "text-amber-700" };
-    case "CREATED_FROM_SPLIT":  return { Icon: Split,        ringClass: "border-emerald-400", bgClass: "bg-emerald-50",  iconColor: "text-emerald-700" };
-    case "DOC_MERGED":          return { Icon: Merge,        ringClass: "border-amber-500",  bgClass: "bg-amber-50",    iconColor: "text-amber-700" };
-    case "CREATED_FROM_MERGE":  return { Icon: Merge,        ringClass: "border-emerald-400", bgClass: "bg-emerald-50",  iconColor: "text-emerald-700" };
-    case "DOC_RENUMBERED":      return { Icon: Hash,         ringClass: "border-slate-400",  bgClass: "bg-[var(--color-surface-2)]",   iconColor: "text-[var(--color-text-muted)]" };
-    case "SET_REV_UP":          return { Icon: Repeat2,      ringClass: "border-emerald-500", bgClass: "bg-emerald-100", iconColor: "text-emerald-700" };
-    case "DOC_SPLIT_REVERSED":  return { Icon: Undo2,        ringClass: "border-slate-400",  bgClass: "bg-[var(--color-surface-2)]",   iconColor: "text-[var(--color-text-muted)]" };
-    case "DOC_MERGE_REVERSED":  return { Icon: Undo2,        ringClass: "border-slate-400",  bgClass: "bg-[var(--color-surface-2)]",   iconColor: "text-[var(--color-text-muted)]" };
-    case "DOC_RENUMBER_REVERSED": return { Icon: Undo2,      ringClass: "border-slate-400",  bgClass: "bg-[var(--color-surface-2)]",   iconColor: "text-[var(--color-text-muted)]" };
+    case "DOC_SPLIT":           return { Icon: Split,        ringClass: "border-[var(--state-held)]",  bgClass: "bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)]",    iconColor: "text-[var(--state-held)]" };
+    case "CREATED_FROM_SPLIT":  return { Icon: Split,        ringClass: "border-[var(--state-released)]", bgClass: "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)]",  iconColor: "text-[var(--state-released)]" };
+    case "DOC_MERGED":          return { Icon: Merge,        ringClass: "border-[var(--state-held)]",  bgClass: "bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)]",    iconColor: "text-[var(--state-held)]" };
+    case "CREATED_FROM_MERGE":  return { Icon: Merge,        ringClass: "border-[var(--state-released)]", bgClass: "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)]",  iconColor: "text-[var(--state-released)]" };
+    case "DOC_RENUMBERED":      return { Icon: Hash,         ringClass: "border-[var(--color-border-strong)]",  bgClass: "bg-[var(--color-surface-2)]",   iconColor: "text-[var(--color-text-muted)]" };
+    case "SET_REV_UP":          return { Icon: Repeat2,      ringClass: "border-[var(--state-released)]", bgClass: "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)]", iconColor: "text-[var(--state-released)]" };
+    case "DOC_SPLIT_REVERSED":  return { Icon: Undo2,        ringClass: "border-[var(--color-border-strong)]",  bgClass: "bg-[var(--color-surface-2)]",   iconColor: "text-[var(--color-text-muted)]" };
+    case "DOC_MERGE_REVERSED":  return { Icon: Undo2,        ringClass: "border-[var(--color-border-strong)]",  bgClass: "bg-[var(--color-surface-2)]",   iconColor: "text-[var(--color-text-muted)]" };
+    case "DOC_RENUMBER_REVERSED": return { Icon: Undo2,      ringClass: "border-[var(--color-border-strong)]",  bgClass: "bg-[var(--color-surface-2)]",   iconColor: "text-[var(--color-text-muted)]" };
     case "EQUIPMENT_STATE_CHANGED": return { Icon: Wrench,   ringClass: "border-[var(--color-border-strong)]",   bgClass: "bg-[var(--color-surface-2)]",     iconColor: "text-[var(--color-text)]" };
-    case "SUPERSEDE_DOC": return { Icon: Stamp,        ringClass: "border-amber-500", bgClass: "bg-amber-50", iconColor: "text-amber-700" };
-    case "ARCHIVE_DOC":   return { Icon: Archive,      ringClass: "border-slate-400", bgClass: "bg-[var(--color-surface-2)]", iconColor: "text-[var(--color-text-muted)]" };
+    case "SUPERSEDE_DOC": return { Icon: Stamp,        ringClass: "border-[var(--state-held)]", bgClass: "bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)]", iconColor: "text-[var(--state-held)]" };
+    case "ARCHIVE_DOC":   return { Icon: Archive,      ringClass: "border-[var(--color-border-strong)]", bgClass: "bg-[var(--color-surface-2)]", iconColor: "text-[var(--color-text-muted)]" };
     default:              return { Icon: HistoryIcon,  ringClass: "border-[var(--color-border-strong)]", bgClass: "bg-[var(--color-surface-2)]", iconColor: "text-[var(--color-text-muted)]" };
   }
 }
@@ -144,7 +144,7 @@ function TimelineRow({ event, showScope, onReverseRequest }: { event: TimelineEv
               <span>{formatTime(event.timestamp)}</span>
               {(event.userName || event.userEmail) && (
                 <>
-                  <span className="text-slate-300">·</span>
+                  <span className="text-[var(--color-text-faint)]">·</span>
                   <span>{event.userName || event.userEmail}</span>
                 </>
               )}
@@ -190,7 +190,7 @@ function ScopeChip({ label, tone }: { label: string; tone: "blue" | "purple" | "
   const toneClass =
     tone === "blue" ? "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]"
     : tone === "purple" ? "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]"
-    : "bg-emerald-50 text-emerald-700 border-emerald-200";
+    : "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)] border-[color-mix(in_srgb,var(--state-released)_35%,transparent)]";
   return (
     <span className={`inline-flex items-center gap-1 ${toneClass} border px-1.5 py-0.5 rounded font-display tabular-nums`}>
       <Layers className="w-2.5 h-2.5" /> {label}

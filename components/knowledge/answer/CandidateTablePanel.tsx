@@ -53,7 +53,7 @@ export default function CandidateTablePanel({ table, onOpen }: {
                   <div className="flex flex-wrap gap-1">
                     {r.matched.map((m) => (
                       <span key={`${m.how}:${m.term}`} title={m.how === "asker" ? "your word" : m.how === "company" ? "the word your documents use for it" : "a related word only"}
-                        className={`rounded px-1 py-px text-[13px] font-bold border ${m.how === "asker" ? "border-emerald-300 bg-emerald-50 text-[var(--state-released)] dark:bg-emerald-950/30 dark:border-emerald-900" : m.how === "company" ? "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)] dark:border-[var(--color-border)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
+                        className={`rounded px-1 py-px text-[13px] font-bold border ${m.how === "asker" ? "border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)]" : m.how === "company" ? "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)] dark:border-[var(--color-border)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
                         {m.term}
                       </span>
                     ))}

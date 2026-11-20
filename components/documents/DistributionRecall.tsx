@@ -70,11 +70,11 @@ export default function DistributionRecall({
         <span className="text-[13px] font-bold text-[var(--color-text)]">Copies in circulation</span>
         <span className="ml-auto flex items-center gap-1.5">
           {outdated.length > 0 ? (
-            <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800">
+            <span className="text-[13px] font-bold px-1.5 py-0.5 rounded-full bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] text-[var(--state-held)]">
               {outdated.length} of {holders.length} outdated
             </span>
           ) : (
-            <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700">
+            <span className="text-[13px] font-bold px-1.5 py-0.5 rounded-full bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)]">
               all {holders.length} current
             </span>
           )}
@@ -87,8 +87,8 @@ export default function DistributionRecall({
           {holders.slice(0, 10).map((h) => (
             <div key={h.userId} className="flex items-center gap-2 text-[13px] py-0.5">
               {h.hasCurrent
-                ? <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0" />
-                : <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />}
+                ? <CheckCircle2 className="w-3 h-3 text-[var(--state-released)] shrink-0" />
+                : <AlertTriangle className="w-3 h-3 text-[var(--state-held)] shrink-0" />}
               <span className="font-bold text-[var(--color-text)] truncate">{shortName(h)}</span>
               <span className="text-[var(--color-text-faint)] ml-auto shrink-0">
                 Rev {h.lastDownloadedRev ?? "?"} · {new Date(h.lastDownloadedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
@@ -101,14 +101,14 @@ export default function DistributionRecall({
 
           {outdated.length > 0 && (
             nudgedCount !== null ? (
-              <div className="mt-1.5 text-[13px] font-bold text-emerald-700 flex items-center gap-1.5">
+              <div className="mt-1.5 text-[13px] font-bold text-[var(--state-released)] flex items-center gap-1.5">
                 <CheckCircle2 className="w-3.5 h-3.5" /> Recall sent to {nudgedCount} {nudgedCount === 1 ? "person" : "people"}
               </div>
             ) : (
               <button
                 onClick={() => void handleNudge()}
                 disabled={nudging}
-                className="mt-1.5 w-full inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] border border-amber-200 transition-colors disabled:opacity-50"
+                className="mt-1.5 w-full inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] border border-[color-mix(in_srgb,var(--state-held)_40%,transparent)] transition-colors disabled:opacity-50"
               >
                 {nudging ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <BellRing className="w-3.5 h-3.5" />}
                 Recall outdated copies - notify {outdated.length} {outdated.length === 1 ? "person" : "people"}

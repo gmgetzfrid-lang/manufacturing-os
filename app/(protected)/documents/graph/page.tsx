@@ -68,10 +68,10 @@ import { useEscapeClose, escapeStackBusy } from "@/components/documents/useEscap
 import { badgeText } from "@/lib/badge";
 
 const VERDICT_STYLE: Record<RankedHit["verdict"], string> = {
-  strong: "bg-green-100 text-green-800 border-green-200",
-  possible: "bg-amber-100 text-amber-800 border-amber-200",
+  strong: "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)] border-[color-mix(in_srgb,var(--state-released)_35%,transparent)]",
+  possible: "bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] text-[var(--state-held)] border-[color-mix(in_srgb,var(--state-held)_40%,transparent)]",
   weak: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]",
-  rejected: "bg-red-100 text-red-700 border-red-200",
+  rejected: "bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)] border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)]",
 };
 const VERDICT_LABEL: Record<RankedHit["verdict"], string> = {
   strong: "Strong", possible: "Possible", weak: "Weak", rejected: "Ditch",
@@ -660,7 +660,7 @@ function GraphPageInner() {
                     <div className="flex flex-wrap gap-1">
                       {parsed.chips.map((c, i) => (
                         <span key={i} title={c.via === "alias" ? `Through a taught alias (${Math.round(c.confidence * 100)}% trusted)` : c.via === "codebook" ? "From the Site Codebook" : "Typed"}
-                          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${CHIP_STYLE[c.kind]}`}>
+                          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[13px] font-semibold ${CHIP_STYLE[c.kind]}`}>
                           <span className="opacity-60">{c.kind === "identifier" ? "#" : c.kind === "unit" ? "unit" : c.kind === "year" ? "yr" : c.kind === "phrase" ? "“”" : c.kind === "doctype" ? "type" : ""}</span>
                           {c.label}
                           {c.via !== "typed" && <span className="opacity-60">· {c.via}</span>}
@@ -705,7 +705,7 @@ function GraphPageInner() {
         {/* ── Centre: the map ─────────────────────────────────────────── */}
         <main className="relative min-h-0 min-w-0 h-[60vh] lg:h-auto bg-[var(--color-canvas)]">
           {loading && data && (
-            <div className="absolute bottom-3 left-3 z-10 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)]/95 px-2.5 py-1 text-[11px] inline-flex items-center gap-1.5 shadow-sm">
+            <div className="absolute bottom-3 left-3 z-10 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)]/95 px-2.5 py-1 text-[13px] inline-flex items-center gap-1.5 shadow-sm">
               <RefreshCw className="w-3 h-3 animate-spin" /> {snapAt ? `Showing the map from ${Math.max(1, Math.round((Date.now() - snapAt) / 60000))} min ago while the fresh one loads` : "Refreshing…"}
             </div>
           )}
@@ -782,8 +782,8 @@ function GraphPageInner() {
             {([["#16a34a", "Strong"], ["#eab308", "Possible"], ["#94a3b8", "Weak"], ["#ef4444", "Ditch"]] as const).map(([c, l]) => (
               <span key={l} className="inline-flex items-center gap-1 rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-1.5 py-0.5"><span className="w-2.5 h-2.5 rounded-full border-2" style={{ borderColor: c }} /> {l}</span>
             ))}
-            <span className="inline-flex items-center gap-1 rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-1.5 py-0.5"><span className="w-4 border-t-2 border-dashed border-red-600" /> Same bytes</span>
-            <span className="inline-flex items-center gap-1 rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-1.5 py-0.5"><span className="w-4 border-t-2 border-dashed border-amber-600" /> Also filed under</span>
+            <span className="inline-flex items-center gap-1 rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-1.5 py-0.5"><span className="w-4 border-t-2 border-dashed border-[var(--state-overdue)]" /> Same bytes</span>
+            <span className="inline-flex items-center gap-1 rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-1.5 py-0.5"><span className="w-4 border-t-2 border-dashed border-[var(--state-held)]" /> Also filed under</span>
           </div>
           {activeHit && (
             <div className="absolute left-1/2 -translate-x-1/2 bottom-12 flex items-center gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/95 shadow-md px-2 py-1.5 text-xs">
@@ -791,7 +791,7 @@ function GraphPageInner() {
               <button onClick={() => jumpTo(activeIdx)} className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 hover:bg-[var(--color-canvas)]" title="Centre on this result">
                 <Crosshair className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                 <span className="font-bold tabular-nums">{activeIdx + 1}</span><span className="text-[var(--color-text-muted)]">/ {hits.length}</span>
-                <span className={`rounded-full border px-1.5 py-px text-[11px] font-bold ${VERDICT_STYLE[activeHit.verdict]}`}>{VERDICT_LABEL[activeHit.verdict]} · {activeHit.score}</span>
+                <span className={`rounded-full border px-1.5 py-px text-[13px] font-bold ${VERDICT_STYLE[activeHit.verdict]}`}>{VERDICT_LABEL[activeHit.verdict]} · {activeHit.score}</span>
                 <FileTypeIcon type={fileTypeOf(activeHit.entry.name)} className="w-3.5 h-3.5" />
                 <span className="font-semibold max-w-[260px] truncate">{activeHit.entry.name}</span>
               </button>
@@ -856,7 +856,7 @@ function GraphPageInner() {
                       onUnit={(code) => { const next = query.includes(code) ? query : `${query} ${code}`.trim(); setQuery(next); runSearch(next); }} />
                   </div>
                 )}
-                {finding && <div className="mb-2 text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Checking tags, drawings, text and work in flight…</div>}
+                {finding && <div className="mb-2 text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Checking tags, drawings, text and work in flight…</div>}
                 {serverFind && serverFind.hidden.count > 0 && (
                   <div className="mb-2 text-[13px] text-[var(--color-text-muted)]">
                     {serverFind.hidden.count} hidden because you asked for a different type: {Object.entries(serverFind.hidden.byType).map(([t, n]) => `${n} ${t}`).join(", ")}.
@@ -920,7 +920,7 @@ function GraphPageInner() {
         </aside>
       </div>
       {viewerError && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 rounded-lg border border-red-200 bg-red-50 text-red-800 text-sm px-3 py-2 shadow-lg flex items-center gap-2">
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 rounded-lg border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)] text-sm px-3 py-2 shadow-lg flex items-center gap-2">
           <AlertTriangle className="w-4 h-4" /> {viewerError}
           <button aria-label="Dismiss" onClick={() => setViewerError(null)} className="ml-2 opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
         </div>
@@ -933,7 +933,7 @@ function GraphPageInner() {
         <div className="fixed inset-0 z-[70] bg-black/85 flex items-center justify-center p-6" onClick={() => setLightbox(null)}>
           <div className="max-w-5xl max-h-full flex flex-col items-center gap-2" onClick={(e) => e.stopPropagation()}>
             <SignedImg path={lightbox.file_url} alt={lightbox.caption ?? ""} className="max-h-[80vh] max-w-full rounded-xl object-contain shadow-2xl" placeholder={<Loader2 className="w-6 h-6 animate-spin text-white" />} />
-            <div className="text-[13px] text-white/80">{lightbox.caption || "Photo"}{lightbox.captured_at ? ` · ${new Date(lightbox.captured_at).toLocaleDateString()}` : ""}</div>
+            <div className="text-[13px] text-white/80">{lightbox.caption || "Photo"}{lightbox.captured_at ? ` · ${new Date(lightbox.captured_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}` : ""}</div>
           </div>
           <button aria-label="Close" onClick={() => setLightbox(null)} className="absolute top-4 right-4 text-white/80 hover:text-white"><X className="w-6 h-6" /></button>
         </div>
@@ -949,7 +949,7 @@ function GraphPageInner() {
       {readAsk && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/50" onClick={() => !readAsk.busy && setReadAsk(null)}>
           <div className="w-[28rem] max-w-[92vw] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
-            <div className="text-sm font-semibold inline-flex items-center gap-2"><Eye className="w-4 h-4 text-emerald-600" /> Read the contents of {readAsk.folder.path || "this library"}</div>
+            <div className="text-sm font-semibold inline-flex items-center gap-2"><Eye className="w-4 h-4 text-[var(--state-released)]" /> Read the contents of {readAsk.folder.path || "this library"}</div>
             <div className="text-[13px] text-[var(--color-text-muted)]">{readAsk.folder.count} file{readAsk.folder.count === 1 ? "" : "s"} here have never been read. Linking the folder as a source of a knowledge library reads them: text pages cost nothing, scanned or SHX pages use vision on the cheap tier within your monthly cap, and every tag read becomes a link. Nothing outside the folder is touched.</div>
             {readAsk.libs.length > 0 && (
               <select value={readAsk.pick} onChange={(e) => setReadAsk({ ...readAsk, pick: e.target.value })} className="w-full text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5">
@@ -1007,7 +1007,7 @@ function EvidenceList({ hit }: { hit: RankedHit }) {
   return (
     <ul className="mt-1.5 space-y-0.5 text-[13px]">
       {hit.evidence.map((e, i) => (
-        <li key={i} className={`flex items-start gap-1.5 ${e.delta > 0 ? "text-green-800" : e.delta < 0 ? "text-red-700" : "text-[var(--color-text-muted)]"}`}>
+        <li key={i} className={`flex items-start gap-1.5 ${e.delta > 0 ? "text-[var(--state-released)]" : e.delta < 0 ? "text-[var(--state-overdue)]" : "text-[var(--color-text-muted)]"}`}>
           <span className="w-8 shrink-0 text-right font-display tabular-nums tabular-nums">{e.delta > 0 ? `+${Math.round(e.delta)}` : e.delta < 0 ? Math.round(e.delta) : "·"}</span>
           <span>{e.label}</span>
         </li>
@@ -1026,11 +1026,11 @@ function HitCard({ hit, rank, active, relations, pages, onReveal, onOpen, onPage
       <div className="flex items-start gap-2">
         <button onClick={onReveal} className="flex-1 text-left min-w-0">
           <div className="flex items-center gap-1.5">
-            <span className={`shrink-0 w-5 h-5 rounded-full grid place-items-center text-[11px] font-semibold ${active ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-slate-800 text-white"}`}>{rank}</span>
-            <span className={`shrink-0 rounded-full border px-1.5 py-px text-[11px] font-bold ${VERDICT_STYLE[hit.verdict]}`}>{VERDICT_LABEL[hit.verdict]} · {hit.score}</span>
+            <span className={`shrink-0 w-5 h-5 rounded-full grid place-items-center text-[13px] font-semibold ${active ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-slate-800 text-white"}`}>{rank}</span>
+            <span className={`shrink-0 rounded-full border px-1.5 py-px text-[13px] font-bold ${VERDICT_STYLE[hit.verdict]}`}>{VERDICT_LABEL[hit.verdict]} · {hit.score}</span>
             <FileTypeIcon type={fileTypeOf(e.name)} className="w-4 h-4 shrink-0" />
             <span className="text-sm font-semibold truncate">{e.name}</span>
-            {e.read?.status === "ready" && <span title={`Content read by AI (${e.read.pages} pages)`} className="shrink-0 inline-flex items-center gap-0.5 text-emerald-700 dark:text-emerald-400 px-1 text-[11px] font-bold"><Eye className="w-3 h-3" /> read</span>}
+            {e.read?.status === "ready" && <span title={`Content read by AI (${e.read.pages} pages)`} className="shrink-0 inline-flex items-center gap-0.5 text-[var(--state-released)] px-1 text-[13px] font-bold"><Eye className="w-3 h-3" /> read</span>}
           </div>
           {e.title && e.title !== e.name && <div className="text-[13px] text-[var(--color-text-muted)] truncate">{e.title}</div>}
           <PathCrumbs entry={e} />
@@ -1064,9 +1064,9 @@ function SelectedCard({ entry, hit, sameBytes, onClose, onReveal, onOpen, orgId,
             {entry.number && <span className="rounded bg-[var(--color-surface)] border border-[var(--color-border)] px-1">{entry.number}{entry.rev ? ` rev ${entry.rev}` : ""}</span>}
             {entry.status && <span className="rounded bg-[var(--color-surface)] border border-[var(--color-border)] px-1">{entry.status}</span>}
             {entry.years.length > 0 && <span className="rounded bg-[var(--color-surface)] border border-[var(--color-border)] px-1">dated {entry.years.join(", ")}</span>}
-            {entry.read && <span className={`rounded border px-1 ${entry.read.status === "ready" ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-amber-50 border-amber-200 text-[var(--state-held)]"}`}>{entry.read.status === "ready" ? `read by AI · ${entry.read.pages} pages` : `AI read: ${entry.read.status}`}</span>}
+            {entry.read && <span className={`rounded border px-1 ${entry.read.status === "ready" ? "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] text-[var(--state-released)]" : "bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] border-[color-mix(in_srgb,var(--state-held)_40%,transparent)] text-[var(--state-held)]"}`}>{entry.read.status === "ready" ? `read by AI · ${entry.read.pages} pages` : `AI read: ${entry.read.status}`}</span>}
             {entry.unitCodes.map((c) => <span key={c} className="rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text)] px-1">unit {c}</span>)}
-            {entry.sizeBytes != null && <span className={`rounded border px-1 ${entry.sizeBytes === 0 ? "bg-red-50 border-red-200 text-red-700" : "bg-[var(--color-surface)] border-[var(--color-border)]"}`}>{entry.sizeBytes === 0 ? "0 KB" : `${Math.max(1, Math.round(entry.sizeBytes / 1024))} KB`}</span>}
+            {entry.sizeBytes != null && <span className={`rounded border px-1 ${entry.sizeBytes === 0 ? "bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] text-[var(--state-overdue)]" : "bg-[var(--color-surface)] border-[var(--color-border)]"}`}>{entry.sizeBytes === 0 ? "0 KB" : `${Math.max(1, Math.round(entry.sizeBytes / 1024))} KB`}</span>}
             {entry.idents.map((t) => <span key={t} className="rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text)] px-1">{tagVariants(t)[1] ?? t}</span>)}
           </div>
         </div>
@@ -1080,14 +1080,14 @@ function SelectedCard({ entry, hit, sameBytes, onClose, onReveal, onOpen, orgId,
         </div>
       )}
       {entry.source === "listing" && (
-        <div className="mt-2 text-xs text-amber-800 dark:text-amber-300 inline-flex items-center gap-1"><HardDrive className="w-3.5 h-3.5" /> On {entry.listingName}, not in the system. Upload it to bring it under control.</div>
+        <div className="mt-2 text-xs text-[var(--state-held)] inline-flex items-center gap-1"><HardDrive className="w-3.5 h-3.5" /> On {entry.listingName}, not in the system. Upload it to bring it under control.</div>
       )}
       {canRead && orgId && entry.source === "system" && fileTypeOf(entry.name).key === "pdf" && (
         <ReadDrawingPanel orgId={orgId} documentId={entry.id.replace(/^doc:/, "")} onDone={onRead} />
       )}
       {sameBytes.length > 0 && (
         <div className="mt-2">
-          <div className="text-[13px] font-bold text-red-700">Same bytes in {sameBytes.length + 1} places</div>
+          <div className="text-[13px] font-bold text-[var(--state-overdue)]">Same bytes in {sameBytes.length + 1} places</div>
           <ul className="text-[13px] space-y-0.5">
             {sameBytes.map((s) => (
               <li key={s.id}><button onClick={() => onReveal(s.id)} className="text-left hover:underline">{[s.libraryName, ...s.path, s.name].filter(Boolean).join(" / ")}</button></li>
@@ -1199,8 +1199,8 @@ function EntityPanel({ orgId, sat, data, entryById, nodeById, serverFind: liveFi
       )}
       {asset && (
         <div>
-          {photoList === null ? <div className="text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> photos…</div>
-            : photoList.length === 0 ? <div className="text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1"><ImageIcon className="w-3 h-3" /> No photos on file</div>
+          {photoList === null ? <div className="text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> photos…</div>
+            : photoList.length === 0 ? <div className="text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1"><ImageIcon className="w-3 h-3" /> No photos on file</div>
             : (
               <div className="flex flex-wrap gap-1.5">
                 {photoList.slice(0, 8).map((p) => (
@@ -1227,8 +1227,8 @@ function EntityPanel({ orgId, sat, data, entryById, nodeById, serverFind: liveFi
                   <div className="text-[13px] text-[var(--color-text-muted)]">{r.how}</div>
                 </button>
                 {r.isDoc && entry && (r.page
-                  ? <button onClick={() => onOpenAtPage(r.id, r.page!, r.tag)} className="shrink-0 rounded-md border border-[var(--color-border)] px-1.5 py-0.5 text-[11px] font-semibold inline-flex items-center gap-1"><Eye className="w-3 h-3" /> Sheet {r.page}</button>
-                  : <button onClick={() => onOpen(r.id)} className="shrink-0 rounded-md border border-[var(--color-border)] px-1.5 py-0.5 text-[11px] font-semibold inline-flex items-center gap-1"><Eye className="w-3 h-3" /> Open</button>)}
+                  ? <button onClick={() => onOpenAtPage(r.id, r.page!, r.tag)} className="shrink-0 rounded-md border border-[var(--color-border)] px-1.5 py-0.5 text-[13px] font-semibold inline-flex items-center gap-1"><Eye className="w-3 h-3" /> Sheet {r.page}</button>
+                  : <button onClick={() => onOpen(r.id)} className="shrink-0 rounded-md border border-[var(--color-border)] px-1.5 py-0.5 text-[13px] font-semibold inline-flex items-center gap-1"><Eye className="w-3 h-3" /> Open</button>)}
               </li>
             );
           })}
@@ -1241,9 +1241,9 @@ function EntityPanel({ orgId, sat, data, entryById, nodeById, serverFind: liveFi
         </div>
       )}
       <div className="flex flex-wrap gap-1">
-        {kind === "unit" && <button onClick={() => onNarrow(sat.id.slice(7))} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-[11px] font-semibold inline-flex items-center gap-1"><Search className="w-3 h-3" /> Search within this unit</button>}
-        {sat.href && <Link href={sat.href} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-[11px] font-semibold inline-flex items-center gap-1"><ExternalLink className="w-3 h-3" /> Full page</Link>}
-        <Link href={globalGraphHref(sat.id)} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-[11px] font-semibold inline-flex items-center gap-1"><Globe className="w-3 h-3" /> Global graph</Link>
+        {kind === "unit" && <button onClick={() => onNarrow(sat.id.slice(7))} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-[13px] font-semibold inline-flex items-center gap-1"><Search className="w-3 h-3" /> Search within this unit</button>}
+        {sat.href && <Link href={sat.href} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-[13px] font-semibold inline-flex items-center gap-1"><ExternalLink className="w-3 h-3" /> Full page</Link>}
+        <Link href={globalGraphHref(sat.id)} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-[13px] font-semibold inline-flex items-center gap-1"><Globe className="w-3 h-3" /> Global graph</Link>
       </div>
     </div>
   );
@@ -1280,9 +1280,9 @@ function LinksPanel({ orgId, edges, units, estateMissing, onReveal, onConnect, c
       <EstateReadiness key={readinessKey} orgId={orgId} onConnect={onConnect} connecting={connecting} />
       <div className="text-[13px] text-[var(--color-text-muted)]">What the estate knows about where things belong - every link with its reason. Provable ones came from the codebook, drawing numbers and ancestry; the rest were approved in Review.</div>
       <div className="flex flex-wrap gap-1">
-        <button onClick={() => setFilter("all")} className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${filter === "all" ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm border-transparent" : "border-[var(--color-border)]"}`}>all {edges.length}</button>
+        <button onClick={() => setFilter("all")} className={`rounded-full border px-2 py-0.5 text-[13px] font-semibold ${filter === "all" ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm border-transparent" : "border-[var(--color-border)]"}`}>all {edges.length}</button>
         {[...counts.entries()].sort((a, b) => b[1] - a[1]).map(([t, n]) => (
-          <button key={t} onClick={() => setFilter(t)} className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${filter === t ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm border-transparent" : "border-[var(--color-border)]"}`}>{EDGE_WORDS[t] ?? t} {n}</button>
+          <button key={t} onClick={() => setFilter(t)} className={`rounded-full border px-2 py-0.5 text-[13px] font-semibold ${filter === t ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm border-transparent" : "border-[var(--color-border)]"}`}>{EDGE_WORDS[t] ?? t} {n}</button>
         ))}
       </div>
       {edges.length === 0 && <div className="text-[13px] text-[var(--color-text-muted)]">No links yet. Add your units to the Site Codebook, then press &ldquo;Resolve links&rdquo; above the map.</div>}
@@ -1338,7 +1338,7 @@ function DrivesPanel({ orgId, controller, listings, uid, userEmail, systemHashes
       <div className="text-[13px] text-[var(--color-text-muted)]">
         A drive the system doesn&apos;t hold. Paste the output of <code>tree /f</code>, <code>dir /s</code>, <code>tree</code>, one path per line - or the JSON from <code>node scripts/thor-scan.mjs</code>, which adds sizes, dates and hashes so files already in the system are identified by their bytes. Names and paths only - nothing is copied.
       </div>
-      {storeState.listingsLocal && <div className="text-[11px] text-[var(--state-held)] flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Saved in this browser only until the finder migration is applied.</div>}
+      {storeState.listingsLocal && <div className="text-[13px] text-[var(--state-held)] flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Saved in this browser only until the finder migration is applied.</div>}
       {listings.map((l) => (
         <div key={l.id} className="rounded-lg border border-[var(--color-border)] p-2 text-[13px] flex items-start gap-2">
           <button onClick={() => onReveal(`drive:${l.id}`)} className="flex-1 text-left">
@@ -1372,7 +1372,7 @@ function DrivesPanel({ orgId, controller, listings, uid, userEmail, systemHashes
               })()}
             </div>
           )}
-          {err && <div className="text-[13px] text-red-700">{err}</div>}
+          {err && <div className="text-[13px] text-[var(--state-overdue)]">{err}</div>}
           <button onClick={save} disabled={busy || !preview?.files.length} className="w-full inline-flex items-center justify-center gap-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-bold px-3 py-1.5 disabled:opacity-50">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Add listing
           </button>
@@ -1412,7 +1412,7 @@ function AliasesPanel({ orgId, controller, aliases, uid, userEmail, units, onCha
       <div className="text-[13px] text-[var(--color-text-muted)]">
         What people say versus what the files say. &ldquo;born&rdquo; means the crude unit. &ldquo;the north furnace&rdquo; is F-101. Teaching one makes it work in every search; opening results through it raises its trust.
       </div>
-      {storeState.aliasesLocal && <div className="text-[11px] text-[var(--state-held)] flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Saved in this browser only until the finder migration is applied.</div>}
+      {storeState.aliasesLocal && <div className="text-[13px] text-[var(--state-held)] flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Saved in this browser only until the finder migration is applied.</div>}
       {aliases.map((a) => (
         <div key={a.id} className="rounded-lg border border-[var(--color-border)] p-2 text-[13px] flex items-start gap-2">
           <div className="flex-1 min-w-0">
@@ -1441,7 +1441,7 @@ function AliasesPanel({ orgId, controller, aliases, uid, userEmail, units, onCha
             <input value={means} onChange={(e) => setMeans(e.target.value)} placeholder={kind === "equipment" ? "The tag - F-101" : "What the files say - crude"}
               className="w-full text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5" />
           )}
-          {err && <div className="text-[13px] text-red-700">{err}</div>}
+          {err && <div className="text-[13px] text-[var(--state-overdue)]">{err}</div>}
           <button onClick={add} disabled={busy || !term.trim() || !means.trim()} className="w-full inline-flex items-center justify-center gap-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-bold px-3 py-1.5 disabled:opacity-50">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Teach alias
           </button>

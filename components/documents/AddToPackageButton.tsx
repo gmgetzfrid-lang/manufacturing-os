@@ -92,7 +92,7 @@ export default function AddToPackageButton({ doc, orgId, userId, userName, openS
       {open && (
         <div className="absolute z-30 mt-1 w-64 left-0 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl p-1.5 space-y-0.5">
           {addedTo ? (
-            <div className="px-2 py-2 text-[13px] font-bold text-emerald-700 inline-flex items-center gap-1.5">
+            <div className="px-2 py-2 text-[13px] font-bold text-[var(--state-released)] inline-flex items-center gap-1.5">
               <Check className="w-3.5 h-3.5" /> Added to {addedTo}
             </div>
           ) : loading ? (

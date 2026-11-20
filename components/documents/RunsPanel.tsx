@@ -21,12 +21,12 @@ export default function RunsPanel({ orgId, onUndone }: { orgId: string; onUndone
     return () => { alive = false; };
   }, [orgId, tick]);
   if (!state) return null;
-  if (!state.available) return <div className="text-[13px] text-amber-700">AI runs are not recorded yet, so they cannot be undone. Apply migration 20261021_ai_boundary_runs.sql.</div>;
+  if (!state.available) return <div className="text-[13px] text-[var(--state-held)]">AI runs are not recorded yet, so they cannot be undone. Apply migration 20261021_ai_boundary_runs.sql.</div>;
   if (!state.runs.length) return null;
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-2.5 space-y-1.5">
       <div className="text-[13px] font-semibold text-[var(--color-text-muted)] inline-flex items-center gap-1"><History className="w-3 h-3" /> AI runs on drawings</div>
-      {note && <div className="text-[13px] text-emerald-700">{note}</div>}
+      {note && <div className="text-[13px] text-[var(--state-released)]">{note}</div>}
       <ul className="space-y-1">
         {state.runs.map((r) => (
           <li key={r.runId} className="flex items-center gap-2 text-[13px]">
@@ -43,7 +43,7 @@ export default function RunsPanel({ orgId, onUndone }: { orgId: string; onUndone
                     .then((u) => { setNote(`Undone: ${u.drawings} drawings put back, ${u.assetsRemoved} registry items removed${u.skipped.length ? `, ${u.skipped.length} left as a person changed them since` : ""}.`); setTick((t) => t + 1); onUndone?.(); })
                     .catch((e) => setNote((e as Error).message))
                     .finally(() => setBusy(null));
-                }} className="shrink-0 rounded-full border border-rose-300 bg-rose-50 text-rose-700 px-2 py-0.5 text-[11px] font-semibold inline-flex items-center gap-1 disabled:opacity-50">
+                }} className="shrink-0 rounded-full border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)] px-2 py-0.5 text-[13px] font-semibold inline-flex items-center gap-1 disabled:opacity-50">
                   {busy === r.runId ? <Loader2 className="w-3 h-3 animate-spin" /> : <Undo2 className="w-3 h-3" />} Undo
                 </button>}
           </li>

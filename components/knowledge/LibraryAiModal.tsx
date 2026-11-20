@@ -122,7 +122,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
             </select>
           </div>
 
-          <div className="rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20 px-3 py-2.5">
+          <div className="rounded-lg border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] px-3 py-2.5">
             <div className="text-[13px] font-bold text-[var(--color-text)]">Answers come from documents only</div>
             <p className="text-[13px] text-[var(--color-text-muted)] mt-0.5">
               Every statement is cited to a page you can open. When the documents can&apos;t prove something -

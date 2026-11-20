@@ -144,7 +144,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
       <div className="w-full max-w-4xl bg-[var(--color-surface)] rounded-lg shadow-2xl border border-[var(--color-border)] overflow-hidden flex flex-col h-[80vh] animate-in fade-in zoom-in-95">
         
         {/* HEADER */}
-        <div className="h-16 border-b border-[var(--color-border)] flex items-center justify-between px-6 bg-slate-50/50 shrink-0">
+        <div className="h-16 border-b border-[var(--color-border)] flex items-center justify-between px-6 bg-[var(--color-surface-2)]/50 shrink-0">
           <div className="flex items-center">
             <BookOpen className="w-5 h-5 mr-3 text-[var(--color-text-muted)]" />
             <div>
@@ -248,12 +248,12 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                 </div>
 
                 {/* SHEET GRID */}
-                <div className="flex-1 overflow-y-auto p-6 bg-slate-50/30">
+                <div className="flex-1 overflow-y-auto p-6 bg-[var(--color-surface-2)]/30">
                   {docsLoading ? (
-                    <div className="flex justify-center p-10"><Loader2 className="w-8 h-8 animate-spin text-slate-300" /></div>
+                    <div className="flex justify-center p-10"><Loader2 className="w-8 h-8 animate-spin text-[var(--color-text-faint)]" /></div>
                   ) : setDocs.length === 0 ? (
                     <div className="text-center p-10 border-2 border-dashed border-[var(--color-border)] rounded-xl">
-                      <Layers className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                      <Layers className="w-12 h-12 text-[var(--color-text-faint)] mx-auto mb-3" />
                       <p className="text-[var(--color-text-muted)] font-bold">Binder is Empty</p>
                       <p className="text-[var(--color-text-faint)] text-[13px]">Search documents above to add them to this set.</p>
                     </div>
@@ -287,10 +287,10 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                               <span className="bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-0.5 rounded text-[13px] font-bold border border-[var(--color-border)]">{doc.rev}</span>
                             </td>
                             <td className="px-4 py-3">
-                              {doc.status === 'Locked' ? <span className="text-red-500 text-xs font-bold flex items-center"><AlertCircle className="w-3 h-3 mr-1" /> Locked</span> : <span className="text-green-600 text-xs font-bold flex items-center"><CheckCircle2 className="w-3 h-3 mr-1" /> Active</span>}
+                              {doc.status === 'Locked' ? <span className="text-[var(--state-overdue)] text-xs font-bold flex items-center"><AlertCircle className="w-3 h-3 mr-1" /> Locked</span> : <span className="text-[var(--state-released)] text-xs font-bold flex items-center"><CheckCircle2 className="w-3 h-3 mr-1" /> Active</span>}
                             </td>
                             <td className="px-4 py-3 text-right">
-                              <button onClick={() => removeFromSet(doc)} className="p-2 text-slate-300 hover:text-red-500 transition-colors"><Trash2 className="w-4 h-4" /></button>
+                              <button onClick={() => removeFromSet(doc)} className="p-2 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] transition-colors"><Trash2 className="w-4 h-4" /></button>
                             </td>
                           </tr>
                         ))}

@@ -138,21 +138,21 @@ export default function ReverseConfirmModal({
 
           {/* Result (after reversal completes) */}
           {result && (
-            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-[13px] space-y-1">
-              <div className="font-bold text-emerald-900 inline-flex items-center gap-1">
+            <div className="bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] rounded-lg p-3 text-[13px] space-y-1">
+              <div className="font-bold text-[var(--state-released)] inline-flex items-center gap-1">
                 <Check className="w-3.5 h-3.5" /> Reversal complete
               </div>
-              <div className="text-emerald-800">
+              <div className="text-[var(--state-released)]">
                 {result.reversedDocIds.length} doc{result.reversedDocIds.length === 1 ? "" : "s"} touched,
                 {result.preservedAsSuperseded > 0 && ` ${result.preservedAsSuperseded} parked under Superseded,`}{" "}
                 audit row written.
               </div>
               {result.warnings.length > 0 && (
-                <div className="pt-2 border-t border-emerald-200">
-                  <div className="font-bold text-amber-800 inline-flex items-center gap-1">
+                <div className="pt-2 border-t border-[color-mix(in_srgb,var(--state-released)_35%,transparent)]">
+                  <div className="font-bold text-[var(--state-held)] inline-flex items-center gap-1">
                     <AlertTriangle className="w-3.5 h-3.5" /> Heads up
                   </div>
-                  <ul className="list-disc ml-4 mt-1 text-amber-800 space-y-0.5">
+                  <ul className="list-disc ml-4 mt-1 text-[var(--state-held)] space-y-0.5">
                     {result.warnings.map((w, i) => <li key={i}>{w}</li>)}
                   </ul>
                 </div>
@@ -161,7 +161,7 @@ export default function ReverseConfirmModal({
           )}
 
           {error && (
-            <div className="flex items-start gap-2 text-[13px] border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
+            <div className="flex items-start gap-2 text-[13px] border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
             </div>
           )}
@@ -237,5 +237,5 @@ function describeReversal(event: TimelineEvent): Description {
 }
 
 function formatWhen(ts: string): string {
-  try { return new Date(ts).toLocaleString(); } catch { return ts; }
+  try { return new Date(ts).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }); } catch { return ts; }
 }

@@ -193,9 +193,9 @@ export default function ColumnManager(props: {
                   <button
                     key={col.key}
                     onClick={() => toggleUniq(col.key)}
-                    className={`px-2.5 py-1 rounded-full text-[11px] font-bold border transition ${
+                    className={`px-2.5 py-1 rounded-full text-[13px] font-bold border transition ${
                       on
-                        ? "bg-amber-100 border-amber-400 text-amber-900"
+                        ? "bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] border-[var(--state-held)] text-[var(--state-held)]"
                         : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
                     }`}
                   >
@@ -240,7 +240,7 @@ export default function ColumnManager(props: {
                         <button
                           onClick={() => void saveRename()}
                           disabled={savingRename || !editValue.trim()}
-                          className="shrink-0 p-2 rounded-lg border border-emerald-300 bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
+                          className="shrink-0 p-2 rounded-lg border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
                           title="Save"
                         >
                           {savingRename ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
@@ -282,7 +282,7 @@ export default function ColumnManager(props: {
                           <button
                             onClick={() => handleDelete(col.key, col.label)}
                             disabled={isDeleting}
-                            className="shrink-0 p-2 rounded-lg border border-red-200 bg-red-50 text-red-400 hover:bg-red-100 hover:text-red-600 transition-colors disabled:opacity-40"
+                            className="shrink-0 p-2 rounded-lg border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] hover:text-[var(--state-overdue)] transition-colors disabled:opacity-40"
                             title={`Delete "${col.label}" column`}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
@@ -294,7 +294,7 @@ export default function ColumnManager(props: {
                 );
               })}
               {renameError && (
-                <div className="mt-3 text-[13px] border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
+                <div className="mt-3 text-[13px] border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
                   <div className="font-semibold text-[13px] mb-1">Rename failed</div>
                   {renameError}
                 </div>

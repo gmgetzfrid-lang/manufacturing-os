@@ -217,7 +217,7 @@ export default function MergeWizard(props: MergeWizardProps) {
           )}
 
           {error && (
-            <div className="flex items-start gap-2 text-[13px] border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
+            <div className="flex items-start gap-2 text-[13px] border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
             </div>
           )}
@@ -356,7 +356,7 @@ function SourceChip({ doc, primary, onRemove }: { doc: DocumentRecord; primary?:
       <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{doc.documentNumber || "-"}</span>
       <span className="text-[var(--color-text-muted)] truncate flex-1">{doc.title || doc.name}</span>
       {onRemove && (
-        <button onClick={onRemove} className="p-1 text-[var(--color-text-faint)] hover:text-red-600">
+        <button onClick={onRemove} className="p-1 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)]">
           <Trash2 className="w-3 h-3" />
         </button>
       )}
@@ -392,7 +392,7 @@ function Step2Target(props: {
       </div>
 
       {mode === "create_new" && (
-        <div className="border border-[var(--color-border)] rounded-lg p-3 bg-slate-50/40 space-y-2">
+        <div className="border border-[var(--color-border)] rounded-lg p-3 bg-[var(--color-surface-2)]/40 space-y-2">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
             <DuplicateAwareInput
               value={props.newDocNumber}
@@ -411,7 +411,7 @@ function Step2Target(props: {
             {props.newFile ? (
               <span className="inline-flex items-center gap-2 text-[13px] text-[var(--color-text)] min-w-0">
                 <FileThumb file={props.newFile} size={28} />
-                <span className="min-w-0"><span className="block font-mono truncate">{props.newFile.name}</span><span className="block text-[var(--color-text-muted)]">{formatSize(props.newFile.size)}</span></span>
+                <span className="min-w-0"><span className="block truncate">{props.newFile.name}</span><span className="block text-[var(--color-text-muted)]">{formatSize(props.newFile.size)}</span></span>
               </span>
             ) : (
               <span className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]">
@@ -424,7 +424,7 @@ function Step2Target(props: {
       )}
 
       {mode === "extend_existing" && (
-        <div className="border border-[var(--color-border)] rounded-lg p-3 bg-slate-50/40 space-y-2">
+        <div className="border border-[var(--color-border)] rounded-lg p-3 bg-[var(--color-surface-2)]/40 space-y-2">
           <div className="text-[13px] font-semibold text-[var(--color-text)] ">Pick the source to keep</div>
           <div className="space-y-1">
             {props.sources.map((s) => (
@@ -455,7 +455,7 @@ function Step2Target(props: {
                 {props.extendFile ? (
                   <span className="inline-flex items-center gap-2 text-[13px] text-[var(--color-text)] min-w-0">
                     <FileThumb file={props.extendFile} size={28} />
-                    <span className="min-w-0"><span className="block font-mono truncate">{props.extendFile.name}</span><span className="block text-[var(--color-text-muted)]">{formatSize(props.extendFile.size)}</span></span>
+                    <span className="min-w-0"><span className="block truncate">{props.extendFile.name}</span><span className="block text-[var(--color-text-muted)]">{formatSize(props.extendFile.size)}</span></span>
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]">
@@ -512,7 +512,7 @@ function Step3TagsAndConfirm(props: {
           {props.sources.map((s) => (
             <li key={s.id}>
               <span className="font-display tabular-nums">{s.documentNumber || s.title}</span> →{" "}
-              <span className="text-amber-700 font-bold">Superseded</span>
+              <span className="text-[var(--state-held)] font-bold">Superseded</span>
               {props.targetMode === "extend_existing" && props.sources[0]?.id === s.id && " (will be kept and extended)"}
             </li>
           ))}

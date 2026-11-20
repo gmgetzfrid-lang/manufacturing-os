@@ -10,10 +10,10 @@ import { ClipboardCheck, ClipboardList, AlertTriangle, Lock } from "lucide-react
 import { ackStatusFor, type AckSummary, type AckStatus } from "@/lib/acknowledgments";
 
 const CFG: Record<Exclude<AckStatus, "none">, { cls: string; Icon: typeof ClipboardCheck; verb: string }> = {
-  complete: { cls: "bg-emerald-50 text-emerald-700 border-emerald-200", Icon: ClipboardCheck, verb: "Acknowledged" },
-  partial:  { cls: "bg-amber-50 text-amber-700 border-amber-200",       Icon: ClipboardList,  verb: "Ack" },
-  overdue:  { cls: "bg-red-50 text-red-700 border-red-200",             Icon: AlertTriangle,  verb: "Ack overdue" },
-  blocked:  { cls: "bg-red-50 text-red-700 border-red-200",             Icon: Lock,           verb: "Pending ack" },
+  complete: { cls: "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)] border-[color-mix(in_srgb,var(--state-released)_35%,transparent)]", Icon: ClipboardCheck, verb: "Acknowledged" },
+  partial:  { cls: "bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] text-[var(--state-held)] border-[color-mix(in_srgb,var(--state-held)_40%,transparent)]",       Icon: ClipboardList,  verb: "Ack" },
+  overdue:  { cls: "bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)] border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)]",             Icon: AlertTriangle,  verb: "Ack overdue" },
+  blocked:  { cls: "bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)] border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)]",             Icon: Lock,           verb: "Pending ack" },
 };
 
 export default function AckPill({ summary, compact = false, className = "" }: {
@@ -29,7 +29,7 @@ export default function AckPill({ summary, compact = false, className = "" }: {
   return (
     <span
       title={`${summary.done} of ${summary.required} acknowledged${summary.waived ? ` · ${summary.waived} waived` : ""}`}
-      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold whitespace-nowrap ${cfg.cls} ${className}`}
+      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[13px] font-semibold whitespace-nowrap ${cfg.cls} ${className}`}
     >
       <Icon className="w-3 h-3 shrink-0" /> {compact ? count : `${cfg.verb} ${count}`}
     </span>

@@ -111,7 +111,7 @@ export default function RevertConfirmModal({
           </div>
 
           {error && (
-            <div className="flex items-start gap-2 text-[13px] border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
+            <div className="flex items-start gap-2 text-[13px] border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
               <span>{error}</span>
             </div>

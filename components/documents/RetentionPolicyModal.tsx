@@ -104,7 +104,7 @@ export default function RetentionPolicyModal({ level, id, orgId, name, uid, user
             <div className="text-[13px] text-[var(--color-text-muted)]">Records are never destroyed on their own. Disposal is always a logged action someone takes, and a legal hold stops it.</div>
 
             <div className="flex justify-between gap-2 pt-2 border-t border-[var(--color-border)]">
-              <button onClick={() => void remove()} disabled={busy || !existing} className="px-3 py-2 rounded-lg text-[13px] font-bold text-red-600 hover:bg-red-50 disabled:opacity-40">Remove</button>
+              <button onClick={() => void remove()} disabled={busy || !existing} className="px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] disabled:opacity-40">Remove</button>
               <div className="flex gap-2">
                 <button onClick={onClose} className="px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text-muted)]">Cancel</button>
                 <button onClick={() => void save()} disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--color-accent)] text-white text-xs font-bold disabled:opacity-50">{busy && <Loader2 className="w-4 h-4 animate-spin" />} Save</button>

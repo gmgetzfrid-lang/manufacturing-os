@@ -101,17 +101,17 @@ export default function ProtectionRecord({ orgId }: { orgId: string }) {
   return (
     <div className="mb-4">
       <div className="flex items-center gap-1.5 mb-1.5">
-        <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+        <ShieldCheck className="w-3.5 h-3.5 text-[var(--state-released)]" />
         <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">
           Protection record - last {WINDOW_DAYS} days
         </span>
       </div>
       <div className="flex flex-wrap gap-2">
         {counts.conflictsBlocked > 0 && stat(
-          <ShieldCheck className="w-4 h-4 text-emerald-600" />,
+          <ShieldCheck className="w-4 h-4 text-[var(--state-released)]" />,
           counts.conflictsBlocked,
           "silent overwrites stopped",
-          "border-emerald-200 bg-emerald-50 text-emerald-900",
+          "border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)]",
         )}
         {(counts.branchesOpened > 0 || counts.branchesResolved > 0) && stat(
           <GitBranch className="w-4 h-4 text-[var(--color-text-muted)]" />,
@@ -126,10 +126,10 @@ export default function ProtectionRecord({ orgId }: { orgId: string }) {
           "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text-muted)]",
         )}
         {counts.flaggedPublishes > 0 && stat(
-          <FileWarning className="w-4 h-4 text-amber-600" />,
+          <FileWarning className="w-4 h-4 text-[var(--state-held)]" />,
           counts.flaggedPublishes,
           "publishes flagged for provenance review",
-          "border-amber-200 bg-amber-50 text-amber-900",
+          "border-[color-mix(in_srgb,var(--state-held)_40%,transparent)] bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] text-[var(--state-held)]",
         )}
       </div>
     </div>

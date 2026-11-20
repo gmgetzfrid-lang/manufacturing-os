@@ -281,7 +281,7 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
                   <Link href={docLink(b.documentId, meta?.libraryId ?? null)} className="text-[var(--color-accent-text)] hover:underline">
                     {meta?.label ?? "Document"}
                   </Link>{" "}
-                  by <b>{b.createdByName || b.createdBy}</b> · {new Date(b.createdAt).toLocaleDateString()}
+                  by <b>{b.createdByName || b.createdBy}</b> · {new Date(b.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                   <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5 italic">&ldquo;{b.reason}&rdquo;</div>
                 </div>
                 {resolveFor === b.id ? null : (
@@ -301,13 +301,13 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
                     placeholder='How was it reconciled? e.g. "both changes merged into Rev 5"'
                     className="w-full px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[13px]"
                   />
-                  {error && <div className="text-[13px] text-red-600 font-bold">{error}</div>}
+                  {error && <div className="text-[13px] text-[var(--state-overdue)] font-bold">{error}</div>}
                   <div className="flex gap-1.5 justify-end">
                     <button onClick={() => setResolveFor(null)} className="px-2 py-1 rounded-lg text-[13px] font-bold border border-[var(--color-border)]">Cancel</button>
                     <button
                       onClick={() => void handleResolve(b, "withdrawn")}
                       disabled={busyId === b.id}
-                      className="px-2 py-1 rounded-lg text-[13px] font-bold border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-50"
+                      className="px-2 py-1 rounded-lg text-[13px] font-bold border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] disabled:opacity-50"
                     >
                       Withdrawn
                     </button>
@@ -328,15 +328,15 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
 
         {/* Unverified provenance */}
         {unverified.map((rev) => (
-          <div key={rev.id} className="rounded-xl border border-red-200 bg-[var(--color-surface)] p-3 flex items-start gap-2">
-            <Flag className="w-4 h-4 mt-0.5 text-red-600 shrink-0" />
+          <div key={rev.id} className="rounded-xl border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] bg-[var(--color-surface)] p-3 flex items-start gap-2">
+            <Flag className="w-4 h-4 mt-0.5 text-[var(--state-overdue)] shrink-0" />
             <div className="flex-1 min-w-0 text-[13px]">
               <b>Rev {rev.revisionLabel}</b> of{" "}
               <Link href={docLink(rev.recordId, rev.libraryId)} className="text-[var(--color-accent-text)] hover:underline">
                 {rev.docLabel}
               </Link>{" "}
               was published with <b>no recorded checkout or download trail</b>
-              {rev.createdByName ? <> by <b>{rev.createdByName}</b></> : null} · {new Date(rev.createdAt).toLocaleDateString()}.
+              {rev.createdByName ? <> by <b>{rev.createdByName}</b></> : null} · {new Date(rev.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}.
               <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">
                 Confirm with the author what their work was based on, then verify.
               </div>
@@ -344,7 +344,7 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
             <button
               onClick={() => void handleVerify(rev)}
               disabled={busyId === rev.id}
-              className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[13px] font-bold border border-emerald-300 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+              className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[13px] font-bold border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] text-[var(--state-released)] hover:bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] disabled:opacity-50"
             >
               {busyId === rev.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
               Verified with author
@@ -356,8 +356,8 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
         {stale.map((s) => {
           const days = Math.floor((Date.now() - Date.parse(s.startedAt)) / 86400000);
           return (
-            <div key={s.sessionId} className="rounded-xl border border-amber-200 bg-[var(--color-surface)] p-3 flex items-start gap-2">
-              <KeyRound className="w-4 h-4 mt-0.5 text-amber-600 shrink-0" />
+            <div key={s.sessionId} className="rounded-xl border border-[color-mix(in_srgb,var(--state-held)_40%,transparent)] bg-[var(--color-surface)] p-3 flex items-start gap-2">
+              <KeyRound className="w-4 h-4 mt-0.5 text-[var(--state-held)] shrink-0" />
               <div className="flex-1 min-w-0 text-[13px]">
                 <Link href={docLink(s.documentId, s.libraryId)} className="text-[var(--color-accent-text)] hover:underline">
                   {s.docLabel}
@@ -374,13 +374,13 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
 
         {/* Deletion requests — durable queue, not just a dismissible bell. */}
         {deletionRequests.map((req) => (
-          <div key={req.auditId} className="rounded-xl border border-rose-200 bg-[var(--color-surface)] p-3 flex items-start gap-2">
-            <AlertTriangle className="w-4 h-4 mt-0.5 text-rose-600 shrink-0" />
+          <div key={req.auditId} className="rounded-xl border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] bg-[var(--color-surface)] p-3 flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 mt-0.5 text-[var(--state-overdue)] shrink-0" />
             <div className="flex-1 min-w-0 text-[13px]">
               <Link href={docLink(req.documentId, req.libraryId)} className="text-[var(--color-accent-text)] hover:underline">
                 {req.label}
               </Link>{" "}
-              - <b>deletion requested</b> by {req.requestedBy || "the owner"} on {new Date(req.requestedAt).toLocaleDateString()}.
+              - <b>deletion requested</b> by {req.requestedBy || "the owner"} on {new Date(req.requestedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}.
               {req.reason && <div className="text-[13px] italic text-[var(--color-text-muted)] mt-0.5">&ldquo;{req.reason}&rdquo;</div>}
               <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">
                 Review the document, then delete/archive it (or decline) - and mark this request handled.
@@ -389,7 +389,7 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
             <button
               onClick={() => void handleResolveDeletion(req)}
               disabled={busyId === req.auditId}
-              className="shrink-0 px-2 py-1 rounded-md text-[13px] font-bold border border-rose-300 text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+              className="shrink-0 px-2 py-1 rounded-md text-[13px] font-bold border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] disabled:opacity-50"
             >
               Mark handled
             </button>

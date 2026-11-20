@@ -11,7 +11,7 @@ import React from "react";
 import type { GraphNode, GraphEdge, GraphNodeType, GraphEdgeType } from "@/lib/orgGraph";
 import type { GraphSim } from "@/lib/graphSim";
 import { groupColorFor, type GraphSettings } from "@/lib/graphSettings";
-import { NODE_COLORS, EDGE_RGB, ACCENT } from "@/components/graph/graphTheme";
+import { NODE_COLORS, EDGE_RGB, ACCENT, rgbOf } from "@/components/graph/graphTheme";
 
 const BASE_R: Record<GraphNodeType, number> = {
   document: 3.5, asset: 4, unit: 7, library: 6, project: 6, plant: 8, plot: 6, finding: 4.5,
@@ -122,6 +122,9 @@ export default function OrgGraph2D({
       const styles = getComputedStyle(document.documentElement);
       const textColor = styles.getPropertyValue("--color-text").trim() || "#334155";
       const bg = styles.getPropertyValue("--color-surface-2").trim() || "#f8fafc";
+      const bodyFont = styles.getPropertyValue("--font-sans").trim() || "system-ui, sans-serif";
+      const displayFont = styles.getPropertyValue("--font-display").trim() || bodyFont;
+      const pathRgb = rgbOf(ACCENT.path);
 
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.fillStyle = bg;
@@ -157,8 +160,8 @@ export default function OrgGraph2D({
           if (!visible(cx, cy)) continue;
           ctx.globalAlpha = Math.min(0.3, Math.max(0, (1.1 - cam.scale) * 0.5));
           ctx.fillStyle = textColor;
-          ctx.font = `900 ${Math.min(64, 22 / cam.scale)}px ui-sans-serif, system-ui, sans-serif`;
-          ctx.fillText(region.label.slice(0, 28).toUpperCase(), cx, cy);
+          ctx.font = `600 ${Math.min(64, 22 / cam.scale)}px ${displayFont}`;
+          ctx.fillText(region.label.slice(0, 28), cx, cy);
           ctx.globalAlpha = 1;
         }
       }
@@ -179,7 +182,7 @@ export default function OrgGraph2D({
         if (onPath) alpha = 1;
         alpha *= st.linkOpacity;
 
-        const rgb = onPath ? "34,211,238" : EDGE_RGB[e.type as GraphEdgeType] ?? "148,163,184";
+        const rgb = onPath ? pathRgb : EDGE_RGB[e.type as GraphEdgeType] ?? "148,163,184";
         ctx.strokeStyle = `rgba(${rgb},${alpha})`;
         ctx.lineWidth = ((onPath ? 2.6 : 1) * st.linkThickness) / cam.scale;
         if (proposed) ctx.setLineDash([6 / cam.scale, 5 / cam.scale]);
@@ -240,7 +243,9 @@ export default function OrgGraph2D({
         if (isGold || inPath) dim = 1;
 
         const r = (BASE_R[n.type] + Math.min(9, Math.sqrt(n.degree) * 1.1)) * st.nodeScale * ease;
+        // Structure is graphite; the node you are on is in the signal color.
         const color = inPath ? ACCENT.path
+          : isSpot ? ACCENT.focus
           : isGold ? ACCENT.found
           : (groupColorFor(n, st.groups) ?? NODE_COLORS[n.type]);
 
@@ -277,7 +282,7 @@ export default function OrgGraph2D({
 
       // ── Labels last, so nothing draws over them ──────────────────────
       const fontPx = Math.max(9, Math.min(13, 11 / cam.scale));
-      ctx.font = `700 ${fontPx}px ui-monospace, monospace`;
+      ctx.font = `600 ${fontPx}px ${bodyFont}`;
       ctx.textAlign = "center";
       for (const { n, x, y, r } of labelable.slice(0, 400)) {
         const label = n.label.slice(0, 26);

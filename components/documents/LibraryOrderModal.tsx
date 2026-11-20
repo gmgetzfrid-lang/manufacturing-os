@@ -199,7 +199,7 @@ export default function LibraryOrderModal({
                     dragId === d.id ? "border-[var(--color-border-strong)] ring-2 ring-[var(--color-border-strong)] opacity-50" : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]"
                   }`}
                 >
-                  <GripVertical className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+                  <GripVertical className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
                   <span className="text-[13px] font-display tabular-nums text-[var(--color-text-faint)] w-7 text-right shrink-0">{idx + 1}.</span>
                   <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
                   <div className="flex-1 min-w-0">
@@ -224,7 +224,7 @@ export default function LibraryOrderModal({
         </div>
 
         {error && (
-          <div className="mx-5 my-2 text-[13px] flex items-start gap-2 shrink-0 border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
+          <div className="mx-5 my-2 text-[13px] flex items-start gap-2 shrink-0 border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
             <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
           </div>
         )}

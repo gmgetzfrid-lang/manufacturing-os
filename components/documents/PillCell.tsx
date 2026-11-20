@@ -4,6 +4,9 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Plus, X, Check, Pencil } from "lucide-react";
 import AssetTagChip from "@/components/assets/AssetTagChip";
 
+/** Tags shown before "+N". */
+const SHOWN = 4;
+
 interface PillCellProps {
   values: string[];
   label: string;
@@ -22,6 +25,7 @@ export default function PillCell({
   orgId, userId, canManageAssets,
 }: PillCellProps) {
   const [editing, setEditing] = useState(false);
+  const [showAll, setShowAll] = useState(false);
   const [pills, setPills] = useState<string[]>(values);
   const [input, setInput] = useState("");
   const [saving, setSaving] = useState(false);
@@ -72,21 +76,31 @@ export default function PillCell({
   if (!editing) {
     return (
       <div className={`flex items-start gap-1 min-w-0 ${saving ? "opacity-60" : ""}`}>
-        {/* Pills wrap into rows and scroll inside a fixed height */}
-        <div className="flex flex-wrap gap-1 max-h-[52px] overflow-y-auto overflow-x-hidden flex-1 min-w-0 custom-scrollbar pr-1">
+        {/* Compact text tags, a few at a time: the first four, then "+N". */}
+        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0 flex-1 min-w-0 pr-1">
           {pills.length === 0 ? (
             <span className="text-[14px] text-[var(--color-text-faint)] select-none leading-6">-</span>
           ) : (
-            pills.map((tag) => (
-              <AssetTagChip
-                key={tag}
-                tag={tag}
-                type={label}
-                orgId={orgId}
-                userId={userId}
-                canManage={canManageAssets}
-              />
-            ))
+            <>
+              {(showAll ? pills : pills.slice(0, SHOWN)).map((tag) => (
+                <AssetTagChip
+                  key={tag}
+                  tag={tag}
+                  type={label}
+                  orgId={orgId}
+                  userId={userId}
+                  canManage={canManageAssets}
+                />
+              ))}
+              {pills.length > SHOWN && (
+                <button type="button" onClick={(e) => { e.stopPropagation(); setShowAll((v) => !v); }}
+                  title={showAll ? "Show fewer" : pills.slice(SHOWN).join(", ")}
+                  aria-label={showAll ? "Show fewer" : `Show ${pills.length - SHOWN} more ${label}`}
+                  className="h-6 px-1.5 rounded text-[13px] font-semibold tabular-nums text-[var(--color-text-muted)] bg-[var(--color-surface-2)] hover:text-[var(--color-text)]">
+                  {showAll ? "Less" : `+${pills.length - SHOWN}`}
+                </button>
+              )}
+            </>
           )}
         </div>
 
@@ -118,14 +132,16 @@ export default function PillCell({
           {pills.map((pill) => (
             <span
               key={pill}
-              className="inline-flex items-center gap-1 text-[11px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)] px-2 py-0.5 rounded-full"
+              className="inline-flex items-center gap-1 font-display text-[14px] font-semibold tabular-nums bg-[var(--color-surface-2)] text-[var(--color-text)] pl-2 pr-1 h-6 rounded"
             >
               {pill}
               <button
+                type="button"
                 onClick={() => removePill(pill)}
-                className="text-[var(--color-text-muted)] hover:text-red-600 transition-colors ml-0.5"
+                aria-label={`Remove ${pill}`}
+                className="w-5 h-5 grid place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--state-overdue)] hover:bg-[var(--color-surface)] transition-colors"
               >
-                <X className="w-2.5 h-2.5" />
+                <X className="w-3 h-3" />
               </button>
             </span>
           ))}
@@ -155,25 +171,27 @@ export default function PillCell({
             if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); handleSave(); }
           }}
           placeholder={`Add ${label}…`}
-          className="flex-1 min-w-0 text-[13px] px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-ring)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder-slate-400"
+          className="flex-1 min-w-0 h-8 text-[14px] px-2 rounded-md border border-[var(--color-border-strong)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]"
         />
         {input.trim() && (
           <button
+            type="button"
             onClick={(e) => { e.stopPropagation(); addPill(); }}
-            className="shrink-0 p-1.5 border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] rounded-lg transition-colors"
+            aria-label={`Add ${input.trim()}`}
+            className="shrink-0 w-8 h-8 grid place-items-center border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] rounded-md transition-colors"
           >
-            <Plus className="w-3 h-3" />
+            <Plus className="w-3.5 h-3.5" />
           </button>
         )}
         <button
+          type="button"
           onClick={(e) => { e.stopPropagation(); handleSave(); }}
-          className="shrink-0 p-1.5 bg-slate-900 hover:bg-slate-700 text-white rounded-lg transition-colors"
-          title="Done"
+          className="shrink-0 h-8 px-2.5 inline-flex items-center gap-1 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)] transition-colors"
         >
-          <Check className="w-3 h-3" />
+          <Check className="w-3.5 h-3.5" /> Done
         </button>
       </div>
-      <p className="text-[13px] text-[var(--color-text-faint)]">Enter to add · Esc to save · commas are kept in the tag (not separators)</p>
+      <p className="text-[13px] text-[var(--color-text-muted)]">Enter adds a tag, Esc saves. Commas stay in the tag.</p>
     </div>
   );
 }

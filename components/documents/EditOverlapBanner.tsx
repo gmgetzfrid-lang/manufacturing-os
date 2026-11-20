@@ -113,7 +113,7 @@ export default function EditOverlapBanner({
         return (
           <div
             key={row.documentId}
-            className="flex items-start gap-2.5 pl-3 py-1 border-l-2 border-amber-500 text-amber-800 dark:text-amber-300"
+            className="flex items-start gap-2.5 pl-3 py-1 border-l-2 border-[var(--state-held)] text-[var(--state-held)]"
           >
             <Users className="w-4 h-4 mt-0.5 shrink-0" />
             <div className="flex-1 min-w-0 text-[13px] leading-relaxed">
@@ -124,11 +124,11 @@ export default function EditOverlapBanner({
                 <><b>{[...new Set(row.intents.map((i) => i.userName || "someone"))].join(", ")}</b> all have active edit work on this document</>
               )}
               {" "}({sourcesByUser.join("; ")}). Talk now: the second one to publish will be stopped.
-              {nudgeErr.has(row.documentId) && <span className="block text-rose-700 dark:text-rose-300 font-bold">The heads-up didn&apos;t send. Try again.</span>}
+              {nudgeErr.has(row.documentId) && <span className="block text-[var(--state-overdue)] font-bold">The heads-up didn&apos;t send. Try again.</span>}
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
               {nudged.has(row.documentId) ? (
-                <span className="text-[13px] font-bold text-emerald-700 dark:text-emerald-400">Heads-up sent</span>
+                <span className="text-[13px] font-bold text-[var(--state-released)]">Heads-up sent</span>
               ) : (
                 <button
                   onClick={() => void sendHeadsUp(row)}

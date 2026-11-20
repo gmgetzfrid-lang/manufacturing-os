@@ -120,19 +120,19 @@ export default function GraphControls({
         {/* 2D / 3D — the switch people will reach for first. */}
         <div className="inline-flex rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)]/90 backdrop-blur p-0.5 shadow-sm">
           <button onClick={() => onChange({ mode: "map" })} title="The estate as a tree: units, equipment, documents. Same map as Documents › Graph"
-            className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] font-semibold transition-colors ${
+            className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[13px] font-semibold transition-colors ${
               settings.mode === "map" ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm" : "text-[var(--color-text-muted)]"
             }`}>
             <MapIcon className="w-3 h-3" /> Map
           </button>
           <button onClick={() => onChange({ mode: "2d" })}
-            className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] font-semibold transition-colors ${
+            className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[13px] font-semibold transition-colors ${
               settings.mode === "2d" ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm" : "text-[var(--color-text-muted)]"
             }`}>
             <Square className="w-3 h-3" /> 2D
           </button>
           <button onClick={() => onChange({ mode: "3d" })}
-            className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] font-semibold transition-colors ${
+            className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[13px] font-semibold transition-colors ${
               settings.mode === "3d" ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm" : "text-[var(--color-text-muted)]"
             }`}>
             <Boxes className="w-3 h-3" /> 3D
@@ -142,14 +142,14 @@ export default function GraphControls({
           <div className="inline-flex rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)]/90 backdrop-blur p-0.5 shadow-sm" title="Estate: the Map's tree as a globe, each operating area its own cluster, nothing moves. Web: every link pulling freely.">
             {(["estate", "web"] as const).map((k) => (
               <button key={k} onClick={() => onChange({ layout3d: k })}
-                className={`px-2 py-1 rounded-full text-[11px] font-semibold ${settings.layout3d === k ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm" : "text-[var(--color-text-muted)]"}`}>
+                className={`px-2 py-1 rounded-full text-[13px] font-semibold ${settings.layout3d === k ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm" : "text-[var(--color-text-muted)]"}`}>
                 {k === "estate" ? "Estate" : "Web"}
               </button>
             ))}
           </div>
         )}
         <button onClick={() => setOpen((v) => !v)}
-          className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border text-[11px] font-semibold shadow-sm ${
+          className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border text-[13px] font-semibold shadow-sm ${
             open ? "border-[var(--color-text)] text-[var(--color-text)] bg-[var(--color-surface)]"
                  : "border-[var(--color-border-strong)] text-[var(--color-text)] bg-[var(--color-surface)]/90 backdrop-blur"
           }`}>
@@ -208,7 +208,7 @@ export default function GraphControls({
                   aria-label="Group colour"
                   className="w-6 h-6 rounded cursor-pointer border border-[var(--color-border)] bg-transparent p-0" />
                 <button onClick={() => removeGroup(g.id)} aria-label="Remove group"
-                  className="p-0.5 text-[var(--color-text-faint)] hover:text-rose-600">
+                  className="p-0.5 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)]">
                   <X className="w-3.5 h-3.5" />
                 </button>
               </div>

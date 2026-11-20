@@ -303,7 +303,7 @@ export default function BackfillVersionModal({
                 <option value="">- Free-floating (no chain link)</option>
                 {existingVersions.map((v) => (
                   <option key={v.id} value={v.id}>
-                    Rev {v.revisionLabel}{v.releasedAt ? ` (${new Date(v.releasedAt as string).toLocaleDateString()})` : ""}
+                    Rev {v.revisionLabel}{v.releasedAt ? ` (${new Date(v.releasedAt as string).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })})` : ""}
                   </option>
                 ))}
               </select>
@@ -311,7 +311,7 @@ export default function BackfillVersionModal({
           )}
 
           {error && (
-            <p role="alert" className="border-l-2 border-rose-500 pl-3 text-[13px] text-rose-700 dark:text-rose-300">{error}</p>
+            <p role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 text-[13px] text-[var(--state-overdue)]">{error}</p>
           )}
         </div>
 

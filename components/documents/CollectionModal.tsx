@@ -440,7 +440,7 @@ export default function CollectionModal({
                               <button onClick={() => onMove(item.document_id, 1)} disabled={idx === itemsHydrated.length - 1 || busy} className="p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-slate-200 rounded disabled:opacity-30">
                                 <ArrowDown className="w-3 h-3" />
                               </button>
-                              <button onClick={() => onRemoveDoc(item.document_id)} disabled={busy} className="p-1 text-[var(--color-text-faint)] hover:text-red-600 hover:bg-red-50 rounded">
+                              <button onClick={() => onRemoveDoc(item.document_id)} disabled={busy} className="p-1 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] rounded">
                                 <Trash2 className="w-3 h-3" />
                               </button>
                             </div>
@@ -501,7 +501,7 @@ export default function CollectionModal({
         </div>
 
         {error && (
-          <div className="mx-5 my-2 text-[13px] flex items-start gap-2 shrink-0 border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
+          <div className="mx-5 my-2 text-[13px] flex items-start gap-2 shrink-0 border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
             <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
           </div>
         )}
@@ -510,7 +510,7 @@ export default function CollectionModal({
         <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between shrink-0">
           <div>
             {mode === "view" && canEdit && collection && (
-              <button onClick={onDelete} disabled={busy} className="text-[13px] font-bold text-red-600 hover:text-red-700 inline-flex items-center gap-1">
+              <button onClick={onDelete} disabled={busy} className="text-[13px] font-bold text-[var(--state-overdue)] hover:text-[var(--state-overdue)] inline-flex items-center gap-1">
                 <Trash2 className="w-3 h-3" /> Delete collection
               </button>
             )}

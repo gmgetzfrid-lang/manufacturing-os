@@ -7,6 +7,7 @@
 import React from "react";
 import { CheckCircle2, Clock, AlertTriangle } from "lucide-react";
 import { reviewStatusFor, daysUntilReview } from "@/lib/reviewCycles";
+import { humanDate } from "@/components/documents/StatusTag";
 
 export default function ReviewPill({ nextReviewDate, leadDays = 30, compact = false, className = "" }: {
   nextReviewDate?: string | null;
@@ -18,19 +19,19 @@ export default function ReviewPill({ nextReviewDate, leadDays = 30, compact = fa
   const status = reviewStatusFor(nextReviewDate, leadDays);
   if (status === "none") return null;
   const days = daysUntilReview(nextReviewDate);
-  const date = (nextReviewDate ?? "").slice(0, 10);
+  const date = humanDate(nextReviewDate);
 
   const cfg = {
-    current:  { cls: "bg-emerald-50 text-emerald-700 border-emerald-200", Icon: CheckCircle2, full: `Reviewed · due ${date}`,            short: date },
-    due_soon: { cls: "bg-amber-50 text-amber-700 border-amber-200",       Icon: Clock,        full: days != null ? `Review due in ${days}d` : `Review due ${date}`, short: days != null ? `Due ${days}d` : date },
-    overdue:  { cls: "bg-red-50 text-red-700 border-red-200",             Icon: AlertTriangle, full: days != null ? `Review overdue ${Math.abs(days)}d` : "Review overdue", short: days != null ? `Overdue ${Math.abs(days)}d` : "Overdue" },
+    current:  { cls: "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)] border-[color-mix(in_srgb,var(--state-released)_35%,transparent)]", Icon: CheckCircle2, full: `Reviewed · due ${date}`,            short: date },
+    due_soon: { cls: "bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] text-[var(--state-held)] border-[color-mix(in_srgb,var(--state-held)_40%,transparent)]",       Icon: Clock,        full: days != null ? `Review due in ${days}d` : `Review due ${date}`, short: days != null ? `Due ${days}d` : date },
+    overdue:  { cls: "bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)] border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)]",             Icon: AlertTriangle, full: days != null ? `Review overdue ${Math.abs(days)}d` : "Review overdue", short: days != null ? `Overdue ${Math.abs(days)}d` : "Overdue" },
   }[status];
 
   const Icon = cfg.Icon;
   return (
     <span
       title={`Next review: ${date}`}
-      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold whitespace-nowrap ${cfg.cls} ${className}`}
+      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[13px] font-semibold whitespace-nowrap ${cfg.cls} ${className}`}
     >
       <Icon className="w-3 h-3 shrink-0" /> {compact ? cfg.short : cfg.full}
     </span>

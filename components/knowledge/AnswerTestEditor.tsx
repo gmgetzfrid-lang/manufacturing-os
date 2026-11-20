@@ -121,7 +121,7 @@ export default function AnswerTestEditor({ initial, citations = [], onSave, onCa
           <div className="flex flex-wrap gap-1">
             {offered.map((c) => (
               <button key={`${c.documentName}|${c.page}`} type="button" onClick={() => toggle(c)}
-                className={`rounded-md border px-2 py-0.5 text-[13px] ${ticked(c) ? "border-emerald-500 bg-emerald-50 text-emerald-900 dark:bg-emerald-950/40" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                className={`rounded-md border px-2 py-0.5 text-[13px] ${ticked(c) ? "border-[var(--state-released)] bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
                 {ticked(c) ? "✓ " : ""}{shortName(c.documentName)} p.{c.page}
               </button>
             ))}

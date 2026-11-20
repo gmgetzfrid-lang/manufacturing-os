@@ -151,9 +151,9 @@ export default function BulkCheckoutToProjectModal({
     <div className="fixed inset-0 z-[210] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
       <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-lg shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
-          <div className={`p-2 rounded-lg ${kind === "adhoc" ? "bg-emerald-100" : "bg-[var(--color-surface-2)]"}`}>
+          <div className={`p-2 rounded-lg ${kind === "adhoc" ? "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)]" : "bg-[var(--color-surface-2)]"}`}>
             {kind === "adhoc"
-              ? <Wand2 className="w-5 h-5 text-emerald-700" />
+              ? <Wand2 className="w-5 h-5 text-[var(--state-released)]" />
               : <Briefcase className="w-5 h-5 text-[var(--color-text-muted)]" />}
           </div>
           <div className="flex-1">
@@ -204,7 +204,7 @@ export default function BulkCheckoutToProjectModal({
                     <span className="font-display font-semibold tabular-nums text-[var(--color-text)] truncate">{d.documentNumber || "-"}</span>
                     <span className="text-[var(--color-text-muted)] truncate">{d.title || d.name}</span>
                     {conflict && (
-                      <span className="ml-auto inline-flex items-center gap-1 text-[13px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                      <span className="ml-auto inline-flex items-center gap-1 text-[13px] text-[var(--state-held)] bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] px-1.5 py-0.5 rounded border border-[color-mix(in_srgb,var(--state-held)_40%,transparent)]">
                         <AlertTriangle className="w-3 h-3" /> already locked
                       </span>
                     )}
@@ -213,7 +213,7 @@ export default function BulkCheckoutToProjectModal({
               })}
             </div>
             {conflicts.length > 0 && (
-              <div className="mt-2 text-[13px] text-amber-700">
+              <div className="mt-2 text-[13px] text-[var(--state-held)]">
                 {conflicts.length} document{conflicts.length === 1 ? " is" : "s are"} locked by other users and will be skipped. You can request markups from them after.
               </div>
             )}
@@ -331,7 +331,7 @@ export default function BulkCheckoutToProjectModal({
           </div>
 
           {error && (
-            <div className="flex items-start gap-2 text-[13px] border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
+            <div className="flex items-start gap-2 text-[13px] border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
             </div>
           )}

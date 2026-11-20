@@ -19,7 +19,7 @@ export default function OriginBadge({ origin, source, reference, edition, classN
   return (
     <span
       title={`External origin${edition ? ` · ${edition}` : ""}`}
-      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold whitespace-nowrap bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)] ${className}`}
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[13px] font-bold whitespace-nowrap bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)] ${className}`}
     >
       <Globe className="w-3 h-3 shrink-0" /> {label}
     </span>

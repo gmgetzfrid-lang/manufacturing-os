@@ -16,7 +16,7 @@ import React from "react";
 import type { GraphNode, GraphEdge, GraphNodeType, GraphEdgeType } from "@/lib/orgGraph";
 import { GraphSim } from "@/lib/graphSim";
 import { groupColorFor, type GraphSettings } from "@/lib/graphSettings";
-import { NODE_COLORS, EDGE_RGB, ACCENT } from "@/components/graph/graphTheme";
+import { NODE_COLORS_ON_DARK as NODE_COLORS, EDGE_RGB, ACCENT, rgbOf } from "@/components/graph/graphTheme";
 import type { GlobeInfo, GlobeKind } from "@/lib/estate3d";
 
 // three is heavy; keep it out of every other route's bundle.
@@ -29,15 +29,18 @@ const BASE_R: Record<GraphNodeType, number> = {
 /** The globe's own vocabulary: one colour and one size per KIND of thing,
  *  so a glance says what it is. Shown in the legend. */
 export const GLOBE_STYLE: Record<GlobeKind, { color: string; r: number; label: string }> = {
-  site: { color: "#e2e8f0", r: 15, label: "Site" },
-  area: { color: "#a78bfa", r: 13, label: "Operating area" },
-  category: { color: "#94a3b8", r: 8, label: "Equipment type" },
-  asset: { color: "#34d399", r: 7.5, label: "Equipment" },
-  project: { color: "#fb7185", r: 10, label: "Project" },
-  group: { color: "#fbbf24", r: 10, label: "Group" },
-  library: { color: "#fbbf24", r: 8, label: "Library" },
-  docgroup: { color: "#38bdf8", r: 7, label: "Group of documents" },
-  document: { color: "#93c5fd", r: 4.5, label: "Document" },
+  // Structure in shades of grey on the night sky, lightest for the
+  // biggest things; size tells the kinds apart. The signal color is kept
+  // for the thing you are on.
+  site: { color: "#f1f4f8", r: 15, label: "Site" },
+  area: { color: "#dde2ea", r: 13, label: "Operating area" },
+  category: { color: "#a9b2be", r: 8, label: "Equipment type" },
+  asset: { color: "#c3cad4", r: 7.5, label: "Equipment" },
+  project: { color: "#b7bfca", r: 10, label: "Project" },
+  group: { color: "#9aa3af", r: 10, label: "Group" },
+  library: { color: "#9aa3af", r: 8, label: "Library" },
+  docgroup: { color: "#8d97a4", r: 7, label: "Group of documents" },
+  document: { color: "#7f8996", r: 4.5, label: "Document" },
 };
 
 interface Props {
@@ -126,8 +129,9 @@ function makeLabelSprite(
   const fontPx = 64;
   const pad = 10;
   const weight = opts?.weight ?? 700;
+  const family = getComputedStyle(document.documentElement).getPropertyValue("--font-sans").trim() || "system-ui, sans-serif";
   const measure = document.createElement("canvas").getContext("2d")!;
-  measure.font = `${weight} ${fontPx}px ui-monospace, SFMono-Regular, monospace`;
+  measure.font = `${weight} ${fontPx}px ${family}`;
   const textW = Math.ceil(measure.measureText(text).width);
 
   const w = textW + pad * 2, h = fontPx + pad * 2;
@@ -136,7 +140,7 @@ function makeLabelSprite(
   canvas.height = Math.ceil(h * dpr);
   const ctx = canvas.getContext("2d")!;
   ctx.scale(dpr, dpr);
-  ctx.font = `${weight} ${fontPx}px ui-monospace, SFMono-Regular, monospace`;
+  ctx.font = `${weight} ${fontPx}px ${family}`;
   ctx.textBaseline = "middle";
   if (opts?.halo !== false) {
     ctx.lineWidth = 7;
@@ -757,7 +761,7 @@ export default function OrgGraph3D({
           dummy.updateMatrix();
           mesh.setMatrixAt(i, dummy.matrix);
 
-          const hex = inPath ? ACCENT.path
+          const hex = inPath || isSpot ? ACCENT.focusOnDark
             : isGold || isGap ? ACCENT.found
             : gi ? GLOBE_STYLE[gi.kind].color
             : (groupColorFor(n, st.groups) ?? NODE_COLORS[n.type]);
@@ -798,6 +802,8 @@ export default function OrgGraph3D({
         const fade = (d: number) => Math.max(0.25, Math.min(1.15, 1.5 - d / (spherical.radius * 2.1)));
         let si = 0, gi = 0;
         drawnEdges = [];
+        // The chain you are tracing, in the (lifted) signal color.
+        const pathRgb = rgbOf(ACCENT.focusOnDark).split(",").map((v) => Number(v) / 255) as [number, number, number];
         for (const e of es) {
           const na = s.get(e.a), nb = s.get(e.b);
           if (!na || !nb) continue;
@@ -811,12 +817,13 @@ export default function OrgGraph3D({
           pos.setXYZ(si * 2 + 1, nb.x, nb.y, nb.z);
           drawnEdges.push(e);
           const rgbStr = EDGE_RGB[e.type as GraphEdgeType] ?? "148,163,184";
-          const [r0, g0, b0] = rgbStr.split(",").map((v) => Number(v) / 255);
+          // Lifted toward white: the palette is set for a light page.
+          const [r0, g0, b0] = rgbStr.split(",").map((v) => (Number(v) + (255 - Number(v)) * 0.5) / 255);
           const inSpot = !spotId || e.a === spotId || e.b === spotId;
           const onPath = onPathSet.has(e.a) && onPathSet.has(e.b);
           const isHoverEdge = hoverEdge === e;
           const k = (isHoverEdge ? 2.2 : onPath ? 1.6 : focus ? (focus.has(e.a) && focus.has(e.b) ? 1.1 : 0.05) : inSpot ? 0.9 : 0.16) * st.linkOpacity;
-          const [r, g, b] = isHoverEdge ? [1, 0.85, 0.3] : onPath ? [0.13, 0.83, 0.93] : [r0, g0, b0];
+          const [r, g, b] = isHoverEdge || onPath ? pathRgb : [r0, g0, b0];
           // Per-END depth cueing: a link running away from the camera fades
           // along its length, which is most of what sells the third axis.
           const ka = k * fade(Math.hypot(na.x - camera.position.x, na.y - camera.position.y, na.z - camera.position.z));
@@ -860,8 +867,8 @@ export default function OrgGraph3D({
             let sprite = regionCache.get(region.label);
             if (!sprite) {
               sprite = makeLabelSprite(
-                THREE, region.label.slice(0, 24).toUpperCase(), "#c7d2fe", maxAniso,
-                { worldHeight: 46, weight: 900 },
+                THREE, region.label.slice(0, 24), "#d5dbe4", maxAniso,
+                { worldHeight: 46, weight: 600 },
               );
               sprite.material.opacity = 0.32;
               regionCache.set(region.label, sprite);
@@ -1069,8 +1076,8 @@ export default function OrgGraph3D({
       )}
       {pinned && ready && !failed && (
         <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 rounded-full bg-black/40 backdrop-blur px-2 py-1 max-w-[calc(100%-24px)]">
-          <button onClick={() => { refitRef.current++; setGapIds(new Set()); onSelect(null); }} className="shrink-0 rounded-full bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold px-2.5 py-0.5">Whole site</button>
-          <span className="text-[13px] text-slate-300 truncate">Drag to turn · scroll toward what you want · click to open · point at a line to see why it exists</span>
+          <button onClick={() => { refitRef.current++; setGapIds(new Set()); onSelect(null); }} className="shrink-0 rounded-full bg-white/10 hover:bg-white/20 text-white text-[13px] font-bold px-2.5 py-0.5">Whole site</button>
+          <span className="text-[13px] text-[var(--color-text-faint)] truncate">Drag to turn · scroll toward what you want · click to open · point at a line to see why it exists</span>
         </div>
       )}
       {pinned && ready && !failed && info && (
@@ -1079,19 +1086,19 @@ export default function OrgGraph3D({
           onPick={(n) => onSelect(n)} />
       )}
       {hover && !linkCard && (
-        <div className="absolute z-20 pointer-events-none max-w-[280px] rounded-lg border border-white/15 bg-slate-950/90 px-2.5 py-1.5 text-[11px] text-slate-200 shadow-xl"
+        <div className="absolute z-20 pointer-events-none max-w-[280px] rounded-lg border border-white/15 bg-slate-950/90 px-2.5 py-1.5 text-[13px] text-slate-200 shadow-xl"
           style={{ left: Math.min(hover.x + 14, (mountRef.current?.clientWidth ?? 9999) - 290), top: hover.y + 14 }}>
           <div className="font-semibold text-white flex items-center gap-1.5">{hover.color && <span className="w-2 h-2 rounded-full shrink-0" style={{ background: hover.color }} />}<span className="break-words">{hover.title}</span></div>
-          {hover.lines.map((l, i) => <div key={i} className="text-slate-300 leading-snug">{l}</div>)}
-          {hover.hint && <div className="mt-0.5 text-[13px] text-slate-400">{hover.hint}</div>}
+          {hover.lines.map((l, i) => <div key={i} className="text-[var(--color-text-faint)] leading-snug">{l}</div>)}
+          {hover.hint && <div className="mt-0.5 text-[13px] text-[var(--color-text-faint)]">{hover.hint}</div>}
         </div>
       )}
       {linkCard && (
-        <div className="absolute z-20 w-72 rounded-lg border border-white/15 bg-slate-950/95 p-2.5 text-[11px] text-slate-200 shadow-2xl"
+        <div className="absolute z-20 w-72 rounded-lg border border-white/15 bg-slate-950/95 p-2.5 text-[13px] text-slate-200 shadow-2xl"
           style={{ left: Math.min(linkCard.x + 10, (mountRef.current?.clientWidth ?? 9999) - 300), top: Math.min(linkCard.y + 10, (mountRef.current?.clientHeight ?? 9999) - 140) }}>
           <div className="flex items-start justify-between gap-2">
             <div className="text-[13px] font-semibold text-amber-300">Why these are linked</div>
-            <button onClick={() => setLinkCard(null)} className="text-slate-400 hover:text-white">✕</button>
+            <button onClick={() => setLinkCard(null)} className="text-[var(--color-text-faint)] hover:text-white">✕</button>
           </div>
           <div className="mt-1 leading-snug text-slate-100">{linkCard.why}</div>
           <div className="mt-2 flex flex-wrap gap-1">
@@ -1103,7 +1110,7 @@ export default function OrgGraph3D({
       )}
       {!ready && !failed && (
         <div className="absolute inset-0 flex items-center justify-center">
-          <div className="text-[13px] font-bold text-slate-400">Building the 3D scene…</div>
+          <div className="text-[13px] font-bold text-[var(--color-text-faint)]">Building the 3D scene…</div>
         </div>
       )}
     </div>
@@ -1126,21 +1133,21 @@ function GlobeLegend({ info, nodes, gapIds, onGaps, onPick }: {
   const unplacedDocs = info.get("__unplaced__")?.docs ?? 0;
   const order: GlobeKind[] = ["area", "category", "asset", "docgroup", "document", "project", "group"];
   return (
-    <div className="absolute top-14 left-3 z-10 w-56 rounded-xl border border-white/10 bg-slate-950/75 backdrop-blur p-2.5 text-[11px] text-slate-200 space-y-1.5">
-      {site && <div className="text-slate-300">{site.equipment} equipment · {site.docs} documents</div>}
+    <div className="absolute top-14 left-3 z-10 w-56 rounded-xl border border-white/10 bg-slate-950/75 backdrop-blur p-2.5 text-[13px] text-slate-200 space-y-1.5">
+      {site && <div className="text-[var(--color-text-faint)]">{site.equipment} equipment · {site.docs} documents</div>}
       <div className="space-y-0.5">
         {order.filter((k) => counts.get(k)).map((k) => (
           <div key={k} className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-full shrink-0 ring-1 ring-black/40" style={{ background: GLOBE_STYLE[k].color }} />
             <span className="flex-1">{GLOBE_STYLE[k].label}</span>
-            <span className="text-slate-400 tabular-nums">{counts.get(k)}</span>
+            <span className="text-[var(--color-text-faint)] tabular-nums">{counts.get(k)}</span>
           </div>
         ))}
       </div>
       <div className="border-t border-white/10 pt-1.5 space-y-1">
-        <div className="text-[13px] font-semibold text-slate-400">Gaps</div>
+        <div className="text-[13px] font-semibold text-[var(--color-text-faint)]">Gaps</div>
         <button disabled={!bare.length} onClick={() => onGaps(gapIds.size ? new Set() : new Set(bare))}
-          className={`w-full text-left rounded-md px-1.5 py-1 ${gapIds.size ? "bg-amber-400/20 text-amber-200" : "hover:bg-white/10"} disabled:opacity-40`}>
+          className={`w-full text-left rounded-md px-1.5 py-1 ${gapIds.size ? "bg-[var(--state-held)]/20 text-amber-200" : "hover:bg-white/10"} disabled:opacity-40`}>
           {gapIds.size ? "Showing" : "Show"} equipment with no documents ({bare.length})
         </button>
         {unplaced && (

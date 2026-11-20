@@ -88,8 +88,8 @@ export default function SupersedeModal({
     <div className="fixed inset-0 z-[210] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-lg shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
-          <div className="p-2 bg-amber-100 rounded-lg">
-            <Layers className="w-5 h-5 text-amber-700" />
+          <div className="p-2 bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] rounded-lg">
+            <Layers className="w-5 h-5 text-[var(--state-held)]" />
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-semibold text-[var(--color-text)] inline-flex items-center gap-1">
@@ -151,11 +151,11 @@ export default function SupersedeModal({
             {replacements.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {replacements.map((r) => (
-                  <div key={r} className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-amber-50 border border-amber-200 text-[13px] font-display tabular-nums text-amber-800">
+                  <div key={r} className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] border border-[color-mix(in_srgb,var(--state-held)_40%,transparent)] text-[13px] font-display tabular-nums text-[var(--state-held)]">
                     {r}
                     <button
                       onClick={() => removeReplacement(r)}
-                      className="ml-0.5 text-amber-600 hover:text-red-600"
+                      className="ml-0.5 text-[var(--state-held)] hover:text-[var(--state-overdue)]"
                       title="Remove"
                     >
                       <Trash2 className="w-3 h-3" />
@@ -165,7 +165,7 @@ export default function SupersedeModal({
               </div>
             )}
             {unresolved.length > 0 && (
-              <div className="mt-2 text-[13px] border-l-2 border-amber-500 pl-3 text-amber-800 dark:text-amber-300">
+              <div className="mt-2 text-[13px] border-l-2 border-[var(--state-held)] pl-3 text-[var(--state-held)]">
                 <b>Note:</b> these document numbers couldn&apos;t be found in this library and were skipped:&nbsp;
                 <span className="font-display tabular-nums">{unresolved.join(", ")}</span>
               </div>
@@ -183,7 +183,7 @@ export default function SupersedeModal({
           </div>
 
           {error && (
-            <div className="flex items-start gap-2 text-[13px] border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
+            <div className="flex items-start gap-2 text-[13px] border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
               <span>{error}</span>
             </div>

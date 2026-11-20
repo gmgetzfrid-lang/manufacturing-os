@@ -163,8 +163,8 @@ export default function DistributionAcks({
               {acks.length === 0 ? (
                 <span className="text-[13px] font-bold text-[var(--color-text-faint)]">none requested for Rev {currentRev ?? "-"}</span>
               ) : (
-                <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded-full ${
-                  confirmed === acks.length ? "bg-emerald-50 text-emerald-700" : "bg-[var(--color-surface-2)] text-[var(--color-text)]"
+                <span className={`text-[13px] font-bold px-1.5 py-0.5 rounded-full ${
+                  confirmed === acks.length ? "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)]" : "bg-[var(--color-surface-2)] text-[var(--color-text)]"
                 }`}>
                   {confirmed} of {acks.length} confirmed
                 </span>
@@ -188,8 +188,8 @@ export default function DistributionAcks({
                     {acks.map((a) => (
                       <div key={a.id} className="flex items-center gap-2 text-[13px] py-0.5">
                         {a.acknowledgedAt
-                          ? <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0" />
-                          : <Clock className="w-3 h-3 text-amber-500 shrink-0" />}
+                          ? <CheckCircle2 className="w-3 h-3 text-[var(--state-released)] shrink-0" />
+                          : <Clock className="w-3 h-3 text-[var(--state-held)] shrink-0" />}
                         <span className="font-bold text-[var(--color-text)] truncate">{shortName(a)}</span>
                         <span className="text-[var(--color-text-faint)] ml-auto shrink-0">
                           {a.acknowledgedAt
@@ -212,12 +212,12 @@ export default function DistributionAcks({
                   </button>
                   {acks.some((a) => !a.acknowledgedAt) && (
                     reminded ? (
-                      <span className="text-[13px] font-bold text-emerald-700">Reminder sent ✓</span>
+                      <span className="text-[13px] font-bold text-[var(--state-released)]">Reminder sent ✓</span>
                     ) : (
                       <button
                         onClick={() => void handleRemind()}
                         disabled={busy}
-                        className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-[13px] font-bold border border-amber-200 text-amber-700 hover:bg-amber-50 disabled:opacity-50"
+                        className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-[13px] font-bold border border-[color-mix(in_srgb,var(--state-held)_40%,transparent)] text-[var(--state-held)] hover:bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] disabled:opacity-50"
                       >
                         <BellRing className="w-3 h-3" /> Remind the unconfirmed
                       </button>

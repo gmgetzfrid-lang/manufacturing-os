@@ -239,7 +239,7 @@ export default function CommandPalette({
             placeholder="Search documents, folders, or actions…"
             className="flex-1 bg-transparent text-[var(--color-text)] text-sm placeholder-[var(--color-text-faint)] focus:outline-none"
           />
-          <kbd className="text-[11px] font-mono text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded">ESC</kbd>
+          <kbd className="text-[13px] font-mono text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded">ESC</kbd>
         </div>
 
         {/* Results */}
@@ -302,7 +302,7 @@ export default function CommandPalette({
                       {primary}
                     </div>
                     {secondary && (
-                      <div className="text-[11px] font-mono text-[var(--color-text-muted)] truncate">{secondary}</div>
+                      <div className="text-[13px] text-[var(--color-text-muted)] truncate">{secondary}</div>
                     )}
                   </div>
                   <div className="shrink-0 flex items-center gap-2">

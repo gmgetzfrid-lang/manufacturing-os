@@ -108,7 +108,7 @@ export default function RelationshipGraph({
 
         <div className="p-4">
           {error ? (
-            <div className="text-sm text-rose-600 p-8 text-center">{error}</div>
+            <div className="text-sm text-[var(--state-overdue)] p-8 text-center">{error}</div>
           ) : !related ? (
             <div className="flex items-center justify-center h-64"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-faint)]" /></div>
           ) : nodes.length === 0 ? (

@@ -159,7 +159,7 @@ export default function Composer({
                 </span>
               </span>
               {a.att === null && !a.error
-                ? <span className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-muted)] shrink-0"><Loader2 className="w-3 h-3 animate-spin" />{Math.round(a.percent)}%</span>
+                ? <span className="inline-flex items-center gap-1 text-[13px] text-[var(--color-text-muted)] shrink-0"><Loader2 className="w-3 h-3 animate-spin" />{Math.round(a.percent)}%</span>
                 : a.att && <Check className="w-3.5 h-3.5 text-[var(--state-released)] shrink-0" />}
               {a.error && a.retryable && a.file && onRetryAttachment && (
                 <button type="button" onClick={() => onRetryAttachment(a.localId)} className="shrink-0 h-7 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] font-semibold">

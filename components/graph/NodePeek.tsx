@@ -127,7 +127,7 @@ export default function NodePeek({
                   “{e.snippet}”
                 </div>
                 {e.confidence < 0.9 && (
-                  <div className="text-[13px] font-semibold text-amber-700 mt-0.5">
+                  <div className="text-[13px] font-semibold text-[var(--state-held)] mt-0.5">
                     {e.origin} match · unreviewed
                   </div>
                 )}
@@ -183,7 +183,7 @@ export default function NodePeek({
           </button>
           {onConnect && (
             <button onClick={onConnect} title="Draw a connection: click this node, then the other one"
-              className="inline-flex items-center justify-center gap-1 text-[13px] font-semibold text-emerald-700 border border-emerald-300 dark:border-emerald-800 rounded-lg px-2 py-1.5 hover:bg-emerald-50 dark:hover:bg-emerald-950/40">
+              className="inline-flex items-center justify-center gap-1 text-[13px] font-semibold text-[var(--state-released)] border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] rounded-lg px-2 py-1.5 hover:bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)]">
               <Link2 className="w-3.5 h-3.5" />
             </button>
           )}

@@ -703,7 +703,7 @@ export default function InspectorPanel({
         {auditState === "loading" ? (
           <div className="text-[13px] text-[var(--color-text-muted)]">Loading recent activity…</div>
         ) : auditState === "failed" ? (
-          <div className="text-[13px] text-rose-700 dark:text-rose-300">Couldn&apos;t load recent activity.</div>
+          <div className="text-[13px] text-[var(--state-overdue)]">Couldn&apos;t load recent activity.</div>
         ) : recentAudits.length === 0 ? (
           <div className="text-[13px] text-[var(--color-text-muted)]">No recent activity.</div>
         ) : (
@@ -1050,8 +1050,8 @@ function TransmittalTrail({ orgId, documentId, currentRev }: { orgId: string; do
                 {r.issuedAt ? ` · ${humanDate(r.issuedAt)}` : ""}
               </span>
               {r.status === "acknowledged"
-                ? <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold"><span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-released)]" />Received</span>
-                : <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold"><span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-held)]" />Not confirmed yet</span>}
+                ? <span className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[13px] font-semibold whitespace-nowrap leading-[18px] bg-[color-mix(in_srgb,var(--state-released)_14%,transparent)] text-[var(--state-released)]">Received</span>
+                : <span className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[13px] font-semibold whitespace-nowrap leading-[18px] bg-[color-mix(in_srgb,var(--state-held)_16%,transparent)] text-[var(--state-held)]">Not confirmed yet</span>}
               {stale && (
                 <span className="text-[13px] font-semibold text-[var(--state-overdue)]" title={`They have Rev ${r.rev}. Current is Rev ${currentRev}.`}>
                   Has an old rev

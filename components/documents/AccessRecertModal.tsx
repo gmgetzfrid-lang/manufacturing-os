@@ -14,6 +14,7 @@ import {
 } from "@/lib/accessRecert";
 import type { RecertPolicy } from "@/types/schema";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
+import { humanDate } from "@/components/documents/StatusTag";
 
 export default function AccessRecertModal({ libraryId, orgId, name, uid, userName, onClose, onSaved }: {
   libraryId: string;
@@ -92,10 +93,10 @@ export default function AccessRecertModal({ libraryId, orgId, name, uid, userNam
             {/* Status */}
             <div className="flex items-center gap-2 text-[13px]">
               {lastAt
-                ? <span className="inline-flex items-center gap-1 text-emerald-700"><CheckCircle2 className="w-3.5 h-3.5" /> Last recertified {lastAt.slice(0, 10)}</span>
+                ? <span className="inline-flex items-center gap-1 text-[var(--state-released)]"><CheckCircle2 className="w-3.5 h-3.5" /> Last recertified {humanDate(lastAt)}</span>
                 : <span className="text-[var(--color-text-muted)]">Never recertified</span>}
-              {nextDate && <span className={`ml-auto inline-flex items-center gap-1 font-bold ${status === "overdue" ? "text-rose-700" : status === "due_soon" ? "text-amber-700" : "text-[var(--color-text-muted)]"}`}>
-                {status === "overdue" ? `Overdue ${Math.abs(days ?? 0)}d` : status === "due_soon" ? `Due in ${days}d` : `Next ${nextDate.slice(0, 10)}`}
+              {nextDate && <span className={`ml-auto inline-flex items-center gap-1 font-bold ${status === "overdue" ? "text-[var(--state-overdue)]" : status === "due_soon" ? "text-[var(--state-held)]" : "text-[var(--color-text-muted)]"}`}>
+                {status === "overdue" ? `Overdue ${Math.abs(days ?? 0)}d` : status === "due_soon" ? `Due in ${days}d` : `Next ${humanDate(nextDate)}`}
               </span>}
             </div>
 
@@ -112,7 +113,7 @@ export default function AccessRecertModal({ libraryId, orgId, name, uid, userNam
                   <button onClick={() => void savePolicy()} disabled={busy} className="ml-auto px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-white text-[13px] font-bold disabled:opacity-50">Save cadence</button>
                 </div>
               )}
-              {existing && <button onClick={() => void clearPolicy()} disabled={busy} className="text-[13px] text-red-600 hover:underline">Remove cadence</button>}
+              {existing && <button onClick={() => void clearPolicy()} disabled={busy} className="text-[13px] text-[var(--state-overdue)] hover:underline">Remove cadence</button>}
             </div>
 
             {/* Access list */}
@@ -131,7 +132,7 @@ export default function AccessRecertModal({ libraryId, orgId, name, uid, userNam
                   ))}
                 </div>
               )}
-              <div className="text-[11px] text-[var(--color-text-muted)] mt-1 flex items-center gap-1"><ShieldAlert className="w-3 h-3" /> To remove access, use the library&apos;s Permissions panel, then attest below.</div>
+              <div className="text-[13px] text-[var(--color-text-muted)] mt-1 flex items-center gap-1"><ShieldAlert className="w-3 h-3" /> To remove access, use the library&apos;s Permissions panel, then attest below.</div>
             </div>
 
             {/* Attest */}

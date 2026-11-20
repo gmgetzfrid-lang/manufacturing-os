@@ -570,7 +570,7 @@ export default function CitedPageViewer({
                       <span className={`block rounded-[3px] ${
                         approx
                           ? "w-20 h-5 bg-[color-mix(in_srgb,var(--color-text-muted)_45%,transparent)] ring-1 ring-[var(--color-text-muted)]"
-                          : "w-14 h-4 bg-amber-300/60 ring-1 ring-amber-500/70"
+                          : "w-14 h-4 bg-[var(--state-held)]/60 ring-1 ring-[var(--state-held)]"
                       }`} />
                       <span className="absolute left-1/2 -translate-x-1/2 top-full mt-1 whitespace-nowrap
  px-1.5 py-0.5 rounded font-display text-[12px] font-semibold text-[var(--color-ink-fg)] bg-[var(--color-ink)]">

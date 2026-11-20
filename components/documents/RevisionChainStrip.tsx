@@ -48,7 +48,7 @@ export default function RevisionChainStrip({ documentId, refreshKey }: RevisionC
       </div>
     );
   }
-  if (error) return <div className="text-[13px] text-red-600 px-2 py-2">{error}</div>;
+  if (error) return <div className="text-[13px] text-[var(--state-overdue)] px-2 py-2">{error}</div>;
   if (chain.length === 0) return null;
 
   return (

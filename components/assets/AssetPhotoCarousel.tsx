@@ -148,7 +148,7 @@ export default function AssetPhotoCarousel({
                 </span>
               )}
             </div>
-            <div className="text-[13px] text-slate-300 truncate flex items-center gap-3">
+            <div className="text-[13px] text-[var(--color-text-faint)] truncate flex items-center gap-3">
               {asset.description && <span className="truncate max-w-md">{asset.description}</span>}
               {asset.location && (
                 <span className="inline-flex items-center gap-1 shrink-0">
@@ -184,7 +184,7 @@ export default function AssetPhotoCarousel({
           </div>
         )}
         {error && (
-          <div role="alert" className="text-red-300 flex items-center gap-2 border-l-2 border-red-400 pl-3">
+          <div role="alert" className="text-red-300 flex items-center gap-2 border-l-2 border-[var(--state-overdue)] pl-3">
             <AlertTriangle className="w-4 h-4" /> Couldn&apos;t load the photos: {error}
           </div>
         )}
@@ -250,7 +250,7 @@ export default function AssetPhotoCarousel({
       {active && !loading && (
         <div className="shrink-0 px-6 pt-3 flex items-center justify-center gap-2 flex-wrap text-[13px] text-white/70" onClick={(e) => e.stopPropagation()}>
           <Calendar className="w-3 h-3" />
-          <span className="font-mono">{active.captured_at ? new Date(active.captured_at).toLocaleDateString() : "Date unknown"}</span>
+          <span className="tabular-nums">{active.captured_at ? new Date(active.captured_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "Date unknown"}</span>
           {age && age.category !== "unknown" && (
             <span className={age.category === "stale" ? "text-red-300 font-bold" : age.category === "aging" ? "text-amber-300 font-bold" : ""}>· {age.label}</span>
           )}
@@ -284,7 +284,7 @@ export default function AssetPhotoCarousel({
               >
                 <SignedImg path={p.file_url} alt="" className="w-full h-full object-cover" />
                 {p.status !== "current" && (
-                  <span className={`absolute bottom-0 inset-x-0 px-1 py-0.5 bg-black/70 text-[11px] font-bold text-center ${p.status === "needs_verification" ? "text-amber-300" : "text-red-300"}`}>
+                  <span className={`absolute bottom-0 inset-x-0 px-1 py-0.5 bg-black/70 text-[13px] font-bold text-center ${p.status === "needs_verification" ? "text-amber-300" : "text-red-300"}`}>
                     {p.status === "needs_verification" ? "Check" : "Old"}
                   </span>
                 )}

@@ -132,7 +132,7 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
       <div className="w-full max-w-3xl bg-[var(--color-surface)] rounded-lg shadow-2xl overflow-hidden my-8 animate-in fade-in zoom-in-95">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface-2)]">
           <div className="flex items-center gap-2">
-            <Repeat2 className="w-5 h-5 text-emerald-600" />
+            <Repeat2 className="w-5 h-5 text-[var(--state-released)]" />
             <div>
               <h2 className="font-semibold text-[var(--color-text)]">Bump Set Revision</h2>
               <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">Every active sheet in this set, in one operation.</div>
@@ -195,7 +195,7 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
                         {s.file ? (
                           <span className="inline-flex items-center gap-1.5 text-[var(--color-text)] min-w-0 text-left">
                             <FileThumb file={s.file} size={24} />
-                            <span className="min-w-0"><span className="block font-mono truncate">{s.file.name}</span><span className="block text-[var(--color-text-muted)]">{formatSize(s.file.size)}</span></span>
+                            <span className="min-w-0"><span className="block truncate">{s.file.name}</span><span className="block text-[var(--color-text-muted)]">{formatSize(s.file.size)}</span></span>
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-[var(--color-text-muted)]">
@@ -212,12 +212,12 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
 
           {result && (
             <div className="text-[13px] space-y-1">
-              <div className="text-emerald-700">Published: <b>{result.succeeded}</b></div>
+              <div className="text-[var(--state-released)]">Published: <b>{result.succeeded}</b></div>
               {result.sentForReview > 0 && (
                 <div className="text-[var(--color-text)]">Sent for pre-publish review (not yet live): <b>{result.sentForReview}</b></div>
               )}
               {result.failed.length > 0 && (
-                <div className="text-red-700">
+                <div className="text-[var(--state-overdue)]">
                   Failed: <b>{result.failed.length}</b>
                   <ul className="list-disc ml-5">
                     {result.failed.map((f, i) => <li key={i}>{f.documentNumber}: {f.error}</li>)}
@@ -232,7 +232,7 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
           )}
 
           {error && (
-            <div className="flex items-start gap-2 text-[13px] border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
+            <div className="flex items-start gap-2 text-[13px] border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
             </div>
           )}

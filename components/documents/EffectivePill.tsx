@@ -7,6 +7,7 @@
 import React from "react";
 import { CalendarClock } from "lucide-react";
 import { effectiveStatusFor, daysUntilEffective } from "@/lib/effectiveDate";
+import { humanDate } from "@/components/documents/StatusTag";
 
 export default function EffectivePill({ effectiveDate, compact = false, className = "" }: {
   effectiveDate?: string | null;
@@ -15,11 +16,11 @@ export default function EffectivePill({ effectiveDate, compact = false, classNam
 }) {
   if (effectiveStatusFor(effectiveDate) !== "pending") return null;
   const days = daysUntilEffective(effectiveDate);
-  const date = (effectiveDate ?? "").slice(0, 10);
+  const date = humanDate(effectiveDate);
   return (
     <span
       title={`Issued - becomes effective ${date}`}
-      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold whitespace-nowrap bg-amber-50 text-amber-700 border-amber-200 ${className}`}
+      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[13px] font-semibold whitespace-nowrap bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] text-[var(--state-held)] border-[color-mix(in_srgb,var(--state-held)_40%,transparent)] ${className}`}
     >
       <CalendarClock className="w-3 h-3 shrink-0" /> {compact ? (days != null ? `Eff ${days}d` : date) : `Effective ${date}`}
     </span>

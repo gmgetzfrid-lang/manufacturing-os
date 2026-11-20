@@ -1,7 +1,8 @@
 "use client";
 
-// EstateReviewPanel — the links the resolver was not sure enough to apply.
-// Each row is one sentence of evidence, who proposed it, and the choices.
+// EstateReviewPanel: the links the resolver was not sure enough to apply,
+// as a ruled table: the link, why, who found it and how sure, and the
+// choices.
 // Approving an alias proposal teaches the alias; approving anything else
 // makes the edge live. Dismissals are remembered.
 //
@@ -13,6 +14,9 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Link2, Check, X, Loader2, RefreshCw, Factory, Briefcase, Cpu, FolderOpen, Quote } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
+import HelpTooltip from "@/components/ui/HelpTooltip";
+import { Section, tbl, sheet, btnRow, btnQuiet } from "@/components/admin/kit";
+import { StatusTag } from "@/components/documents/StatusTag";
 import { listPendingEdges, decideEdge, declareEdge, estatePost } from "@/lib/estate/client";
 import { labelNodes, type NodeLabel } from "@/lib/estate/labels";
 import { addFinderAlias } from "@/lib/fileFinder/stores";
@@ -85,7 +89,7 @@ export default function EstateReviewPanel() {
     try {
       const r = await estatePost<{ folders: number; documents: number; applied: number; pending: number; unchanged: number; demoted?: number; removed?: number; notes: string[] }>("/api/estate/resolve", { orgId: activeOrgId, all: true });
       const checked = [r.demoted ? `${r.demoted} earlier link${r.demoted === 1 ? "" : "s"} no longer proven and moved here for you` : null, r.removed ? `${r.removed} with nothing behind them taken away` : null].filter(Boolean).join(", ");
-      setNote(`${r.folders} folders and ${r.documents} documents looked at - ${r.applied} links applied, ${r.pending} new here, ${r.unchanged} already decided.${checked ? ` Checked again: ${checked}.` : ""}${r.notes.length ? " " + r.notes.join(" ") : ""}`);
+      setNote(`Looked at ${r.folders} folders and ${r.documents} documents: ${r.applied} linked, ${r.pending} new here, ${r.unchanged} already decided.${checked ? ` Checked again: ${checked}.` : ""}${r.notes.length ? " " + r.notes.join(" ") : ""}`);
       await load();
     } catch (err) { setNote((err as Error).message); }
     finally { setRunning(false); }
@@ -94,52 +98,93 @@ export default function EstateReviewPanel() {
   const L = (id: string) => labels.get(id) ?? { label: id };
   const Node = ({ id }: { id: string }) => {
     const l = L(id);
-    const body = <span className="font-bold">{l.label}{l.sub ? <span className="font-normal text-[var(--color-text-muted)]"> · {l.sub}</span> : null}</span>;
-    return l.href ? <Link href={l.href} className="hover:underline">{body}</Link> : body;
+    const name = l.href
+      ? <Link href={l.href} className="font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{l.label}</Link>
+      : <span className="font-semibold text-[var(--color-text)]">{l.label}</span>;
+    return <span className="min-w-0">{name}{l.sub ? <span className="text-[14px] text-[var(--color-text-muted)]"> ({l.sub})</span> : null}</span>;
   };
+  const sure = (e: EstateEdge) => e.tier === "strong" ? <StatusTag tone="none">Likely</StatusTag>
+    : e.tier === "inferred" ? <StatusTag tone="warn">A guess</StatusTag>
+    : <StatusTag tone="good">Proven</StatusTag>;
 
   return (
-    <section className="mb-6 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-      <div className="px-4 py-3 border-b border-[var(--color-border)] flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <div className="text-sm font-semibold inline-flex items-center gap-2"><Link2 className="w-4 h-4 text-[var(--color-text-muted)]" /> Links waiting for you</div>
-          <div className="text-[13px] text-[var(--color-text-muted)]">Only what is proven links by itself: a unit&apos;s number and name together (&ldquo;20 - Crude&rdquo;), a drawing number, a folder under a linked folder. A name on its own is asked here. <b>Belongs to</b>: it is that unit&apos;s own. <b>Applies to</b>: a standard or reference that covers it.</div>
-        </div>
-        {canDecide && (
-          <button onClick={run} disabled={running} title="Work the links out again. Links made earlier that are no longer proven come back here; a person's links are never touched." className="shrink-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-60">
-            {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} {running ? "Checking…" : "Check the links again"}
-          </button>
-        )}
-      </div>
-      {note && <div className="px-4 py-2 text-[13px] text-[var(--color-text-muted)] border-b border-[var(--color-border)]">{note}</div>}
+    <Section
+      label={<span className="inline-flex items-center gap-2">Links waiting for you{rows && rows.length > 0 && <span className="font-sans text-[14px] font-normal text-[var(--color-text-muted)] tabular-nums">{rows.length}</span>}
+        <span className="font-sans font-normal text-[14px] leading-snug"><HelpTooltip>
+          Only what is proven links by itself: a unit&apos;s number and name together (&ldquo;20 - Crude&rdquo;), a drawing number, a folder under a linked folder. A name on its own is asked here.
+          <span className="block mt-1.5"><b>Belongs to</b>: it is that unit&apos;s own. <b>Applies to</b>: a standard or reference filed elsewhere that covers it.</span>
+        </HelpTooltip></span>
+      </span>}
+      action={canDecide ? (
+        <button type="button" onClick={run} disabled={running} title="Work the links out again. Links that are no longer proven come back here; a person's links are never touched." className={btnQuiet}>
+          {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} {running ? "Checking…" : "Check the links again"}
+        </button>
+      ) : undefined}
+    >
+      {note && <p role="status" className="mb-2.5 text-[14px] text-[var(--color-text-muted)] max-w-[90ch]">{note}</p>}
       {rows === null ? (
-        <div className="p-6 text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading…</div>
+        <div className={`${sheet} px-4 py-4 text-[14px] text-[var(--color-text-muted)] inline-flex items-center gap-2 w-full`}><Loader2 className="w-4 h-4 animate-spin" /> Loading the links…</div>
       ) : rows.length === 0 ? (
-        <div className="p-6 text-[13px] text-[var(--color-text-muted)] italic">Nothing waiting. &ldquo;Check the links again&rdquo; after teaching aliases or adding units to the codebook to find more.</div>
+        <div className={`${sheet} px-4 py-4 flex flex-wrap items-center gap-x-3 gap-y-1`}>
+          <StatusTag tone="good">Nothing waiting</StatusTag>
+          <span className="text-[14px] text-[var(--color-text-muted)]">Check again after teaching aliases or adding units to the codebook.</span>
+        </div>
       ) : (
-        <ul className="divide-y divide-[var(--color-border)]">
-          {rows.map((e) => {
-            const I = TYPE_ICON[e.type] ?? Link2;
-            return (
-              <li key={e.id} className="px-4 py-3 flex items-start gap-3 flex-wrap sm:flex-nowrap">
-                <I className="w-4 h-4 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
-                <div className="flex-1 min-w-0 text-sm">
-                  <div className="flex flex-wrap items-center gap-x-1.5"><Node id={e.a} /> <span className="text-[var(--color-text-muted)]">{e.type === "belongs_to_unit" ? "and" : TYPE_LABEL[e.type] ?? e.type}</span> <Node id={e.b} /></div>
-                  <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{e.summary}</div>
-                  <div className="text-[13px] text-[var(--color-text-faint)] mt-0.5">{HOW[e.origin] ?? e.origin} · {e.tier === "strong" ? "likely" : e.tier === "inferred" ? "a guess" : "proven"}{e.createdByName ? ` · found on a run by ${e.createdByName}` : ""}</div>
-                </div>
-                {canDecide && (
-                  <div className="flex items-center gap-1 shrink-0 flex-wrap">
-                    <button onClick={() => decide(e, true)} disabled={busy === e.id} className="inline-flex items-center gap-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] px-2 py-1 text-[13px] font-bold hover:bg-[var(--color-surface-2)] disabled:opacity-50"><Check className="w-3.5 h-3.5" /> {e.type === "alias_of" ? "Teach" : e.type === "belongs_to_unit" ? "Belongs to" : "Link"}</button>
-                    {e.type === "belongs_to_unit" && <button onClick={() => applies(e)} disabled={busy === e.id} className="inline-flex items-center gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-1 text-[13px] font-bold hover:bg-[var(--color-surface-2)] disabled:opacity-50"><Link2 className="w-3.5 h-3.5" /> Applies to</button>}
-                    <button onClick={() => decide(e, false)} disabled={busy === e.id} className="inline-flex items-center gap-1 rounded-lg border border-[var(--color-border)] px-2 py-1 text-[13px] font-bold hover:bg-[var(--color-canvas)] disabled:opacity-50"><X className="w-3.5 h-3.5" /> No</button>
-                  </div>
-                )}
-              </li>
-            );
-          })}
-        </ul>
+        <div className={tbl.wrap}>
+          <table className={tbl.table}>
+            <thead className={`${tbl.thead} max-md:hidden`}>
+              <tr>
+                <th className={tbl.th}>Link</th>
+                <th className={`${tbl.th} max-lg:hidden`}>Why</th>
+                <th className={tbl.th}>Found by</th>
+                {canDecide && <th className={`${tbl.th} w-[1%]`}><span className="sr-only">Decide</span></th>}
+              </tr>
+            </thead>
+            <tbody className={tbl.tbody}>
+              {rows.map((e) => {
+                const I = TYPE_ICON[e.type] ?? Link2;
+                return (
+                  <tr key={e.id} className={`${tbl.tr} max-md:flex max-md:flex-col max-md:py-1.5`}>
+                    <td className={`${tbl.td} max-md:py-1 align-top`}>
+                      <div className="flex items-start gap-2.5">
+                        <I className="w-4 h-4 mt-1 shrink-0 text-[var(--color-text-muted)]" />
+                        <div className="min-w-0 flex flex-wrap items-baseline gap-x-1.5">
+                          <Node id={e.a} />
+                          <span className="text-[14px] text-[var(--color-text-muted)]">{e.type === "belongs_to_unit" ? "and" : TYPE_LABEL[e.type] ?? e.type}</span>
+                          <Node id={e.b} />
+                        </div>
+                      </div>
+                      {e.summary && <div className="lg:hidden pl-[26px] mt-0.5 text-[14px] text-[var(--color-text-muted)] line-clamp-2">{e.summary}</div>}
+                    </td>
+                    <td className={`${tbl.td} align-top max-lg:hidden text-[14px] text-[var(--color-text-muted)] max-w-[44ch]`}>{e.summary || "-"}</td>
+                    <td className={`${tbl.td} max-md:py-1 align-top whitespace-nowrap`}>
+                      <div className="flex items-center gap-2 max-md:pl-[26px]">
+                        {sure(e)}
+                        <span className="md:hidden text-[13px] text-[var(--color-text-muted)]">{HOW[e.origin] ?? e.origin}</span>
+                      </div>
+                      <div className="max-md:hidden mt-0.5 text-[13px] text-[var(--color-text-muted)]">{HOW[e.origin] ?? e.origin}</div>
+                      {e.createdByName && <div className="max-md:hidden text-[13px] text-[var(--color-text-muted)]">Run by {e.createdByName}</div>}
+                    </td>
+                    {canDecide && (
+                      <td className={`${tbl.td} max-md:py-1 align-top`}>
+                        <div className="flex flex-wrap md:flex-nowrap items-center md:justify-end gap-1.5 max-md:pl-[26px]">
+                          <button type="button" onClick={() => decide(e, false)} disabled={busy === e.id} className={btnRow}><X className="w-3.5 h-3.5" /> No</button>
+                          {e.type === "belongs_to_unit" && (
+                            <button type="button" onClick={() => applies(e)} disabled={busy === e.id} className={btnRow}><Link2 className="w-3.5 h-3.5" /> Applies to</button>
+                          )}
+                          <button type="button" onClick={() => decide(e, true)} disabled={busy === e.id} className={btnRow}>
+                            {busy === e.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} {e.type === "alias_of" ? "Teach" : e.type === "belongs_to_unit" ? "Belongs to" : "Link"}
+                          </button>
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
-    </section>
+    </Section>
   );
 }

@@ -128,7 +128,7 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
               {owner ? (
                 <div className="flex items-center gap-2">
                   <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-xs text-[var(--color-text)]">{owner.name || owner.email}</span>
-                  <button onClick={() => { setOwnerState(null); setOwnerChanged(true); }} className="text-[13px] text-red-600 hover:underline">Clear</button>
+                  <button onClick={() => { setOwnerState(null); setOwnerChanged(true); }} className="text-[13px] text-[var(--state-overdue)] hover:underline">Clear</button>
                 </div>
               ) : (
                 <>
@@ -166,7 +166,7 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
                   <div className="text-[13px] font-bold text-[var(--color-text-muted)]">Notify (besides Admin/DocCtrl)</div>
                   <div className="flex flex-wrap gap-1">
                     {reviewers.map((r) => (
-                      <span key={r.uid} className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-[11px] text-[var(--color-text)]">{r.name || r.email}<button aria-label="Remove" onClick={() => setReviewers((p) => p.filter((x) => x.uid !== r.uid))}><X className="w-3 h-3" /></button></span>
+                      <span key={r.uid} className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-[13px] text-[var(--color-text)]">{r.name || r.email}<button aria-label="Remove" onClick={() => setReviewers((p) => p.filter((x) => x.uid !== r.uid))}><X className="w-3 h-3" /></button></span>
                     ))}
                   </div>
                   <input value={userQuery} onChange={(e) => setUserQuery(e.target.value)} placeholder="Search people…" className={`${inp} w-full`} />
@@ -182,7 +182,7 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
               </>
             )}
             <div className="flex justify-between gap-2 pt-2 border-t border-[var(--color-border)]">
-              <button onClick={() => void remove()} disabled={busy || !existing} className="px-3 py-2 rounded-lg text-[13px] font-bold text-red-600 hover:bg-red-50 disabled:opacity-40">Remove cycle</button>
+              <button onClick={() => void remove()} disabled={busy || !existing} className="px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] disabled:opacity-40">Remove cycle</button>
               <div className="flex gap-2">
                 <button onClick={onClose} className="px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text-muted)]">Cancel</button>
                 <button onClick={() => void save()} disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--color-accent)] text-white text-xs font-bold disabled:opacity-50">{busy && <Loader2 className="w-4 h-4 animate-spin" />} Save</button>

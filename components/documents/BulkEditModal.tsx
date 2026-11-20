@@ -169,12 +169,12 @@ export default function BulkEditModal({
 
           {results && (
             <div className="space-y-2">
-              <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3 text-[13px] text-emerald-800 flex items-start gap-2">
+              <div className="rounded-lg bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] p-3 text-[13px] text-[var(--state-released)] flex items-start gap-2">
                 <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />
                 Applied to <b>{results.ok}</b> document{results.ok === 1 ? "" : "s"}.
               </div>
               {results.failed.length > 0 && (
-                <div className="text-[13px] border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
+                <div className="text-[13px] border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
                   <div className="font-bold flex items-center gap-1.5 mb-1"><AlertTriangle className="w-4 h-4" /> {results.failed.length} failed</div>
                   <ul className="ml-5 list-disc space-y-0.5">
                     {results.failed.slice(0, 5).map((f, i) => (

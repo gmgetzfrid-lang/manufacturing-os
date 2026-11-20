@@ -1,27 +1,46 @@
 "use client";
 
-// SignaturePanel — shows the e-signatures captured against a resource and a
-// button to capture a new one. Self-fetching; refreshes when a signature is
-// recorded anywhere (via the global `signature-recorded` event).
+// SignaturePanel: the e-signatures on a resource, as a section. A heading,
+// then one ruled list of signers on a white sheet: name, role, a quiet
+// status pill (what they signed: approved, reviewed, rejected…) and when.
+// People still expected to sign are listed as waiting. The Sign button is
+// the filled main button only when it is your turn; otherwise it is a
+// plain secondary button. Self-fetching; refreshes when a signature is
+// recorded anywhere (the global `signature-recorded` event).
 
 import React from "react";
-import { ShieldCheck, PenLine, CheckCircle2, XCircle, Eye } from "lucide-react";
+import { PenLine } from "lucide-react";
 import { listSignatures, type ESignature } from "@/lib/eSignatures";
 import { requestSignature } from "@/components/signatures/SignatureCaptureHost";
+import { useRole } from "@/components/providers/RoleContext";
+import { heroPrimary, heroQuiet } from "@/components/ui/PageHero";
+import { shortDateTime } from "@/components/admin/kit";
+import { StatusTag, type DocTone } from "@/components/documents/StatusTag";
 
-const INTENT_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
-  Approved: CheckCircle2, Reviewed: Eye, Acknowledged: CheckCircle2, Witnessed: Eye, Rejected: XCircle,
+/** Someone expected to sign. Matched to a signature by user id, else by name. */
+export interface ExpectedSigner { uid?: string | null; name: string; role?: string | null }
+
+const INTENT_TONE: Record<string, DocTone> = {
+  Approved: "good", Reviewed: "good", Acknowledged: "good", Witnessed: "good", Rejected: "bad",
 };
 
+interface Row { key: string; name: string; role: string | null; sig: ESignature | null; you: boolean }
+
 export default function SignaturePanel({
-  resourceType, resourceId, resourceLabel, canSign = true, className = "",
+  resourceType, resourceId, resourceLabel, canSign = true, yourTurn, signers, className = "",
 }: {
   resourceType: string;
   resourceId: string;
   resourceLabel?: string;
   canSign?: boolean;
+  /** It's this person's turn to sign: the Sign button becomes the filled
+   *  main button. Worked out from `signers` when left out. */
+  yourTurn?: boolean;
+  /** People expected to sign; those who haven't yet show as waiting. */
+  signers?: ExpectedSigner[];
   className?: string;
 }) {
+  const { uid } = useRole();
   const [sigs, setSigs] = React.useState<ESignature[] | null>(null);
   const [failed, setFailed] = React.useState(false);
 
@@ -40,51 +59,97 @@ export default function SignaturePanel({
     return () => window.removeEventListener("signature-recorded", onRecorded as EventListener);
   }, [resourceType, resourceId, load]);
 
+  // Expected signers first (each with their latest signature, if any), then
+  // everyone else who signed, newest first.
+  const rows: Row[] = React.useMemo(() => {
+    const list = sigs ?? [];
+    const used = new Set<string>();
+    const same = (a?: string | null, b?: string | null) => !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase();
+    const expected: Row[] = (signers ?? []).map((p, i) => {
+      const sig = list.find((s) => !used.has(s.id) && (p.uid ? s.signerUserId === p.uid : same(s.signerName, p.name))) ?? null;
+      if (sig) used.add(sig.id);
+      return { key: `e${i}`, name: p.name, role: p.role ?? sig?.signerRole ?? null, sig, you: !!uid && (p.uid ? p.uid === uid : sig?.signerUserId === uid) };
+    });
+    const others: Row[] = list.filter((s) => !used.has(s.id)).map((s) => ({ key: s.id, name: s.signerName, role: s.signerRole ?? null, sig: s, you: !!uid && s.signerUserId === uid }));
+    return [...expected, ...others];
+  }, [sigs, signers, uid]);
+
+  const myTurn = yourTurn ?? rows.some((r) => r.you && !r.sig && (signers?.length ?? 0) > 0);
+  const signedCount = rows.filter((r) => r.sig).length;
+  const waitingCount = rows.length - signedCount;
+
   return (
-    <div className={`rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] ${className}`}>
-      <div className="flex items-center gap-2 px-4 sm:px-5 py-3 border-b border-[var(--color-border)]">
-        <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-[13px] font-semibold text-[var(--color-text-muted)] flex-1">Signatures{sigs && sigs.length > 0 && <> · {sigs.length}</>}</span>
+    <section className={`min-w-0 ${className}`} aria-labelledby={`sig-${resourceId}`}>
+      <div className="flex flex-wrap items-end gap-x-3 gap-y-2 mb-2.5 min-h-8">
+        <h2 id={`sig-${resourceId}`} className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Signatures</h2>
+        {sigs && rows.length > 0 && (
+          <span className="text-[14px] text-[var(--color-text-muted)] tabular-nums">
+            {signedCount} signed{waitingCount > 0 ? `, ${waitingCount} waiting` : ""}
+          </span>
+        )}
+        <div className="flex-1" />
         {canSign && (
           <button
             type="button"
             onClick={() => requestSignature({ resourceType, resourceId, resourceLabel })}
-            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[13px] font-bold"
+            className={myTurn ? heroPrimary : heroQuiet}
           >
-            <PenLine className="w-3.5 h-3.5" /> Sign
+            <PenLine className="w-4 h-4" /> Sign
           </button>
         )}
       </div>
-      <div className="p-3">
+
+      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
         {!sigs ? (
-          <div className="text-[13px] text-[var(--color-text-muted)] py-2 text-center">Loading signatures…</div>
+          <p aria-busy="true" className="px-4 py-4 text-[14px] text-[var(--color-text-muted)]">Loading signatures…</p>
         ) : failed ? (
-          <div className="text-[13px] text-rose-700 dark:text-rose-400 py-3 text-center">
-            Couldn&apos;t load signatures. <button type="button" onClick={() => void load()} className="font-bold underline">Try again</button>
-          </div>
-        ) : sigs.length === 0 ? (
-          <div className="text-[13px] text-[var(--color-text-muted)] italic py-3 text-center">No signatures yet.</div>
+          <p role="alert" className="px-4 py-4 text-[14px] text-[var(--state-overdue)]">
+            <span className="font-semibold">Couldn&apos;t load the signatures.</span>{" "}
+            <button type="button" onClick={() => void load()} className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Try again</button>
+          </p>
+        ) : rows.length === 0 ? (
+          <p className="px-4 py-4 text-[14px] text-[var(--color-text-muted)]">
+            No signatures yet.{canSign ? " Sign records your name, role and the time." : ""}
+          </p>
         ) : (
-          <ul className="space-y-2">
-            {sigs.map((s) => {
-              const Icon = INTENT_ICON[s.intent] ?? CheckCircle2;
-              const tone = s.intent === "Rejected" ? "text-rose-600" : "text-emerald-600";
-              return (
-                <li key={s.id} className="flex items-start gap-2.5">
-                  <Icon className={`w-4 h-4 mt-0.5 shrink-0 ${tone}`} />
-                  <div className="min-w-0">
-                    <div className="text-sm text-[var(--color-text)]">
-                      <span className="font-bold">{s.intent}</span> by <span className="font-bold" style={{ fontFamily: "cursive" }}>{s.signerName}</span>
-                      {s.signerRole && <span className="text-[var(--color-text-muted)]"> · {s.signerRole}</span>}
-                    </div>
-                    <div className="text-[13px] text-[var(--color-text-muted)]">{new Date(s.signedAt).toLocaleString()}</div>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
+          <table className="w-full text-[15px]">
+            <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left max-sm:hidden">
+              <tr>
+                <th className="font-semibold px-4 h-10">Signer</th>
+                <th className="font-semibold px-4">Role</th>
+                <th className="font-semibold px-4">Status</th>
+                <th className="font-semibold px-4 text-right">Signed</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--color-border)]">
+              {rows.map((r) => {
+                const when = r.sig ? shortDateTime(r.sig.signedAt) : "";
+                const tag = r.sig
+                  ? <StatusTag tone={INTENT_TONE[r.sig.intent] ?? "good"}>{r.sig.intent}</StatusTag>
+                  : <StatusTag tone="warn">Waiting</StatusTag>;
+                return (
+                  <tr key={r.key} title={r.sig?.statement}>
+                    <td className="px-4 py-3 min-w-0">
+                      <div className="flex items-center gap-3">
+                        <span className="min-w-0 flex-1 truncate font-semibold text-[var(--color-text)]">
+                          {r.name}{r.you && <span className="font-normal text-[var(--color-text-muted)]"> (you)</span>}
+                        </span>
+                        <span className="sm:hidden shrink-0">{tag}</span>
+                      </div>
+                      <div className="sm:hidden text-[13px] text-[var(--color-text-muted)]">
+                        {[r.role, when || "Not signed yet"].filter(Boolean).join(", ")}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 max-sm:hidden text-[var(--color-text-muted)] whitespace-nowrap">{r.role || "-"}</td>
+                    <td className="px-4 py-3 max-sm:hidden">{tag}</td>
+                    <td className="px-4 py-3 max-sm:hidden text-right whitespace-nowrap tabular-nums text-[var(--color-text-muted)]">{when || "-"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         )}
       </div>
-    </div>
+    </section>
   );
 }

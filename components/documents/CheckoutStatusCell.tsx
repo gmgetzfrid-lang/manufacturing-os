@@ -264,14 +264,14 @@ const CheckoutInfoPopover = ({
         ) : (
           <div className="space-y-3">
             {sessions.map(session => (
-              <div key={session.userId} className={`rounded-xl p-3 border ${session.userId === docRecord.checkedOutBy ? 'bg-[var(--color-surface-2)] border-[var(--color-border)]' : 'bg-slate-50/50 border-[var(--color-border)]'}`}>
+              <div key={session.userId} className={`rounded-xl p-3 border ${session.userId === docRecord.checkedOutBy ? 'bg-[var(--color-surface-2)] border-[var(--color-border)]' : 'bg-[var(--color-surface-2)]/50 border-[var(--color-border)]'}`}>
                 <div className="flex items-center gap-3 mb-2">
                   <UserAvatar uid={session.userId} name={session.userName} size={24} className="shadow-sm" />
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-center">
                       <p className="text-[13px] font-bold text-[var(--color-text)] truncate">{session.userName}</p>
                       {session.userId === docRecord.checkedOutBy && (
-                        <span className="flex items-center text-[11px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] px-1.5 py-0.5 rounded-full border border-[var(--color-border)] shadow-sm" title="This person holds the lock, they're the one publishing wins for">
+                        <span className="flex items-center text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] px-1.5 py-0.5 rounded-full border border-[var(--color-border)] shadow-sm" title="This person holds the lock, they're the one publishing wins for">
                           <Lock className="w-2.5 h-2.5 mr-1" /> Holds the lock
                         </span>
                       )}
@@ -284,7 +284,7 @@ const CheckoutInfoPopover = ({
                 {/* The document-control "why": purpose category + stated reason. */}
                 <div className="ml-9 space-y-1.5">
                   {session.purpose && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)]">
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[13px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)]">
                       {session.purpose}
                     </span>
                   )}
@@ -298,7 +298,7 @@ const CheckoutInfoPopover = ({
                   {(() => {
                     const clock = clockLine(session);
                     return clock ? (
-                      <div className={`text-[13px] font-bold ${clock.overdue ? "text-amber-600" : "text-[var(--color-text-muted)]"}`}>
+                      <div className={`text-[13px] font-bold ${clock.overdue ? "text-[var(--state-held)]" : "text-[var(--color-text-muted)]"}`}>
                         <Clock className="w-2.5 h-2.5 inline mr-1 -mt-0.5" />{clock.text}
                       </div>
                     ) : null;
@@ -340,7 +340,7 @@ const CheckoutInfoPopover = ({
              <button
                onClick={handleForceRelease}
                disabled={processing}
-               className="w-full py-2 bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-rose-700 dark:text-rose-400 border border-[var(--color-border)] rounded-lg text-[13px] font-bold flex items-center justify-center transition-colors disabled:opacity-50"
+               className="w-full py-2 bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--state-overdue)] border border-[var(--color-border)] rounded-lg text-[13px] font-bold flex items-center justify-center transition-colors disabled:opacity-50"
              >
                <Shield className="w-3.5 h-3.5 mr-1.5" />
                {processing ? "Releasing…" : "Force release (admin)"}

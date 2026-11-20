@@ -16,6 +16,7 @@ import { resolveFileUrl } from "@/lib/storage";
 import type { DocumentRecord } from "@/types/schema";
 import dynamic from "next/dynamic";
 import { vDim, vPanel, vKicker, vTitle, vIcon, vClose } from "@/components/viewers/viewerChrome";
+import { humanDate } from "@/components/documents/StatusTag";
 // react-pdf is heavy; load the diff engine only when a compare opens.
 const PdfRevisionDiff = dynamic(() => import("@/components/viewers/PdfRevisionDiff"), { ssr: false });
 
@@ -142,7 +143,7 @@ export default function CompareRevisionsModal({
   if (!isOpen || typeof document === "undefined") return null;
 
   const optionLabel = (v: VersionOption) =>
-    `Rev ${v.revisionLabel}${v.id === doc.currentVersionId ? " · current" : ""}${v.createdAt ? ` · ${v.createdAt.slice(0, 10)}` : ""}`;
+    `Rev ${v.revisionLabel}${v.id === doc.currentVersionId ? " · current" : ""}${v.createdAt ? ` · ${humanDate(v.createdAt)}` : ""}`;
 
   const selectCls = "h-9 bg-[var(--color-ink-2)] border border-[var(--color-border)] rounded-[10px] px-2 text-[13px] font-semibold text-[var(--color-text)] outline-none focus:border-[var(--color-border-strong)] max-w-[220px]";
 

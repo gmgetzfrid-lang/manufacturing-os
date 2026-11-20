@@ -176,7 +176,7 @@ export default function VersionHistoryPanel({
 
   if (error) {
     return (
-      <p role="alert" className="text-[13px] text-rose-700 dark:text-rose-300 border-l-2 border-rose-500 pl-3 py-1">{error}</p>
+      <p role="alert" className="text-[13px] text-[var(--state-overdue)] border-l-2 border-[var(--state-overdue)] pl-3 py-1">{error}</p>
     );
   }
 
@@ -296,7 +296,7 @@ export default function VersionHistoryPanel({
                     )}
                     {v.provenance === "session" && (
                       <span
-                        className="text-[13px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded"
+                        className="text-[13px] font-bold text-[var(--state-released)] bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] px-1.5 py-0.5 rounded"
                         title="Published from a checkout: full record of where it came from."
                       >
                         Session
@@ -401,7 +401,7 @@ export default function VersionHistoryPanel({
                   )}
                   {v.sourceFileName && (
                     <span className="inline-flex items-center gap-1">
-                      <FileText className="w-3 h-3" /> <b className="text-[var(--color-text)] font-mono">{v.sourceFileName}</b>
+                      <FileText className="w-3 h-3" /> <b className="text-[var(--color-text)] font-semibold">{v.sourceFileName}</b>
                     </span>
                   )}
                 </div>
@@ -484,7 +484,7 @@ export default function VersionHistoryPanel({
               />
             </label>
             {labelError && (
-              <p role="alert" className="mt-2 text-[13px] text-rose-700 dark:text-rose-300 border-l-2 border-rose-500 pl-2.5">{labelError}</p>
+              <p role="alert" className="mt-2 text-[13px] text-[var(--state-overdue)] border-l-2 border-[var(--state-overdue)] pl-2.5">{labelError}</p>
             )}
             <div className="mt-3 flex items-center justify-end gap-2">
               <button

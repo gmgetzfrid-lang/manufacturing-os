@@ -52,7 +52,7 @@ export default function ImpactPanel({ documentId, orgId }: ImpactPanelProps) {
   }, [documentId, orgId]);
 
   // Loading and failure each say so; "nothing touches this" stays silent.
-  if (impactFailed) return <p className="px-4 pt-2 text-[13px] text-rose-700 dark:text-rose-300">Couldn&apos;t check what this document touches.</p>;
+  if (impactFailed) return <p className="px-4 pt-2 text-[13px] text-[var(--state-overdue)]">Couldn&apos;t check what this document touches.</p>;
   if (!impact) return <p className="px-4 pt-2 text-[13px] text-[var(--color-text-muted)]">Checking what this document touches…</p>;
   const total =
     impact.siblingDocs.length + impact.openTickets.length + impact.projects.length +
@@ -72,43 +72,43 @@ export default function ImpactPanel({ documentId, orgId }: ImpactPanelProps) {
         <span className="text-[13px] font-bold text-[var(--color-text)]">Changing this touches</span>
         <span className="flex items-center gap-1.5 flex-wrap justify-end flex-1">
           {impact.siblingDocs.length > 0 && (
-            <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded-full ${midChangeSiblings > 0 ? "bg-amber-100 text-amber-800" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
+            <span className={`text-[13px] font-bold px-1.5 py-0.5 rounded-full ${midChangeSiblings > 0 ? "bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] text-[var(--state-held)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
               {impact.siblingDocs.length} related doc{impact.siblingDocs.length === 1 ? "" : "s"}
               {midChangeSiblings > 0 && ` · ${midChangeSiblings} mid-change`}
             </span>
           )}
           {impact.openTickets.length > 0 && (
-            <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)]">
+            <span className="text-[13px] font-bold px-1.5 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)]">
               {impact.openTickets.length} open ticket{impact.openTickets.length === 1 ? "" : "s"}
             </span>
           )}
           {impact.projects.length > 0 && (
-            <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
+            <span className="text-[13px] font-bold px-1.5 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
               {impact.projects.length} project{impact.projects.length === 1 ? "" : "s"}
             </span>
           )}
           {impact.activeHoldCount > 0 && (
-            <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-red-50 text-red-700">
+            <span className="text-[13px] font-bold px-1.5 py-0.5 rounded-full bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)]">
               {impact.activeHoldCount} hold{impact.activeHoldCount === 1 ? "" : "s"}
             </span>
           )}
           {impact.openBranchCount > 0 && (
-            <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)]">
+            <span className="text-[13px] font-bold px-1.5 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)]">
               {impact.openBranchCount} branch{impact.openBranchCount === 1 ? "" : "es"}
             </span>
           )}
           {impact.workPackages.length > 0 && (
-            <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)]">
+            <span className="text-[13px] font-bold px-1.5 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)]">
               {impact.workPackages.length} work pack{impact.workPackages.length === 1 ? "" : "s"}
             </span>
           )}
           {impact.pendingDistributionAcks > 0 && (
-            <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800">
+            <span className="text-[13px] font-bold px-1.5 py-0.5 rounded-full bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] text-[var(--state-held)]">
               {impact.pendingDistributionAcks} unconfirmed cop{impact.pendingDistributionAcks === 1 ? "y" : "ies"}
             </span>
           )}
           {connected.length > 0 && (
-            <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)]">
+            <span className="text-[13px] font-bold px-1.5 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)]">
               {connected.length} downstream
             </span>
           )}
@@ -152,12 +152,12 @@ export default function ImpactPanel({ documentId, orgId }: ImpactPanelProps) {
                     href={d.libraryId ? `/documents/${d.libraryId}?doc=${d.id}` : "#"}
                     className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] group"
                   >
-                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${d.checkedOutByName ? "bg-amber-500" : "bg-slate-300"}`} />
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${d.checkedOutByName ? "bg-[var(--state-held)]" : "bg-slate-300"}`} />
                     <span className="text-[13px] font-bold text-[var(--color-text)] group-hover:text-[var(--color-text)] truncate">{d.label}</span>
                     <span className="text-[13px] text-[var(--color-text-faint)] shrink-0">Rev {d.rev ?? "-"}</span>
                     <span className="text-[13px] text-[var(--color-text-faint)] truncate">({d.sharedTags.slice(0, 3).join(", ")})</span>
                     {d.checkedOutByName && (
-                      <span className="ml-auto shrink-0 inline-flex items-center gap-1 text-[13px] font-bold text-amber-700">
+                      <span className="ml-auto shrink-0 inline-flex items-center gap-1 text-[13px] font-bold text-[var(--state-held)]">
                         <Lock className="w-2.5 h-2.5" /> {d.checkedOutByName}
                       </span>
                     )}
@@ -189,7 +189,7 @@ export default function ImpactPanel({ documentId, orgId }: ImpactPanelProps) {
             <div className="flex items-center gap-1.5 flex-wrap">
               <Briefcase className="w-3 h-3 text-[var(--color-text-faint)]" />
               {impact.projects.map((p) => (
-                <Link key={p.id} href={`/projects/${p.id}`} className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+                <Link key={p.id} href={`/projects/${p.id}`} className="text-[13px] font-bold px-2 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
                   {p.name}
                 </Link>
               ))}
@@ -199,7 +199,7 @@ export default function ImpactPanel({ documentId, orgId }: ImpactPanelProps) {
           {(impact.activeHoldCount > 0 || impact.openBranchCount > 0) && (
             <div className="flex items-center gap-3 text-[13px] font-bold">
               {impact.activeHoldCount > 0 && (
-                <span className="inline-flex items-center gap-1 text-red-700"><ShieldAlert className="w-3 h-3" /> {impact.activeHoldCount} active hold{impact.activeHoldCount === 1 ? "" : "s"} - publishing is blocked</span>
+                <span className="inline-flex items-center gap-1 text-[var(--state-overdue)]"><ShieldAlert className="w-3 h-3" /> {impact.activeHoldCount} active hold{impact.activeHoldCount === 1 ? "" : "s"} - publishing is blocked</span>
               )}
               {impact.openBranchCount > 0 && (
                 <span className="inline-flex items-center gap-1 text-[var(--color-text)]"><GitBranch className="w-3 h-3" /> unreconciled branch open</span>

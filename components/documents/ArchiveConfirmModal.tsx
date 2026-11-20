@@ -63,10 +63,10 @@ export default function ArchiveConfirmModal({
     <div className="fixed inset-0 z-[210] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <div className="w-full max-w-md bg-[var(--color-surface)] rounded-lg shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
-          <div className={`p-2 ${isArchive ? "bg-[var(--color-surface-2)]" : "bg-emerald-100"} rounded-lg`}>
+          <div className={`p-2 ${isArchive ? "bg-[var(--color-surface-2)]" : "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)]"} rounded-lg`}>
             {isArchive
               ? <Archive className="w-5 h-5 text-[var(--color-text)]" />
-              : <ArchiveRestore className="w-5 h-5 text-emerald-700" />}
+              : <ArchiveRestore className="w-5 h-5 text-[var(--state-released)]" />}
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-semibold text-[var(--color-text)]">
@@ -111,7 +111,7 @@ export default function ArchiveConfirmModal({
           </div>
 
           {error && (
-            <div className="flex items-start gap-2 text-[13px] border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
+            <div className="flex items-start gap-2 text-[13px] border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
               <span>{error}</span>
             </div>

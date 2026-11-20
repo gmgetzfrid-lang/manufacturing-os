@@ -101,11 +101,11 @@ export default function DocThumb({
 
   // Nothing to render, non-PDF, or a render failure → typed placeholder.
   if (nothingToShow || nonPdf || failed) {
-    return <div ref={ref} className={`${box} flex items-center justify-center`} style={style}><FileText className="w-4 h-4 text-slate-300" /></div>;
+    return <div ref={ref} className={`${box} flex items-center justify-center`} style={style}><FileText className="w-4 h-4 text-[var(--color-text-faint)]" /></div>;
   }
   // Not visible yet, still resolving the path/url → loader.
   if (!visible || !url) {
-    return <div ref={ref} className={`${box} flex items-center justify-center`} style={style}><Loader2 className="w-3.5 h-3.5 animate-spin text-slate-300" /></div>;
+    return <div ref={ref} className={`${box} flex items-center justify-center`} style={style}><Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-faint)]" /></div>;
   }
 
   return (

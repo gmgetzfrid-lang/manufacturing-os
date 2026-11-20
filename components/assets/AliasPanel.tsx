@@ -78,7 +78,7 @@ export default function AliasPanel({
         Nicknames, old tags before a renumber, vendor names.
       </p>
       {loadFailed && (
-        <p role="alert" className="text-[13px] text-rose-700 dark:text-rose-400">
+        <p role="alert" className="text-[13px] text-[var(--state-overdue)]">
           Couldn&apos;t load the other names. <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
         </p>
       )}
@@ -90,13 +90,13 @@ export default function AliasPanel({
             return (
               <span key={a.id}
                 title={`${ALIAS_ORIGIN_LABELS[a.origin] ?? a.origin}${a.created_by_name ? ` · ${a.created_by_name}` : ""}`}
-                className="group inline-flex items-center gap-1 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] pl-2 pr-1 py-0.5 text-[11px] font-bold text-[var(--color-text)]">
+                className="group inline-flex items-center gap-1 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] pl-2 pr-1 py-0.5 text-[13px] font-bold text-[var(--color-text)]">
                 <Icon className="w-3 h-3 text-[var(--color-text-faint)]" />
                 {a.alias}
                 {canManage && (
                   <button onClick={() => void remove(a)}
                     aria-label={`Remove alias ${a.alias}`}
-                    className="p-0.5 rounded-full text-[var(--color-text-faint)] hover:text-rose-600 opacity-50 group-hover:opacity-100">
+                    className="p-0.5 rounded-full text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] opacity-50 group-hover:opacity-100">
                     <X className="w-2.5 h-2.5" />
                   </button>
                 )}
@@ -126,7 +126,7 @@ export default function AliasPanel({
       {rows.length === 0 && !canManage && !loadFailed && (
         <div className="text-[13px] text-[var(--color-text-faint)] italic">No other names recorded.</div>
       )}
-      {error && <div role="alert" className="text-[13px] text-rose-700 dark:text-rose-400">{error}</div>}
+      {error && <div role="alert" className="text-[13px] text-[var(--state-overdue)]">{error}</div>}
     </section>
   );
 }

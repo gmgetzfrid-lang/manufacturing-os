@@ -682,7 +682,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
             <div className={isIdle ? "" : "bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-5"}>
               {/* Until the sessions load we can't tell check-out from check-in. */}
               {loadErr ? (
-                <p role="alert" className="border-l-2 border-rose-500 pl-3 text-sm text-rose-700 dark:text-rose-300">{loadErr}</p>
+                <p role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 text-sm text-[var(--state-overdue)]">{loadErr}</p>
               ) : loading ? (
                 <LoadingBlock what="who has it out" rows={3} className="border-0 p-0" />
               ) : mySession ? (
@@ -731,7 +731,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                   {/* THE WHOLE DEFAULT FORM: what + why. Everything else is
                       behind Options — the honest path must be the cheap one. */}
                   <div>
-                    <label className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1 block">What are you doing? <span className="text-rose-500">*</span></label>
+                    <label className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1 block">What are you doing? <span className="text-[var(--state-overdue)]">*</span></label>
                     <div className="grid grid-cols-2 gap-1.5">
                       {CHECKOUT_PURPOSES.map((p) => (
                         <button
@@ -751,7 +751,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                   </div>
 
                   <div>
-                    <label className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1 block">In a few words, why? <span className="text-rose-500">*</span></label>
+                    <label className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1 block">In a few words, why? <span className="text-[var(--state-overdue)]">*</span></label>
                     <input
                       ref={noteInputRef}
                       value={note}
@@ -769,7 +769,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                   <button
                     type="button"
                     onClick={() => setShowOptions((v) => !v)}
-                    className="w-full flex items-center justify-between px-3 py-2 rounded-lg border border-dashed border-[var(--color-border-strong)] text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-slate-400 transition-colors"
+                    className="w-full flex items-center justify-between px-3 py-2 rounded-lg border border-dashed border-[var(--color-border-strong)] text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] transition-colors"
                   >
                     <span>
                       {projectChoice === "adhoc"
@@ -896,7 +896,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                   )}
 
                   {activeSessions.length > 0 && !isOrphaned && (
-                    <p className="border-l-2 border-amber-500 pl-3 text-[13px] text-amber-800 dark:text-amber-300 flex items-start">
+                    <p className="border-l-2 border-[var(--state-held)] pl-3 text-[13px] text-[var(--state-held)] flex items-start">
                       <AlertTriangle className="w-4 h-4 mr-2 shrink-0 mt-0.5" />
                       Others are working on this file. Talk in the thread first.
                     </p>
@@ -912,8 +912,8 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                     const ready = purposeDone && noteDone;
                     const StepMark = ({ done, n }: { done: boolean; n: string }) =>
                       done
-                        ? <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                        : <span className="w-3.5 h-3.5 shrink-0 rounded-full border border-[var(--color-border-strong)] text-[11px] font-semibold text-[var(--color-text-muted)] inline-flex items-center justify-center">{n}</span>;
+                        ? <Check className="w-3.5 h-3.5 text-[var(--state-released)] shrink-0" />
+                        : <span className="w-3.5 h-3.5 shrink-0 rounded-full border border-[var(--color-border-strong)] text-[13px] font-semibold text-[var(--color-text-muted)] inline-flex items-center justify-center">{n}</span>;
                     const buttonLabel = processing ? "Working…"
                       : !purposeDone ? "Pick a purpose to continue"
                       : !noteDone ? (noteLen === 0 ? "Add a few words on why" : `Add ${5 - noteLen} more character${5 - noteLen === 1 ? "" : "s"}`)
@@ -923,10 +923,10 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                       <div className="space-y-2">
                         {!ready && (
                           <div className="flex items-center gap-4 text-[13px] text-[var(--color-text-muted)]">
-                            <span className={`flex items-center gap-1.5 ${purposeDone ? "text-emerald-700" : ""}`}>
+                            <span className={`flex items-center gap-1.5 ${purposeDone ? "text-[var(--state-released)]" : ""}`}>
                               <StepMark done={purposeDone} n="1" /> What you&apos;re doing
                             </span>
-                            <span className={`flex items-center gap-1.5 ${noteDone ? "text-emerald-700" : ""}`}>
+                            <span className={`flex items-center gap-1.5 ${noteDone ? "text-[var(--state-released)]" : ""}`}>
                               <StepMark done={noteDone} n="2" /> Why (5+ characters)
                             </span>
                           </div>

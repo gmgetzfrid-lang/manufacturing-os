@@ -165,7 +165,7 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
             <div className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
-                  <label className="block text-sm font-bold text-[var(--color-text)] mb-2">Name <span className="text-red-500">*</span></label>
+                  <label className="block text-sm font-bold text-[var(--color-text)] mb-2">Name <span className="text-[var(--state-overdue)]">*</span></label>
                   <input 
                     value={label}
                     onChange={(e) => setLabel(e.target.value)}
@@ -197,7 +197,7 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
                           onChange={(e) => handleUpdateOption(idx, e.target.value)}
                           className="flex-1 px-3 py-2 rounded-lg border border-[var(--color-border)] text-sm focus:border-[var(--color-border-strong)] outline-none"
                         />
-                        <button onClick={() => handleRemoveOption(idx)} className="p-2 text-[var(--color-text-faint)] hover:text-red-500 hover:bg-red-50 rounded-lg"><Trash2 className="w-4 h-4" /></button>
+                        <button onClick={() => handleRemoveOption(idx)} className="p-2 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] rounded-lg"><Trash2 className="w-4 h-4" /></button>
                       </div>
                     ))}
                   </div>
@@ -248,8 +248,8 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
                       body="Full-screen carousel with date watermarks. Replaces $20k-100k/yr point-cloud subscriptions."
                     />
                     <FeatureMini
-                      icon={<Zap className="w-4 h-4 text-emerald-700" />}
-                      bg="bg-emerald-100"
+                      icon={<Zap className="w-4 h-4 text-[var(--state-released)]" />}
+                      bg="bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)]"
                       title="Registry-synced"
                       body="Same tag on a P&ID, ISO, or MOC = same asset. Photos and history follow the equipment, not the doc."
                     />

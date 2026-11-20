@@ -693,7 +693,7 @@ export default function ChatShell() {
   return (
     // The chat keeps the full height: the conversation is the page. Its
     // parts are white sheets on the grey panel: conversations (left), the
-    // stream under a plain header that says what you're asking (middle),
+    // stream under a slim brand band that says what you're asking (middle),
     // the reading panel (right).
     <div className="relative flex h-full min-h-0 overflow-hidden gap-3 px-2 sm:px-4 lg:px-6 pt-1 pb-2 sm:pb-4">
       {/* Rail */}
@@ -716,7 +716,9 @@ export default function ChatShell() {
 
       {/* Stream */}
       <div className="flex-1 min-w-0 flex flex-col rounded-lg overflow-hidden bg-[var(--color-surface)] border border-[var(--color-border)]">
-        <div className="px-3 sm:px-5 py-2.5 min-h-[60px] flex items-center gap-2 shrink-0 border-b border-[var(--color-border)]">
+        {/* A slim band in the brand color, like every page's header: inside
+            .page-head the text and border tokens turn white. */}
+        <div className="page-head bg-[var(--color-band)] rounded-t-lg px-3 sm:px-5 py-2.5 min-h-[60px] flex items-center gap-2 shrink-0">
           {!railOpen && (
             <button onClick={() => setRailOpen(true)} title="Conversations" aria-label="Show conversations"
               className="h-9 w-9 -ml-1 shrink-0 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">

@@ -411,7 +411,7 @@ export default function RevUpModal({
               <ChevronRight className="w-4 h-4 rotate-180" />
             </button>
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-semibold text-amber-800 dark:text-amber-300 inline-flex items-center gap-1.5"><AlertTriangle className="w-4 h-4" /> This document changed while you were working</div>
+              <div className="text-sm font-semibold text-[var(--state-held)] inline-flex items-center gap-1.5"><AlertTriangle className="w-4 h-4" /> This document changed while you were working</div>
               <div className="text-[13px] text-[var(--color-text-muted)] truncate">
                 {doc.documentNumber || doc.title || doc.name}
               </div>
@@ -459,7 +459,7 @@ export default function RevUpModal({
                   </div>
                 </div>
                 {msgSent ? (
-                  <div className="mt-2 text-[13px] font-bold text-emerald-700 dark:text-emerald-400">Sent to the document thread.</div>
+                  <div className="mt-2 text-[13px] font-bold text-[var(--state-released)]">Sent to the document thread.</div>
                 ) : (
                   <div className="mt-2 flex gap-1.5">
                     <input
@@ -527,7 +527,7 @@ export default function RevUpModal({
             </div>
 
             {error && (
-              <p role="alert" className="border-l-2 border-rose-500 pl-3 text-[13px] text-rose-700 dark:text-rose-300">{error}</p>
+              <p role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 text-[13px] text-[var(--state-overdue)]">{error}</p>
             )}
           </div>
 
@@ -584,7 +584,7 @@ export default function RevUpModal({
               role="button" tabIndex={0}
               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInputRef.current?.click(); } }}
               className={`mt-1.5 rounded-xl border-2 border-dashed transition-colors cursor-pointer p-4 ${
-                file ? "border-[var(--color-border-strong)] bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] hover:border-slate-400 bg-[var(--color-surface-2)] text-center"
+                file ? "border-[var(--color-border-strong)] bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] hover:border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-center"
               } ${pdfDrag.ring}`}
             >
               {pdfDrag.over ? (
@@ -635,7 +635,7 @@ export default function RevUpModal({
               ))}
             </select>
             {baseVersionId !== "none" && baseVersionId !== (doc.currentVersionId ?? "none") && (
-              <p className="mt-1.5 border-l-2 border-amber-500 pl-2 text-[13px] text-amber-800 dark:text-amber-300">
+              <p className="mt-1.5 border-l-2 border-[var(--state-held)] pl-2 text-[13px] text-[var(--state-held)]">
                 That isn&apos;t the current revision, so publishing will stop and show what changed since.
               </p>
             )}
@@ -667,7 +667,7 @@ export default function RevUpModal({
               chosen change type (Minor/Correction) bypasses the gate. The
               default dropdown value must never silently decide governance. */}
           {reviewControl && reviewControl.mode !== "none" && effMode === "none" && (
-            <p className="border-l-2 border-amber-500 pl-3 text-[13px] text-amber-800 dark:text-amber-300">
+            <p className="border-l-2 border-[var(--state-held)] pl-3 text-[13px] text-[var(--state-held)]">
               A <b>{changeType}</b> change skips this library&apos;s reviewers. If it&apos;s more than that, set Change Type to <b>Major</b>.
             </p>
           )}
@@ -717,7 +717,7 @@ export default function RevUpModal({
               <input
                 value={mocReference}
                 onChange={(e) => setMocReference(e.target.value)}
-                className={`${inputClass} ${mocReference.trim().length >= 3 ? "" : "border-amber-400 bg-amber-50/40"}`}
+                className={`${inputClass} ${mocReference.trim().length >= 3 ? "" : "border-[var(--state-held)] bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)]"}`}
                 placeholder="MOC-2026-0142"
               />
             </Field>
@@ -726,7 +726,7 @@ export default function RevUpModal({
               change type on a drawing waives the MOC — say so, so a real
               process change doesn't slip out under last week's setting. */}
           {docClass === "drawing" && isMinorLike && (
-            <p className="border-l-2 border-amber-500 pl-2 text-[13px] text-amber-800 dark:text-amber-300">
+            <p className="border-l-2 border-[var(--state-held)] pl-2 text-[13px] text-[var(--state-held)]">
               No MOC needed for a <b>{changeType}</b> drawing change. If it changes the process, set Change Type to <b>Major</b>.
             </p>
           )}
@@ -781,7 +781,7 @@ export default function RevUpModal({
               onClick={() => sourceInputRef.current?.click()}
               {...srcDrag.bind}
               className={`rounded-xl border-2 border-dashed cursor-pointer p-3 transition-colors ${
-                sourceFile ? "border-[var(--color-border-strong)] bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] hover:border-slate-400 bg-[var(--color-surface-2)] text-center"
+                sourceFile ? "border-[var(--color-border-strong)] bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] hover:border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-center"
               } ${srcDrag.ring}`}
             >
               {srcDrag.over ? (
@@ -820,8 +820,8 @@ export default function RevUpModal({
           {/* Override: the doc is checked out by someone else. Publishing leaves
               their checkout open; they're notified and pointed to the new rev. */}
           {lockedByOther && (
-            <div className="border-l-2 border-amber-500 pl-3 space-y-2">
-              <div className="flex items-start gap-2 text-[13px] text-amber-800 dark:text-amber-300">
+            <div className="border-l-2 border-[var(--state-held)] pl-3 space-y-2">
+              <div className="flex items-start gap-2 text-[13px] text-[var(--state-held)]">
                 <Lock className="w-4 h-4 mt-0.5 shrink-0" />
                 <span>
                   <b>{doc.checkedOutByName || "Another user"}</b> has this checked out. They stay checked
@@ -844,7 +844,7 @@ export default function RevUpModal({
           )}
 
           {error && (
-            <p role="alert" className="border-l-2 border-rose-500 pl-3 text-[13px] text-rose-700 dark:text-rose-300">{error}</p>
+            <p role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 text-[13px] text-[var(--state-overdue)]">{error}</p>
           )}
         </div>
 

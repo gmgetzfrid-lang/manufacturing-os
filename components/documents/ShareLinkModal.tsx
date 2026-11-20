@@ -99,7 +99,7 @@ export default function ShareLinkModal({
 
         <div className="px-5 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
           {error && (
-            <div className="text-[13px] flex items-start gap-2 border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
+            <div className="text-[13px] flex items-start gap-2 border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
             </div>
           )}
@@ -152,7 +152,7 @@ export default function ShareLinkModal({
                   const isExpired = !!s.expiresAt && new Date(s.expiresAt).getTime() < Date.now();
                   const dead = isRevoked || isExpired;
                   return (
-                    <li key={s.id} className={`rounded-lg border p-3 ${dead ? "border-[var(--color-border)] bg-slate-50/50 opacity-60" : "border-[var(--color-border)] bg-[var(--color-surface)]"}`}>
+                    <li key={s.id} className={`rounded-lg border p-3 ${dead ? "border-[var(--color-border)] bg-[var(--color-surface-2)]/50 opacity-60" : "border-[var(--color-border)] bg-[var(--color-surface)]"}`}>
                       <div className="flex items-center gap-2">
                         <input
                           readOnly
@@ -170,7 +170,7 @@ export default function ShareLinkModal({
                               className="p-1.5 rounded-md bg-[var(--color-surface-2)] hover:bg-slate-200 text-[var(--color-text)]"
                               title="Copy"
                             >
-                              {copied === s.id ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                              {copied === s.id ? <CheckCircle2 className="w-3.5 h-3.5 text-[var(--state-released)]" /> : <Copy className="w-3.5 h-3.5" />}
                             </button>
                             <button
                               onClick={() => setQrFor(qrFor === s.id ? null : s.id)}
@@ -190,7 +190,7 @@ export default function ShareLinkModal({
                             </a>
                             <button
                               onClick={() => void revoke(s.id)}
-                              className="p-1.5 rounded-md bg-rose-100 hover:bg-rose-200 text-rose-700"
+                              className="p-1.5 rounded-md bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)]"
                               title="Revoke"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -202,9 +202,9 @@ export default function ShareLinkModal({
                         {s.note && <span className="italic text-[var(--color-text-muted)]">&ldquo;{s.note}&rdquo;</span>}
                         {s.createdByName && <span>by {s.createdByName}</span>}
                         {s.expiresAt && (
-                          <span>{isExpired ? "expired" : "expires"} {new Date(s.expiresAt).toLocaleDateString()}</span>
+                          <span>{isExpired ? "expired" : "expires"} {new Date(s.expiresAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
                         )}
-                        {isRevoked && <span className="text-rose-700">revoked</span>}
+                        {isRevoked && <span className="text-[var(--state-overdue)]">revoked</span>}
                         <span className="inline-flex items-center gap-0.5"><Eye className="w-2.5 h-2.5" /> {s.accessCount}</span>
                       </div>
                       {qrFor === s.id && !dead && (

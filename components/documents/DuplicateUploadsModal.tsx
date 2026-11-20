@@ -101,7 +101,7 @@ export default function DuplicateUploadsModal({
       onMouseDown={(e) => { if (e.target === e.currentTarget && !running) onClose(); }}>
       <div className="w-full max-w-xl bg-[var(--color-surface)] rounded-t-2xl sm:rounded-lg shadow-2xl border border-[var(--color-border)] overflow-hidden flex flex-col max-h-[90dvh]">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-start gap-3">
-          <div className="p-2 rounded-lg bg-amber-100 dark:bg-amber-950/40"><Copy className="w-5 h-5 text-amber-700 dark:text-amber-400" /></div>
+          <div className="p-2 rounded-lg bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)]"><Copy className="w-5 h-5 text-[var(--state-held)]" /></div>
           <div className="min-w-0 flex-1">
             <div className="text-sm font-semibold text-[var(--color-text)]">Clean up uploads</div>
             <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">
@@ -115,39 +115,39 @@ export default function DuplicateUploadsModal({
 
         <div className="p-5 overflow-auto">
           {loadError ? (
-            <p className="text-sm text-rose-600">{loadError}</p>
+            <p className="text-sm text-[var(--state-overdue)]">{loadError}</p>
           ) : result ? (
-            <p className="text-sm font-bold text-emerald-700 dark:text-emerald-400 flex items-start gap-2"><CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" /> {result}</p>
+            <p className="text-sm font-bold text-[var(--state-released)] flex items-start gap-2"><CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" /> {result}</p>
           ) : groups === null ? (
             <p className="text-sm text-[var(--color-text-muted)] flex items-center gap-2">
               <Loader2 className="w-4 h-4 animate-spin" /> Checking {scanned.toLocaleString()} documents…
             </p>
           ) : nothing ? (
-            <p className="text-sm font-bold text-emerald-700 dark:text-emerald-400 flex items-center gap-2">
+            <p className="text-sm font-bold text-[var(--state-released)] flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4" /> All clean - no duplicate uploads and no entries missing their file.
             </p>
           ) : (
             <>
               {empty.length > 0 && (
                 <p className="text-sm text-[var(--color-text)] mb-2">
-                  <b className="text-rose-700 dark:text-rose-400">{empty.length.toLocaleString()} entr{empty.length === 1 ? "y has" : "ies have"} no file</b> - an
+                  <b className="text-[var(--state-overdue)]">{empty.length.toLocaleString()} entr{empty.length === 1 ? "y has" : "ies have"} no file</b> - an
                   upload created the entry but its file never attached. There&apos;s nothing to open in them.
                 </p>
               )}
               {files > 0 && (
               <p className="text-sm text-[var(--color-text)]">
                 <b>{files.toLocaleString()} file{files === 1 ? " was" : "s were"}</b> uploaded more than once, making{" "}
-                <b className="text-amber-700 dark:text-amber-400">{dupIds.length.toLocaleString()} extra cop{dupIds.length === 1 ? "y" : "ies"}</b>.
+                <b className="text-[var(--state-held)]">{dupIds.length.toLocaleString()} extra cop{dupIds.length === 1 ? "y" : "ies"}</b>.
               </p>
               )}
               {files > 0 && <ul className="mt-3 rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] text-[13px] max-h-72 overflow-auto">
                 {groups.slice(0, 200).map((g) => (
                   <li key={g.key} className="px-3 py-2 flex items-center gap-2 min-w-0">
                     <span className="min-w-0 flex-1">
-                      <span className="block font-mono truncate text-[var(--color-text)]" title={g.name}>{g.name}</span>
+                      <span className="block truncate text-[var(--color-text)]" title={g.name}>{g.name}</span>
                       <span className="block text-[13px] text-[var(--color-text-faint)] truncate">{folderName(g.folderId)}</span>
                     </span>
-                    <span className="shrink-0 font-semibold text-amber-700 dark:text-amber-400">×{g.extras.length + 1}</span>
+                    <span className="shrink-0 font-semibold text-[var(--state-held)]">×{g.extras.length + 1}</span>
                   </li>
                 ))}
                 {groups.length > 200 && <li className="px-3 py-2 text-[var(--color-text-faint)]">+{groups.length - 200} more files</li>}
@@ -171,7 +171,7 @@ export default function DuplicateUploadsModal({
           </button>
           {!result && !nothing && (
             <button onClick={() => void removeExtras()} disabled={!!running}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-[13px] font-semibold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50">
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-[13px] font-semibold text-white bg-[var(--state-overdue)] hover:bg-[var(--state-overdue)] disabled:opacity-50">
               {running ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
               Clean up {extras.length.toLocaleString()} entr{extras.length === 1 ? "y" : "ies"}
             </button>

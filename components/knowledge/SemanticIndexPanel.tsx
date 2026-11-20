@@ -21,10 +21,14 @@
 // resumes exactly where it stopped.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Brain, Loader2, AlertTriangle, Check, Square, RefreshCw } from "lucide-react";
+import { Brain, Loader2, Square, RefreshCw } from "lucide-react";
 import { useToast } from "@/components/providers/ToastProvider";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { Button } from "@/components/ui/Button";
+import HelpTooltip from "@/components/ui/HelpTooltip";
+import { Section, sheet } from "@/components/admin/kit";
+import { StatusTag } from "@/components/documents/StatusTag";
+import { Note, Cells, Bar } from "@/components/knowledge/panelKit";
 import {
   semanticStatus, buildSemanticIndex, resetSemanticIndex, type SemanticProgress,
 } from "@/lib/knowledge";
@@ -113,20 +117,20 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
       if (final.error) {
         setBuildNote({ tone: "err", text: final.error });
       } else if (final.done) {
-        setBuildNote({ tone: "ok", text: "Meaning index complete - every passage carries a vector." });
+        setBuildNote({ tone: "ok", text: "Meaning index complete: every passage carries a vector." });
         showToast({ type: "success", title: "Meaning index complete." });
       } else if (final.paused) {
         setBuildNote({
           tone: "info",
-          text: "Paused here while the database catches up - it's busy writing the index. Everything built so far is saved, "
-            + "and the build carries on by itself in the background. Press Build index any time to drive it from this tab again.",
+          text: "Paused while the database catches up. Everything built is saved and the build carries on in the background; "
+            + "press Build index to drive it from this tab again.",
         });
       } else if (stopRef.current) {
-        setBuildNote({ tone: "ok", text: `Stopped - ${final.remaining.toLocaleString()} passage(s) left. Resume any time; nothing built is lost.` });
+        setBuildNote({ tone: "ok", text: `Stopped with ${final.remaining.toLocaleString()} passage${final.remaining === 1 ? "" : "s"} left. Resume any time; nothing built is lost.` });
       } else {
         // Ended without finishing, erroring, or being stopped — a silent
         // no-op is the one outcome that must never pass without comment.
-        setBuildNote({ tone: "info", text: `Paused with ${final.remaining.toLocaleString()} passage(s) to go. Everything built so far is saved - press Build index to continue.` });
+        setBuildNote({ tone: "info", text: `Paused with ${final.remaining.toLocaleString()} passage${final.remaining === 1 ? "" : "s"} to go. Everything built is saved; press Build index to continue.` });
       }
     } catch (e) {
       const message = (e as Error).message;
@@ -164,42 +168,35 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
   };
 
   // A panel that renders NOTHING is indistinguishable from a feature that was
-  // never built — and this one used to disappear in three different ways: on
-  // any non-migration error, and whenever the library had no passages at all.
-  //
-  // That second case is the one that matters. A library of AutoCAD SHX
-  // exports indexes to almost nothing until image reading is switched on, so
-  // total is 0, so the panel vanished — exactly when the person needed it to
-  // explain itself. Say the state out loud instead, and name the fix.
-  const strip = (tone: "warn" | "muted", body: React.ReactNode) => (
-    <div className={`mt-4 text-[13px] flex items-start gap-2 ${
-      tone === "warn"
-        ? "border-l-2 border-[var(--state-held)] pl-3 py-1 text-[var(--state-held)]"
-        : "rounded-lg px-4 py-3 border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>
-      {tone === "warn"
-        ? <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-[var(--state-held)]" />
-        : <Brain className="w-4 h-4 shrink-0 mt-0.5 opacity-60" />}
-      <span className="min-w-0">{body}</span>
-    </div>
+  // never built. It used to disappear on any non-migration error and
+  // whenever the library had no passages at all (a library of AutoCAD SHX
+  // exports indexes to almost nothing until image reading is on). Say the
+  // state out loud instead, and name the fix.
+  const help = (
+    <span className="font-sans font-normal text-[14px] leading-snug"><HelpTooltip>
+      Finds &ldquo;pipe supports&rdquo; in a standard that says &ldquo;hanger and support details&rdquo;. Keyword search still handles exact tags. Building it uses your embeddings key, which is separate from your chat key (AI settings).
+    </HelpTooltip></span>
+  );
+  const shell = (tag: React.ReactNode, body: React.ReactNode, action?: React.ReactNode) => (
+    <Section label={<span className="inline-flex items-center gap-2.5">Meaning-based search {tag}{help}</span>} action={action}>
+      <div className={`${sheet} px-4 sm:px-5 py-4`}>{body}</div>
+    </Section>
   );
 
   if (unavailable) {
-    return /migration/i.test(unavailable)
-      ? strip("warn", <><b>Meaning-based search is waiting on a database migration:</b> {unavailable}</>)
-      : strip("warn", <><b>Meaning-based search couldn&apos;t report its status:</b> {unavailable}</>);
+    return shell(
+      <StatusTag tone="warn">{/migration/i.test(unavailable) ? "Not set up" : "Unknown"}</StatusTag>,
+      <Note tone="warn" title={/migration/i.test(unavailable) ? "Waiting on a database migration." : "Couldn't read the meaning index."}>{unavailable}</Note>,
+    );
   }
-  if (!status) return strip("muted", "Counting the meaning index… (slow while it's being built, nothing to do)");
+  if (!status) return shell(null, <p className="flex items-center gap-2 text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Counting the meaning index… (slow while it&apos;s being built)</p>);
   if (status.total === 0) {
-    return strip("muted", (
-      <>
-        <b className="text-[var(--color-text)]">Meaning-based search has nothing to index yet.</b>{" "}
-        This library has no indexed passages. If the documents are already uploaded, they were
-        read as having almost no text - the usual cause is an AutoCAD export drawn with SHX fonts,
-        or a scan, where every tag is line-work rather than text. Turn on{" "}
-        <b>&ldquo;These are CAD exports or scans&rdquo;</b> in Library AI setup, run{" "}
-        <b>Rebuild index</b> under Drawing intelligence, then come back here.
-      </>
-    ));
+    return shell(
+      <StatusTag tone="none">Nothing to index</StatusTag>,
+      <Note tone="none" title="This library has no indexed passages yet.">
+        Uploaded documents read as almost no text are usually AutoCAD exports with SHX fonts, or scans. Turn on &ldquo;These are CAD exports or scans&rdquo; in Library AI setup, re-index the documents, then come back here.
+      </Note>,
+    );
   }
 
   const covered = status.coveredNow ?? 0;
@@ -208,98 +205,66 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
   const estCents = Math.ceil((status.remaining / 1000) * CENTS_PER_1K_PASSAGES);
   const fullCents = Math.ceil((status.total / 1000) * CENTS_PER_1K_PASSAGES);
 
+  const action = isController ? (
+    building ? (
+      <Button size="sm" variant="secondary" className="!h-9 !text-[14px]" onClick={() => { stopRef.current = true; }}>
+        <Square className="w-3.5 h-3.5" /> Stop
+      </Button>
+    ) : complete ? (
+      // A finished index is not a permanent one. Chunking changes when
+      // ingestion improves and models get swapped; without this the
+      // upgrade would reach only documents added afterwards and the
+      // library would sit half-indexed under two regimes with nothing
+      // on screen saying so.
+      <Button size="sm" variant="secondary" className="!h-9 !text-[14px]" onClick={() => void rebuild()}>
+        <RefreshCw className="w-4 h-4" /> Rebuild index
+      </Button>
+    ) : (
+      <Button size="sm" variant="secondary" className="!h-9 !text-[14px]" onClick={() => void build()}>
+        <Brain className="w-4 h-4" /> Build index
+      </Button>
+    )
+  ) : undefined;
+
+  const tag = complete ? <StatusTag tone="good">Complete</StatusTag>
+    : building ? <StatusTag tone="warn">Building</StatusTag>
+    : covered === 0 ? <StatusTag tone="none">Not built</StatusTag>
+    : <StatusTag tone="warn">Partly built</StatusTag>;
+
   return (
-    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-      <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg flex items-center justify-center bg-[var(--color-text)]">
-            <Brain className="w-4 h-4 text-[var(--color-surface)]" />
-          </div>
-          <div>
-            <div className="text-[13px] font-semibold text-[var(--color-text)]">Meaning-based search</div>
-            <div className="text-[13px] text-[var(--color-text-muted)]">
-              Finds &ldquo;pipe supports&rdquo; in a standard that says &ldquo;hanger and support details&rdquo;.
-              Keyword search still handles exact tags, and always will.
-            </div>
-          </div>
+    <Section label={<span className="inline-flex items-center gap-2.5">Meaning-based search {tag}{help}</span>} action={action}>
+      <div className={`${sheet} overflow-hidden`}>
+        <Cells cells={[
+          { label: "Passages with meaning", value: <>{status.estimated ? "≈ " : ""}{covered.toLocaleString()}<span className="text-[var(--color-text-muted)] font-medium text-[18px]"> of {status.total.toLocaleString()}</span></> },
+          { label: "Built", value: `${pct}%`, tone: complete ? "good" : undefined },
+          { label: "Left to build", value: status.remaining.toLocaleString() },
+          complete
+            ? { label: "To rebuild, about", value: fullCents > 0 ? `${fullCents}¢` : "-", hint: "On your embeddings key" }
+            : { label: "To finish, about", value: estCents > 0 ? `${estCents}¢` : "-", hint: "On your embeddings key" },
+        ]} />
+        <div className="px-4 sm:px-5 pb-4">
+          <Bar segments={[{ key: "built", value: covered, color: "var(--color-main)" }]} total={status.total} label={`${pct}% built`} />
+          <p className="mt-1.5 flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]">
+            {building && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+            {building && status.busy ? "Database busy: pausing a moment, nothing lost."
+              : complete ? "Every passage carries a vector."
+              : covered === 0 ? "Not built yet. Questions use keyword search alone."
+              : "Partly built. The rest are keyword-only until this finishes."}
+          </p>
         </div>
-        {isController && (
-          building ? (
-            <Button size="sm" variant="secondary" onClick={() => { stopRef.current = true; }}>
-              <Square className="w-3.5 h-3.5" /> Stop
-            </Button>
-          ) : complete ? (
-            // A finished index is not a permanent one. Chunking changes when
-            // ingestion improves and models get swapped; without this the
-            // upgrade would reach only documents added afterwards and the
-            // library would sit half-indexed under two regimes with nothing
-            // on screen saying so.
-            <Button size="sm" variant="secondary" onClick={() => void rebuild()}>
-              <RefreshCw className="w-3.5 h-3.5" /> Rebuild index
-              {fullCents > 0 && <span className="opacity-70"> (~{fullCents}¢)</span>}
-            </Button>
-          ) : (
-            <Button size="sm" variant="secondary" onClick={() => void build()}>
-              <Brain className="w-3.5 h-3.5" /> Build index
-              {estCents > 0 && <span className="opacity-70"> (~{estCents}¢)</span>}
-            </Button>
-          )
+
+        {((building && status.rateLimited) || buildNote || needsKey) && (
+          <div className="border-t border-[var(--color-border)] px-4 sm:px-5 py-3 space-y-2.5">
+            {building && status.rateLimited && (
+              <Note tone="warn" title="Provider rate limit: pacing, not stopped.">
+                Your embeddings account is on a free tier, so the build runs in small batches about once a minute. Leave this page open and it will finish; a payment method at your provider unlocks full speed.
+              </Note>
+            )}
+            {buildNote && <Note tone={buildNote.tone === "ok" ? "good" : buildNote.tone === "err" ? "bad" : "none"}>{buildNote.text}</Note>}
+            {needsKey && <Note tone="warn" title="Needs an embeddings key.">{needsKey}</Note>}
+          </div>
         )}
       </div>
-
-      <div className="h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-        <div
-          className="h-full transition-all bg-[var(--color-text)]"
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-
-      <div className="mt-1.5 flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]">
-        {building && <Loader2 className="w-3 h-3 animate-spin" />}
-        {complete && <Check className="w-3 h-3 text-[var(--state-released)]" />}
-        <span>
-          <b className="text-[var(--color-text)]">{status.estimated ? "≈ " : ""}{covered.toLocaleString()}</b> of{" "}
-          {status.total.toLocaleString()} passages carry meaning vectors ({pct}%).
-          {building && status.busy && " Database busy - pausing a moment, nothing lost."}
-        </span>
-      </div>
-
-      {building && status.rateLimited && (
-        <div className="mt-2 border-l-2 border-[var(--state-held)] pl-3 text-[13px] text-[var(--state-held)]">
-          <b>Provider rate limit: pacing, not stopped.</b> Your embeddings account is on a free
-          tier (Voyage without a payment method: 3 calls and 10K tokens per minute), so the build
-          continues in small batches about once a minute. Leave this page open and it will finish.
-          Adding a payment method at your provider unlocks full speed - your free trial tokens
-          still apply.
-        </div>
-      )}
-
-      {buildNote && (
-        <div className={`mt-2 border-l-2 pl-3 text-[13px] ${
-          buildNote.tone === "ok"
-            ? "border-emerald-500 text-[var(--state-released)]"
-            : buildNote.tone === "info"
-              ? "border-[var(--color-border-strong)] text-[var(--color-text)]"
-              : "border-[var(--state-overdue)] text-[var(--state-overdue)]"}`}>
-          {buildNote.text}
-        </div>
-      )}
-
-      {needsKey && (
-        <div className="mt-2 border-l-2 border-[var(--state-held)] pl-3 text-[13px] text-[var(--state-held)]">
-          {needsKey}
-        </div>
-      )}
-
-      {!complete && !needsKey && (
-        <p className="mt-1 text-[13px] text-[var(--color-text-faint)]">
-          {covered === 0
-            ? "Not built yet. Questions use keyword search alone, as this library did before."
-            : "Partly built. Questions already use both; the remaining passages are keyword-only until this finishes."}
-          {" "}Needs an embeddings key, which is separate from your chat key - add one under
-          AI settings. Claude keeps answering the questions either way.
-        </p>
-      )}
-    </div>
+    </Section>
   );
 }

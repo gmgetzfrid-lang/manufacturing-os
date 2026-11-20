@@ -161,7 +161,7 @@ export default function FolderGrid({
           {onDelete && (
             <>
               <div className="h-px bg-[var(--color-surface-2)] my-1" />
-              <button onClick={() => { onDelete(id); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 flex items-center font-medium">
+              <button onClick={() => { onDelete(id); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] flex items-center font-medium">
                 <Trash2 className="w-4 h-4 mr-2" /> Delete
               </button>
             </>

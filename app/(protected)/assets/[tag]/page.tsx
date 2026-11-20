@@ -275,7 +275,7 @@ export default function AssetHubPage() {
                       {held ? <StatusTag tone="bad" colored>On hold</StatusTag> : d.status ? <StatusTag status={d.status} /> : <span className="text-[var(--color-text-muted)]">-</span>}
                     </td>
                     <td className="px-4 py-2.5 hidden lg:table-cell">
-                      {d.checkedOutByName ? <span className="inline-flex items-center gap-1.5 font-semibold"><span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-held)]" />{d.checkedOutByName}</span> : ""}
+                      {d.checkedOutByName ? <span className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[13px] font-semibold whitespace-nowrap leading-[18px] bg-[color-mix(in_srgb,var(--state-held)_16%,transparent)] text-[var(--state-held)]">{d.checkedOutByName}</span> : ""}
                     </td>
                   </tr>
                 );

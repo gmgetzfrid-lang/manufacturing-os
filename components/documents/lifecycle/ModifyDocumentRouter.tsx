@@ -270,13 +270,13 @@ function RouterChoice({
   onClick: () => void;
 }) {
   const colorClass =
-    color === "emerald" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
-    color === "amber"   ? "bg-amber-50   text-amber-700   border-amber-200" :
+    color === "emerald" ? "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)] border-[color-mix(in_srgb,var(--state-released)_35%,transparent)]" :
+    color === "amber"   ? "bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)]   text-[var(--state-held)]   border-[color-mix(in_srgb,var(--state-held)_40%,transparent)]" :
                           "bg-[var(--color-surface-2)]  text-[var(--color-text-muted)]   border-[var(--color-border)]";
   return (
     <button
       onClick={onClick}
-      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-100/60 text-left"
+      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-[var(--color-surface-2)]/60 text-left"
     >
       <div className={`w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 ${colorClass}`}>
         <Icon className="w-4 h-4" />

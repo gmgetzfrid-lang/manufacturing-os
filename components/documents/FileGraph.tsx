@@ -25,6 +25,7 @@ import React, { useEffect, useImperativeHandle, useMemo, useRef, useState } from
 import { balloonLayout, layoutBounds, type Placed } from "@/lib/fileFinder/balloonLayout";
 import type { FileTypeInfo } from "@/lib/fileFinder/fileTypes";
 import { useIconImages, IconHost } from "./fileGraphIcons";
+import { themeColor } from "@/components/graph/graphTheme";
 
 export type FileNodeKind = "library" | "folder" | "file" | "drive" | "extfolder" | "extfile";
 
@@ -283,6 +284,8 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
       ctx.translate(w / 2 + cam.x, h / 2 + cam.y);
       ctx.scale(cam.scale, cam.scale);
       const s = cam.scale;
+      // What you pick or point at is in the signal color; the rest is graphite.
+      const focus = themeColor("--color-accent", "#2e6be7");
 
       // The way up: a dim node above the root.
       const up = upRef.current, upP = upPosRef.current;
@@ -300,7 +303,7 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
         ctx.strokeStyle = "rgba(255,255,255,0.9)"; ctx.lineWidth = 1.5; ctx.stroke();
         const img = imagesRef.current.get(up.kind === "folder" || up.kind === "extfolder" ? "folderOpen" : up.type.key);
         if (img) ctx.drawImage(img, upP.x - r * 0.6, upP.y - r * 0.6, r * 1.2, r * 1.2);
-        ctx.font = "600 11px ui-sans-serif, system-ui"; ctx.textAlign = "center"; ctx.textBaseline = "top";
+        ctx.font = "600 11px Barlow, system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "top";
         ctx.fillStyle = "#334155";
         ctx.fillText(`↑ ${up.label.length > 24 ? up.label.slice(0, 22) + "…" : up.label}`, upP.x, upP.y + r + 4);
         ctx.globalAlpha = 1;
@@ -366,7 +369,7 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
       const anchor = an ? { x: ax / an, y: ay / an } : { x: 0, y: 0 };
       let reach = 0;
       for (const sat of satsHere) for (const l of sat.links) { const p = pos.get(l.to); if (p) reach = Math.max(reach, Math.hypot(p.x - anchor.x, p.y - anchor.y)); }
-      ctx.font = "800 12px ui-sans-serif, system-ui";
+      ctx.font = "600 12px Barlow, system-ui, sans-serif";
       const arcOf = (sat: FileGraphSatellite) => Math.max(66, ctx.measureText(sat.label).width + 16);
       const total = satsHere.reduce((a, sat) => a + arcOf(sat), 0);
       const oneAnchor = new Set(satsHere.flatMap((sat) => sat.links.map((l) => l.to))).size === 1;
@@ -392,11 +395,11 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
         satPos.current.set(sat.id, cur);
         // Reserve its place now so file labels steer round it; draw it last
         // so nothing paints over it.
-        ctx.font = "800 12px ui-sans-serif, system-ui";
+        ctx.font = "600 12px Barlow, system-ui, sans-serif";
         const rw = Math.max(52, ctx.measureText(sat.label).width + 6);
         placed.push([cur.x - rw / 2, cur.y - 26, rw, 26 + 20 + 19]);
         satDraws.push(() => {
-        const LINK: Record<string, string> = { drawn_on: "rgba(14,165,233,0.8)", mentioned_in: "rgba(99,102,241,0.8)", tagged_to: "rgba(16,185,129,0.8)", filed_under: "rgba(217,119,6,0.8)", in_project: "rgba(245,158,11,0.8)", linked_unit: "rgba(124,58,237,0.8)", named: "rgba(148,163,184,0.5)" };
+        const LINK: Record<string, string> = { drawn_on: "rgba(47,58,72,0.75)", mentioned_in: "rgba(82,93,108,0.7)", tagged_to: "rgba(62,74,90,0.75)", filed_under: "rgba(107,118,133,0.7)", in_project: "rgba(107,118,133,0.7)", linked_unit: "rgba(47,58,72,0.75)", named: "rgba(148,163,184,0.5)" };
         ctx.setLineDash([5 / s, 4 / s]); ctx.lineWidth = Math.max(1, 1.4 / s);
         for (const l of sat.links) {
           const p = pos.get(l.to);
@@ -408,10 +411,10 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
         const r = 20;
         ctx.beginPath(); ctx.arc(cur.x, cur.y, r + 6, 0, Math.PI * 2); ctx.fillStyle = sat.color + "33"; ctx.fill();
         ctx.beginPath(); ctx.arc(cur.x, cur.y, r, 0, Math.PI * 2); ctx.fillStyle = sat.color; ctx.fill();
-        ctx.lineWidth = hoverRef.current === `sat:${sat.id}` ? 3 : 1.5; ctx.strokeStyle = hoverRef.current === `sat:${sat.id}` ? "#0ea5e9" : "rgba(255,255,255,0.95)"; ctx.stroke();
+        ctx.lineWidth = hoverRef.current === `sat:${sat.id}` ? 3 : 1.5; ctx.strokeStyle = hoverRef.current === `sat:${sat.id}` ? focus : "rgba(255,255,255,0.95)"; ctx.stroke();
         const img = imagesRef.current.get(sat.iconKey);
         if (img) ctx.drawImage(img, cur.x - r * 0.6, cur.y - r * 0.6, r * 1.2, r * 1.2);
-        ctx.font = "800 12px ui-sans-serif, system-ui"; ctx.textAlign = "center"; ctx.textBaseline = "top";
+        ctx.font = "600 12px Barlow, system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "top";
         const tw = ctx.measureText(sat.label).width;
         ctx.fillStyle = "rgba(255,255,255,0.9)"; ctx.fillRect(cur.x - tw / 2 - 3, cur.y + r + 3, tw + 6, 16);
         ctx.fillStyle = "#0f172a"; ctx.fillText(sat.label, cur.x, cur.y + r + 5);
@@ -439,14 +442,14 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
           ctx.strokeStyle = VERDICT[light.verdict]; ctx.lineWidth = active ? 5 : 3; ctx.stroke();
           if (active) {
             ctx.beginPath(); ctx.arc(p.x, p.y, r + 10, 0, Math.PI * 2);
-            ctx.strokeStyle = "#0ea5e9"; ctx.lineWidth = 2.5; ctx.setLineDash([5, 4]); ctx.stroke(); ctx.setLineDash([]);
+            ctx.strokeStyle = focus; ctx.lineWidth = 2.5; ctx.setLineDash([5, 4]); ctx.stroke(); ctx.setLineDash([]);
           }
         }
         // Disc.
         ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
         ctx.fillStyle = n.type.color; ctx.fill();
         ctx.lineWidth = n.id === sel ? 3.5 : n.id === hov ? 2.5 : 1.5;
-        ctx.strokeStyle = n.id === sel ? "#0ea5e9" : n.id === hov ? "#0ea5e9" : "rgba(255,255,255,0.9)";
+        ctx.strokeStyle = n.id === sel ? focus : n.id === hov ? focus : "rgba(255,255,255,0.9)";
         ctx.stroke();
         // Icon.
         // Folders show open or closed; any other container (an operating
@@ -461,31 +464,35 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
         if (rank) {
           const bx = p.x - r * 0.85, by = p.y - r * 0.85, br = Math.max(8, r * 0.5);
           ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2);
-          ctx.fillStyle = active ? "#0ea5e9" : "#0f172a"; ctx.fill();
+          ctx.fillStyle = active ? focus : "#0f172a"; ctx.fill();
           ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.stroke();
-          ctx.fillStyle = "#fff"; ctx.font = `800 ${Math.max(9, br * 1.2)}px ui-sans-serif, system-ui`;
+          ctx.fillStyle = "#fff"; ctx.font = `600 ${Math.max(9, br * 1.2)}px Barlow, system-ui, sans-serif`;
           ctx.textAlign = "center"; ctx.textBaseline = "middle";
           ctx.fillText(String(rank), bx, by);
           ctx.textBaseline = "top";
         }
         // Collapsed count badge.
         if (isContainer(n.kind) && n.childCount > 0 && col.has(n.id)) {
+          // A pill as wide as its number, so "946" never spills out.
+          const t = n.childCount > 999 ? "999+" : String(n.childCount);
           const bx = p.x + r * 0.75, by = p.y - r * 0.75, br = Math.max(7, r * 0.42);
-          ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2);
-          ctx.fillStyle = "#0f172a"; ctx.fill();
+          ctx.font = `600 ${Math.max(8, br * 1.1)}px Barlow, system-ui, sans-serif`;
+          const bw = Math.max(br * 2, ctx.measureText(t).width + br);
+          ctx.beginPath(); ctx.roundRect(bx - bw / 2, by - br, bw, br * 2, br);
+          ctx.fillStyle = "#1f2733"; ctx.fill();
           ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.2; ctx.stroke();
-          ctx.fillStyle = "#fff"; ctx.font = `700 ${Math.max(8, br * 1.1)}px ui-sans-serif, system-ui`;
+          ctx.fillStyle = "#fff";
           ctx.textBaseline = "middle";
-          ctx.fillText(n.childCount > 999 ? "999+" : String(n.childCount), bx, by);
+          ctx.fillText(t, bx, by);
           ctx.textBaseline = "top";
         }
         // Equipment count, on the icon's right shoulder: always visible.
         if (n.equipment) {
           const t = n.equipment > 99 ? "99+" : String(n.equipment);
-          ctx.font = "800 9px ui-sans-serif, system-ui";
+          ctx.font = "600 9px Barlow, system-ui, sans-serif";
           const w = Math.max(15, ctx.measureText(t).width + 8);
           const bx = p.x + r * 0.62, byy = p.y - 6.5;
-          ctx.fillStyle = dim ? "rgba(5,150,105,0.35)" : "#059669";
+          ctx.fillStyle = dim ? "rgba(62,74,90,0.35)" : "#3e4a5a";
           ctx.beginPath(); ctx.roundRect(bx, byy, w, 13, 6.5); ctx.fill();
           ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.stroke();
           ctx.fillStyle = "#fff"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
@@ -503,7 +510,7 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
         {
           const container = isContainer(n.kind);
           const fontPx = container ? 12 : 11;
-          ctx.font = `${container ? 700 : 500} ${fontPx}px ui-sans-serif, system-ui`;
+          ctx.font = `${container ? 700 : 500} ${fontPx}px Barlow, system-ui, sans-serif`;
           const label = n.label.length > 28 ? n.label.slice(0, 26) + "…" : n.label;
           const tw = ctx.measureText(label).width;
           const lh = fontPx + 4 + (n.badge ? 15 : 0);
@@ -521,10 +528,10 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
           ctx.fillStyle = dim ? "rgba(51,65,85,0.5)" : container ? "#0f172a" : "#334155";
           ctx.fillText(label, p.x, ly + 2);
           if (n.badge) {
-            ctx.font = "700 9px ui-sans-serif, system-ui";
+            ctx.font = "700 9px Barlow, system-ui, sans-serif";
             const bw = ctx.measureText(n.badge).width + 8;
             const by = ly + 2 + fontPx + 5;
-            ctx.fillStyle = dim ? "rgba(124,58,237,0.25)" : "#7c3aed";
+            ctx.fillStyle = dim ? "rgba(62,74,90,0.25)" : "#3e4a5a";
             ctx.beginPath(); ctx.roundRect(p.x - bw / 2, by, bw, 12, 6); ctx.fill();
             ctx.fillStyle = "#fff"; ctx.fillText(n.badge, p.x, by + 2);
           }

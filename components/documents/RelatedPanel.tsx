@@ -135,7 +135,7 @@ export default function RelatedPanel({
             title={`Short link anyone in the org can use: ${shortLink}`}
             className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
           >
-            {copied ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+            {copied ? <Check className="w-3 h-3 text-[var(--state-released)]" /> : <Copy className="w-3 h-3" />}
             /d/{documentNumber}
           </button>
         )}
@@ -163,7 +163,7 @@ export default function RelatedPanel({
                 </>
               ) : (
                 <>
-                  <Globe className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <Globe className="w-3.5 h-3.5 text-[var(--state-released)] shrink-0" />
                   <a href={r.url ?? "#"} target="_blank" rel="noreferrer"
                     className="flex-1 min-w-0 text-[13px] font-bold text-[var(--color-text)] hover:text-[var(--color-accent-text)] truncate">
                     {r.label || r.url}
@@ -184,11 +184,11 @@ export default function RelatedPanel({
               )}
               {r.evidence_lost_at && (
                 <span title="A later revision removed what this link was based on. It is still linked: worth a look."
-                  className="shrink-0 text-amber-600"><AlertTriangle className="w-3 h-3" /></span>
+                  className="shrink-0 text-[var(--state-held)]"><AlertTriangle className="w-3 h-3" /></span>
               )}
               {canManage && (
                 <button onClick={() => void removeRelatedResource(r.id).then(refresh)}
-                  title="Unpin" className="p-0.5 rounded text-[var(--color-text-faint)] hover:text-rose-600 opacity-60 group-hover:opacity-100">
+                  title="Unpin" className="p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] opacity-60 group-hover:opacity-100">
                   <X className="w-3 h-3" />
                 </button>
               )}
@@ -201,7 +201,7 @@ export default function RelatedPanel({
                 <Plus className="w-3 h-3" /> Pin document
               </button>
               <button onClick={() => setUrlDraft({ url: "", label: "" })}
-                className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-text-muted)] hover:text-emerald-700 border border-dashed border-[var(--color-border-strong)] rounded-lg px-2 py-1">
+                className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-text-muted)] hover:text-[var(--state-released)] border border-dashed border-[var(--color-border-strong)] rounded-lg px-2 py-1">
                 <Link2 className="w-3 h-3" /> Pin external link
               </button>
             </div>
@@ -251,10 +251,10 @@ export default function RelatedPanel({
 
       {/* Found, awaiting a decision — review where the document is. */}
       {proposals.length > 0 && (
-        <div className="border-l-2 border-amber-500 pl-2.5 py-1 space-y-1.5">
+        <div className="border-l-2 border-[var(--state-held)] pl-2.5 py-1 space-y-1.5">
           <div className="flex items-center gap-1.5">
-            <Sparkles className="w-3 h-3 text-amber-600" />
-            <span className="text-[13px] font-semibold text-amber-800 dark:text-amber-300">
+            <Sparkles className="w-3 h-3 text-[var(--state-held)]" />
+            <span className="text-[13px] font-semibold text-[var(--state-held)]">
               Found · needs review
             </span>
           </div>
@@ -274,7 +274,7 @@ export default function RelatedPanel({
                     {decidingId === p.id ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Check className="w-2.5 h-2.5" />} Link
                   </button>
                   <button onClick={() => void decideProposal(p, false)} disabled={decidingId === p.id}
-                    className="text-[13px] font-bold text-[var(--color-text-muted)] hover:text-rose-600 px-1 disabled:opacity-50">
+                    className="text-[13px] font-bold text-[var(--color-text-muted)] hover:text-[var(--state-overdue)] px-1 disabled:opacity-50">
                     Not related
                   </button>
                 </div>
@@ -304,7 +304,7 @@ export default function RelatedPanel({
             {backlinks.projects.map((p) => (
               <Link key={p.id} href={`/projects/${p.id}`}
                 className="flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-[var(--color-surface-2)] transition-colors">
-                <Briefcase className="w-3 h-3 text-rose-500 shrink-0" />
+                <Briefcase className="w-3 h-3 text-[var(--state-overdue)] shrink-0" />
                 <span className="flex-1 min-w-0 text-[13px] font-bold text-[var(--color-text)] truncate">{p.name}</span>
                 <span className="shrink-0 text-[13px] text-[var(--color-text-faint)]">project</span>
               </Link>

@@ -129,9 +129,9 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
   };
 
   const statusChip = (r: ReviewSignoffRow) => {
-    if (r.status === "signed") return <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700"><CheckCircle2 className="w-3 h-3" /> {r.signedAt?.slice(0, 10)}</span>;
+    if (r.status === "signed") return <span className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--state-released)]"><CheckCircle2 className="w-3 h-3" /> {r.signedAt?.slice(0, 10)}</span>;
     if (r.slot === "alternate" && !r.activated) return <span className="text-[13px] font-bold text-[var(--color-text-faint)]">Standby</span>;
-    return <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-600"><Clock className="w-3 h-3" /> Pending</span>;
+    return <span className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--state-held)]"><Clock className="w-3 h-3" /> Pending</span>;
   };
 
   // Nothing in review: show the effective mode (and stay quiet if none).
@@ -173,7 +173,7 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
       </div>
 
       {loading ? (
-        <div className="flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading…</div>
+        <div className="flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading…</div>
       ) : (
         <>
           {draftFileUrl && (
@@ -206,7 +206,7 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
           {canManage && roster.length === 0 ? (
             // RESCUE, not a dead end: a zero-person roster can never complete,
             // so the disabled button would strand this draft forever.
-            <div className="border-l-2 border-rose-500 pl-2.5 text-[13px] text-rose-700 dark:text-rose-300">
+            <div className="border-l-2 border-[var(--state-overdue)] pl-2.5 text-[13px] text-[var(--state-overdue)]">
               <b>No reviewers are configured for this library</b> - this draft can never complete review as-is.
               Set reviewers in the library&apos;s review policy, or lower the review mode, then resubmit.
               <a href="/admin/libraries" className="block mt-1 font-semibold underline">Open library settings →</a>

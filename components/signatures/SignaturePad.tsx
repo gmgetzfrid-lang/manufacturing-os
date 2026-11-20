@@ -100,9 +100,9 @@ export default function SignaturePad({ onChange, height = 160, className = "" }:
           onPointerLeave={end}
           onPointerCancel={end}
         />
-        <div className="pointer-events-none absolute inset-x-6 bottom-7 border-b border-dashed border-slate-300" />
+        <div className="pointer-events-none absolute inset-x-6 bottom-7 border-b border-dashed border-[var(--color-border-strong)]" />
         {!hasInk && (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-xs text-slate-400 select-none">
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-xs text-[var(--color-text-faint)] select-none">
             Sign here with your mouse, finger, or stylus
           </div>
         )}

@@ -89,7 +89,7 @@ export default function MentionsPanel({ orgId, assetId, tag }: Props) {
       )}
 
       {error && (
-        <div role="alert" className="p-4 text-[13px] text-rose-700 dark:text-rose-400">Couldn&apos;t load mentions: {error}</div>
+        <div role="alert" className="p-4 text-[13px] text-[var(--state-overdue)]">Couldn&apos;t load mentions: {error}</div>
       )}
 
       {docs !== null && docs.length === 0 && !error && (
@@ -155,7 +155,7 @@ function DocRow({ doc }: { doc: MentionedDocument }) {
                     {m.count}× · matched &ldquo;{m.matchedText}&rdquo;
                   </span>
                   {m.confidence < 0.9 && (
-                    <span className="text-[13px] font-bold text-amber-700 dark:text-amber-400">unconfirmed</span>
+                    <span className="text-[13px] font-bold text-[var(--state-held)]">unconfirmed</span>
                   )}
                   {href && <ExternalLink className="w-3 h-3 text-[var(--color-text-faint)] ml-auto shrink-0" />}
                 </div>

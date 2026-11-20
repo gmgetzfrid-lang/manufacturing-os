@@ -52,15 +52,15 @@ const COLUMN_TONE: Record<Column, string> = {
   "Draft": "border-[var(--color-border-strong)] bg-[var(--color-surface-2)]",
   "In Review": "border-[var(--color-border)] bg-[var(--color-surface-2)]",
   "IFC": "border-[var(--color-border)] bg-[var(--color-surface-2)]",
-  "As-Built": "border-emerald-300 bg-emerald-50/60",
-  "Superseded": "border-rose-300 bg-rose-50/60",
+  "As-Built": "border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)]",
+  "Superseded": "border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)]",
 };
 const COLUMN_DOT: Record<Column, string> = {
   "Draft": "bg-slate-400",
   "In Review": "bg-[var(--color-text-muted)]",
   "IFC": "bg-[var(--color-text-muted)]",
-  "As-Built": "bg-emerald-500",
-  "Superseded": "bg-rose-500",
+  "As-Built": "bg-[var(--state-released)]",
+  "Superseded": "bg-[var(--state-overdue)]",
 };
 
 function lifecycleOf(d: BoardDoc): Column {
@@ -78,10 +78,10 @@ function ageDays(iso: string | null): number {
   return Math.max(0, Math.floor(ms / 86400000));
 }
 function ageChip(days: number): { cls: string; label: string } {
-  if (days >= 90) return { cls: "bg-rose-100 text-rose-800", label: `${Math.floor(days / 30)}mo` };
-  if (days >= 30) return { cls: "bg-amber-100 text-amber-800", label: `${Math.floor(days / 7)}w` };
-  if (days >= 7) return { cls: "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300", label: `${Math.floor(days / 7)}w` };
-  return { cls: "bg-emerald-50 text-emerald-700", label: days <= 1 ? "new" : `${days}d` };
+  if (days >= 90) return { cls: "bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)]", label: `${Math.floor(days / 30)}mo` };
+  if (days >= 30) return { cls: "bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] text-[var(--state-held)]", label: `${Math.floor(days / 7)}w` };
+  if (days >= 7) return { cls: "bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] text-[var(--state-held)]", label: `${Math.floor(days / 7)}w` };
+  return { cls: "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)]", label: days <= 1 ? "new" : `${days}d` };
 }
 
 export default function LifecycleBoard() {
@@ -171,7 +171,7 @@ export default function LifecycleBoard() {
       </div>
 
       {error && (
-        <div className="mb-3 text-[13px] flex items-center gap-2 border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
+        <div className="mb-3 text-[13px] flex items-center gap-2 border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
           <AlertTriangle className="w-4 h-4 shrink-0" /> {error}
         </div>
       )}
@@ -200,8 +200,8 @@ export default function LifecycleBoard() {
                   <div className="flex items-center gap-2">
                     <span className={`w-2.5 h-2.5 rounded-full ${COLUMN_DOT[col]}`} />
                     <span className="text-sm font-semibold text-[var(--color-text)]">{col}</span>
-                    <span className="text-[11px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface)]/70 rounded-full px-1.5">{badgeText(items.length)}</span>
-                    {bottleneck && <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-rose-700"><AlertTriangle className="w-3 h-3" /> bottleneck</span>}
+                    <span className="text-[13px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface)]/70 rounded-full px-1.5">{badgeText(items.length)}</span>
+                    {bottleneck && <span className="ml-auto inline-flex items-center gap-1 text-[13px] font-bold text-[var(--state-overdue)]"><AlertTriangle className="w-3 h-3" /> bottleneck</span>}
                   </div>
                   {items.length > 0 && (
                     <div className="mt-2" title="Aging mix: green=fresh, red=90d+">
@@ -235,7 +235,7 @@ export default function LifecycleBoard() {
                         {d.title && d.number !== d.title && <div className="text-[13px] text-[var(--color-text-muted)] truncate mt-0.5">{d.title}</div>}
                         <div className="flex items-center gap-1.5 mt-1.5">
                           <span className={`text-[13px] font-bold px-1.5 py-0.5 rounded ${chip.cls}`} title={`${days} days in this state`}>{chip.label}</span>
-                          {d.checkedOutByName && <span className="text-[11px] font-bold text-[var(--color-text)] inline-flex items-center gap-0.5"><Lock className="w-2.5 h-2.5" />{d.checkedOutByName}</span>}
+                          {d.checkedOutByName && <span className="text-[13px] font-bold text-[var(--color-text)] inline-flex items-center gap-0.5"><Lock className="w-2.5 h-2.5" />{d.checkedOutByName}</span>}
                         </div>
                       </Link>
                     );
