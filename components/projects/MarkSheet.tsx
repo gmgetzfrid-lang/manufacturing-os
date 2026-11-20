@@ -6,11 +6,12 @@
 // (the line the report reads; for a hold or a block, the reason). The
 // comment goes on each step.
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
 import type { MilestoneStatus } from "@/types/schema";
 import type { ShiftCredit, ShiftTimes } from "@/lib/shiftReport";
 import { shiftChoices, resolveWhen, WhenFields, pickOf } from "@/components/projects/ProgressControl";
+import { useDraft } from "@/hooks/useDraft";
 
 const WORD: Record<string, string> = { completed: "Done", in_progress: "Started", on_hold: "On hold", blocked: "Blocked", planned: "Not started", missed: "Missed" };
 
@@ -31,23 +32,38 @@ export default function MarkSheet({ names, status, tz, times, now: clockNow, ahe
   const [otherDay, setOtherDay] = useState<string | null>(null);
   const [clock, setClock] = useState(() => new Date(now).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: tz }));
   const [note, setNote] = useState("");
+  // The comment comes back after a reload until it's saved.
+  const draft = useDraft<string>(`mark:${status}:${names.join("|").slice(0, 300)}`, note, setNote, (v) => !v.trim());
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const word = WORD[status] ?? status;
   const n = names.length;
+  // Escape closes, as the X does.
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      // Only the dialog on top closes.
+      const open = document.querySelectorAll('[aria-modal="true"]');
+      if (open.length && open[open.length - 1] !== boxRef.current) return;
+      onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   const save = async () => {
     const when = resolveWhen(pickOf(choices, wi, otherDay, tz, times), clock, tz, times);
     if ("error" in when) { setMsg(when.error); return; }
-    if (!note.trim()) { setMsg(status === "on_hold" || status === "blocked" ? "Put in the reason." : "Put in a comment - it's the line the report reads."); return; }
+    if (!note.trim()) { setMsg(status === "on_hold" || status === "blocked" ? "Put in the reason." : "Put in a comment: it's the line the report reads."); return; }
     setBusy(true);
     const ok = await onSave(when.credit, note.trim());
     setBusy(false);
-    if (ok) onClose();
+    if (ok) { draft.clear(); onClose(); }
   };
 
   return (
-    <div className="fixed inset-0 z-[185] bg-black/50" onClick={onClose}>
+    <div ref={boxRef} aria-modal="true" className="fixed inset-0 z-[185] bg-black/50" onClick={onClose}>
       <div role="dialog" aria-label={`Mark ${word}`} onClick={(e) => e.stopPropagation()}
         className="absolute left-1/2 top-16 -translate-x-1/2 w-[440px] max-w-[96vw] max-h-[86dvh] overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-xl text-[12px] max-sm:left-0 max-sm:right-0 max-sm:top-auto max-sm:bottom-0 max-sm:translate-x-0 max-sm:w-full max-sm:max-w-none max-sm:rounded-b-none">
         <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2">
@@ -59,13 +75,13 @@ export default function MarkSheet({ names, status, tz, times, now: clockNow, ahe
             {names.map((s, i) => <li key={i} className="break-words">{s}</li>)}
           </ul>
           {ahead > 0 && (
-            <div className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+            <div className="border-l-2 border-amber-500 pl-2 py-0.5 text-amber-800 dark:text-amber-300">
               {ahead === n ? (n === 1 ? "It's" : "They're") : `${ahead} of these ${ahead === 1 ? "is" : "are"}`} planned for a later day. The plan keeps that day; the calendar shows {ahead === 1 ? "it" : "them"} on the day {ahead === 1 ? "it was" : "they were"} worked, marked ahead.
             </div>
           )}
           <WhenFields choices={choices} idx={wi} setIdx={(i) => { setWi(i); setMsg(null); }} clock={clock} setClock={(v) => { setClock(v); setMsg(null); }} tz={tz} times={times} other={otherDay} setOther={(d) => { setOtherDay(d); setMsg(null); }} disabled={busy} />
           <label className="block">
-            <span className="block font-bold mb-1">{status === "on_hold" || status === "blocked" ? "Reason" : "Comment"} <span className="font-black text-amber-700 dark:text-amber-400">- required</span>{n > 1 && <span className="font-normal text-[var(--color-text-muted)]"> · goes on each step</span>}</span>
+            <span className="block font-bold mb-1">{status === "on_hold" || status === "blocked" ? "Reason" : "Comment"} <span className="font-semibold text-[var(--color-text-muted)]">(required)</span>{n > 1 && <span className="font-normal text-[var(--color-text-muted)]"> · goes on each step</span>}</span>
             <textarea value={note} onChange={(e) => { setNote(e.target.value); setMsg(null); }} rows={2} disabled={busy}
               placeholder={status === "completed" ? "e.g. Bundle pulled and set on the pad" : status === "in_progress" ? "e.g. Blinds going in, 4 of 9" : "e.g. Waiting on the crane"}
               className="w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1.5 text-[12.5px] focus:outline-none focus:border-[var(--color-accent-ring)]" />

@@ -38,6 +38,7 @@ import type { CancelledJob } from "@/lib/cancelledJobs";
 import AddWorkPicker from "@/components/projects/AddWorkPicker";
 import { useWoClasses, passes, WoClassSelects } from "@/components/projects/WoClassFilter";
 import { typeLabel, unitLabel } from "@/lib/woClass";
+import MoreMenu from "@/components/ui/MoreMenu";
 
 export default function WorkOrdersView({ milestones, cancelled = [], childrenByParent, tz, times, progress, canEdit, onUpdate, onFixTimes, onOpenDetail, onMoveDays, marks, onDiscovery, onNewWorkOrder, projectId, projectName, user, onCancelled, onOpenReport }: {
   milestones: Milestone[];
@@ -113,6 +114,8 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
   const stepKey = useMemo(() => orders.flatMap((o) => o.steps.map((x) => x.id)).filter((x): x is string => !!x).sort().join(","), [orders]);
   const sig = useMemo(() => milestones.map((m) => `${m.id}:${m.status}:${m.percentComplete ?? 0}`).join("|"), [milestones]);
   const [pre, setPre] = useState<{ notes: MilestoneNote[]; log: ProgressLogRow[] } | null>(null);
+  // A read that failed says so, instead of looking like "no comments yet".
+  const [preErr, setPreErr] = useState(false);
   const [preTick, setPreTick] = useState(0);
   useEffect(() => {
     const on = () => setPreTick((t) => t + 1);
@@ -123,10 +126,11 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
     if (!stepKey) return;
     let alive = true;
     const pid = projectId ?? milestones[0]?.projectId;
+    let failed = false;
     Promise.all([
-      notesFor(stepKey.split(",")).catch(() => [] as MilestoneNote[]),
-      pid ? loadProgressLog(pid).then((l) => l ?? []).catch(() => [] as ProgressLogRow[]) : Promise.resolve([] as ProgressLogRow[]),
-    ]).then(([notes, log]) => { if (alive) setPre({ notes, log }); });
+      notesFor(stepKey.split(",")).catch(() => { failed = true; return [] as MilestoneNote[]; }),
+      pid ? loadProgressLog(pid).then((l) => l ?? []).catch(() => { failed = true; return [] as ProgressLogRow[]; }) : Promise.resolve([] as ProgressLogRow[]),
+    ]).then(([notes, log]) => { if (alive) { setPre({ notes, log }); setPreErr(failed); } });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- read again when the steps, their status or the comments change
   }, [stepKey, sig, preTick, projectId]);
@@ -165,7 +169,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
     setPrintMenu(false); setPrintMsg(null);
     // Opened at the tap, so the browser doesn't take it for a pop-up.
     const w = window.open("", "_blank");
-    if (!w) { setPrintMsg("Your browser blocked the print window - allow pop-ups for this site and try again."); return; }
+    if (!w) { setPrintMsg("Your browser blocked the print window. Allow pop-ups for this site and try again."); return; }
     w.document.write(`<p style="font:14px Arial,sans-serif;padding:24px">Getting ${shown.length} work order${shown.length === 1 ? "" : "s"} ready to print…</p>`);
     try {
       const scope = `${SHOW_WORD[show]}${query.trim() ? ` · search “${query.trim()}”` : ""}${format === "history" ? " · with each step's history" : ""}`;
@@ -247,26 +251,44 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
           {query && <button type="button" onClick={() => setQuery("")} className="text-[11px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Clear</button>}
         </label>
         <select value={who ?? "__all"} onChange={(e) => setWho(e.target.value === "__all" ? null : e.target.value)} aria-label="Who"
-          className={`h-8 rounded-lg border px-2 text-[12px] font-semibold ${who != null ? "border-[var(--color-accent)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text)]"} bg-[var(--color-surface)]`}>
+          className={`h-8 rounded-lg border px-2 text-[12px] font-semibold ${who != null ? "border-[var(--color-text)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text)]"} bg-[var(--color-surface)]`}>
           <option value="__all">Everyone</option>
           {whoList.map(([k, x]) => <option key={k || "__none"} value={k}>{k ? x.name : "No crew named"} ({x.steps} step{x.steps === 1 ? "" : "s"})</option>)}
         </select>
         <WoClassSelects c={wc} units={units} types={types} onUnits={setUnits} onTypes={setTypes} />
-        <div className="inline-flex flex-wrap gap-1" role="group" aria-label="Show">
-          {([["all", "All"], ["open", "Open"], ["critical", "Critical path"], ["behind", "Behind"], ["notStarted", "Not started"], ["held", "Held"], ["done", "Done"], ["added", "Discovery & added"]] as const).map(([k, l]) => {
-            const n = found.filter(is(k)).length;
-            return (
-              <button key={k} type="button" aria-pressed={!showCancelled && show === k} onClick={() => { setShow(k); setShowCancelled(false); }}
-                className={`h-8 px-2.5 rounded-full border text-[12px] font-semibold ${!showCancelled && show === k ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
-                {l} <span className="tabular-nums opacity-80">{n}</span>
-              </button>
-            );
-          })}
-          <button type="button" aria-pressed={showCancelled} onClick={() => setShowCancelled((v) => !v)} title="Work orders taken off this schedule: where they went, why, and Put back"
-            className={`h-8 px-2.5 rounded-full border text-[12px] font-semibold ${showCancelled ? "border-amber-600 bg-amber-600 text-white" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
-            Cancelled <span className="tabular-nums opacity-80">{showCancelled ? cancelledShown.length : cancelled.length}</span>
-          </button>
-        </div>
+        {/* The everyday filters in sight; the rest folded under More. */}
+        {(() => {
+          const ALL = [["all", "All"], ["open", "Open"], ["critical", "Critical path"], ["behind", "Behind"], ["notStarted", "Not started"], ["held", "Held"], ["done", "Done"], ["added", "Discovery & added"]] as const;
+          const UP_FRONT: Show[] = ["all", "open", "behind", "held"];
+          const chip = (on: boolean) => `h-8 px-2.5 rounded-full border text-[12px] font-semibold ${on ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
+          const folded = ALL.filter(([k]) => !UP_FRONT.includes(k));
+          const pickedFolded = !showCancelled && !UP_FRONT.includes(show) ? ALL.find(([k]) => k === show) : undefined;
+          return (
+            <div className="inline-flex flex-wrap items-center gap-1" role="group" aria-label="Show">
+              {ALL.filter(([k]) => UP_FRONT.includes(k)).map(([k, l]) => (
+                <button key={k} type="button" aria-pressed={!showCancelled && show === k} onClick={() => { setShow(k); setShowCancelled(false); }} className={chip(!showCancelled && show === k)}>
+                  {l} <span className="tabular-nums opacity-80">{found.filter(is(k)).length}</span>
+                </button>
+              ))}
+              {/* A folded filter in use shows as a chip of its own. */}
+              {pickedFolded && (
+                <button type="button" aria-pressed onClick={() => setShow("all")} title="Show all again" className={chip(true)}>
+                  {pickedFolded[1]} <span className="tabular-nums opacity-80">{found.filter(is(pickedFolded[0])).length}</span>
+                </button>
+              )}
+              {showCancelled && (
+                <button type="button" aria-pressed onClick={() => setShowCancelled(false)} title="Back to the live work orders" className={chip(true)}>
+                  Cancelled <span className="tabular-nums opacity-80">{cancelledShown.length}</span>
+                </button>
+              )}
+              <MoreMenu label="More filters" triggerClass="inline-flex items-center gap-1 h-8 px-2.5 rounded-full border text-[12px] font-semibold border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                items={[
+                  ...folded.map(([k, l]) => ({ icon: <span aria-hidden className="w-4 text-center tabular-nums text-[11px]">{found.filter(is(k)).length}</span>, label: l, current: !showCancelled && show === k, onClick: () => { setShow(k); setShowCancelled(false); } })),
+                  { icon: <Ban className="w-4 h-4" />, label: `Cancelled (${cancelled.length})`, current: showCancelled, line: true, onClick: () => setShowCancelled(true) },
+                ]} />
+            </div>
+          );
+        })()}
         {canEdit && onNewWorkOrder && (
           <button type="button" onClick={() => onNewWorkOrder()}
             className="ml-auto inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-[var(--color-accent)] text-[12px] font-bold text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]">
@@ -275,7 +297,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
         )}
         {canEdit && onDiscovery && (
           <button type="button" onClick={() => setPicking(true)}
-            className={`${onNewWorkOrder ? "" : "ml-auto "}inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-dashed border-[var(--color-accent)] text-[12px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]`}>
+            className={`${onNewWorkOrder ? "" : "ml-auto "}inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]`}>
             <Plus className="w-3.5 h-3.5" /> Add to a work order
           </button>
         )}
@@ -299,7 +321,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
                 </button>
                 {onOpenReport && (
                   <button type="button" onClick={() => { setPrintMenu(false); onOpenReport({ id: "sheet" }); }} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)]">
-                    <span className="font-semibold">Shift sheet - fill in by pen</span>
+                    <span className="font-semibold">Shift sheet: fill in by pen</span>
                     <span className="block text-[11px] text-[var(--color-text-muted)]">One page for the coming shift: only its work, by equipment</span>
                   </button>
                 )}
@@ -309,6 +331,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
         </span>
       </div>
       {printMsg && <div role="alert" className="text-[11.5px] font-semibold text-rose-700 dark:text-rose-400">{printMsg}</div>}
+      {preErr && <div role="alert" className="text-[11.5px] font-semibold text-rose-700 dark:text-rose-400">Couldn&apos;t read the steps&apos; comments and history. They&apos;re missing below until the page is opened again.</div>}
 
       {showCancelled ? (
         cancelledShown.length === 0 ? (
@@ -316,8 +339,8 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
             {cancelled.length === 0 ? "No work orders cancelled from this schedule." : "No cancelled work orders match."}
           </div>
         ) : (
-          <div className="rounded-xl border border-amber-300 dark:border-amber-800/70 bg-amber-50 dark:bg-amber-950/30">
-            <div className="px-3 py-2 text-[12px] text-amber-900 dark:text-amber-200 border-b border-amber-200 dark:border-amber-900/60">
+          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+            <div className="px-3 py-2 text-[12px] text-[var(--color-text)] border-b border-[var(--color-border)]">
               <b>{cancelledShown.length} cancelled</b> from this schedule, still to be done elsewhere. Not counted in any progress, plan or report except the close-out&apos;s cancelled list.
             </div>
             <CancelledJobsList jobs={cancelledShown} canEdit={canEdit && !!user} userId={user?.id ?? ""} userEmail={user?.email} onChanged={() => onCancelled?.()} />
@@ -335,9 +358,9 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
             const single = o.steps.length === 1 && o.steps[0].id === o.owner.id;
             const name = `${o.wo ? `WO ${o.wo}` : "No WO"} ${o.owner.name}`;
             return (
-              // Each work order its own card; open, it's framed in the accent
-              // colour and its steps sit inside it, indented on a grey panel.
-              <li key={o.key} className={`rounded-xl border bg-[var(--color-surface)] ${isOpen ? "border-[var(--color-border-strong)] ring-1 ring-[var(--color-accent)] shadow-md" : "border-[var(--color-border)] shadow-sm"}`}>
+              // Each work order its own card; open, it's framed in a dark edge
+              // and its steps sit inside it, indented on a grey panel.
+              <li key={o.key} className={`rounded-xl border bg-[var(--color-surface)] ${isOpen ? "border-[var(--color-text)] shadow-md" : "border-[var(--color-border)] shadow-sm"}`}>
                 <button type="button" onClick={() => toggle(o.key)} aria-expanded={isOpen} aria-label={`${isOpen ? "Close" : "Open"} ${name}`}
                   ref={(el) => { if (el) heads.current.set(o.key, el); else heads.current.delete(o.key); }}
                   className={`w-full text-left px-3 py-2.5 rounded-t-[10px] ${isOpen ? "sticky top-0 z-20 bg-[var(--color-surface-2)] border-b border-[var(--color-text)]" : "rounded-b-[10px] hover:bg-[var(--color-surface-2)]"}`}>
@@ -374,7 +397,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
                         <EquipmentField milestone={o.owner} milestones={milestones} />
                         {canEdit && onDiscovery && (
                           <button type="button" onClick={() => onDiscovery(o.owner)}
-                            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-dashed border-[var(--color-accent)] text-[12px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]">
+                            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                             <Plus className="w-3.5 h-3.5" /> Add discovery or added scope to this work order
                           </button>
                         )}
@@ -385,7 +408,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
                           </button>
                         )}
                         {canEdit && o.owner.id && (
-                          <button type="button" onClick={() => newFinding({ milestoneId: o.owner.id })} title="A problem, a lesson, a material shortfall or missed scope on this work order - kept for the next job"
+                          <button type="button" onClick={() => newFinding({ milestoneId: o.owner.id })} title="A problem, a lesson, a material shortfall or missed scope on this work order, kept for the next job"
                             className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                             <Lightbulb className="w-3.5 h-3.5" /> + Finding
                           </button>
@@ -404,7 +427,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
                         <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
                           <CalendarQuickView whole task={o.owner} onDay={o.steps} others={[]} dayKey={today} band={null} dayLabel="" marks={marks}
                             tz={tz} times={times} progress={progress} canEdit={canEdit} preloaded={pre}
-                            onUpdate={onUpdate} onFixTimes={onFixTimes} onOpenDetail={onOpenDetail} onMoveDays={canEdit ? onMoveDays : undefined} onDiscovery={onDiscovery} />
+                            onUpdate={onUpdate} onFixTimes={onFixTimes} onOpenDetail={onOpenDetail} onMoveDays={canEdit ? onMoveDays : undefined} />
                         </div>
                       </div>
                     </div>
@@ -418,7 +441,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
                             onDone={() => { setCancelling(null); toggle(o.key); onCancelled?.(); }} />
                         ) : (
                           <button type="button" onClick={() => setCancelling(o.key)} title="Planned, but not done here: kept on record as cancelled, with why (and where it moved)"
-                            className="inline-flex items-center gap-1.5 text-[11.5px] font-bold text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 px-2 py-1 rounded-md">
+                            className="inline-flex items-center gap-1.5 text-[11.5px] font-bold text-[var(--color-text-muted)] hover:text-rose-700 dark:hover:text-rose-400 hover:bg-[var(--color-surface-2)] px-2 py-1 rounded-md">
                             <Ban className="w-3.5 h-3.5" /> Cancel work order
                           </button>
                         )}
@@ -426,7 +449,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
                     )}
                     {/* Close it from the bottom: no scrolling back up. */}
                     <button type="button" onClick={() => toggle(o.key)} aria-label={`Close ${name}`}
-                      className="w-full flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-b-[10px] border-t border-[var(--color-border)] text-[12px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]">
+                      className="w-full flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-b-[10px] border-t border-[var(--color-border)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                       <ChevronUp className="w-4 h-4" /> Close {o.wo ? `WO ${o.wo}` : o.owner.name}
                     </button>
                   </div>

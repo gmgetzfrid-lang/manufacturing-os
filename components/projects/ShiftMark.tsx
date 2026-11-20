@@ -11,11 +11,11 @@ import type { WorkShift } from "@/lib/shiftReport";
 export default function ShiftMark({ work, label }: { work: WorkShift; label?: boolean }) {
   const title = work === "both" ? "Worked round the clock" : work === "night" ? "Night-shift work" : "Day-shift work";
   if (work === "both") {
-    return <span title={title} className="shrink-0 inline-flex items-center rounded px-1 text-[8.5px] font-black leading-[14px] bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200">24h</span>;
+    return <span title={title} className="shrink-0 inline-flex items-center rounded px-1 text-[11px] font-black leading-[14px] bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)]">24h</span>;
   }
   const night = work === "night";
   return (
-    <span title={title} className={`shrink-0 inline-flex items-center gap-0.5 rounded px-1 text-[11px] font-bold leading-[14px] ${night ? "bg-[var(--color-surface-2)] text-[var(--color-text)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)]" : "bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-200"}`}>
+    <span title={title} className={`shrink-0 inline-flex items-center gap-0.5 rounded px-1 text-[11px] font-bold leading-[14px] bg-[var(--color-surface-2)] ${night ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
       {night ? <Moon className="w-2.5 h-2.5" /> : <Sun className="w-2.5 h-2.5" />}{label ? (night ? "Night" : "Day") : null}
     </span>
   );

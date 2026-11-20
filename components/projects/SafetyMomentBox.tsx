@@ -14,11 +14,11 @@ import { rankHazards, type HazardJobInput, type HazardKind } from "@/lib/safetyM
 import { safetyBrief, splitLead, talkSources, projectFacts, RISKS_RANKED, type ProjectBase, type SafetyTopic } from "@/lib/safetyTalk";
 import type { ShiftWindow } from "@/lib/shiftReport";
 
-// Each card's color: the job in blue, the risks in red and orange.
+// Each card's color: the top risk in red, the others plain.
 const TONE = [
-  { bar: "border-t-[var(--color-border-strong)]", num: "bg-[var(--color-text-muted)]", kick: "text-[var(--color-text)] dark:text-[var(--color-text)]", dot: "bg-[var(--color-text-muted)]" },
+  { bar: "border-t-[var(--color-border-strong)]", num: "bg-slate-600 dark:bg-slate-500", kick: "text-[var(--color-text)]", dot: "bg-[var(--color-text-muted)]" },
   { bar: "border-t-rose-500", num: "bg-rose-600", kick: "text-rose-800 dark:text-rose-300", dot: "bg-rose-500" },
-  { bar: "border-t-[var(--color-border-strong)]", num: "bg-[var(--color-text-muted)]", kick: "text-[var(--color-text)] dark:text-[var(--color-text)]", dot: "bg-[var(--color-text-muted)]" },
+  { bar: "border-t-[var(--color-border-strong)]", num: "bg-slate-600 dark:bg-slate-500", kick: "text-[var(--color-text)]", dot: "bg-[var(--color-text-muted)]" },
 ];
 
 export function SafetyMomentBox({ jobs, shift, T, print, project, recent, label, onUse, chosen }: {
@@ -51,7 +51,7 @@ export function SafetyMomentBox({ jobs, shift, T, print, project, recent, label,
     <div className={print ? "space-y-[6pt]" : "keep space-y-1.5"}>
       <div className="flex flex-wrap items-baseline gap-x-2">
         <span className={`inline-flex items-center gap-1 font-semibold text-[var(--color-text)] dark:text-[var(--color-text)] ${print ? "text-[10pt]" : "text-[12px]"}`}>
-          <ShieldAlert className="w-3.5 h-3.5 self-center" aria-hidden="true" /> Safety topics{label ? ` - ${label}` : ""}
+          <ShieldAlert className="w-3.5 h-3.5 self-center" aria-hidden="true" /> Safety topics{label ? `: ${label}` : ""}
         </span>
         {!print && <span className="text-[11px] text-[var(--color-text-muted)]">Tap one to present it full screen</span>}
       </div>
@@ -103,7 +103,7 @@ function TopicCard({ t, n, tone, print, onPresent, onUse, chosen }: { t: SafetyT
       {!print && (onUse || chosen) && (
         <div className="mt-2">
           {chosen ? (
-            <span className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-emerald-600 text-white text-[11.5px] font-bold"><Check className="w-3.5 h-3.5" /> The meeting&apos;s topic</span>
+            <span className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-[var(--color-text)] text-[var(--color-surface)] text-[11.5px] font-bold"><Check className="w-3.5 h-3.5" /> The meeting&apos;s topic</span>
           ) : (
             <button type="button" onClick={(e) => { e.stopPropagation(); onUse?.(); }}
               className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md border border-[var(--color-border-strong)] text-[11.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
@@ -142,7 +142,7 @@ function Presenter({ topics, at, label, onMove, onClose }: { topics: SafetyTopic
     <div className="fixed inset-0 z-[400] bg-slate-950 text-white flex flex-col" role="dialog" aria-modal="true" aria-label={`Safety topic ${at + 1} of ${topics.length}`}>
       <div className="flex items-center gap-3 px-5 py-3 border-b border-white/10">
         <ShieldAlert className="w-5 h-5 text-[var(--color-text-muted)]" aria-hidden />
-        <span className="text-[13px] font-black uppercase tracking-widest text-white/70">Safety{label ? ` - ${label}` : ""}</span>
+        <span className="text-[13px] font-black uppercase tracking-widest text-white/70">Safety{label ? `: ${label}` : ""}</span>
         <span className="ml-auto text-[13px] font-bold text-white/60 tabular-nums">{at + 1} / {topics.length}</span>
         <button type="button" onClick={onClose} aria-label="Close" className="p-1.5 rounded-md hover:bg-white/10"><X className="w-5 h-5" /></button>
       </div>

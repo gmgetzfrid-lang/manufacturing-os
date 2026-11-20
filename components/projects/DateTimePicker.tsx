@@ -12,7 +12,7 @@
 
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { CalendarDays, Clock, ChevronLeft, ChevronRight } from "lucide-react";
+import { CalendarDays, Clock, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { shiftAt, type ShiftTimes } from "@/lib/shiftReport";
 import { fmtInTz, toDateTimeInput, fromDateTimeInput, dayKey } from "@/lib/scheduleTz";
 import { parseTypedTime } from "@/lib/typedTime";
@@ -78,7 +78,7 @@ export default function DateTimePicker({ label, value, onChange, tz, times, plan
   const iso = time ? fromDateTimeInput(value, tz) : null;
   const t = iso ? Date.parse(iso) : NaN;
   const sh = Number.isFinite(t) ? shiftAt(t, tz, times) : null;
-  const chip = (on: boolean, empty: boolean) => `inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border text-[13px] font-semibold disabled:opacity-50 ${on ? "border-[var(--color-border-strong)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface)]" : empty ? "border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"}`;
+  const chip = (on: boolean, empty: boolean) => `inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border text-[13px] font-semibold disabled:opacity-50 ${on ? "border-[var(--color-text)] ring-1 ring-[var(--color-text)] bg-[var(--color-surface)]" : empty ? "border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"}`;
   const small = "h-7 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-semibold hover:bg-[var(--color-surface-2)] disabled:opacity-50";
 
   return (
@@ -99,7 +99,7 @@ export default function DateTimePicker({ label, value, onChange, tz, times, plan
         </button>
         {sh && (!future && t > nowMs + 60_000
           ? <span className="text-[12px] font-semibold text-amber-700 dark:text-amber-400">{aheadWords(t - nowMs)} from now</span>
-          : <span className="text-[12px] text-[var(--color-text-muted)]" title="The shift this time counts for - not the date">{fmtInTz(sh.start, tz, { weekday: "short" })} {sh.kind} shift, {fmtInTz(sh.start, tz, { hour: "numeric", minute: "2-digit", hour12: true })} to {fmtInTz(sh.end, tz, { hour: "numeric", minute: "2-digit", hour12: true })}</span>)}
+          : <span className="text-[12px] text-[var(--color-text-muted)]" title="The shift this time counts for, not the date">{fmtInTz(sh.start, tz, { weekday: "short" })} {sh.kind} shift, {fmtInTz(sh.start, tz, { hour: "numeric", minute: "2-digit", hour12: true })} to {fmtInTz(sh.end, tz, { hour: "numeric", minute: "2-digit", hour12: true })}</span>)}
       </div>
       {date && firstDay && date < firstDay ? (
         <div className="text-[12px] font-semibold text-rose-700 dark:text-rose-400">Before the job started ({dayWords(firstDay)}). Pick the right day.</div>
@@ -152,23 +152,25 @@ function TimeSheet({ title, hm, start, onSet, onClose }: { title: string; hm: st
   const closeRef = useRef(onClose);
   useEffect(() => { closeRef.current = onClose; });
   useEffect(() => {
-    const k = (e: KeyboardEvent) => { if (e.key === "Escape") closeRef.current(); };
-    window.addEventListener("keydown", k);
+    // Caught first, so the dialog or panel it opened from stays open.
+    const k = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); closeRef.current(); } };
+    window.addEventListener("keydown", k, true);
     const html = document.documentElement, was = html.style.overflow;
     html.style.overflow = "hidden";
-    return () => { window.removeEventListener("keydown", k); html.style.overflow = was; };
+    return () => { window.removeEventListener("keydown", k, true); html.style.overflow = was; };
   }, []);
   const [fine] = useState(() => typeof window !== "undefined" && !!window.matchMedia?.("(pointer: fine)").matches);
   return createPortal(
-    <div className="fixed inset-0 z-[400] bg-black/40 flex items-end sm:items-center justify-center" onClick={onClose}>
+    <div className="fixed inset-0 z-[400] bg-black/50 flex items-end sm:items-center justify-center" onClick={onClose}>
       <div role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}
         className="w-full sm:w-[340px] rounded-t-2xl sm:rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-xl px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] space-y-2.5">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-[14px] font-bold">{title}</span>
+          <span className="text-[14px] font-bold flex-1 min-w-0 truncate">{title}</span>
           <input value={typed ?? shown} onChange={(e) => type(e.target.value)} onFocus={(e) => e.currentTarget.select()} autoFocus={fine}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); set(); } }}
             aria-label="Type the time" inputMode="text" autoComplete="off" spellCheck={false} enterKeyHint="done"
             className={`w-[118px] h-9 rounded-lg border px-2 text-right text-[17px] font-bold tabular-nums bg-[var(--color-surface)] focus:outline-none ${bad ? "border-rose-500" : "border-[var(--color-border-strong)] focus:border-[var(--color-accent-ring)]"}`} />
+          <button type="button" onClick={onClose} aria-label="Close" className="shrink-0 w-8 h-8 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
         <div className="relative flex justify-center gap-2">
           <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 h-10 rounded-lg bg-[var(--color-surface-2)]" />
@@ -302,14 +304,14 @@ function Month({ value, today, planned, onPick, future, earliest }: { value: str
           const k = key(i + 1), on = k === value, later = (!future && k > today) || (!!earliest && k < earliest);
           return (
             <button key={k} type="button" disabled={later} aria-pressed={on} aria-label={dayWords(k)} onClick={() => onPick(k)}
-              className={`relative mx-auto w-9 h-9 rounded-full text-[13px] tabular-nums ${on ? "bg-[var(--color-text)] text-[var(--color-surface)] font-bold" : later ? "text-[var(--color-text-faint)] opacity-40" : `hover:bg-[var(--color-surface-2)] ${k === today ? "font-bold text-[var(--color-accent)] ring-1 ring-inset ring-[var(--color-accent)]" : ""}`}`}>
+              className={`relative mx-auto w-9 h-9 rounded-full text-[13px] tabular-nums ${on ? "bg-[var(--color-text)] text-[var(--color-surface)] font-bold" : later ? "text-[var(--color-text-faint)] opacity-40" : `hover:bg-[var(--color-surface-2)] ${k === today ? "font-bold text-[var(--color-text)] ring-1 ring-inset ring-[var(--color-border-strong)]" : ""}`}`}>
               {i + 1}
-              {k === planned && <span title="Planned" className={`absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full ${on ? "bg-[var(--color-accent-fg)]" : "bg-[var(--color-surface-2)]"}`} />}
+              {k === planned && <span title="Planned" className={`absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full ${on ? "bg-[var(--color-surface)]" : "bg-[var(--color-text-muted)]"}`} />}
             </button>
           );
         })}
       </div>
-      {planned && <div className="mt-1 text-[11px] text-[var(--color-text-muted)]"><span className="inline-block w-1 h-1 rounded-full bg-[var(--color-surface-2)] align-middle mr-1" />planned day</div>}
+      {planned && <div className="mt-1 text-[11px] text-[var(--color-text-muted)]"><span className="inline-block w-1 h-1 rounded-full bg-[var(--color-text-muted)] align-middle mr-1" />planned day</div>}
     </div>
   );
 }

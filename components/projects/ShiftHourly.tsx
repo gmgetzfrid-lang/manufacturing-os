@@ -32,6 +32,8 @@ import { cleanName, crewNames, renamed, setNames, totalOnSite, withName, without
 
 const inputCls = "rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1 text-[12.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-accent-ring)]";
 const btn = "inline-flex items-center gap-1.5 h-7 px-3 rounded-lg text-[12px] font-bold disabled:opacity-60";
+/** An inline editor's Save: quiet, the report's one orange button is Email / Print. */
+const saveBtn = `${btn} border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]`;
 const iconBtn = "shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]";
 
 export interface HourlyCtx {
@@ -209,7 +211,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
                 {head && edit && ot && otForm == null && (
                   <span className="flex items-center gap-1">
                     {ot.list.some((x) => x.until == null) && (
-                      <button type="button" onClick={() => setOtForm("send")} className="shrink-0 inline-flex items-center h-6 px-2 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-bold">Sent home</button>
+                      <button type="button" onClick={() => setOtForm("send")} className="shrink-0 inline-flex items-center h-6 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[11px] font-bold hover:bg-[var(--color-surface-2)]">Sent home</button>
                     )}
                     <button type="button" onClick={() => setOtForm("edit")} aria-label="Change the overtime" className={iconBtn}><Pencil className="w-3.5 h-3.5" /></button>
                   </span>
@@ -235,12 +237,12 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
                     {h.onAddWork && (
                       <>
                       <button type="button" onClick={() => h.onAddWork?.(hr.start)} aria-label={`Add discovery or added scope at ${clocks[i]}`}
-                        title="Add discovery or added scope at this hour - it goes into the schedule"
-                        className="shrink-0 inline-flex items-center gap-0.5 h-6 px-1.5 rounded-md border border-dashed border-[var(--color-accent)] text-[11px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]">
+                        title="Add discovery or added scope at this hour: it goes into the schedule"
+                        className="shrink-0 inline-flex items-center gap-0.5 h-6 px-1.5 rounded-md border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
                         <Plus className="w-3 h-3" /> Add work
                       </button>
                     <button type="button" onClick={() => newFinding({ at: hr.start })} aria-label={`Add a finding at ${clocks[i]}`}
-                      title="A problem, a lesson, a material shortfall or missed scope - kept for the next job"
+                      title="A problem, a lesson, a material shortfall or missed scope, kept for the next job"
                       className="shrink-0 inline-flex items-center gap-0.5 h-6 px-1.5 rounded-md border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
                       <Plus className="w-3 h-3" /> Finding
                     </button>
@@ -277,8 +279,8 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
                     (a time fixed, an entry moved or changed): say so, one tap to
                     bring it up to date (what they added stays). */}
                 {edit && r.typed && r.stale && editing !== r.slot.key && (
-                  <div role="status" className="mt-1 space-y-1 rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-2 py-1 text-[11.5px] text-amber-900 dark:text-amber-100">
-                    <div className="font-semibold">Typed here, not on the work order now:</div>
+                  <div role="status" className="mt-1 space-y-1 border-l-2 border-amber-500 pl-2 py-0.5 text-[11.5px] text-[var(--color-text)]">
+                    <div className="font-semibold text-amber-800 dark:text-amber-300">Typed here, not on the work order now:</div>
                     {(r.mismatch ?? []).map((x) => (
                       <div key={x} className="flex items-start gap-2">
                         <span className="min-w-0 flex-1 break-words italic"><Line text={x} /></span>
@@ -291,7 +293,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
                 {/* A typed note: a mistake, or now put in as work (its own entry
                     says it) - deleted, the hour shows its entries again. */}
                 {edit && typed && editing !== r.slot.key && !isMeeting && (
-                  <button type="button" onClick={() => void setHour(r.slot, null)} title="Delete what was typed here - the hour shows its entries"
+                  <button type="button" onClick={() => void setHour(r.slot, null)} title="Delete what was typed here: the hour shows its entries"
                     className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-semibold text-rose-700 dark:text-rose-400 hover:underline">
                     <Trash2 className="w-3 h-3" /> Delete typed note
                   </button>
@@ -301,12 +303,12 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
               {h.onAddWork && editing !== r.slot.key && !isMeeting && (
                 <>
                 <button type="button" onClick={() => h.onAddWork?.(r.slot.start)} aria-label={`Add discovery or added scope at ${clocks[i]}`}
-                  title="Add discovery or added scope at this hour - it goes into the schedule"
-                  className="shrink-0 inline-flex items-center gap-0.5 h-6 px-1.5 rounded-md border border-dashed border-[var(--color-accent)] text-[11px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]">
+                  title="Add discovery or added scope at this hour: it goes into the schedule"
+                  className="shrink-0 inline-flex items-center gap-0.5 h-6 px-1.5 rounded-md border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
                   <Plus className="w-3 h-3" /> Add work
                 </button>
                     <button type="button" onClick={() => newFinding({ at: r.slot.start })} aria-label={`Add a finding at ${clocks[i]}`}
-                      title="A problem, a lesson, a material shortfall or missed scope - kept for the next job"
+                      title="A problem, a lesson, a material shortfall or missed scope, kept for the next job"
                       className="shrink-0 inline-flex items-center gap-0.5 h-6 px-1.5 rounded-md border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
                       <Plus className="w-3 h-3" /> Finding
                     </button>
@@ -337,7 +339,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
           ? <HoldOverForm ot={h.overtime} adding={otForm === "new"} onDone={() => setOtForm(null)} onError={setMsg} />
           : !h.overtime.list.length && (
             <button type="button" onClick={() => setOtForm("new")}
-              className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md border border-dashed border-[var(--color-accent)] text-[11.5px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]">
+              className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md border border-[var(--color-border-strong)] text-[11.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
               <Plus className="w-3.5 h-3.5" /> Hold a crew over (overtime)
             </button>
           ))}
@@ -430,7 +432,7 @@ function HoldOverForm({ ot, adding, onDone, onError }: { ot: OtCtx; adding: bool
       <button type="button" onClick={() => setRows([...rows, blank()])} className="text-[11px] font-semibold text-[var(--color-accent)] hover:underline">+ Another crew</button>
       {err && <div role="alert" className="text-[11.5px] font-semibold text-rose-700 dark:text-rose-400">{err}</div>}
       <div className="flex items-center gap-2">
-        <button type="button" disabled={busy} onClick={() => void save()} className={`${btn} bg-[var(--color-accent)] text-[var(--color-accent-fg)]`}>Save</button>
+        <button type="button" disabled={busy} onClick={() => void save()} className={saveBtn}>Save</button>
         <button type="button" onClick={onDone} className="text-[11.5px] text-[var(--color-text-muted)] hover:underline">Cancel</button>
       </div>
     </div>
@@ -458,7 +460,7 @@ function SentHomeForm({ ot, onDone, onError }: { ot: OtCtx; onDone: () => void; 
         <option value="">No one takes over</option>
         {ot.crews.map((c) => <option key={c} value={c}>{c} takes over</option>)}
       </select>
-      <button type="button" onClick={() => void save()} className={`${btn} bg-[var(--color-accent)] text-[var(--color-accent-fg)]`}>Save</button>
+      <button type="button" onClick={() => void save()} className={saveBtn}>Save</button>
       <button type="button" onClick={onDone} className="text-[11.5px] text-[var(--color-text-muted)] hover:underline">Cancel</button>
       {err && <div role="alert" className="w-full text-[11.5px] font-semibold text-rose-700 dark:text-rose-400">{err}</div>}
     </div>
@@ -536,12 +538,12 @@ export function MeetingBox({ m, edit }: { m: MeetingCtx; edit: boolean }) {
     <div className="mt-1 space-y-1">
       {/* Carried from the last same shift until someone changes or checks it. */}
       {m.carried ? (
-        <div role="status" className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-2 py-1 text-[11.5px] text-amber-900 dark:text-amber-100">
+        <div role="status" className="flex flex-wrap items-center gap-x-2 gap-y-1 border-l-2 border-amber-500 pl-2 py-0.5 text-[11.5px] text-amber-800 dark:text-amber-300">
           <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden />
           <span className="min-w-0 flex-1"><b>Not updated for this shift.</b> Same people and head counts as {m.carried.label}{edit ? ": change anyone who's different." : "."}</span>
           {edit && (
             <button type="button" onClick={() => void save(own).catch(() => undefined)}
-              className="shrink-0 inline-flex items-center gap-1 h-6 px-2 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[11px] font-bold">
+              className="shrink-0 inline-flex items-center gap-1 h-6 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[11px] font-bold">
               <Check className="w-3.5 h-3.5" /> Looks right
             </button>
           )}
@@ -553,7 +555,7 @@ export function MeetingBox({ m, edit }: { m: MeetingCtx; edit: boolean }) {
         <div className={`${grid} px-2 py-0.5 text-[12px] font-semibold text-[var(--color-text-muted)]`}>
           <span className="max-sm:hidden">Resource</span><span>Meeting attendees</span><span className="w-[6.5rem] text-right" title="Everyone on site from the resource. Split gives direct (on the tools) and indirect (supervision, safety, hole and fire watch, QC, tool room).">On site</span>
         </div>
-        {list.length === 0 && <div className="px-2 py-1 text-[12px] italic text-[var(--color-text-muted)]">No crews on the plan{edit ? " - add a company below" : ""}</div>}
+        {list.length === 0 && <div className="px-2 py-1 text-[12px] italic text-[var(--color-text-muted)]">No crews on the plan{edit ? ". Add a company below." : ""}</div>}
         {list.map((crew) => (
           <CrewRow key={crew} grid={grid} crew={crew} value={crews[crew]} known={m.known?.[crew]} edit={edit} plan={plans.get(crew) ?? null}
             onNames={(f) => setCrew(crew, (c) => setNames(c, f))}
@@ -626,7 +628,7 @@ function CrewRow({ grid, crew, value, known, edit, plan, onNames, onCount, onTot
         )}
         {edit && !adding && (
           <button type="button" onClick={() => setAdding(true)} aria-label={`Add an attendee from ${crew}`} title="Add an attendee"
-            className="shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full border border-dashed border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]">
+            className="shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full border border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
             <Plus className="w-3.5 h-3.5" />
           </button>
         )}
@@ -795,7 +797,7 @@ function SafetyTopic({ value, topics, edit, onSave }: { value?: string; topics?:
           <input autoFocus value={v} onChange={(e) => setV(e.target.value)} aria-label="Safety topic" placeholder="What the meeting talked through"
             onKeyDown={(e) => { if (e.key === "Enter") commit(v); if (e.key === "Escape") setEditing(false); }}
             className={`${inputCls} flex-1 min-w-0 h-7`} />
-          <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => commit(v)} className={`${btn} h-7 bg-[var(--color-accent)] text-[var(--color-accent-fg)]`}>Save</button>
+          <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => commit(v)} className={`${saveBtn} h-7`}>Save</button>
           <button type="button" onClick={() => setEditing(false)} className="text-[11px] text-[var(--color-text-muted)] hover:underline">Cancel</button>
         </span>
       ) : t ? (
@@ -809,7 +811,7 @@ function SafetyTopic({ value, topics, edit, onSave }: { value?: string; topics?:
           )}
         </>
       ) : edit ? (
-        <button type="button" onClick={open} aria-label="Add the safety topic" className="inline-flex items-center gap-0.5 h-6 px-1.5 rounded-md border border-dashed border-[var(--color-accent)] text-[11px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]">
+        <button type="button" onClick={open} aria-label="Add the safety topic" className="inline-flex items-center gap-0.5 h-6 px-1.5 rounded-md border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
           <Plus className="w-3 h-3" /> Add
         </button>
       ) : <span className="text-[var(--color-text-faint)]">-</span>}
@@ -832,10 +834,10 @@ function HourForm({ init, placeholder, onDone, onCancel }: { init: string; place
   const [text, setText] = useState(init);
   return (
     <div className="mt-0.5 space-y-1.5">
-      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={Math.min(8, Math.max(2, text.split("\n").length + 1))} aria-label={placeholder} placeholder={`${placeholder} - one line each`} autoFocus
+      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={Math.min(8, Math.max(2, text.split("\n").length + 1))} aria-label={placeholder} placeholder={`${placeholder}, one line each`} autoFocus
         className={`${inputCls} w-full resize-y`} />
       <div className="flex items-center gap-2">
-        <button type="button" onClick={() => onDone(text)} className={`${btn} bg-[var(--color-accent)] text-[var(--color-accent-fg)]`}>Save</button>
+        <button type="button" onClick={() => onDone(text)} className={saveBtn}>Save</button>
         <button type="button" onClick={onCancel} className="text-[11.5px] text-[var(--color-text-muted)] hover:underline">Cancel</button>
       </div>
     </div>

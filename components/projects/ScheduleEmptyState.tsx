@@ -19,35 +19,33 @@ interface Props {
 
 export default function ScheduleEmptyState({ canEdit, onImport, onAdd, phaseName }: Props) {
   return (
-    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm ring-1 ring-slate-900/[0.03] overflow-hidden">
+    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden">
       <div className="px-6 py-8 text-center border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
-        <div className="w-14 h-14 mx-auto rounded-2xl bg-[image:var(--brand-gradient)] flex items-center justify-center shadow-lg mb-3">
-          <CalendarRange className="w-7 h-7 text-white" />
+        <div className="w-12 h-12 mx-auto rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] flex items-center justify-center mb-3">
+          <CalendarRange className="w-6 h-6 text-[var(--color-text-muted)]" />
         </div>
         <h2 className="text-lg font-black text-[var(--color-text)]">{phaseName ? `No schedule in ${phaseName} yet` : "Let's build your schedule"}</h2>
         <p className="text-sm text-[var(--color-text-muted)] mt-1 max-w-md mx-auto">
           {phaseName
             ? `Import ${phaseName}'s schedule file: it goes into ${phaseName} only and is tracked on its own. The other phases aren't touched, and All phases shows the whole project.`
-            : "Pick how you want to start. You can mix and match later - everything lands in the same plan and runs in the Execution board."}
+            : "Import the schedule file you already have, or add tasks one at a time. Both land in the same plan."}
         </p>
       </div>
 
       {canEdit ? (
         <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
           <StartCard
-            tone="indigo"
+            main
             icon={<Upload className="w-5 h-5" />}
-            badge="Easiest"
             title={phaseName ? `Import ${phaseName}'s schedule` : "Import a schedule"}
-            body="Already have one? Drop a Microsoft Project XML or Primavera (.xer/.xml) file and we'll parse it - hierarchy and all. (In MS Project: File → Save As → XML.)"
-            cta="Upload a file"
+            body="A Microsoft Project XML or Primavera (.xer or .xml) file. Phases, tasks and steps come in as they are."
+            cta="Pick the file"
             onClick={onImport}
           />
           <StartCard
-            tone="slate"
             icon={<Plus className="w-5 h-5" />}
             title="Start from scratch"
-            body="Add tasks one at a time and build the structure yourself. Good for small jobs or quick punch lists."
+            body="Add tasks one at a time. Good for small jobs or a punch list."
             cta="Add a task"
             onClick={onAdd}
           />
@@ -61,27 +59,22 @@ export default function ScheduleEmptyState({ canEdit, onImport, onAdd, phaseName
   );
 }
 
-function StartCard({ tone, icon, badge, title, body, cta, onClick }: {
-  tone: "indigo" | "slate";
-  icon: React.ReactNode; badge?: string; title: string; body: string; cta: string; onClick: () => void;
+function StartCard({ main, icon, title, body, cta, onClick }: {
+  /** The one way in most people take: its button is the orange one. */
+  main?: boolean;
+  icon: React.ReactNode; title: string; body: string; cta: string; onClick: () => void;
 }) {
-  const accent = tone === "indigo"
-    ? "border-[var(--color-accent-ring)]/40 hover:border-[var(--color-accent-ring)]"
-    : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]";
-  const iconBg = tone === "indigo" ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]";
-  const ctaCls = tone === "indigo" ? "text-[var(--color-text)]" : "text-[var(--color-text)]";
   return (
     <button
       onClick={onClick}
-      className={`text-left rounded-2xl border p-4 hover-lift bg-[var(--color-surface)] flex flex-col ${accent}`}
+      className="group text-left rounded-2xl border p-4 bg-[var(--color-surface)] flex flex-col border-[var(--color-border)] hover:border-[var(--color-border-strong)]"
     >
-      <div className="flex items-center gap-2">
-        <span className={`w-9 h-9 rounded-lg flex items-center justify-center ${iconBg}`}>{icon}</span>
-        {badge && <span className="ml-auto text-[11px] font-black uppercase tracking-widest bg-[var(--color-surface-2)] text-[var(--color-text)] px-1.5 py-0.5 rounded-full">{badge}</span>}
-      </div>
+      <span className="w-9 h-9 rounded-lg flex items-center justify-center bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">{icon}</span>
       <div className="mt-3 text-sm font-bold text-[var(--color-text)]">{title}</div>
       <div className="mt-1 text-[12px] text-[var(--color-text-muted)] leading-snug flex-1">{body}</div>
-      <div className={`mt-3 inline-flex items-center gap-1 text-[12px] font-bold ${ctaCls}`}>
+      <div className={`mt-3 self-start inline-flex items-center gap-1 text-[12px] font-bold rounded-lg px-3 py-1.5 ${main
+        ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] group-hover:bg-[var(--color-accent-hover)]"
+        : "border border-[var(--color-border)] text-[var(--color-text)] group-hover:bg-[var(--color-surface-2)]"}`}>
         {cta} <ArrowRight className="w-3.5 h-3.5" />
       </div>
     </button>

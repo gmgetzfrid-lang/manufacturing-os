@@ -10,6 +10,7 @@ import { cancelMilestone, restoreCancelledMilestone } from "@/lib/milestones";
 import { fmtInTz } from "@/lib/scheduleTz";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import type { CancelledJob } from "@/lib/cancelledJobs";
+import { useDraft } from "@/hooks/useDraft";
 
 export function CancelJobForm({ id, name, steps, userId, userName, userEmail, onDone, onClose }: {
   id: string; name: string; steps: number;
@@ -17,6 +18,8 @@ export function CancelJobForm({ id, name, steps, userId, userName, userEmail, on
   onDone: () => void; onClose: () => void;
 }) {
   const [note, setNote] = useState("");
+  // The reason typed here comes back after a reload until the job is cancelled.
+  const draft = useDraft<string>(`cancel-job:${id}`, note, setNote, (v) => !v.trim());
   const [movedTo, setMovedTo] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -24,6 +27,7 @@ export function CancelJobForm({ id, name, steps, userId, userName, userEmail, on
     setBusy(true); setErr(null);
     try {
       await cancelMilestone({ id, note, movedTo, actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail });
+      draft.clear();
       onDone();
     } catch (e) { setErr((e as Error).message); setBusy(false); }
   };
@@ -71,7 +75,7 @@ export function CancelledJobsList({ jobs, canEdit, userId, userEmail, onChanged 
     finally { setBusy(null); }
   };
   return (
-    <div className="divide-y divide-amber-200 dark:divide-amber-900/60">
+    <div className="divide-y divide-[var(--color-border)]">
       {err && <div className="px-3 py-2 text-[12px] text-rose-700 dark:text-rose-300">{err}</div>}
       {jobs.map((j) => (
         <div key={j.m.id} className="px-3 py-2 flex items-start gap-3">
@@ -93,7 +97,7 @@ export function CancelledJobsList({ jobs, canEdit, userId, userEmail, onChanged 
           </div>
           {canEdit && j.m.id && (
             <button onClick={() => void putBack(j.m.id!)} disabled={busy != null} title="Put this job back on the schedule"
-              className="shrink-0 inline-flex items-center gap-1 rounded-md border border-amber-300 dark:border-amber-800 px-2 py-1 text-[11px] font-bold text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40 disabled:opacity-50">
+              className="shrink-0 inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-1 text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
               {busy === j.m.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />} Put back
             </button>
           )}
@@ -117,7 +121,7 @@ export function CancelledJobsBar({ jobs, canEdit, userId, userEmail, onChanged }
         {open ? <ChevronDown className="w-4 h-4 shrink-0" /> : <ChevronRight className="w-4 h-4 shrink-0" />}
       </button>
       {open && (
-        <div className="border-t border-amber-200 dark:border-amber-900/60">
+        <div className="border-t border-[var(--color-border)]">
           <CancelledJobsList jobs={jobs} canEdit={canEdit} userId={userId} userEmail={userEmail} onChanged={onChanged} />
         </div>
       )}

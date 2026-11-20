@@ -52,10 +52,10 @@ const smallBtn = "px-1.5 py-1 text-[11px] font-semibold rounded hover:bg-[var(--
 /** "Removed. Undo" - right after a removal, until dismissed. */
 function UndoLine({ text, onUndo, onDismiss }: { text: string; onUndo: () => void; onDismiss: () => void }) {
   return (
-    <div role="status" className="mt-1 flex items-center gap-2 rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-2 py-1 text-[11px] text-amber-900 dark:text-amber-200">
+    <div role="status" className="mt-1 flex items-center gap-2 border-l-2 border-[var(--color-border-strong)] pl-2 py-0.5 text-[11px] text-[var(--color-text)]">
       <span className="min-w-0 flex-1 truncate">{text}</span>
-      <button type="button" onClick={onUndo} className="inline-flex items-center gap-1 px-2 py-1 rounded font-bold bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"><RotateCcw className="w-3 h-3" /> Undo</button>
-      <button type="button" onClick={onDismiss} className="px-1.5 py-1 font-semibold hover:underline">Dismiss</button>
+      <button type="button" onClick={onUndo} className="inline-flex items-center gap-1 px-2 py-1 rounded border border-[var(--color-border-strong)] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><RotateCcw className="w-3 h-3" /> Undo</button>
+      <button type="button" onClick={onDismiss} className="px-1.5 py-1 font-semibold text-[var(--color-text-muted)] hover:underline">Dismiss</button>
     </div>
   );
 }
@@ -108,6 +108,13 @@ export const typeClock = (v: string) => {
 
 const nowClock = (tz: string) => new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: tz });
 
+/** Now, when the shift is the one running (a past shift's time is typed). */
+const clockIfNow = (shift: ShiftWindow, tz: string) => { const t = Date.now(); return t >= shift.start && t < shift.end ? nowClock(tz) : ""; };
+
+/** A quiet Add/Save beside a line being typed: the report's one orange
+ *  button is its Email / Print. */
+const addBtn = "h-7 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[11px] font-bold";
+
 const inputCls = "h-7 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[12px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-accent-ring)]";
 
 /** "Safety incidents this shift: None / Report one" — in place of the old
@@ -124,7 +131,7 @@ export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, on
   const items = incidents?.items ?? [];
   const none = !!incidents?.none && items.length === 0;
   const [open, setOpen] = useState(false);
-  const [clock, setClock] = useState("");
+  const [clock, setClock] = useState(() => clockIfNow(shift, tz));
   const [kind, setKind] = useState<IncidentKind>("Near miss");
   const [text, setText] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
@@ -136,7 +143,7 @@ export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, on
   const key = handoverKey(shift);
   // A new incident being written survives a reload (not one being edited).
   useDraft<string>(edit && !editingId ? `incident:${key}` : null, text, (v) => { setText(v); setOpen(true); }, (v) => !v.trim());
-  const reset = () => { setClock(""); setText(""); setMsg(null); setOpen(false); setEditingId(null); setKind("Near miss"); };
+  const reset = () => { setClock(clockIfNow(shift, tz)); setText(""); setMsg(null); setOpen(false); setEditingId(null); setKind("Near miss"); };
   const add = () => {
     const r = clockOnShift(shift, clock, tz);
     if ("error" in r) { setMsg(r.error); return; }
@@ -171,7 +178,7 @@ export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, on
     else if (write) void write(key, (rec) => restoreIncident(rec, x)).catch((e) => setMsg((e as Error).message));
     else onAdd({ at: x.at, kind: x.kind, text: x.text });
   };
-  const btn = (on: boolean) => `px-2 py-0.5 text-[11px] font-semibold ${on ? "bg-emerald-700 text-white" : "bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
+  const btn = (on: boolean) => `px-2 py-0.5 text-[11px] font-semibold ${on ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
   return (
     <div className="text-[11.5px] min-w-0">
       <div className="flex flex-wrap items-center gap-1.5">
@@ -215,7 +222,7 @@ export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, on
             {INCIDENT_KINDS.map((k) => <option key={k}>{k}</option>)}
           </select>
           <input value={text} onChange={(e) => { setText(e.target.value); setMsg(null); }} onKeyDown={(e) => { if (e.key === "Enter") add(); }} placeholder="What happened, who, what was done" aria-label="What happened" className={`${inputCls} flex-1 min-w-[180px]`} />
-          <button type="button" onClick={add} className="h-7 px-2.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-bold">{editingId ? "Save" : "Add"}</button>
+          <button type="button" onClick={add} className={addBtn}>{editingId ? "Save" : "Add"}</button>
           {editingId && <button type="button" onClick={reset} className="h-7 px-2 text-[11px] font-semibold text-[var(--color-text-muted)]">Cancel</button>}
           {msg && <span className="basis-full text-rose-700 dark:text-rose-400 font-semibold">{msg}</span>}
         </div>
@@ -241,7 +248,7 @@ export function ShiftNotesBox({ notes, edit, print, shift, tz, T, D, onAdd, onCl
   /** Put a removed note back exactly (Undo). Unset: written from here (or re-added). */
   onRestore?: (n: ShiftNote & { shiftKey: string }) => void;
 }) {
-  const [clock, setClock] = useState("");
+  const [clock, setClock] = useState(() => clockIfNow(shift, tz));
   const [text, setText] = useState("");
   const [follow, setFollow] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -253,7 +260,7 @@ export function ShiftNotesBox({ notes, edit, print, shift, tz, T, D, onAdd, onCl
   const [removed, setRemoved] = useState<(ShiftNote & { shiftKey: string }) | null>(null);
   const [cleared, setCleared] = useState<(ShiftNote & { shiftKey: string; from?: string }) | null>(null);
   const { write, by } = useRecordWriter();
-  const reset = () => { setClock(""); setText(""); setFollow(false); setMsg(null); setEditing(null); };
+  const reset = () => { setClock(clockIfNow(shift, tz)); setText(""); setFollow(false); setMsg(null); setEditing(null); };
   const fail = (e: unknown) => setMsg((e as Error).message);
   const add = () => {
     const r = clockOnShift(shift, clock, tz);
@@ -315,7 +322,7 @@ export function ShiftNotesBox({ notes, edit, print, shift, tz, T, D, onAdd, onCl
               </span>
               {edit && !print && (
                 <span className="ml-auto flex gap-1 shrink-0">
-                  {n.followUp && !n.cleared && <button type="button" onClick={() => clear(n)} className={`${smallBtn} text-emerald-700 dark:text-emerald-400`}>Clear</button>}
+                  {n.followUp && !n.cleared && <button type="button" onClick={() => clear(n)} className={`${smallBtn} text-[var(--color-text)]`}>Clear</button>}
                   {n.followUp && n.cleared && canUnclear(n) && <button type="button" onClick={() => unclear(n)} className={`${smallBtn} text-[var(--color-text-muted)] hover:text-[var(--color-text)]`}>Undo clear</button>}
                   {!n.from && <button type="button" onClick={() => startEdit(n)} className={`${smallBtn} text-[var(--color-text-muted)] hover:text-[var(--color-text)]`}>Edit</button>}
                   {!n.from && <button type="button" onClick={() => void remove(n)} className={`${smallBtn} text-[var(--color-text-muted)] hover:text-rose-700`}>Remove</button>}
@@ -338,7 +345,7 @@ export function ShiftNotesBox({ notes, edit, print, shift, tz, T, D, onAdd, onCl
           <button type="button" onClick={() => setClock(nowClock(tz))} className="h-7 px-2 rounded-md border border-[var(--color-border-strong)] text-[11px] font-semibold">Now</button>
           <input value={text} onChange={(e) => { setText(e.target.value); setMsg(null); }} onKeyDown={(e) => { if (e.key === "Enter") add(); }} placeholder="What happened, or what needs doing" aria-label="Note" className={`${inputCls} flex-1 min-w-[160px]`} />
           <label className="inline-flex items-center gap-1 text-[11px]"><input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} /> Follow-up</label>
-          <button type="button" onClick={add} className="h-7 px-2.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-bold">{editing ? "Save" : "Add"}</button>
+          <button type="button" onClick={add} className={addBtn}>{editing ? "Save" : "Add"}</button>
           {editing && <button type="button" onClick={reset} className="h-7 px-2 text-[11px] font-semibold text-[var(--color-text-muted)]">Cancel</button>}
           {msg && <span className="basis-full text-[11px] text-rose-700 dark:text-rose-400 font-semibold">{msg}</span>}
         </div>
@@ -358,7 +365,7 @@ export function AddCompany({ onAdd }: { onAdd: (name: string) => void }) {
     <div className="mt-1 flex items-center gap-1.5">
       <input autoFocus value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") add(); if (e.key === "Escape") setOpen(false); }}
         placeholder="Company or group" aria-label="Company or group" className={`${inputCls} flex-1 min-w-0`} />
-      <button type="button" onClick={add} className="h-7 px-2.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-bold">Add</button>
+      <button type="button" onClick={add} className={addBtn}>Add</button>
       <button type="button" onClick={() => setOpen(false)} className="text-[11px] text-[var(--color-text-muted)]">Cancel</button>
     </div>
   );
@@ -370,7 +377,7 @@ export function TimeLogButton({ busy, msg, onExport, shiftLabel }: { busy: boole
   return (
     <span className="relative inline-flex">
       <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} disabled={busy}
-        title="Every work order and step with the time each thing was done - its own file for the project, not part of the update"
+        title="Every work order and step with the time each thing was done: its own file for the project, not part of the update"
         className="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-60">
         <FileSpreadsheet className="w-3.5 h-3.5" /> {busy ? "Exporting…" : "Time log"}
       </button>

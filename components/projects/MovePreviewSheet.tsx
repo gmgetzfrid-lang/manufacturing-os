@@ -74,7 +74,7 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
       if (landsInPast) w.push("This lands in the past.");
     }
     if (mode === "extend" && targets.some((t) => t.status === "completed")) {
-      w.push("Some selected tasks are already Done - extending a finished task is unusual.");
+      w.push("Some selected tasks are already Done: extending a finished task is unusual.");
     }
     // Pulling work ahead of an unfinished predecessor: say so before commit.
     if (deltaDays < 0 && allTasks && allTasks.length) {
@@ -85,7 +85,7 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
         for (const c of predecessorConflicts(t, projected, byId)) {
           const when = new Date(c.predFinish).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
           const what = c.link.type === "SS" || c.link.type === "SF" ? "starts" : "finishes";
-          w.push(`“${t.name}” would start earlier than its link to “${c.pred.name}” allows (${what}${c.link.lagHours ? ` + ${c.link.lagHours} h` : ""} - ${when}), and that task isn't done.`);
+          w.push(`“${t.name}” would start earlier than its link to “${c.pred.name}” allows (${what}${c.link.lagHours ? ` + ${c.link.lagHours} h` : ""}, ${when}), and that task isn't done.`);
         }
       }
     }
@@ -101,7 +101,7 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
           <h2 className="font-bold text-[var(--color-text)] text-sm flex-1 min-w-0 truncate">
             Move {multi ? `${targets.length} tasks` : `“${primary.name}”`} {absDays} day{absDays === 1 ? "" : "s"} {dir}
           </h2>
-          <button onClick={onCancel} className="p-1 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] transition-colors"><XIcon className="w-4 h-4" /></button>
+          <button onClick={onCancel} aria-label="Close" className="p-1 rounded hover:bg-[var(--color-surface)] text-[var(--color-text-muted)] transition-colors"><XIcon className="w-4 h-4" /></button>
         </div>
 
         <div className="p-5 space-y-3">
@@ -111,8 +111,7 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
               active={mode === "defer"}
               onClick={() => setMode("defer")}
               title="Shift the date"
-              body={`Move the whole ${multi ? "selection" : "task"} ${dir}. Same duration - no work hours added.`}
-              tone="slate"
+              body={`Move the whole ${multi ? "selection" : "task"} ${dir}. Same duration, no work hours added.`}
             />
             <ModeCard
               active={mode === "extend"}
@@ -120,12 +119,11 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
               onClick={() => canExtend && setMode("extend")}
               title="It's taking longer"
               body={canExtend ? "Keep the start, push the finish out." : "Only when moving later."}
-              tone="amber"
             />
           </div>
 
           {/* Impact line — the confidence-builder */}
-          <div className={`rounded-lg border p-3 text-sm ${mode === "extend" ? "border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200" : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]"}`}>
+          <div className="rounded-lg border p-3 text-sm border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]">
             {mode === "defer" ? (
               <div className="flex items-center gap-2">
                 <ArrowRight className="w-4 h-4 shrink-0" />
@@ -136,7 +134,7 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
                 <Clock className="w-4 h-4 shrink-0 mt-0.5" />
                 <div>
                   <span>Extending the finish by {absDays} day{absDays === 1 ? "" : "s"}; the start stays.</span>
-                  <div className="mt-1 text-[11px] opacity-80">Planned work hours stay as entered - change them on the task if the job itself grew.</div>
+                  <div className="mt-1 text-[11px] opacity-80">Planned work hours stay as entered. Change them on the task if the job itself grew.</div>
                 </div>
               </div>
             )}
@@ -144,18 +142,18 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
 
           {pushed.length > 0 && (
             <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2.5 text-[12px] text-[var(--color-text)]">
-              <b>Also moves</b> - linked step{pushed.length === 1 ? "" : "s"} that can&apos;t start until this finishes: {pushed.slice(0, 6).join(", ")}{pushed.length > 6 ? ` and ${pushed.length - 6} more` : ""}.
+              <b>Also moves:</b> linked step{pushed.length === 1 ? "" : "s"} that can&apos;t start until this finishes: {pushed.slice(0, 6).join(", ")}{pushed.length > 6 ? ` and ${pushed.length - 6} more` : ""}.
             </div>
           )}
 
           {warnings.length > 0 && (
-            <div className="rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 p-2.5 space-y-1">
+            <div className="border-l-2 border-amber-500 pl-3 space-y-1">
               {warnings.map((wn, i) => (
-                <div key={i} className="flex items-start gap-1.5 text-[12px] text-amber-900 dark:text-amber-200">
+                <div key={i} className="flex items-start gap-1.5 text-[12px] text-amber-800 dark:text-amber-300">
                   <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" /> {wn}
                 </div>
               ))}
-              <div className="text-[11px] text-amber-700/80 pl-5">You can still continue - this is just a heads-up.</div>
+              <div className="text-[11px] text-[var(--color-text-muted)] pl-5">You can still go ahead.</div>
             </div>
           )}
 
@@ -178,12 +176,13 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
   );
 }
 
-function ModeCard({ active, disabled, onClick, title, body, tone }: {
-  active: boolean; disabled?: boolean; onClick: () => void; title: string; body: string; tone: "slate" | "amber";
+function ModeCard({ active, disabled, onClick, title, body }: {
+  active: boolean; disabled?: boolean; onClick: () => void; title: string; body: string;
 }) {
-  const ring = active ? (tone === "amber" ? "border-amber-400 ring-2 ring-amber-200 bg-amber-50 dark:bg-amber-950/40" : "border-[var(--color-accent-ring)] ring-2 ring-[var(--color-accent-ring)]/30 bg-[var(--color-surface-2)]") : "border-[var(--color-border)] hover:border-[var(--color-border-strong)] bg-[var(--color-surface)]";
+  // Picked: a dark edge, never orange.
+  const ring = active ? "border-[var(--color-text)] ring-1 ring-[var(--color-text)] bg-[var(--color-surface-2)]" : "border-[var(--color-border)] hover:border-[var(--color-border-strong)] bg-[var(--color-surface)]";
   return (
-    <button onClick={onClick} disabled={disabled} className={`text-left rounded-xl border p-3 transition-all disabled:opacity-40 disabled:cursor-not-allowed ${ring}`}>
+    <button onClick={onClick} disabled={disabled} aria-pressed={active} className={`text-left rounded-xl border p-3 transition-all disabled:opacity-40 disabled:cursor-not-allowed ${ring}`}>
       <div className="text-[13px] font-bold text-[var(--color-text)]">{title}</div>
       <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 leading-snug">{body}</div>
     </button>

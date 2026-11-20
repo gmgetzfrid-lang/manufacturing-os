@@ -34,7 +34,7 @@ export default function UndoToastHost({
                 <RotateCcw className="w-3 h-3" /> Undo
               </button>
             )}
-            <button onClick={() => onDismiss(t.id)} className="p-1 rounded hover:bg-white/10 text-slate-400 shrink-0" title="Dismiss">
+            <button onClick={() => onDismiss(t.id)} className="p-1 rounded hover:bg-white/10 text-slate-400 shrink-0" title="Dismiss" aria-label="Dismiss">
               <XIcon className="w-3.5 h-3.5" />
             </button>
           </div>

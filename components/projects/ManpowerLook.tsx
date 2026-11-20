@@ -12,6 +12,7 @@ import { shiftLabel, type ShiftRow } from "@/lib/phaseReport";
 import type { ShiftRecord } from "@/lib/shiftRecord";
 import type { StepLook } from "@/lib/lookBack";
 import { companyOf, estimateByWorkOrder, manpowerSummary, shiftCounts, type ManpowerSettings, type ShiftCount, type WorkSpan } from "@/lib/manpower";
+import LoadingBlock from "@/components/ui/LoadingBlock";
 
 // Each company keeps its color (fixed order, by man-hours); past seven, Other.
 const SWATCH = [
@@ -86,7 +87,8 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
     return { counts, sum, est, wos: [...wos.values()].sort((a, b) => b.mh - a.mh), addedMH: Math.round(addedMH * 10) / 10, rate, order };
   }, [records, shifts, settings, steps, now]);
 
-  if (!data) return null;
+  // Still reading the shift records: say so, never a blank space.
+  if (!data) return <LoadingBlock what="the head counts" rows={2} />;
   const { counts, sum, est, wos, addedMH, rate, order } = data;
   const head = "text-[12.5px] font-bold text-[var(--color-text)]";
   if (sum.counted === 0) {

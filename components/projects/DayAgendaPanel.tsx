@@ -44,6 +44,7 @@ import { loadProgressLog, type ProgressLogRow } from "@/lib/progressHistory";
 import { lastChanges, saidWithLatest } from "@/lib/stepComment";
 import { searchMatcher, hasQuery } from "@/lib/fuzzySearch";
 import { appAlert } from "@/components/providers/DialogProvider";
+import { useDraft } from "@/hooks/useDraft";
 
 interface Props {
   day: string; // "YYYY-MM-DD" in the plant zone
@@ -120,6 +121,15 @@ export default function DayAgendaPanel({
   onSetStatus, onSetProgress, onAddNote, onOpenDetail, onChangeDay, onClose, colorOf, shiftTimes = DEFAULT_SHIFT_TIMES, hidden, planNow: planNowAll, userId, onSetProgressNote, onStartNote, onUpdateStep, onFixTimes, pathMarks, inline, now: clockNow, onAddWork,
 }: Props) {
   const [query, setQuery] = useState("");
+  // Escape closes the side panel, as its X does (a step's own Escape closes
+  // just that step first).
+  useEffect(() => {
+    if (inline || hidden) return;
+    // Not while a dialog is open over it (that one closes first).
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !e.defaultPrevented && !document.querySelector('[aria-modal="true"]')) onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [inline, hidden, onClose]);
   // A step's WO number: its own, else its work order's (or the file's WO column).
   const wos = useMemo(() => inheritedWorkOrders(milestones), [milestones]);
   const woOf = useCallback((m: Milestone) => m.workOrderRef?.trim() || (m.id ? wos.get(m.id) : undefined) || null, [wos]);
@@ -256,6 +266,8 @@ export default function DayAgendaPanel({
   // Each step's latest comment as of this day (one written later belongs to
   // a later day's story): on its row, and in its box to edit.
   const [stepNotes, setStepNotes] = useState<MilestoneNote[]>([]);
+  // A read that failed says so, instead of looking like "no comments".
+  const [readErr, setReadErr] = useState(false);
   const [notesTick, setNotesTick] = useState(0);
   // A comment or a time corrected elsewhere (a step card's history).
   useEffect(() => {
@@ -267,7 +279,7 @@ export default function DayAgendaPanel({
   useEffect(() => {
     if (!dayStepIds) return;
     let alive = true;
-    notesFor(dayStepIds.split(",")).then((n) => { if (alive) setStepNotes(n); }).catch(() => undefined);
+    notesFor(dayStepIds.split(",")).then((n) => { if (alive) { setStepNotes(n); setReadErr(false); } }).catch(() => { if (alive) setReadErr(true); });
     return () => { alive = false; };
   }, [dayStepIds, notesTick]);
   // Each step's history (the progress log), for the step card.
@@ -277,7 +289,7 @@ export default function DayAgendaPanel({
   useEffect(() => {
     if (!projectId || !onUpdateStep) return;
     let alive = true;
-    loadProgressLog(projectId).then((l) => { if (alive) setLog(l ?? []); }).catch(() => undefined);
+    loadProgressLog(projectId).then((l) => { if (alive) setLog(l ?? []); }).catch(() => { if (alive) setReadErr(true); });
     return () => { alive = false; };
   }, [projectId, onUpdateStep, notesTick, logSig]);
   const dayEndsAt = shiftWindow(day, "night", tz, shiftTimes).end + TURNOVER_GRACE_MS;
@@ -366,10 +378,10 @@ export default function DayAgendaPanel({
   };
   const spanNote = (r: Row) => {
     const planned = r.plannedStart != null && Number.isFinite(r.plannedStart) ? `planned ${fmtInTz(r.plannedStart, tz, { weekday: "short", month: "short", day: "numeric" })} ${clockLabel(r.plannedStart, tz)}` : "planned later";
-    if (r.live === "done-ahead") return `${planned} - done ahead of plan`;
+    if (r.live === "done-ahead") return `${planned}, done ahead of plan`;
     if (r.leaf.status === "completed") return null;
-    if (r.live === "overdue") return `was due ${fmtInTz(r.finishMs, tz, { month: "short", day: "numeric" })} ${clockLabel(r.finishMs, tz)} - carry-over, finish or re-plan it`;
-    if (r.live === "started-early") return `${planned} - started ahead of plan`;
+    if (r.live === "overdue") return `was due ${fmtInTz(r.finishMs, tz, { month: "short", day: "numeric" })} ${clockLabel(r.finishMs, tz)}: carry-over, finish or re-plan it`;
+    if (r.live === "started-early") return `${planned}, started ahead of plan`;
     if (r.startsToday && r.endsToday) return null;
     const parts: string[] = [];
     if (!r.startsToday) parts.push(`started ${fmtInTz(r.startMs, tz, { month: "short", day: "numeric" })}`);
@@ -379,7 +391,7 @@ export default function DayAgendaPanel({
 
   return (
     <div className={inline ? (hidden ? "hidden" : "") : `fixed inset-0 z-[170] flex justify-end ${hidden ? "hidden" : ""}`} onClick={inline ? undefined : onClose}>
-      {!inline && <div className="absolute inset-0 bg-slate-900/30" />}
+      {!inline && <div className="absolute inset-0 bg-slate-900/50" />}
       <div
         className={inline
           ? "relative w-full max-h-[78vh] bg-[var(--color-surface)] text-[var(--color-text)] flex flex-col"
@@ -403,16 +415,17 @@ export default function DayAgendaPanel({
               </div>
             </div>
             <button onClick={() => onChangeDay(dayKey(addDays(dayMs, 1, tz), tz))} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Next day"><ChevronRight className="w-4 h-4" /></button>
-            {!inline && <button onClick={onClose} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Close"><XIcon className="w-4 h-4" /></button>}
+            {!inline && <button onClick={onClose} className="p-1.5 rounded-md hover:bg-[var(--color-surface)] text-[var(--color-text-muted)]" title="Close" aria-label="Close"><XIcon className="w-4 h-4" /></button>}
           </div>
           {totals.n > 0 && (
-            <div className="mt-2 h-1.5 rounded-full bg-black/10 overflow-hidden">
-              <div className={`h-full ${totals.avg >= 100 ? "bg-emerald-500" : "bg-[var(--color-surface-2)]"}`} style={{ width: `${totals.avg}%` }} />
+            <div className="mt-2 h-1.5 rounded-full bg-black/10 dark:bg-white/10 overflow-hidden">
+              <div className={`h-full ${totals.avg >= 100 ? "bg-emerald-500" : "bg-[var(--color-text)]"}`} style={{ width: `${totals.avg}%` }} />
             </div>
           )}
+          {readErr && <div role="alert" className="mt-1.5 text-[11px] font-semibold text-rose-700 dark:text-rose-400">Couldn&apos;t read the steps&apos; comments and history. Close and reopen the day to try again.</div>}
           {onAddWork && (
             <button type="button" onClick={onAddWork}
-              className="mt-2 inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-dashed border-[var(--color-accent)] text-[12px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]">
+              className="mt-2 inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
               <Plus className="w-3.5 h-3.5" /> Add discovery or added scope
             </button>
           )}
@@ -422,7 +435,7 @@ export default function DayAgendaPanel({
               <input value={query} onChange={(e) => setQuery(e.target.value)}
                 // A keyboard popping up on a tablet hides half the list: focus only with a mouse.
                 autoFocus={typeof window !== "undefined" && window.matchMedia?.("(pointer: fine)").matches}
-                placeholder="Find equipment, WO # or step - e.g. E-606, 4410037"
+                placeholder="Find equipment, WO # or step, e.g. E-606, 4410037"
                 className="w-full h-8 pl-8 pr-8 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-accent-ring)]" />
               {query && <button onClick={() => setQuery("")} className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-[var(--color-text-faint)] hover:text-[var(--color-text)]" title="Clear"><XIcon className="w-3.5 h-3.5" /></button>}
             </div>
@@ -530,8 +543,8 @@ export default function DayAgendaPanel({
                         </button>
                         <span className="shrink-0 w-[76px] flex flex-col items-end gap-0.5">
                         <span className="flex items-center justify-end gap-1">
-                          <span className="h-1 w-8 rounded-full bg-black/10 overflow-hidden">
-                            <span className={`block h-full ${pct >= 100 ? "bg-emerald-500" : "bg-[var(--color-surface-2)]"}`} style={{ width: `${pct}%` }} />
+                          <span className="h-1 w-8 rounded-full bg-black/10 dark:bg-white/10 overflow-hidden">
+                            <span className={`block h-full ${pct >= 100 ? "bg-emerald-500" : "bg-[var(--color-text)]"}`} style={{ width: `${pct}%` }} />
                           </span>
                           <ProgressControl
                             percent={pct}
@@ -599,7 +612,7 @@ export default function DayAgendaPanel({
           )}
           {otherDays.length > 0 && (
             <section className="border-t border-[var(--color-border)]">
-              <div className="px-4 py-2 text-[12px] font-semibold text-[var(--color-text-muted)] bg-[var(--color-surface-2)]">On other days - click to go to its day</div>
+              <div className="px-4 py-2 text-[12px] font-semibold text-[var(--color-text-muted)] bg-[var(--color-surface-2)]">On other days: tap to go to its day</div>
               <ul className="divide-y divide-[var(--color-border)]">
                 {otherDays.map((m) => {
                   const d = dayKey(startMsOf(m), tz);
@@ -631,11 +644,13 @@ export default function DayAgendaPanel({
 
 // ─── Update one step in place ────────────────────────────────────────
 
+// Picked: dark, like every other picked chip.
+const PICKED = "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]";
 const STATUS_BTNS: Array<{ s: MilestoneStatus; label: string; on: string }> = [
-  { s: "in_progress", label: "Working", on: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border-strong)]" },
-  { s: "completed", label: "Done", on: "bg-emerald-600 text-white border-emerald-600" },
-  { s: "on_hold", label: "On hold", on: "bg-amber-500 text-white border-amber-500" },
-  { s: "blocked", label: "Blocked", on: "bg-rose-600 text-white border-rose-600" },
+  { s: "in_progress", label: "Working", on: PICKED },
+  { s: "completed", label: "Done", on: PICKED },
+  { s: "on_hold", label: "On hold", on: PICKED },
+  { s: "blocked", label: "Blocked", on: PICKED },
 ];
 const PCTS = PICK_PCTS;
 
@@ -667,6 +682,8 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
   const own = !!latest && !!userId && latest.byId === userId;
   const [noteMode, setNoteMode] = useState<"edit" | "new">(own ? "edit" : "new");
   const [note, setNote] = useState(own ? latest!.body : "");
+  // A new note as typed survives a reload (not an edit of the last one).
+  const noteDraft = useDraft<string>(!canEdit || noteMode === "edit" ? null : `step-note:${leaf.id}`, note, setNote, (v) => !v.trim());
   const [saved, setSaved] = useState<string | null>(null);
   const pctRef = useRef<HTMLInputElement>(null);
   // Ready to type with a mouse; on a tablet the keyboard would cover the form.
@@ -743,7 +760,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
   const saveHold = async (): Promise<boolean> => {
     if (ro || !onSetStatus || !hold) return false;
     if (timed) {
-      if (!reason.trim()) { setNeedMsg(hold === "blocked" ? "Say what's blocking it - it goes on the report." : "Say why it's on hold - it goes on the report."); return false; }
+      if (!reason.trim()) { setNeedMsg(hold === "blocked" ? "Say what's blocking it: it goes on the report." : "Say why it's on hold: it goes on the report."); return false; }
       if (whenAt == null) { setNeedMsg(when && "error" in when ? when.error : "Put in the time it happened."); clockRef.current?.focus(); return false; }
       savedHold.current = `${hold}|${reason.trim()}`;
       const ok = await onUpdateStep!(id, { status: hold, pct: null, note: reason.trim(), at: whenAt });
@@ -753,14 +770,14 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
       return ok;
     }
     savedHold.current = `${hold}|${reason.trim()}`;
-    report(await onSetStatus(id, hold, reason.trim() || undefined), hold === "blocked" ? "Blocked - reason saved" : "On hold - reason saved");
+    report(await onSetStatus(id, hold, reason.trim() || undefined), hold === "blocked" ? "Blocked, reason saved" : "On hold, reason saved");
     return true;
   };
   const sentNote = useRef<string | null>(own ? latest!.body.trim() : null);
   // Edit mode: only a changed comment is written; new mode: added.
   const writeNote = async (text: string) => {
     if (noteMode === "edit" && latest) await updateMilestoneNote(latest.id, text);
-    else if (onAddNote) await onAddNote(id, text);
+    else if (onAddNote) { await onAddNote(id, text); noteDraft.clear(); }
     onNotesChanged?.();
   };
   const notePending = () => !!note.trim() && note.trim() !== sentNote.current;
@@ -773,7 +790,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
   const commit = async (): Promise<boolean> => {
     if (ro) return false;
     if (!progressPending()) { await saveNote(); return true; }
-    if (needsNote()) { setNeedMsg(`Say what got done to save ${stagedPct ?? 0}% - it goes on the shift report.`); noteRef.current?.focus(); return false; }
+    if (needsNote()) { setNeedMsg(`Say what got done to save ${stagedPct ?? 0}%: it goes on the shift report.`); noteRef.current?.focus(); return false; }
     if (timed) {
       if (whenAt == null) { setNeedMsg(when && "error" in when ? when.error : "Put in the time it happened."); clockRef.current?.focus(); return false; }
       const v = stagedPct ?? 0;
@@ -783,7 +800,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
       const ok = await onUpdateStep!(id, { status, pct: status === "in_progress" ? v : null, note: text, at: whenAt });
       if (!ok) { sentNote.current = null; report(false, ""); return false; }
       report(true, `${status === "completed" ? "Done" : status === "planned" ? "Not started" : `${v}%`} at ${clock}`);
-      setStage(null); setStarting(false); setNeedMsg(null); setNote(""); setClock("");
+      setStage(null); setStarting(false); setNeedMsg(null); setNote(""); setClock(""); noteDraft.clear();
       onNotesChanged?.();
       return true;
     }
@@ -791,7 +808,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
     if (starting && onSetStatus) {
       const v = stagedPct ?? 0;
       ok = (await onSetStatus(id, v >= 100 ? "completed" : "in_progress", undefined, v)) !== false;
-      report(ok, v >= 100 ? "Marked done" : `Working - ${v}% saved`);
+      report(ok, v >= 100 ? "Marked done" : `Working, ${v}% saved`);
     } else if (stage != null) ok = await setPct(stage);
     if (!ok) return false;
     setStage(null); setStarting(false); setNeedMsg(null);
@@ -837,7 +854,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
   const active = hold ?? leaf.status;
 
   return (
-    <div className="px-4 pb-3 pt-1 space-y-2 text-[11px]" onKeyDown={(e) => { if (e.key === "Escape") onClose(); }}>
+    <div className="px-4 pb-3 pt-1 space-y-2 text-[11px]" onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); onClose(); } }}>
       <div className="flex items-center gap-1.5 flex-wrap">
         <span className="w-16 shrink-0 font-black uppercase tracking-wider text-[11px] text-[var(--color-text-muted)]">% done</span>
         {PCTS.map((v) => (
@@ -872,15 +889,15 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
           </span>
           <input value={reason} disabled={ro} autoFocus onChange={(e) => { setReason(e.target.value); setHoldTouched(true); setNeedMsg(null); }}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void saveHold(); } }}
-            placeholder="What's stopping it - permit, scaffold, ops release, parts…"
+            placeholder="What's stopping it: permit, scaffold, ops release, parts…"
             className="flex-1 h-7 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] focus:outline-none focus:border-[var(--color-accent-ring)]" />
-          <button disabled={ro} onClick={() => void saveHold()} className={`h-7 px-2.5 rounded-md font-bold text-white ${hold === "blocked" ? "bg-rose-600 hover:bg-rose-700" : "bg-amber-500 hover:bg-amber-600"} disabled:opacity-40`}>
+          <button disabled={ro} onClick={() => void saveHold()} className="h-7 px-2.5 rounded-md font-bold bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40">
             Save {hold === "blocked" ? "blocked" : "on hold"}{timed && holdTouched && whenAt != null ? ` at ${clock}` : ""}
           </button>
         </div>
       )}
       {timed && starting && (leaf.status === "on_hold" || leaf.status === "blocked") && (
-        <div className="ml-[70px] rounded-md bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 px-2 py-1 text-amber-900 dark:text-amber-200">
+        <div className="ml-[70px] border-l-2 border-amber-500 pl-2 py-0.5 text-amber-800 dark:text-amber-300">
           Taking it off {leaf.status === "on_hold" ? "hold" : "block"}. It was: <b>&ldquo;{leaf.statusReason || "no reason given"}&rdquo;</b>. Say what changed.
         </div>
       )}
@@ -894,10 +911,10 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
           <span className="inline-flex flex-wrap gap-1" role="group" aria-label="Which shift">
             {choice.choices.map((c, i) => (
               <button key={c.w.start} type="button" disabled={ro} aria-pressed={i === wi && !otherDay} onClick={() => { setWi(i); setOtherDay(null); setPicking(false); setNeedMsg(null); }}
-                className={`h-7 px-2 rounded-md border font-bold pointer-coarse:h-9 ${i === wi && !otherDay ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>{c.label}</button>
+                className={`h-7 px-2 rounded-md border font-bold pointer-coarse:h-9 ${i === wi && !otherDay ? PICKED : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>{c.label}</button>
             ))}
             {picking || otherDay
-              ? <DayPick value={otherDay} onChange={(d) => { setOtherDay(d); setNeedMsg(null); }} tz={tz} disabled={ro} className={`h-7 pointer-coarse:h-9 ${otherDay ? "ring-1 ring-[var(--color-accent)] border-[var(--color-border-strong)]" : ""}`} />
+              ? <DayPick value={otherDay} onChange={(d) => { setOtherDay(d); setNeedMsg(null); }} tz={tz} disabled={ro} className={`h-7 pointer-coarse:h-9 ${otherDay ? "ring-1 ring-[var(--color-text)] border-[var(--color-text)]" : ""}`} />
               : <button type="button" disabled={ro} onClick={() => setPicking(true)} className="h-7 px-2 rounded-md border border-dashed border-[var(--color-border-strong)] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] pointer-coarse:h-9">Other day…</button>}
           </span>
           <input ref={clockRef} value={clock} disabled={ro} inputMode="numeric" placeholder="hh:mm" aria-label="Time it happened, 24-hour"
@@ -910,12 +927,12 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
         </div>
       )}
       {timed && choice.ahead && (progressPending() || (holdTouched && !!hold)) && (
-        <div className="ml-[70px] text-emerald-800 dark:text-emerald-300">Planned later than now - put in when it was really done; it shows on that day as worked ahead.</div>
+        <div className="ml-[70px] text-[var(--color-text-muted)]">Planned later than now: put in when it was really done; it shows on that day as worked ahead.</div>
       )}
       {onAddNote && latest && noteMode === "new" && (
         <div className="flex items-start gap-1.5">
           <span className="w-16 shrink-0 font-black uppercase tracking-wider text-[11px] text-[var(--color-text-muted)]">Latest</span>
-          <span className="flex-1 italic text-[var(--color-text-muted)]">&ldquo;{latest.body}&rdquo; - {latest.by ?? "someone"}{latest.at ? `, ${new Date(latest.at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}</span>
+          <span className="flex-1 italic text-[var(--color-text-muted)]">&ldquo;{latest.body}&rdquo; · {latest.by ?? "someone"}{latest.at ? `, ${new Date(latest.at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}</span>
         </div>
       )}
       {onAddNote && (
@@ -926,7 +943,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
           </span>
           <input ref={noteRef} value={note} disabled={ro} onChange={(e) => { setNote(e.target.value); setNeedMsg(null); }}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void commit(); } }}
-            placeholder={progressPending() ? "e.g. bundle half out · or why it's corrected" : "Comment - shows on the shift report (e.g. sent out for calibration)"}
+            placeholder={progressPending() ? "e.g. bundle half out · or why it's corrected" : "Comment: shows on the shift report (e.g. sent out for calibration)"}
             aria-required={needsNote()}
             className={`flex-1 min-w-[180px] h-7 px-2 rounded-md bg-[var(--color-surface)] pointer-coarse:h-9 focus:outline-none focus:border-[var(--color-accent-ring)] ${needMsg && needsNote() ? "border-2 border-rose-500" : needsNote() ? "border-2 border-amber-400 bg-amber-50/60 dark:bg-amber-950/30" : "border border-[var(--color-border-strong)]"}`} />
           {progressPending() && (

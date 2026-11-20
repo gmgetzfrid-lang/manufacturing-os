@@ -8,7 +8,7 @@
 //   Cancel  - planned but not done on this job: kept on the close-out
 //             report as cancelled, with why and where it went.
 
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Ban, Trash2, X } from "lucide-react";
 import { CancelJobForm } from "@/components/projects/CancelledJobs";
 import type { Milestone } from "@/types/schema";
@@ -28,10 +28,23 @@ export function RemoveStepDialog({ m, under, userId, userName, userEmail, onDele
   onClose: () => void;
 }) {
   const [cancelling, setCancelling] = useState(false);
+  // Escape closes, as the X does.
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      // Only the dialog on top closes.
+      const open = document.querySelectorAll('[aria-modal="true"]');
+      if (open.length && open[open.length - 1] !== boxRef.current) return;
+      onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
   const what = under > 0 ? `${m.name} and the ${under} step${under === 1 ? "" : "s"} under it` : m.name;
   const choice = "w-full flex items-start gap-3 rounded-xl border px-3.5 py-3 text-left";
   return (
-    <div className="fixed inset-0 z-[320] bg-slate-900/50 flex items-end sm:items-center justify-center sm:p-4" role="dialog" aria-modal="true" aria-label="Remove a step" onClick={onClose}>
+    <div ref={boxRef} className="fixed inset-0 z-[320] bg-slate-900/50 flex items-end sm:items-center justify-center sm:p-4" role="dialog" aria-modal="true" aria-label="Remove a step" onClick={onClose}>
       <div className="w-full sm:max-w-md bg-[var(--color-surface)] rounded-t-2xl sm:rounded-2xl shadow-2xl p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start gap-2">
           <div className="min-w-0 flex-1">

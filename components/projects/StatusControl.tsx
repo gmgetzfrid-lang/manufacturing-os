@@ -29,10 +29,10 @@ interface Meta { label: string; dot: string; pill: string; Icon: React.Component
 export const STATUS_META: Record<MilestoneStatus, Meta> = {
   planned:     { label: "Planned",     dot: "bg-slate-300 border-slate-400",   pill: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",     Icon: Circle },
   in_progress: { label: "In progress", dot: "bg-[var(--color-text-muted)] border-[var(--color-border-strong)]",     pill: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",        Icon: Loader2 },
-  completed:   { label: "Done",        dot: "bg-emerald-500 border-emerald-600",pill: "bg-emerald-100 text-emerald-800 border-emerald-200",Icon: CircleCheck },
-  on_hold:     { label: "On hold",     dot: "bg-amber-500 border-amber-600",   pill: "bg-amber-100 text-amber-900 border-amber-200",     Icon: PauseCircle, needsReason: true },
-  blocked:     { label: "Blocked",     dot: "bg-rose-500 border-rose-600",     pill: "bg-rose-100 text-rose-800 border-rose-200",        Icon: AlertTriangle, needsReason: true },
-  missed:      { label: "Missed",      dot: "bg-rose-600 border-rose-700",     pill: "bg-rose-100 text-rose-900 border-rose-300",        Icon: XCircle },
+  completed:   { label: "Done",        dot: "bg-emerald-500 border-emerald-600",pill: "bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800",Icon: CircleCheck },
+  on_hold:     { label: "On hold",     dot: "bg-amber-500 border-amber-600",   pill: "bg-amber-100 text-amber-900 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800",     Icon: PauseCircle, needsReason: true },
+  blocked:     { label: "Blocked",     dot: "bg-rose-500 border-rose-600",     pill: "bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800",        Icon: AlertTriangle, needsReason: true },
+  missed:      { label: "Missed",      dot: "bg-rose-600 border-rose-700",     pill: "bg-rose-100 text-rose-900 border-rose-300 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800",        Icon: XCircle },
 };
 
 export function statusLabel(s: MilestoneStatus): string { return STATUS_META[s].label; }
@@ -134,7 +134,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
   };
   const commit = () => {
     if (!reasonFor) return;
-    if (!reason.trim()) { setWhyMsg("Add a few words - it goes on the report."); return; }
+    if (!reason.trim()) { setWhyMsg("Add a few words: it goes on the report."); return; }
     let forShift: ShiftCredit | undefined;
     if (clockCtx && choices.length) {
       const r = resolveWhen(pickOf(choices, whenIdx, otherDay, clockCtx.tz, clockCtx.times), when, clockCtx.tz, clockCtx.times);
@@ -161,7 +161,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
   if (readOnly) {
     return (
       <span
-        title={title ?? `${meta.label} - rolls up from sub-tasks`}
+        title={title ?? `${meta.label}: rolls up from sub-tasks`}
         className={
           variant === "dot"
             ? `inline-flex items-center justify-center rounded-full border ${dotSize} ${meta.dot} opacity-90`
@@ -181,7 +181,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
         ref={btnRef}
         onClick={(e) => { e.stopPropagation(); if (disabled) { onDisabledClick?.(); return; } openMenu(); }}
         aria-disabled={disabled}
-        title={disabled ? (onDisabledClick ? `${meta.label} - view only` : meta.label) : `${meta.label} - click to change`}
+        title={disabled ? (onDisabledClick ? `${meta.label}: view only` : meta.label) : `${meta.label}: tap to change`}
         className={
           variant === "dot"
             ? `relative inline-flex items-center justify-center rounded-full border ${dotSize} ${meta.dot} after:absolute after:-inset-1.5 pointer-coarse:after:-inset-3 after:content-[''] ${disabled ? `opacity-70 ${onDisabledClick ? "cursor-pointer" : "cursor-default"}` : "cursor-pointer hover:scale-110 transition-transform"}`
@@ -231,7 +231,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
                   {STATUS_META[reasonFor].label}
                 </div>
                 <div>
-                  <div className="font-bold text-[var(--color-text)] mb-1">{askFor(reasonFor)} <span className="font-black text-amber-700 dark:text-amber-400">- required</span></div>
+                  <div className="font-bold text-[var(--color-text)] mb-1">{askFor(reasonFor)} <span className="font-normal text-[var(--color-text-muted)]">(required)</span></div>
                   <input
                     autoFocus
                     value={reason}
@@ -261,7 +261,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
                   <button
                     key={s}
                     onClick={() => choose(s)}
-                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-[var(--color-surface-2)] transition-colors ${s === status ? "font-bold text-[var(--color-accent)]" : "font-medium text-[var(--color-text)]"}`}
+                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-[var(--color-surface-2)] transition-colors ${s === status ? "font-bold text-[var(--color-text)] bg-[var(--color-surface-2)]" : "font-medium text-[var(--color-text)]"}`}
                   >
                     <span className={`w-3 h-3 rounded-full border ${m.dot} inline-flex items-center justify-center`}>
                       {s === "completed" && <CircleCheck className="w-2 h-2 text-white" />}

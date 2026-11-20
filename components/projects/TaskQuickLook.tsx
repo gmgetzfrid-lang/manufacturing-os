@@ -80,8 +80,8 @@ export function QuickLookCard({ look, goalAt, noteOf, fmt, onOpen, onClose }: {
         </div>
 
         {look.waitsOn.length > 0 && (
-          <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[12.5px] dark:border-amber-900 dark:bg-amber-950/30">
-            <b className="text-amber-900 dark:text-amber-200">Can&apos;t start until done: </b>
+          <div className="mt-3 border-l-2 border-amber-500 pl-3 py-0.5 text-[12.5px]">
+            <b className="text-amber-800 dark:text-amber-300">Can&apos;t start until done: </b>
             {look.waitsOn.map((s, i) => (
               <span key={s.id}>{i > 0 && " · "}{link(s, "font-semibold text-[var(--color-text)]")} <span className="text-[var(--color-text-muted)]">({s.percent}%, due {fmt.DTs(s.finish)})</span></span>
             ))}
@@ -91,7 +91,7 @@ export function QuickLookCard({ look, goalAt, noteOf, fmt, onOpen, onClose }: {
         {/* Every step on the equipment, in order, with its times. */}
         {look.order.length > 1 && (
           <>
-            <Heading hint="in start order - tap a step to open it">Step order on {eqName ?? "this task"}</Heading>
+            <Heading hint="in start order: tap a step to open it">Step order on {eqName ?? "this task"}</Heading>
             <div className="rounded-lg border border-[var(--color-border)] overflow-hidden">
               <table className="w-full text-[12px]">
                 <thead>
@@ -112,7 +112,7 @@ export function QuickLookCard({ look, goalAt, noteOf, fmt, onOpen, onClose }: {
                         <td className="px-2 py-1 font-mono tabular-nums text-[11px] whitespace-nowrap hidden sm:table-cell">{fmt.DTs(s.finish)}</td>
                         <td className="px-2 py-1">
                           {s.isThis ? <b className="text-[var(--color-text)]">{s.name}</b> : link(s, fin ? "text-[var(--color-text-faint)] line-through" : "font-semibold text-[var(--color-text)]")}
-                          {s.isThis && <span className="ml-1.5 rounded bg-[var(--color-surface-2)] px-1 py-px text-[11px] font-black uppercase text-[var(--color-text)]">This step</span>}
+                          {s.isThis && <span className="ml-1.5 rounded border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 py-px text-[11px] font-black uppercase text-[var(--color-text)]">This step</span>}
                           {s.isNext && <span className="ml-1.5 rounded bg-slate-800 px-1 py-px text-[11px] font-black uppercase text-white dark:bg-slate-200 dark:text-slate-900">Next</span>}
                         </td>
                         <td className="px-2 py-1 hidden sm:table-cell text-[11px] text-[var(--color-text-muted)]">{s.who}</td>

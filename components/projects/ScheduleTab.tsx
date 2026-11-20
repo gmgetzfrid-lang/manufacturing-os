@@ -21,7 +21,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Flag, Plus, Loader2, AlertTriangle, Check, X, Calendar, ChevronDown, Upload, ArrowRight, Eye, EyeOff, Layers, Clock, Trash2, RotateCcw } from "lucide-react";
+import { Flag, Plus, Loader2, AlertTriangle, Check, Calendar, ChevronDown, Upload, ArrowRight, Eye, EyeOff, Layers, Clock, Trash2, RotateCcw } from "lucide-react";
 import {
   listMilestones, createMilestone, setMilestoneStatus, setMilestoneProgress, restoreMilestoneStates, deleteMilestone, clearProjectSchedule, resetProjectProgress,
   applyMilestoneMoves, computeScheduleMetrics, setBaseline, addMilestoneNote, creditProgressTo,
@@ -44,7 +44,9 @@ import { filterMilestones, isFilterActive, EMPTY_FILTER, type ScheduleFilter } f
 import { buildProgressIndex, type ProgressInfo } from "@/lib/scheduleProgress";
 import RebaseScheduleModal from "@/components/projects/RebaseScheduleModal";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
-import { DEFAULT_SCHEDULE_TZ, fmtInTz, fromDateTimeInput, tzLabel, dayKey } from "@/lib/scheduleTz";
+import { DEFAULT_SCHEDULE_TZ, fmtInTz, fromDateTimeInput, toDateTimeInput, tzLabel, dayKey } from "@/lib/scheduleTz";
+import MoreMenu, { type MoreItem } from "@/components/ui/MoreMenu";
+import { useDraft } from "@/hooks/useDraft";
 import { inPhase, phaseOnDay, setNewWorkPhase, type ProjectPhase } from "@/lib/projectPhases";
 import { EquipmentScopeProvider } from "@/components/projects/EquipmentScope";
 import { PhaseProvider } from "@/components/projects/PhaseContext";
@@ -326,7 +328,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   };
 
   const onDelete = async (id: string) => {
-    if (!(await appConfirm({ message: "Delete this milestone? This action is audited.", tone: "danger" }))) return;
+    if (!(await appConfirm({ message: "Delete this task? This action is audited.", tone: "danger" }))) return;
     setBusy(true);
     try { await deleteMilestone(id, userId); await refresh(); }
     catch (e) { setError((e as Error).message); }
@@ -363,6 +365,15 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       if (!res.ok) throw new Error(res.error ?? "Couldn't set the baseline.");
       await refresh();
     },
+  };
+
+  // A task just added: scroll it into view and mark it for a moment.
+  const [justAdded, setJustAdded] = useState<string | null>(null);
+  const showNewRow = (id: string | null) => {
+    if (!id) return;
+    setJustAdded(id);
+    requestAnimationFrame(() => document.getElementById(`ms-row-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }));
+    setTimeout(() => setJustAdded((x) => (x === id ? null : x)), 4000);
   };
 
   return (
@@ -402,95 +413,58 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
         )}
       </div>}
 
-      {/* Plan: build the schedule - import it, set it up, add to it. */}
+      {/* Plan: build the schedule. One main action (Add task); Import and
+          Setup beside it; the rest folded under More. */}
       {mode === "plan" && <div className="flex items-center justify-between gap-3 flex-wrap">
-        <span className="text-[12px] text-[var(--color-text-muted)]">The schedule as a list: phases, tasks, steps.</span>
+        <span className="text-[12px] text-[var(--color-text-muted)]">{milestones.length > 0 ? `${milestones.length} task${milestones.length === 1 ? "" : "s"} on the schedule: phases, tasks, steps.` : "The schedule as a list: phases, tasks, steps."}</span>
         <div className="inline-flex flex-wrap items-center gap-2">
-          <button
-            onClick={() => setShowGhost((v) => !v)}
-            title={showGhost
-              ? "Hide the read-only rows imported from your scheduling tool (they still count in the metrics)"
-              : "Show the read-only rows imported from your scheduling tool"}
-            className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)] transition-colors"
-          >
-            {showGhost ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />} Imported rows
-          </button>
           <ScheduleSetupButton {...setupProps} />
           {canEdit && (
-            <>
-              <button
-                onClick={() => setImportOpen(true)}
-                className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text)] hover:text-[var(--color-text)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] border border-[var(--color-border)] px-2.5 py-1.5 rounded-lg shadow-sm transition-colors"
-              >
-                <Upload className="w-3.5 h-3.5" /> Import schedule
-              </button>
-              {milestones.length > 0 && (
-                <button
-                  onClick={() => void onResetProgress()}
-                  disabled={busy || resetting}
-                  title="Start the real run clean: every task back to 0% / planned, actual start and completion stamps cleared. Dates and notes stay."
-                  className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 dark:text-amber-300 hover:text-amber-900 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 border border-amber-200 dark:border-amber-800 px-2.5 py-1.5 rounded-lg shadow-sm transition-colors disabled:opacity-50"
-                >
-                  {resetting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />} Reset progress
-                </button>
-              )}
-              {milestones.length > 0 && (
-                <button
-                  onClick={() => void onClearSchedule()}
-                  disabled={busy || clearing}
-                  title="Delete every task on this schedule so you can import the file again from scratch"
-                  className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-700 dark:text-rose-300 hover:text-rose-800 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 border border-rose-200 dark:border-rose-800 px-2.5 py-1.5 rounded-lg shadow-sm transition-colors disabled:opacity-50"
-                >
-                  {clearing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} Clear schedule
-                </button>
-              )}
-              {milestones.length > 0 && (
-                <button
-                  onClick={() => setRebaseOpen(true)}
-                  title="Shift every task by a date delta - reuse an old schedule with a new start date"
-                  className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] bg-[var(--color-surface-2)] border border-[var(--color-accent-ring)]/40 px-2.5 py-1.5 rounded-lg shadow-sm transition-colors"
-                >
-                  <Calendar className="w-3.5 h-3.5" /> Rebase
-                </button>
-              )}
-              {milestones.length > 0 && (
-                <button
-                  onClick={onSetBaseline}
-                  disabled={baselineBusy}
-                  title={hasBaseline
-                    ? "Re-capture the approved plan as the new baseline to measure drift against"
-                    : "Snapshot the current plan as the baseline - every view then shows how far you've drifted from it"}
-                  className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-300 hover:text-emerald-900 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 border border-emerald-200 dark:border-emerald-800 px-2.5 py-1.5 rounded-lg shadow-sm disabled:opacity-40 transition-colors"
-                >
-                  <Flag className="w-3.5 h-3.5" /> {hasBaseline ? "Re-baseline" : "Set baseline"}
-                </button>
-              )}
-              <button
-                onClick={() => setAdding((v) => !v)}
-                className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-2.5 py-1.5 rounded-lg shadow-sm transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5" /> Add task
-              </button>
-            </>
+            <button
+              onClick={() => setImportOpen(true)}
+              className="inline-flex items-center gap-1 text-[12px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] border border-[var(--color-border)] px-2.5 py-1.5 rounded-lg transition-colors"
+            >
+              <Upload className="w-3.5 h-3.5" /> Import schedule
+            </button>
+          )}
+          {(() => {
+            const more: MoreItem[] = [
+              { icon: showGhost ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />, label: showGhost ? "Hide imported rows" : "Show imported rows", onClick: () => setShowGhost((v) => !v) },
+            ];
+            if (canEdit && milestones.length > 0 && !busy) {
+              if (!baselineBusy) more.push({ icon: <Flag className="w-4 h-4" />, label: hasBaseline ? "Re-baseline" : "Set baseline", onClick: onSetBaseline, line: true });
+              more.push({ icon: <Calendar className="w-4 h-4" />, label: "Rebase dates", onClick: () => setRebaseOpen(true) });
+              if (!resetting) more.push({ icon: <RotateCcw className="w-4 h-4" />, label: "Reset progress", onClick: onResetProgress, line: true });
+              if (!clearing) more.push({ icon: <Trash2 className="w-4 h-4" />, label: "Clear schedule", onClick: onClearSchedule, tone: "bad" });
+            }
+            return <MoreMenu items={more} />;
+          })()}
+          {(resetting || clearing || baselineBusy) && <Loader2 aria-label="Working" className="w-4 h-4 animate-spin text-[var(--color-text-muted)]" />}
+          {canEdit && !adding && (
+            <button
+              onClick={() => setAdding(true)}
+              className="inline-flex items-center gap-1 text-[12px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-2.5 py-1.5 rounded-lg transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" /> Add task
+            </button>
           )}
         </div>
       </div>}
 
       {/* Right after Clear schedule or Reset progress: put it back. */}
       {undoable && canEdit && (
-        <div role="status" className="flex items-center gap-2 flex-wrap rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2.5 text-[12px] text-amber-900 dark:text-amber-200">
-          <RotateCcw className="w-4 h-4 shrink-0" />
+        <div role="status" className="flex items-center gap-2 flex-wrap border-l-2 border-amber-500 pl-3 py-1 text-[12px] text-amber-800 dark:text-amber-300">
           <span className="flex-1 min-w-48">
             {undoable.kind === "clear"
-              ? `Schedule cleared - ${undoable.count} task${undoable.count === 1 ? "" : "s"} deleted.`
+              ? `Schedule cleared: ${undoable.count} task${undoable.count === 1 ? "" : "s"} deleted.`
               : `Progress reset on ${undoable.count} task${undoable.count === 1 ? "" : "s"}.`}
             {" "}Undo puts {undoable.kind === "clear" ? "every task back with its notes" : "each task's status, %, times and baseline back as they were"}.
           </span>
           <button onClick={() => void onUndo()} disabled={undoing}
-            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12px] font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[12px] font-bold hover:bg-[var(--color-surface-2)] disabled:opacity-50">
             {undoing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />} Undo
           </button>
-          <button onClick={() => setUndoable(null)} disabled={undoing} className="px-2 py-1.5 text-[12px] font-bold text-amber-800 dark:text-amber-300 hover:underline">Dismiss</button>
+          <button onClick={() => setUndoable(null)} disabled={undoing} className="px-2 py-1.5 text-[12px] font-bold text-[var(--color-text-muted)] hover:underline">Dismiss</button>
         </div>
       )}
 
@@ -631,7 +605,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
               <span className="text-[11px] text-[var(--color-text-muted)] font-mono">{visible.length}</span>
             </div>
             <HelpTooltip>
-              <b>Imported rows</b> are read-only milestones from your scheduling tool (P6 / MS Project). They still count toward the earned-value rollup. Toggle &ldquo;Imported rows&rdquo; up top to hide them from this list while keeping them in metrics.
+              <b>Imported rows</b> are read-only milestones from your scheduling tool (P6 / MS Project). They still count toward the earned-value rollup. More › Hide imported rows takes them off this list; they still count.
             </HelpTooltip>
           </div>
 
@@ -645,7 +619,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
               userRole={userRole}
               milestones={milestones}
               onCancel={() => setAdding(false)}
-              onCreated={() => { setAdding(false); void refresh(); }}
+              onCreated={(id) => { setAdding(false); void refresh().then(() => showNewRow(id)); }}
             />
           )}
 
@@ -655,7 +629,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
             </div>
           ) : visible.length === 0 ? (
             <div className="px-4 py-10 text-center text-sm text-[var(--color-text-muted)]">
-              {planFilterOn ? "No tasks match the current search/filter." : <>No milestones yet.{canEdit && " Click Add milestone above to create the first one."}</>}
+              {planFilterOn ? "No tasks match the current search/filter." : <>No tasks here yet.{canEdit && " Add task puts the first one in."}</>}
             </div>
           ) : (
             <div className="divide-y divide-[var(--color-border)]">
@@ -669,6 +643,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
                   m={m}
                   depth={depth}
                   info={m.id ? planProgress.get(m.id) : undefined}
+                  fresh={!!m.id && m.id === justAdded}
                   canEdit={canEdit}
                   busy={busy}
                   onSetStatus={onSetStatus}
@@ -756,8 +731,8 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
 }
 
 
-function MilestoneRow({ m, depth = 0, info, canEdit, busy, onSetStatus, onDelete }: {
-  m: Milestone; depth?: number; info?: ProgressInfo; canEdit: boolean; busy: boolean;
+function MilestoneRow({ m, depth = 0, info, fresh, canEdit, busy, onSetStatus, onDelete }: {
+  m: Milestone; depth?: number; info?: ProgressInfo; fresh?: boolean; canEdit: boolean; busy: boolean;
   onSetStatus: (id: string, s: MilestoneStatus) => void;
   onDelete: (id: string) => void;
 }) {
@@ -792,7 +767,7 @@ function MilestoneRow({ m, depth = 0, info, canEdit, busy, onSetStatus, onDelete
   const ghost = m.source !== "manual";
 
   return (
-    <div className={`py-3 pr-4 flex items-start gap-3 border-l-4 ${tone} ${ghost ? "opacity-90" : ""}`} style={{ paddingLeft: 16 + depth * 18 }}>
+    <div id={m.id ? `ms-row-${m.id}` : undefined} className={`py-3 pr-4 flex items-start gap-3 border-l-4 ${tone} ${ghost ? "opacity-90" : ""} ${fresh ? "ring-2 ring-inset ring-[var(--color-border-strong)]" : ""}`} style={{ paddingLeft: 16 + depth * 18 }}>
       {m.isSummary
         ? <Layers className="w-4 h-4 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
         : <Flag className="w-4 h-4 mt-0.5 text-[var(--color-text-faint)] shrink-0" />}
@@ -847,7 +822,7 @@ function MilestoneRow({ m, depth = 0, info, canEdit, busy, onSetStatus, onDelete
                 <button
                   onClick={() => onSetStatus(m.id!, "completed")}
                   disabled={busy}
-                  className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-300 hover:text-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 border border-emerald-200 dark:border-emerald-800 px-1.5 py-1 rounded disabled:opacity-40 transition-colors"
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-1 rounded disabled:opacity-40 transition-colors"
                   title="Mark complete"
                 >
                   <Check className="w-3 h-3" /> Done
@@ -859,10 +834,11 @@ function MilestoneRow({ m, depth = 0, info, canEdit, busy, onSetStatus, onDelete
           <button
             onClick={() => onDelete(m.id!)}
             disabled={busy}
-            className="p-1 rounded text-[var(--color-text-faint)] hover:text-red-600 hover:bg-red-50 transition-colors"
-            title="Delete milestone"
+            className="p-1 rounded text-[var(--color-text-faint)] hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
+            title="Delete task"
+            aria-label="Delete task"
           >
-            <X className="w-3.5 h-3.5" />
+            <Trash2 className="w-3.5 h-3.5" />
           </button>
         </div>
       )}
@@ -919,9 +895,9 @@ function StatusMenu({ current, onPick, disabled }: { current: MilestoneStatus; o
               <button
                 key={s}
                 onClick={() => { setOpen(false); onPick(s); }}
-                className={`w-full text-left text-xs px-3 py-1.5 hover:bg-[var(--color-surface-2)] capitalize transition-colors ${s === current ? "font-bold text-[var(--color-accent)]" : "text-[var(--color-text)]"}`}
+                className={`w-full flex items-center gap-1.5 text-left text-xs px-3 py-1.5 hover:bg-[var(--color-surface-2)] capitalize transition-colors text-[var(--color-text)] ${s === current ? "font-bold bg-[var(--color-surface-2)]" : ""}`}
               >
-                {s.replace("_", " ")}
+                {s.replace("_", " ")}{s === current && <Check className="w-3 h-3 ml-auto" />}
               </button>
             ))}
           </div>
@@ -941,17 +917,20 @@ function AddMilestoneForm({
   userName?: string; userEmail?: string; userRole?: string;
   /** Current schedule, for the "under" (equipment / group) picker. */
   milestones?: Milestone[];
-  onCancel: () => void; onCreated: () => void;
+  onCancel: () => void; onCreated: (id: string | null) => void;
 }) {
   const tz = useScheduleTz();
   const [name, setName] = useState("");
-  const [startAt, setStartAt] = useState("");   // plant-time "YYYY-MM-DDTHH:MM"
+  // Starts at the next whole hour, plant time; change it if the step is later.
+  const [startAt, setStartAt] = useState(() => toDateTimeInput(Math.ceil(Date.now() / 3600_000) * 3600_000, tz));   // plant-time "YYYY-MM-DDTHH:MM"
   const [finishAt, setFinishAt] = useState("");
   const [hours, setHours] = useState("");
   const [parentId, setParentId] = useState("");
   const [weight, setWeight] = useState("1");
   const [linkedRev, setLinkedRev] = useState("");
   const [description, setDescription] = useState("");
+  // Notes typed here survive a reload until the task is added.
+  const draft = useDraft<string>(`milestone-add:${projectId}`, description, setDescription, (v) => !v.trim());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -986,7 +965,7 @@ function AddMilestoneForm({
     if (h != null && (!Number.isFinite(h) || h <= 0)) { setError("Hours must be a positive number."); return; }
     setBusy(true); setError(null);
     try {
-      await createMilestone({
+      const made = await createMilestone({
         orgId, projectId,
         name, description,
         weight: Number(weight) || 1,
@@ -1000,7 +979,8 @@ function AddMilestoneForm({
         createdByEmail: userEmail,
         createdByRole: userRole,
       });
-      onCreated();
+      draft.clear();
+      onCreated(made.id ?? null);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   };
@@ -1052,7 +1032,7 @@ function AddMilestoneForm({
         <div className="text-[11px] text-[var(--color-text-muted)]">Finish will be set to <b>{fmtInTz(finishFromHours, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</b> (start + {hours} h).</div>
       )}
       {error && (
-        <div className="text-[11px] text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded px-2 py-1">{error}</div>
+        <div role="alert" className="text-[12px] text-red-700 dark:text-red-300">{error}</div>
       )}
       <div className="flex items-center justify-end gap-2">
         <button type="button" onClick={onCancel} className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 transition-colors">Cancel</button>

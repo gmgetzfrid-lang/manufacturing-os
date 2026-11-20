@@ -91,6 +91,8 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
     // eslint-disable-next-line react-hooks/exhaustive-deps -- ids follow idsKey
     [pre, preloaded, ownLog, idsKey]);
   const [tick, setTick] = useState(0);
+  // A read that failed says so, instead of looking like "no comments".
+  const [readErr, setReadErr] = useState(false);
   useEffect(() => {
     const on = () => setTick((t) => t + 1);
     window.addEventListener("milestone-notes:changed", on);
@@ -101,8 +103,8 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
   useEffect(() => {
     let alive = true;
     if (!idsKey || pre) return;
-    notesFor(idsKey.split(",")).then((n) => { if (alive) setNotes(n); }).catch(() => { /* comments are extra */ });
-    if (task.projectId) loadProgressLog(task.projectId).then((l) => { if (alive) setLog((l ?? []).filter((r) => idsKey.includes(r.milestone_id))); }).catch(() => { /* history is extra */ });
+    notesFor(idsKey.split(",")).then((n) => { if (alive) { setNotes(n); setReadErr(false); } }).catch(() => { if (alive) setReadErr(true); });
+    if (task.projectId) loadProgressLog(task.projectId).then((l) => { if (alive) setLog((l ?? []).filter((r) => idsKey.includes(r.milestone_id))); }).catch(() => { if (alive) setReadErr(true); });
     return () => { alive = false; };
   }, [idsKey, task.projectId, tick, sig, pre]);
 
@@ -204,14 +206,14 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
             </span>
             {held && (
               <span className="block text-[11px] font-semibold text-amber-800 dark:text-amber-300">
-                {WORD[m.status]}{Number.isFinite(info.since) ? ` since ${fmt(info.since)}` : ""}{m.statusReason ? ` - “${m.statusReason}”` : " - no reason given"}
+                {WORD[m.status]}{Number.isFinite(info.since) ? ` since ${fmt(info.since)}` : ""}{m.statusReason ? `: “${m.statusReason}”` : ", no reason given"}
               </span>
             )}
-            {info.comment && <span className="block text-[11px] italic text-[var(--color-text-muted)] break-words">“{info.comment.body}” - {fmt(ms(info.comment.happenedAt ?? info.comment.createdAt))}</span>}
+            {info.comment && <span className="block text-[11px] italic text-[var(--color-text-muted)] break-words">“{info.comment.body}” · {fmt(ms(info.comment.happenedAt ?? info.comment.createdAt))}</span>}
             {info.why && h < 0 && <span className="block text-[11px] italic font-medium text-amber-800 dark:text-amber-300 break-words">Why behind: {info.why.body}</span>}</>}
           </span>
           <span className="shrink-0 flex flex-col items-end gap-0.5">
-            <span className={`rounded-md border px-1 text-[11px] font-bold tabular-nums ${pct >= 100 ? "text-emerald-700 bg-emerald-50 border-emerald-200" : pct > 0 ? "text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]" : "text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]"}`}>{pct}%</span>
+            <span className={`rounded-md border px-1 text-[11px] font-bold tabular-nums ${pct >= 100 ? "text-emerald-700 bg-emerald-50 border-emerald-200 dark:text-emerald-300 dark:bg-emerald-950/40 dark:border-emerald-800" : pct > 0 ? "text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]" : "text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]"}`}>{pct}%</span>
             {Math.abs(h) >= 0.1 && m.status !== "completed" && <span className={`font-mono text-[11px] font-bold ${h < 0 ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>{h > 0 ? "+" : "−"}{Math.abs(h)} h</span>}
           </span>
           {/* A step opens to its card: start, %, finish, history. */}
@@ -257,11 +259,12 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
           {showOthers && <ul className="border-t border-[var(--color-border)]">{here.rest.map((m) => stepRow(m, true))}</ul>}
         </div>
       )}
+      {readErr && <div role="alert" className="px-3 py-1.5 border-t border-[var(--color-border)] text-[11px] text-rose-700 dark:text-rose-400">Couldn&apos;t read the comments and history for these steps. Reopen to try again.</div>}
       <div className="px-3 py-1.5 border-t border-[var(--color-border)] flex items-center justify-between gap-2 text-[11px] text-[var(--color-text-faint)]">
         {onDiscovery ? (
-          <button type="button" onClick={() => onDiscovery(task)} className="font-bold text-[var(--color-accent)] dark:text-[var(--color-text)] hover:underline">+ Discovery or added scope</button>
+          <button type="button" onClick={() => onDiscovery(task)} className="font-bold text-[var(--color-accent)] hover:underline">+ Discovery or added scope</button>
         ) : <span>Tap a step to update it.</span>}
-        {onOpenDetail && <button type="button" onClick={() => onOpenDetail(task)} className="font-semibold text-[var(--color-accent)] hover:underline">Schedule details (move, depends on) ›</button>}
+        {onOpenDetail && <button type="button" onClick={() => onOpenDetail(task)} className="font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline">Schedule details (move, depends on) ›</button>}
       </div>
     </div>
   );

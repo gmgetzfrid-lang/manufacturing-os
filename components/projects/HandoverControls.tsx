@@ -8,6 +8,7 @@
 import React, { useState } from "react";
 import { Loader2, Lock, Unlock } from "lucide-react";
 import type { HandoverDecision } from "@/lib/shiftHandover";
+import { appConfirm } from "@/components/providers/DialogProvider";
 
 export function TryControl({ kind, decision, suggestions, crews, disabled, onChange, inherit }: {
   kind: "day" | "night";
@@ -34,7 +35,7 @@ export function TryControl({ kind, decision, suggestions, crews, disabled, onCha
         onClick={() => onChange({ ...decision, tryIt: !on, crew: !on ? decision?.crew ?? suggestions[0]?.crew ?? null : decision?.crew })}
         className={`shrink-0 whitespace-nowrap inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-bold transition-colors disabled:opacity-60 ${on
           ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]"
-          : "border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-accent)] dark:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] dark:hover:bg-[var(--color-surface-2)]"}`}>
+          : "border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
         {on ? "✓ " : "+ "}{kind === "night" ? "Night" : "Day"} could try
       </button>
       {on && (
@@ -69,12 +70,12 @@ export function ShipBar({ shippedAt, shippedBy, tries, canShip, busy, err, onShi
 }) {
   if (shippedAt) {
     return (
-      <div role="status" className="mx-3 mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 px-3 py-2 text-[12px] text-emerald-900 dark:text-emerald-100 print:hidden">
-        <Lock className="w-4 h-4 shrink-0" />
+      <div role="status" className="mx-3 mt-2 flex flex-wrap items-center gap-2 border-l-2 border-emerald-500 pl-3 py-1 text-[12px] text-[var(--color-text)] print:hidden">
+        <Lock className="w-4 h-4 shrink-0 text-emerald-700 dark:text-emerald-400" />
         <span className="flex-1 min-w-[200px]"><b>Report locked</b> {when(shippedAt)}{shippedBy ? ` by ${shippedBy}` : ""}{tries ? ` · ${tries} step${tries === 1 ? "" : "s"} asked to try` : ""}. It can&apos;t be changed.</span>
         {canShip && (
-          <button onClick={() => { if (window.confirm(`Unlock the ${label} report? It can be changed again until it's locked.`)) onUnship(); }} disabled={busy}
-            className="inline-flex items-center gap-1 rounded-md border border-emerald-400 dark:border-emerald-700 px-2 py-1 text-[11px] font-bold hover:bg-emerald-100 dark:hover:bg-emerald-900/40 disabled:opacity-50">
+          <button onClick={() => { void appConfirm({ message: `Unlock the ${label} report? It can be changed again until it's locked.`, confirmLabel: "Unlock" }).then((ok) => { if (ok) onUnship(); }); }} disabled={busy}
+            className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border-strong)] px-2 py-1 text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Unlock className="w-3.5 h-3.5" />} Unlock to edit
           </button>
         )}

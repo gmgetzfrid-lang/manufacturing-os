@@ -42,7 +42,7 @@ export function useSortRows(onReorder?: (ids: string[]) => void) {
   const grip = (moving: string[], label: string) => (onReorder ? {
     role: "button" as const,
     tabIndex: 0,
-    "aria-label": `Move ${label} - drag, or use the arrow keys`,
+    "aria-label": `Move ${label}: drag, or use the arrow keys`,
     title: "Drag to put it in a different place (or ↑ ↓)",
     onPointerDown: (e: React.PointerEvent<HTMLElement>) => {
       if (e.button !== 0) return;
@@ -75,7 +75,7 @@ export function useSortRows(onReorder?: (ids: string[]) => void) {
       commit(moving, before + (e.key === "ArrowUp" ? -1 : 1));
     },
   } : null);
-  const indicator = drag ? <div aria-hidden className="pointer-events-none absolute left-0 right-0 z-10 h-0.5 rounded bg-[var(--color-surface-2)]" style={{ top: drag.line - 1 }} /> : null;
+  const indicator = drag ? <div aria-hidden className="pointer-events-none absolute left-0 right-0 z-10 h-0.5 rounded bg-[var(--color-text)]" style={{ top: drag.line - 1 }} /> : null;
   return { box: setBox, grip, indicator, moving: (id: string) => !!drag?.moving.includes(id) };
 }
 

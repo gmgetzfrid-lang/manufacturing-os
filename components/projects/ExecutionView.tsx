@@ -73,6 +73,7 @@ import { appConfirm } from "@/components/providers/DialogProvider";
 import StatusControl from "@/components/projects/StatusControl";
 import ProgressControl, { ShiftClockContext } from "@/components/projects/ProgressControl";
 import ExecutionGuide from "@/components/projects/ExecutionGuide";
+import MoreMenu from "@/components/ui/MoreMenu";
 import ReportsView from "@/components/projects/ReportsView";
 import { RemoveStepDialog, REMOVE_STEP_EVENT } from "@/components/projects/RemoveStep";
 import type { ReportLink } from "@/lib/reportLinks";
@@ -384,9 +385,6 @@ export default function ExecutionView({
   // report their own (status-reconciled) percent; summaries roll their leaf
   // descendants up, duration-weighted (see lib/scheduleProgress.ts).
   const progressIndex = useMemo(() => buildProgressIndex(items, tz), [items, tz]);
-  // Something on this schedule is theirs (a task they made or finished):
-  // not new here (the guide's "New here?" stays away).
-  const worked = useMemo(() => !!userId && milestones.some((m) => m.createdBy === userId || m.completedBy === userId), [milestones, userId]);
   // The Completion card's counts (Work's summary at the top).
   const metrics = useMemo(() => computeScheduleMetrics(items), [items]);
 
@@ -481,7 +479,7 @@ export default function ExecutionView({
 
   // Shown when a non-member taps a disabled status dot.
   const notifyViewOnly = useCallback(() => {
-    notify("You're not a member of this project - ask the project owner to add you to update status or reschedule.", "warning");
+    notify("You're not a member of this project. Ask the project owner to add you to update status or reschedule.", "warning");
   }, [notify]);
 
   // Build the forest. Roots = rows whose parent is missing/absent.
@@ -645,9 +643,9 @@ export default function ExecutionView({
     const res = await creditProgressTo(id, w.at);
     if (res === "ok" || res === "late") return;
     notify(w.ahead && res === "range" ? `Saved. Its history line shows the time you put it in until the database update (20261111_progress_ahead.sql) is run.`
-      : res === "missing" ? `Saved, but logged at the time you typed it in - putting it at ${w.label} needs the database update (20261107_progress_times.sql) run first.`
-      : res === "changed" ? `Saved, but logged at the time you typed it in - the step has a later entry than ${w.label}. Fix that entry's time in the step's History first.`
-        : `Saved, but logged at the time you typed it in - it couldn't be put at ${w.label}.`, "warning");
+      : res === "missing" ? `Saved, but logged at the time you typed it in: putting it at ${w.label} needs the database update (20261107_progress_times.sql) run first.`
+      : res === "changed" ? `Saved, but logged at the time you typed it in: the step has a later entry than ${w.label}. Fix that entry's time in the step's History first.`
+        : `Saved, but logged at the time you typed it in: it couldn't be put at ${w.label}.`, "warning");
   }, [notify]);
   const setStatus = useCallback(async (id: string, next: MilestoneStatus, reason?: string, percent?: number, forShift?: ShiftCredit): Promise<boolean> => {
     if (!canEdit || !onSetStatus) return false;
@@ -856,10 +854,13 @@ export default function ExecutionView({
       if (after?.id) await addMilestoneNote({ orgId, milestoneId: after.id, kind: "note", statusAt: after.status, body: addedNote(draft.kind ?? "discovery", draft.what), createdBy: userId, createdByName: userName, happenedAt: new Date(draft.foundAt).toISOString() }).catch(() => undefined);
       onRefresh();
       announce(`${draft.newTask ? `New work order (${ADDED[draft.kind ?? "discovery"].lower})` : ADDED[draft.kind ?? "discovery"].word} ${draft.newTask ? "" : "on "}${truncate(taskName, 24)}: ${impactLine(plan.impact, (h) => `${h} h`, projectWord)}`, async () => {
-        for (const id of made) await deleteMilestone(id, userId).catch(() => undefined);
-        if (newTaskId) await deleteMilestone(newTaskId, userId).catch(() => undefined);
-        for (const l of linksBefore) await updateMilestone({ id: l.id, ...who, patch: { dependsOn: l.dependsOn } }).catch(() => undefined);
+        // Every part is tried; any that didn't go back is said (the toast's "Couldn't undo").
+        let left = 0;
+        for (const id of made) await deleteMilestone(id, userId).catch(() => { left++; });
+        if (newTaskId) await deleteMilestone(newTaskId, userId).catch(() => { left++; });
+        for (const l of linksBefore) await updateMilestone({ id: l.id, ...who, patch: { dependsOn: l.dependsOn } }).catch(() => { left++; });
         onRefresh();
+        if (left) throw new Error(`${left} part${left === 1 ? "" : "s"} of it didn't come off. Check the work order`);
       }, plan.impact.critical ? "default" : "success");
       return true;
     } catch (e) {
@@ -888,18 +889,24 @@ export default function ExecutionView({
     }
     const label = (t: number) => { const w = shiftAt(t, tz, shiftTimes); return `${fmtInTz(w.start, tz, { weekday: "short" })} ${w.kind} ${fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true })}`; };
     const made: string[] = [];
+    let notesFailed = 0;
     for (const n of planNote(c, reason, label)) {
       try {
         const saved = await addMilestoneNote({ orgId, milestoneId: n.id, kind: "reschedule", statusAt: byId.get(n.id)?.status ?? null, body: n.body, createdBy: userId, createdByName: userName });
         if (saved.id) made.push(saved.id);
-      } catch { /* the move is saved; the reason is best-effort */ }
+      } catch { notesFailed++; }
     }
+    // The move is saved; say so when its reason didn't go on with it.
+    if (notesFailed) notify(`Moved, but the reason couldn't be saved on ${notesFailed} step${notesFailed === 1 ? "" : "s"}. Add it as a comment.`, "warning");
     announce([c.in ? `“${truncate(c.in.name)}” in` : null, c.out ? `“${truncate(c.out.name)}” out` : null].filter(Boolean).join(", ") + ` · ${label(c.in?.to[0] ?? c.out!.to[0]).replace(/ \d\d:\d\d$/, "")}`,
       async () => {
         await onMoveMany(before);
-        if (inBefore?.id && c.inPatch) await updateMilestone({ id: inBefore.id, ...who, patch: { ...(c.inPatch.shift ? { shift: inBefore.shift ?? null } : {}), ...(c.inPatch.responsibleParty ? { responsibleParty: inBefore.responsibleParty ?? null } : {}) } }).catch(() => undefined);
-        for (const id of made) await deleteMilestoneNote(id).catch(() => undefined);
+        let left = 0;
+        if (inBefore?.id && c.inPatch) await updateMilestone({ id: inBefore.id, ...who, patch: { ...(c.inPatch.shift ? { shift: inBefore.shift ?? null } : {}), ...(c.inPatch.responsibleParty ? { responsibleParty: inBefore.responsibleParty ?? null } : {}) } }).catch(() => { left++; });
+        for (const id of made) await deleteMilestoneNote(id).catch(() => { left++; });
         onRefresh();
+        // The dates went back; say so when the crew or a reason note didn't.
+        if (left) throw new Error(`the dates went back, but ${left} crew change${left === 1 ? "" : "s"} or reason note${left === 1 ? "" : "s"} didn't`);
       },
       c.impact.critical ? "default" : "success");
     if (c.inPatch) onRefresh();
@@ -923,7 +930,7 @@ export default function ExecutionView({
     const ok = await appConfirm({
       title: `Delete ${n} task${n === 1 ? "" : "s"}?`,
       message: withKids
-        ? "Some of these have steps under them - those are deleted too, with their comments. Undo right after brings everything back."
+        ? "Some of these have steps under them: those are deleted too, with their comments. Undo right after brings everything back."
         : "Their comments go with them. Undo right after brings them back.",
       tone: "danger", confirmLabel: "Delete",
     });
@@ -932,7 +939,7 @@ export default function ExecutionView({
       const removed = await deleteMilestones({ orgId, projectId, ids, withChildren: true, actorUserId: userId, actorUserEmail: userEmail });
       setSelectedIds(new Set());
       onRefresh();
-      if (removed.notDeleted) notify(`${removed.notDeleted} task${removed.notDeleted === 1 ? " wasn't" : "s weren't"} deleted - you may not have permission for ${removed.notDeleted === 1 ? "it" : "them"}.`, "warning");
+      if (removed.notDeleted) notify(`${removed.notDeleted} task${removed.notDeleted === 1 ? " wasn't" : "s weren't"} deleted. You may not have permission for ${removed.notDeleted === 1 ? "it" : "them"}.`, "warning");
       announce(`Deleted ${removed.rows.length} task${removed.rows.length === 1 ? "" : "s"}`, async () => {
         try { await restoreDeletedMilestones(removed); } catch (e) { notify(`Undo failed: ${(e as Error).message}`, "warning"); }
         onRefresh();
@@ -948,7 +955,7 @@ export default function ExecutionView({
       const removed = await deleteMilestones({ orgId, projectId, ids: [id], withChildren: true, actorUserId: userId, actorUserEmail: userEmail });
       if (detailId === id) setDetailId(null);
       onRefresh();
-      if (removed.notDeleted || removed.rows.length === 0) { notify("It wasn't deleted - you may not have permission for it.", "warning"); return; }
+      if (removed.notDeleted || removed.rows.length === 0) { notify("It wasn't deleted. You may not have permission for it.", "warning"); return; }
       announce(`Deleted “${truncate(name)}”`, async () => {
         try { await restoreDeletedMilestones(removed); } catch (e) { notify(`Undo failed: ${(e as Error).message}`, "warning"); }
         onRefresh();
@@ -1265,7 +1272,7 @@ export default function ExecutionView({
       <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-12 text-center">
         <CalendarDays className="w-10 h-10 text-slate-300 mx-auto mb-3" />
         <div className="text-sm font-semibold text-[var(--color-text)]">No dated tasks yet</div>
-        <div className="text-xs text-[var(--color-text-muted)] mt-1">Import a schedule or add a milestone to populate the execution board.</div>
+        <div className="text-xs text-[var(--color-text-muted)] mt-1">Import a schedule, or add a task with a date, on the Plan tab.</div>
       </div>
     );
   }
@@ -1280,8 +1287,8 @@ export default function ExecutionView({
           signal state), but edits are disabled — say why so it doesn't feel
           broken. */}
       {!canEdit && (
-        <div className="flex items-center gap-2 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-[12px] text-amber-800 dark:text-amber-300">
-          <Eye className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
+        <div className="flex items-center gap-2 border-l-2 border-amber-500 pl-3 py-0.5 text-[12px] text-amber-800 dark:text-amber-300">
+          <Eye className="w-4 h-4 shrink-0" />
           <span>
             <b>View only.</b> You&apos;re a viewer on this project, or not on it. To update the work, ask its owner or a co-owner to make you an editor (Members).
           </span>
@@ -1317,10 +1324,10 @@ export default function ExecutionView({
           <button
             onClick={() => setShowCritical((v) => !v)}
             aria-pressed={showCritical}
-            title="Show the critical path - and mark tasks on or off it"
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-colors ${showCritical ? "bg-rose-600 text-white border-rose-600" : "bg-[var(--color-surface)] text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800 hover:border-rose-400"}`}
+            title="Show the critical path, and mark tasks on or off it"
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-colors ${showCritical ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}
           >
-            <Zap className="w-3.5 h-3.5" /> Critical path <span className="font-mono opacity-80">{critical.ids.size}</span>
+            <Zap className={`w-3.5 h-3.5 ${showCritical ? "" : "text-rose-600 dark:text-rose-400"}`} /> Critical path <span className="font-mono opacity-80">{critical.ids.size}</span>
           </button>
         )}
         {layout === "timeline" && showCritical && (
@@ -1342,7 +1349,7 @@ export default function ExecutionView({
           </div>
         )}
         <span className="ml-auto" />
-        <ExecutionGuide userId={userId} worked={worked} />
+        <ExecutionGuide />
         {canEdit && (
           <button onClick={() => setBulkMode("replace")}
             title="Swap a contractor, crew, company or location on every task at once"
@@ -1728,31 +1735,27 @@ function Toolbar({
               {/* Bulk status */}
               <div className="inline-flex items-center gap-1">
                 <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Mark</span>
-                {([["completed", "Done", "bg-emerald-600"], ["in_progress", "Doing", "bg-[var(--color-text-muted)]"], ["on_hold", "Hold", "bg-amber-600"], ["blocked", "Block", "bg-rose-600"]] as const).map(([s, label, bg]) => (
-                  <button key={s} onClick={() => onBulkStatus(s)} className={`px-2 py-1 rounded-md text-white text-[11px] font-bold ${bg} hover:brightness-110`}>
-                    {label}
+                {([["completed", "Done", "bg-emerald-600"], ["in_progress", "Doing", "bg-slate-500"], ["on_hold", "Hold", "bg-amber-500"], ["blocked", "Block", "bg-rose-600"]] as const).map(([s, label, dot]) => (
+                  <button key={s} onClick={() => onBulkStatus(s)} className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-[11px] font-bold hover:bg-[var(--color-surface-2)]">
+                    <span aria-hidden className={`w-2 h-2 rounded-full ${dot}`} />{label}
                   </button>
                 ))}
               </div>
-              <span className="w-px h-4 bg-slate-200" />
+              <span className="w-px h-4 bg-[var(--color-border)]" />
               {/* Bulk move */}
               <div className="inline-flex items-center gap-1">
                 <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Move</span>
                 <button onClick={() => onBulkMove(-1)} className="px-1.5 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] text-[11px] font-bold">−1d</button>
                 <button onClick={() => onBulkMove(1)} className="px-1.5 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] text-[11px] font-bold">+1d</button>
               </div>
-              <span className="w-px h-4 bg-slate-200" />
-              <button onClick={onBulkSet} title="Set the contractor, crew, company, location… on all the selected tasks"
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[11px] font-bold transition-colors">
-                <Replace className="w-3 h-3" /> Set…
-              </button>
-              <button onClick={onGroup} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[11px] font-bold transition-colors">
-                <FolderPlus className="w-3 h-3" /> Group
-              </button>
-              <button onClick={onBulkDelete} title="Delete the selected tasks (Undo brings them back)"
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-rose-300 text-rose-700 dark:text-rose-300 dark:border-rose-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-[11px] font-bold transition-colors">
-                <Trash2 className="w-3 h-3" /> Delete
-              </button>
+              {/* The rest, folded: set a field, group, delete. */}
+              <MoreMenu iconOnly label="More for the selected tasks"
+                triggerClass="inline-flex items-center justify-center w-7 h-7 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                items={[
+                  { icon: <Replace className="w-4 h-4" />, label: "Set a field on them…", onClick: onBulkSet },
+                  { icon: <FolderPlus className="w-4 h-4" />, label: "Group them", onClick: onGroup },
+                  { icon: <Trash2 className="w-4 h-4" />, label: "Delete them", onClick: onBulkDelete, tone: "bad", line: true },
+                ]} />
             </>
           )}
           <button onClick={onClearSelection} className="inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] text-[11px] font-bold ml-auto">
@@ -1764,7 +1767,7 @@ function Toolbar({
           <button onClick={onToday} className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[var(--color-text)] hover:text-[var(--color-text)] px-2 py-1 rounded-md hover:bg-[var(--color-surface-2)] border border-[var(--color-border)]">
             <Crosshair className="w-3.5 h-3.5 text-rose-500" /> Today
           </button>
-          <div className="w-px h-5 bg-slate-200" />
+          <div className="w-px h-5 bg-[var(--color-border)]" />
           <button onClick={onExpandAll} className="text-[11px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded-md hover:bg-[var(--color-surface-2)]">Expand all</button>
           <button onClick={onCollapseAll} className="text-[11px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded-md hover:bg-[var(--color-surface-2)]">Collapse all</button>
           <div className="ml-auto inline-flex items-center gap-1">
@@ -1772,13 +1775,13 @@ function Toolbar({
               onClick={onZoomOut}
               disabled={!canZoomOut}
               className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] disabled:opacity-30"
-              title="Zoom out"
+              title="Zoom out" aria-label="Zoom out"
             >
               <ZoomOut className="w-4 h-4" />
             </button>
             <button
               onClick={onFit}
-              className={`text-[11px] font-bold px-2 py-1 rounded-md border transition-colors ${isAutoFit ? "bg-[var(--color-text)] border-[var(--color-accent-ring)]/40 text-[var(--color-surface)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}
+              className={`text-[11px] font-bold px-2 py-1 rounded-md border transition-colors ${isAutoFit ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}
               title="Fit the whole schedule to the screen width"
             >
               Fit
@@ -1787,7 +1790,7 @@ function Toolbar({
               onClick={onZoomIn}
               disabled={!canZoomIn}
               className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] disabled:opacity-30"
-              title="Zoom in"
+              title="Zoom in" aria-label="Zoom in"
             >
               <ZoomIn className="w-4 h-4" />
             </button>
@@ -1847,7 +1850,7 @@ function OutlineRow({
       )}
       {criticalMark && (
         <button onClick={criticalMark.onToggle} aria-pressed={criticalMark.on}
-          title={`${criticalMark.on ? "On the critical path - tap to take it off" : "Not critical - tap to mark it critical"}${hasChildren ? " (with everything under it)" : ""}${criticalMark.own ? " · marked by hand" : ""}`}
+          title={`${criticalMark.on ? "On the critical path: tap to take it off" : "Not critical: tap to mark it critical"}${hasChildren ? " (with everything under it)" : ""}${criticalMark.own ? " · marked by hand" : ""}`}
           className={`shrink-0 w-5 h-5 inline-flex items-center justify-center rounded ${criticalMark.on ? "bg-rose-600 text-white" : "text-slate-300 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40"} ${criticalMark.own ? "ring-1 ring-offset-1 ring-rose-400 dark:ring-offset-slate-900" : ""}`}>
           <Zap className="w-3 h-3" />
         </button>
@@ -1861,7 +1864,7 @@ function OutlineRow({
       )}
 
       {hasChildren ? (
-        <StatusControl status={derivedStatus} variant="dot" size="md" readOnly title="Phase status - rolls up from sub-tasks" onPick={() => {}} />
+        <StatusControl status={derivedStatus} variant="dot" size="md" readOnly title="Phase status: rolls up from sub-tasks" onPick={() => {}} />
       ) : (
         <StatusControl status={ms.status} busy={busy} disabled={!canEdit} onDisabledClick={onViewOnly} variant="dot" size="md" onPick={onSetStatus} percent={pct} onSetProgress={onSetProgress} onStartWithNote={onStartNote} />
       )}
@@ -2036,7 +2039,7 @@ function Bar({
         <button onClick={onOpenDetail} className="relative shrink-0" aria-label={`Milestone ${ms.name}`}>
           <span className={`block w-3 h-3 rotate-45 border-2 border-white shadow ${ms.status === "completed" ? "bg-emerald-500" : onPath ? "bg-rose-500" : "bg-slate-700"}`} />
         </button>
-        <span className="whitespace-nowrap text-[11px] font-bold text-[var(--color-text)] max-w-[200px] truncate bg-white/80 rounded px-1">{ms.name}</span>
+        <span className="whitespace-nowrap text-[11px] font-bold text-[var(--color-text)] max-w-[200px] truncate bg-[var(--color-surface)]/80 rounded px-1">{ms.name}</span>
       </div>
     );
   }
@@ -2085,7 +2088,7 @@ function Bar({
           visually merge with neighbouring rows' labels. */}
       {!labelFits && (
         <span
-          className="absolute left-full ml-1.5 whitespace-nowrap text-[11px] font-semibold text-[var(--color-text)] pointer-events-none max-w-[220px] truncate bg-white/80 rounded px-1 shadow-sm"
+          className="absolute left-full ml-1.5 whitespace-nowrap text-[11px] font-semibold text-[var(--color-text)] pointer-events-none max-w-[220px] truncate bg-[var(--color-surface)]/80 rounded px-1 shadow-sm"
           style={{ top: "50%", transform: "translateY(-50%)" }}
         >
           {ms.name}
@@ -2146,7 +2149,7 @@ function Axis({ domain, pxPerDay, shiftTimes }: { domain: { start: Date; totalDa
       for (let d = 0; d < domain.totalDays; d++) {
         for (let h = hStep; h < 24; h += hStep) {
           const x = (d + h / 24) * pxPerDay;
-          hours.push({ x, label: `${h}:00` });
+          hours.push({ x, label: `${h % 12 || 12} ${h < 12 ? "AM" : "PM"}` });
         }
       }
     }
@@ -2167,15 +2170,15 @@ function Axis({ domain, pxPerDay, shiftTimes }: { domain: { start: Date; totalDa
         <div className="absolute inset-x-0 bottom-0 border-t border-slate-200 dark:border-slate-700" style={{ height: AXIS_H - DAY_ROW }}>
           {bands.map((b, i) => (
             <div key={i} className={`absolute top-0 flex items-center gap-1 overflow-hidden border-b border-slate-200 dark:border-slate-700 ${b.night ? "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]" : "bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300"}`}
-              style={{ left: b.x, width: b.w, height: SHIFT_ROW }} title={`${b.night ? "Night" : "Day"} shift from ${b.label}`}>
+              style={{ left: b.x, width: b.w, height: SHIFT_ROW }} title={`${b.night ? "Night" : "Day"} shift from ${clock12(b.label)}`}>
               <div className="absolute top-0 bottom-0 left-0 w-px bg-slate-300 dark:bg-slate-600" />
-              <span className="pl-1 text-[11px] font-black whitespace-nowrap">{b.night ? "☾" : "☀"}{pxPerDay >= 110 ? ` ${b.night ? "Night" : "Day"} ${b.label}` : ""}</span>
+              <span className="pl-1 text-[11px] font-black whitespace-nowrap">{b.night ? "☾" : "☀"}{pxPerDay >= 110 ? ` ${b.night ? "Night" : "Day"} ${clock12(b.label)}` : ""}</span>
             </div>
           ))}
           {hours.map((h, i) => (
             <div key={`h${i}`} className="absolute bottom-0" style={{ left: h.x }}>
               <div className="absolute bottom-0 w-px h-1.5 bg-slate-400 dark:bg-slate-500" />
-              <span className="absolute bottom-1.5 -translate-x-1/2 text-[8.5px] font-mono text-slate-600 dark:text-slate-300 whitespace-nowrap">{h.label}</span>
+              <span className="absolute bottom-1.5 -translate-x-1/2 text-[11px] leading-none tabular-nums text-slate-600 dark:text-slate-300 whitespace-nowrap">{h.label}</span>
             </div>
           ))}
         </div>
@@ -2327,10 +2330,10 @@ function Legend() {
         <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]" title="A summary / phase that rolls up its children">
           <span className="relative w-7 flex items-center"><span className="h-1 w-full rounded-full bg-slate-400" /><span className="absolute -left-px w-[3px] h-3 rounded-sm bg-slate-400" /><span className="absolute -right-px w-[3px] h-3 rounded-sm bg-slate-400" /></span> Phase / summary
         </span>
-        <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]" title="A milestone - a zero-duration marker">
+        <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]" title="A milestone: a zero-duration marker">
           <span className="w-2.5 h-2.5 rotate-45 bg-slate-700 border border-white" /> Milestone
         </span>
-        <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]" title="On the critical path - drives the finish date">
+        <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]" title="On the critical path: drives the finish date">
           <span className="w-3 h-2.5 rounded-sm bg-slate-300 ring-2 ring-rose-500 ring-offset-1" /> Critical path
         </span>
         <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]" title="Finish-to-start dependency between linked tasks">
@@ -2349,6 +2352,15 @@ function Legend() {
 
 // ─── Group modal ───────────────────────────────────────────────
 
+/** Escape closes a dialog, as its X does (not while it's saving). */
+function useEscapeClose(onClose: () => void, busy: boolean) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !busy) onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, busy]);
+}
+
 function GroupTasksModal({
   orgId, projectId, actorUserId, actorUserName, actorUserEmail, actorUserRole,
   childIds, childNames, existingParents, onClose, onDone,
@@ -2363,6 +2375,7 @@ function GroupTasksModal({
   const [existingId, setExistingId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useEscapeClose(onClose, busy);
   const canSubmit = mode === "new" ? !!name.trim() : !!existingId;
 
   const submit = async () => {
@@ -2389,7 +2402,7 @@ function GroupTasksModal({
             <h2 className="text-sm font-semibold text-[var(--color-text)]">Group under a parent</h2>
             <div className="text-[11px] text-[var(--color-text-muted)]">{childIds.length} task{childIds.length === 1 ? "" : "s"} selected</div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><XIcon className="w-4 h-4" /></button>
+          <button onClick={onClose} aria-label="Close" className="p-1.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><XIcon className="w-4 h-4" /></button>
         </div>
         <div className="p-5 space-y-4">
           <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-md p-0.5 gap-0.5">
@@ -2400,9 +2413,9 @@ function GroupTasksModal({
             ))}
           </div>
           {mode === "new" ? (
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder='e.g. "Phase 2 - Tear Down"' autoFocus className="w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30 focus:border-[var(--color-accent-ring)]" />
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder='e.g. "Phase 2: Tear Down"' autoFocus className="w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30 focus:border-[var(--color-accent-ring)]" />
           ) : existingParents.length === 0 ? (
-            <div className="text-xs text-[var(--color-text-muted)] italic">No existing parents - create a new one.</div>
+            <div className="text-xs text-[var(--color-text-muted)] italic">No existing parents. Create a new one.</div>
           ) : (
             <Select value={existingId} onChange={(e) => setExistingId(e.target.value)}>
               <option value="">- pick a parent -</option>
@@ -2415,7 +2428,7 @@ function GroupTasksModal({
               {childNames.length > 12 && <li className="text-[11px] text-[var(--color-text-muted)] italic">+{childNames.length - 12} more</li>}
             </ul>
           </div>
-          {error && <div className="text-xs text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-md p-2">{error}</div>}
+          {error && <div role="alert" className="text-xs text-rose-700 dark:text-rose-300">{error}</div>}
         </div>
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Cancel</button>
@@ -2444,6 +2457,7 @@ function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milest
   const [value, setValue] = useState<number>(current);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useEscapeClose(onClose, busy);
   const days = value;
 
   const submit = async () => {
@@ -2455,7 +2469,8 @@ function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milest
         : { id: task.id, days: Math.round(value), timeZone: tz, actorUserId });
       if (!res.ok) setError(res.error ?? "Couldn't set duration");
       else onDone();
-    } finally { setBusy(false); }
+    } catch (e) { setError(`Couldn't set duration: ${(e as Error).message}`); }
+    finally { setBusy(false); }
   };
 
   return (
@@ -2467,7 +2482,7 @@ function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milest
             <h2 className="text-sm font-semibold text-[var(--color-text)] truncate">Set duration</h2>
             <div className="text-[11px] text-[var(--color-text-muted)] truncate">{task.name}</div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><XIcon className="w-4 h-4" /></button>
+          <button onClick={onClose} aria-label="Close" className="p-1.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><XIcon className="w-4 h-4" /></button>
         </div>
         <div className="p-5 space-y-3">
           <div className="flex items-center justify-between">
@@ -2486,7 +2501,7 @@ function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milest
             Keeps its finish, <b>{fmtInTz(finishAt, tz, { weekday: "short", month: "short", day: "numeric", ...(timed ? { hour: "numeric", minute: "2-digit", hour12: true } : {}) })}</b>;
             {unit === "hours" ? ` starts ${value} h before it.` : days > 1 ? ` starts ${Math.round(days) - 1} day${Math.round(days) - 1 === 1 ? "" : "s"} earlier.` : " a single-day task."}
           </div>
-          {error && <div className="text-xs text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-md p-2">{error}</div>}
+          {error && <div role="alert" className="text-xs text-rose-700 dark:text-rose-300">{error}</div>}
         </div>
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Cancel</button>
@@ -2501,10 +2516,13 @@ function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milest
 
 // ─── Helpers ────────────────────────────────────────────────────
 
+/** "7:00 PM" for "19:00". */
+function clock12(hm: string): string { const [h, m] = hm.split(":").map(Number); return `${(h || 0) % 12 || 12}:${String(m || 0).padStart(2, "0")} ${(h || 0) < 12 ? "AM" : "PM"}`; }
+
 function statusTone(status: MilestoneStatus): { bar: string; border: string; dotBg: string; dotBorder: string } {
   switch (status) {
     case "completed":   return { bar: "bg-emerald-500", border: "border-emerald-600", dotBg: "bg-emerald-500", dotBorder: "border-emerald-500" };
-    case "in_progress": return { bar: "bg-[var(--color-text-muted)]",    border: "border-[var(--color-border-strong)]",    dotBg: "bg-[var(--color-text-muted)]",    dotBorder: "border-[var(--color-border-strong)]" };
+    case "in_progress": return { bar: "bg-slate-600 dark:bg-slate-500",    border: "border-slate-700 dark:border-slate-400",    dotBg: "bg-slate-600 dark:bg-slate-500",    dotBorder: "border-slate-700 dark:border-slate-400" };
     case "blocked":     return { bar: "bg-rose-500",    border: "border-rose-600",    dotBg: "bg-rose-500",    dotBorder: "border-rose-500" };
     case "on_hold":     return { bar: "bg-amber-500",   border: "border-amber-600",   dotBg: "bg-amber-500",   dotBorder: "border-amber-500" };
     case "missed":      return { bar: "bg-rose-600",    border: "border-rose-700",    dotBg: "bg-rose-600",    dotBorder: "border-rose-600" };

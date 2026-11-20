@@ -7,7 +7,7 @@
 // isn't on the sheet (the crew jumped ahead) is found and added at the
 // bottom.
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, ClipboardPen, Loader2, Plus, Search, X } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
@@ -20,6 +20,7 @@ import { useShiftRecords } from "@/lib/shiftRecord";
 import { woOf } from "@/lib/workOrderCrew";
 import { startMsOf } from "@/lib/calendarPlacement";
 import { searchMatcher, hasQuery } from "@/lib/fuzzySearch";
+import { useDraft } from "@/hooks/useDraft";
 
 const field = "h-9 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[13px] text-[var(--color-text)] disabled:opacity-50";
 const has = (e?: SheetEntry) => !!e && !!(e.start?.trim() || e.lunchPct?.trim() || e.endPct?.trim() || e.done?.trim() || e.hold || e.note?.trim());
@@ -58,6 +59,15 @@ export default function ShiftSheetEntry({ milestones, progress, tz, times, targe
   const [summary, setSummary] = useState<string | null>(null);
   const at = sheetTimes(target, times, tz);
   const orgId = milestones[0]?.orgId ?? "";
+  // What's typed and not saved yet survives a reload (saved lines drop out).
+  const pending = useMemo(() => Object.fromEntries(Object.entries(entry).filter(([id, e]) => has(e) && !result[id]?.ok)), [entry, result]);
+  useDraft<Record<string, SheetEntry>>(canEdit ? `sheet-entry:${projectId}:${handoverKey(target)}` : null, pending, setEntry, (v) => !Object.values(v).some(has));
+  // Escape closes, as the X does (not while lines are saving).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !busy) onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy, onClose]);
   const set = (id: string, patch: Partial<SheetEntry>) => { setEntry((cur) => ({ ...cur, [id]: { ...cur[id], ...patch } })); setResult((r) => { const n = { ...r }; delete n[id]; return n; }); };
 
   const lineIds = groups.flatMap((g) => g.lines.map((l) => l.id));

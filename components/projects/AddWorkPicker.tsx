@@ -5,7 +5,7 @@
 // worked that day on top), then the same form as on Work orders, with the
 // day (or the hour) filled in.
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Search, X as XIcon } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import { dayKeyToMs, fmtInTz, fromDateTimeInput } from "@/lib/scheduleTz";
@@ -42,6 +42,18 @@ export default function AddWorkPicker({ day: when, tz, milestones, onPick, onNew
   onClose: () => void;
 }) {
   const [q, setQ] = useState("");
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      // Only the dialog on top closes.
+      const open = document.querySelectorAll('[aria-modal="true"]');
+      if (open.length && open[open.length - 1] !== boxRef.current) return;
+      onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
   const day = when.slice(0, 10);
   const { onDay, others } = useMemo(() => workOrdersForDay(milestones, day, tz), [milestones, day, tz]);
   const wos = useMemo(() => inheritedWorkOrders(milestones), [milestones]);
@@ -70,14 +82,14 @@ export default function AddWorkPicker({ day: when, tz, milestones, onPick, onNew
     );
   };
   return (
-    <div className="fixed inset-0 z-[180] flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4" onClick={onClose}>
-      <div role="dialog" aria-label={`Add discovery or added scope - ${label}`} onClick={(e) => e.stopPropagation()}
+    <div ref={boxRef} aria-modal="true" className="fixed inset-0 z-[180] flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4" onClick={onClose}>
+      <div role="dialog" aria-label={`Add discovery or added scope: ${label}`} onClick={(e) => e.stopPropagation()}
         className="w-full sm:max-w-md max-h-[85vh] flex flex-col rounded-t-2xl sm:rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-xl">
         <div className="px-4 pt-3 pb-2 border-b border-[var(--color-border)]">
           <div className="flex items-start justify-between gap-2">
             <div>
               <div className="text-[15px] font-bold text-[var(--color-text)] inline-flex items-center gap-1.5"><Plus className="w-4 h-4" /> Add discovery or added scope</div>
-              <div className="text-[12px] text-[var(--color-text-muted)]">{label} - {onNew ? "a new work order, or under one on the schedule?" : "which work order is it under?"}</div>
+              <div className="text-[12px] text-[var(--color-text-muted)]">{label}: {onNew ? "a new work order, or under one on the schedule?" : "which work order is it under?"}</div>
             </div>
             <button type="button" onClick={onClose} aria-label="Close" className="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><XIcon className="w-4 h-4" /></button>
           </div>
@@ -93,7 +105,7 @@ export default function AddWorkPicker({ day: when, tz, milestones, onPick, onNew
             <button type="button" onClick={onNew}
               className="w-full text-left px-3 py-2.5 border-b border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
               <div className="text-[13px] font-bold text-[var(--color-text)] inline-flex items-center gap-1.5"><Plus className="w-4 h-4" /> New work order</div>
-              <div className="text-[11.5px] text-[var(--color-text-muted)]">Its own WO #, name, steps and crew - not under one already on the schedule</div>
+              <div className="text-[11.5px] text-[var(--color-text-muted)]">Its own WO #, name, steps and crew, not under one already on the schedule</div>
             </button>
           )}
           {list("Worked this day", onDay)}

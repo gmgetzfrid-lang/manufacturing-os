@@ -8,7 +8,7 @@
 // activity trail.
 
 import { EquipmentField } from "@/components/projects/EquipmentPicker";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useProjectWord } from "@/components/projects/ProjectTypeContext";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { spanLabel, startOf, finishOf, effectiveSpans } from "@/lib/scheduleTime";
@@ -37,6 +37,7 @@ import { CancelJobForm } from "@/components/projects/CancelledJobs";
 import CrewPicker from "@/components/projects/CrewPicker";
 import ProgressControl, { ProgressSlider, ProgressNoteForm } from "@/components/projects/ProgressControl";
 import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
+import { useDraft } from "@/hooks/useDraft";
 
 interface Props {
   milestone: Milestone;
@@ -93,6 +94,24 @@ export default function TaskDetailPanel({
   const [busyStatus, setBusyStatus] = useState(false);
   const [notes, setNotes] = useState<MilestoneNote[]>([]);
   const [noteDraft, setNoteDraft] = useState("");
+  // A note being typed survives a reload until it's added.
+  useDraft<string>(canEdit && m.id ? `task-note:${m.id}` : null, noteDraft, setNoteDraft, (v) => !v.trim());
+  // The activity list couldn't be read: said, not shown as "no activity".
+  const [notesErr, setNotesErr] = useState(false);
+  // Escape closes the panel, as its X does (an open field's own Escape
+  // first, and a dialog opened over the panel closes before it).
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
+      const open = document.querySelectorAll('[aria-modal="true"]');
+      if (open.length && open[open.length - 1] !== rootRef.current) return;
+      onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
   // A failed save says so, here, instead of the control just snapping back.
   const [err, setErr] = useState<string | null>(null);
   const failed = (e: unknown) => setErr((e as Error)?.message || "That didn't save - try again.");
@@ -156,7 +175,7 @@ export default function TaskDetailPanel({
 
   const loadNotes = useCallback(() => {
     if (!m.id) return;
-    listMilestoneNotes(m.id).then(setNotes).catch(() => setNotes([]));
+    listMilestoneNotes(m.id).then((n) => { setNotes(n); setNotesErr(false); }).catch(() => { setNotes([]); setNotesErr(true); });
   }, [m.id]);
   useEffect(() => { loadNotes(); }, [loadNotes]);
 
@@ -269,8 +288,8 @@ export default function TaskDetailPanel({
   }, [m.id, m.status, actualEdit, tz, userId, userName, loadNotes, onChanged]);
 
   return (
-    <div className="fixed inset-0 z-[150] flex justify-end" role="dialog" aria-modal="true">
-      <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-[1px]" onClick={onClose} />
+    <div ref={rootRef} className="fixed inset-0 z-[150] flex justify-end" role="dialog" aria-modal="true">
+      <div className="absolute inset-0 bg-slate-900/50" onClick={onClose} />
       <div className="relative w-full max-w-[440px] bg-[var(--color-surface)] shadow-2xl ring-1 ring-slate-900/10 flex flex-col animate-[slidein_.15s_ease-out]">
         {/* Header */}
         <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-start gap-2 bg-[var(--color-surface-2)]">
@@ -307,15 +326,15 @@ export default function TaskDetailPanel({
             {canEdit && !editing && (
               <button onClick={() => setEditing(true)} title="Edit" className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><Pencil className="w-4 h-4" /></button>
             )}
-            <button onClick={onClose} className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><XIcon className="w-4 h-4" /></button>
+            <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface)]"><XIcon className="w-4 h-4" /></button>
           </div>
         </div>
 
         <div className="flex-1 overflow-y-auto">
           {err && (
-            <div className="mx-4 mt-3 flex items-start gap-2 rounded-md border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/40 px-2.5 py-2 text-[12px] text-rose-800 dark:text-rose-300">
+            <div role="alert" className="mx-4 mt-3 flex items-start gap-2 border-l-2 border-rose-500 pl-2.5 py-1 text-[12px] text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span className="flex-1">{err}</span>
-              <button onClick={() => setErr(null)} className="shrink-0" title="Dismiss"><XIcon className="w-3.5 h-3.5" /></button>
+              <button onClick={() => setErr(null)} className="shrink-0" title="Dismiss" aria-label="Dismiss"><XIcon className="w-3.5 h-3.5" /></button>
             </div>
           )}
           {editing ? (
@@ -379,7 +398,7 @@ export default function TaskDetailPanel({
                   </div>
                   {/* Rolled-up progress bar. */}
                   <div className="mt-2 h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-                    <div className={`h-full ${effPct === 100 ? "bg-emerald-500" : "bg-[var(--color-surface-2)]"}`} style={{ width: `${effPct}%` }} />
+                    <div className={`h-full ${effPct === 100 ? "bg-emerald-500" : "bg-[var(--color-text)]"}`} style={{ width: `${effPct}%` }} />
                   </div>
                   <div className="mt-2 text-[11px] text-[var(--color-text-faint)] flex items-start gap-1">
                     <Layers className="w-3 h-3 mt-0.5 shrink-0" />
@@ -667,7 +686,9 @@ export default function TaskDetailPanel({
                     </button>
                   </div>
                 )}
-                {notes.length === 0 ? (
+                {notesErr ? (
+                  <div role="alert" className="text-[11px] font-semibold text-rose-700 dark:text-rose-400">Couldn&apos;t read the activity. <button type="button" onClick={loadNotes} className="underline">Try again</button></div>
+                ) : notes.length === 0 ? (
                   <div className="text-[11px] text-[var(--color-text-faint)] italic">No activity yet.</div>
                 ) : (
                   <ul className="space-y-2">
@@ -721,7 +742,7 @@ export default function TaskDetailPanel({
             ) : (
               <>
                 <button onClick={() => setCancelling(true)} title="Planned, but not done here: kept on record as cancelled, with why (and where it moved)"
-                  className="inline-flex items-center gap-1.5 text-[11px] font-bold text-amber-700 dark:text-amber-400 hover:text-amber-900 dark:hover:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/40 px-2 py-1 rounded-md">
+                  className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] px-2 py-1 rounded-md">
                   <Ban className="w-3.5 h-3.5" /> Cancel job
                 </button>
                 <button onClick={() => void onDelete()} title="Put in by mistake: gone for good" className="inline-flex items-center gap-1.5 text-[11px] font-bold text-rose-600 dark:text-rose-400 hover:text-rose-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 px-2 py-1 rounded-md">
@@ -731,7 +752,7 @@ export default function TaskDetailPanel({
             )}
           </div>
         )}
-        {saving && <div className="absolute inset-0 bg-white/40 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-muted)] dark:text-[var(--color-text)]" /></div>}
+        {saving && <div className="absolute inset-0 bg-black/10 dark:bg-black/30 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-muted)] dark:text-[var(--color-text)]" /></div>}
       </div>
       <style jsx>{`@keyframes slidein { from { transform: translateX(16px); opacity: .6 } to { transform: translateX(0); opacity: 1 } }`}</style>
     </div>
@@ -918,7 +939,7 @@ function EditForm({
         </L>
       </div>
       <L label="Description"><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className={`${inp} resize-y`} /></L>
-      {error && <div className="text-xs text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-md p-2">{error}</div>}
+      {error && <div role="alert" className="text-xs text-rose-700 dark:text-rose-300">{error}</div>}
       <div className="flex items-center justify-end gap-2 pt-1">
         <button onClick={onCancel} disabled={saving} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
         <button onClick={() => void save()} disabled={saving || !canSave || v.hasErrors} title={v.hasErrors ? "Fix the highlighted fields first" : undefined} className="inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-md disabled:opacity-40">
@@ -1235,12 +1256,13 @@ function AssigneeEditor({ milestone, canEdit, userId, onChanged }: {
   milestone: Milestone; canEdit: boolean; userId: string; onChanged: () => void;
 }) {
   const [members, setMembers] = useState<ProjectMember[]>([]);
+  const [membersErr, setMembersErr] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!milestone.projectId) return;
     let alive = true;
-    listMembers(milestone.projectId).then((ms) => { if (alive) setMembers(ms); }).catch(() => {});
+    listMembers(milestone.projectId).then((ms) => { if (alive) { setMembers(ms); setMembersErr(false); } }).catch(() => { if (alive) setMembersErr(true); });
     return () => { alive = false; };
   }, [milestone.projectId]);
 
@@ -1270,8 +1292,9 @@ function AssigneeEditor({ milestone, canEdit, userId, onChanged }: {
       <div className="flex items-center gap-1.5 mb-1.5">
         <Target className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
         <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Responsible</span>
-        <span className="text-[11px] text-[var(--color-text-faint)]">- the member who owns this deliverable</span>
+        <span className="text-[11px] text-[var(--color-text-faint)]">: the member who owns this deliverable</span>
       </div>
+      {membersErr && <div role="alert" className="mb-1 text-[11px] font-semibold text-rose-700 dark:text-rose-400">Couldn&apos;t read the project&apos;s members, so the list below is short.</div>}
       {canEdit ? (
         <select
           value={assignedId}
@@ -1282,7 +1305,7 @@ function AssigneeEditor({ milestone, canEdit, userId, onChanged }: {
           <option value="">Unassigned</option>
           {members.map((m) => (
             <option key={m.userId} value={m.userId}>
-              {(m.userName || m.userEmail || m.userId.slice(0, 8))}{m.responsibility ? ` - ${m.responsibility}` : ""}
+              {(m.userName || m.userEmail || m.userId.slice(0, 8))}{m.responsibility ? ` · ${m.responsibility}` : ""}
             </option>
           ))}
         </select>

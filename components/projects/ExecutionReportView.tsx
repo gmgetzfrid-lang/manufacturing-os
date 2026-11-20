@@ -137,13 +137,13 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
 
       {/* Critical path — what's driving the finish */}
       {critical.ids.size > 0 && (
-        <div className="rounded-2xl border border-rose-200 dark:border-rose-800 bg-rose-50/40 shadow-sm px-4 py-3">
+        <div className="rounded-2xl border border-[var(--color-border)] border-l-2 border-l-rose-500 bg-[var(--color-surface)] shadow-sm px-4 py-3">
           <div className="flex items-center gap-2 flex-wrap">
             <Zap className="w-4 h-4 text-rose-600 dark:text-rose-400" />
             <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Driving the finish</span>
             <span className="text-sm font-bold text-[var(--color-text)]">{critical.ids.size} task{critical.ids.size === 1 ? "" : "s"} on the critical path</span>
             {critical.remainingHours > 0 && <span className="text-[11px] text-[var(--color-text-muted)]">· {Math.round(critical.remainingHours)}h remaining on the chain</span>}
-            <span className="ml-auto text-[10px] text-[var(--color-text-faint)]">{criticalSource ? `${criticalSource} · change it on the Timeline` : "estimate - based on schedule shape, not dependency links"}</span>
+            <span className="ml-auto text-[11px] print:text-[10px] text-[var(--color-text-faint)]">{criticalSource ? `${criticalSource} · change it on the Timeline` : "estimate, based on schedule shape, not dependency links"}</span>
           </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {criticalNames.slice(0, 10).map((n, i) => (
@@ -156,7 +156,7 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
 
       {/* Baseline drift — planned vs now */}
       {r.baseline && (
-        <div className={`rounded-2xl border shadow-sm px-4 py-3 ${r.baseline.finishDriftDays > 0 ? "border-rose-200 dark:border-rose-800 bg-rose-50/40" : r.baseline.finishDriftDays < 0 ? "border-emerald-200 dark:border-emerald-800 bg-emerald-50/40" : "border-[var(--color-border)] bg-[var(--color-surface)]"}`}>
+        <div className={`rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm px-4 py-3 ${r.baseline.finishDriftDays > 0 ? "border-l-2 border-l-rose-500" : r.baseline.finishDriftDays < 0 ? "border-l-2 border-l-emerald-500" : ""}`}>
           <div className="flex items-center gap-3 flex-wrap">
             <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Vs. approved plan</span>
             <span className={`text-lg font-black ${r.baseline.finishDriftDays > 0 ? "text-rose-600 dark:text-rose-400" : r.baseline.finishDriftDays < 0 ? "text-emerald-600 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>
@@ -182,7 +182,7 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
       {/* Health chips */}
       <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm px-4 py-3 flex items-center gap-4 flex-wrap">
         <Health icon={<CheckCircle2 className="w-4 h-4" />} tone="emerald" label="Done" value={r.done} />
-        <Health icon={<Clock className="w-4 h-4" />} tone="blue" label="In progress" value={r.inProgress} />
+        <Health icon={<Clock className="w-4 h-4" />} tone="slate" label="In progress" value={r.inProgress} />
         <Health icon={<PauseCircle className="w-4 h-4" />} tone="amber" label="On hold" value={r.onHold} />
         <Health icon={<AlertTriangle className="w-4 h-4" />} tone="rose" label="Blocked" value={r.blocked} />
         <Health icon={<AlertTriangle className="w-4 h-4" />} tone="rose" label="Overdue" value={r.overdue} />
@@ -195,8 +195,8 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
 
       {/* Blockers — what's stopping work, with reasons */}
       {r.blockers.length > 0 && (
-        <div className="bg-[var(--color-surface)] rounded-2xl border border-rose-200 dark:border-rose-800 shadow-sm overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-rose-100 bg-rose-50/60 dark:bg-rose-950/30 flex items-center gap-2">
+        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] border-l-2 border-l-rose-500 shadow-sm overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center gap-2">
             <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400" />
             <span className="font-bold text-[var(--color-text)] text-sm">Needs attention</span>
             <span className="text-[11px] text-[var(--color-text-muted)]">{r.blockers.length} on-hold / blocked</span>
@@ -204,7 +204,7 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
           <ul className="divide-y divide-[var(--color-border)]">
             {r.blockers.map((b) => (
               <li key={b.id} className="px-4 py-2.5 flex items-start gap-3">
-                <span className={`mt-0.5 shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${b.status === "blocked" ? "bg-rose-100 dark:bg-rose-900/40 text-rose-800 dark:text-rose-300 border-rose-200 dark:border-rose-800" : "bg-amber-100 dark:bg-amber-900/40 text-amber-900 dark:text-amber-200 border-amber-200 dark:border-amber-800"}`}>
+                <span className={`mt-0.5 shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] print:text-[9px] font-black uppercase tracking-wider border ${b.status === "blocked" ? "bg-rose-100 dark:bg-rose-900/40 text-rose-800 dark:text-rose-300 border-rose-200 dark:border-rose-800" : "bg-amber-100 dark:bg-amber-900/40 text-amber-900 dark:text-amber-200 border-amber-200 dark:border-amber-800"}`}>
                   {b.status === "blocked" ? "Blocked" : "On hold"}
                 </span>
                 <div className="flex-1 min-w-0">
@@ -227,7 +227,7 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
               <div key={g.id} className="px-4 py-2.5 flex items-center gap-3">
                 <div className="w-40 shrink-0 min-w-0">
                   <div className="text-[13px] font-bold text-[var(--color-text)] truncate">{g.name}</div>
-                  <div className="text-[10px] text-[var(--color-text-faint)] font-mono">{fmtDate(g.start, tz)} – {fmtDate(g.finish, tz)}</div>
+                  <div className="text-[11px] print:text-[10px] text-[var(--color-text-faint)] font-mono">{fmtDate(g.start, tz)} – {fmtDate(g.finish, tz)}</div>
                 </div>
                 <div className="flex-1">
                   <Bar pct={g.pctComplete} done={g.pctComplete === 100} />
@@ -247,7 +247,7 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
       {/* Planned vs actual performer */}
       <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-hidden">
         <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)] flex items-center gap-2">
-          <Users className="w-4 h-4 text-[var(--color-accent)]" />
+          <Users className="w-4 h-4 text-[var(--color-text-muted)]" />
           <span className="font-bold text-[var(--color-text)] text-sm">Who did the work</span>
         </div>
         <div className="px-4 py-3">
@@ -264,15 +264,15 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
             </div>
           )}
           {r.performers.deviations.length > 0 && (
-            <div className="mt-3 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 p-2.5">
-              <div className="text-[11px] font-bold text-amber-900 dark:text-amber-200 mb-1">{r.performers.deviations.length} task{r.performers.deviations.length === 1 ? "" : "s"} done by someone other than planned</div>
+            <div className="mt-3 border-l-2 border-amber-500 pl-3 py-0.5">
+              <div className="text-[11px] font-bold text-amber-800 dark:text-amber-300 mb-1">{r.performers.deviations.length} task{r.performers.deviations.length === 1 ? "" : "s"} done by someone other than planned</div>
               <ul className="space-y-0.5">
                 {r.performers.deviations.slice(0, 8).map((d) => (
-                  <li key={d.id} className="text-[12px] text-amber-900/90">
+                  <li key={d.id} className="text-[12px] text-[var(--color-text)]">
                     <b>{d.name}</b>: planned <i>{d.planned}</i> → actually <i>{d.actual}</i>
                   </li>
                 ))}
-                {r.performers.deviations.length > 8 && <li className="text-[11px] text-amber-800/70 italic">+{r.performers.deviations.length - 8} more</li>}
+                {r.performers.deviations.length > 8 && <li className="text-[11px] text-[var(--color-text-muted)] italic">+{r.performers.deviations.length - 8} more</li>}
               </ul>
             </div>
           )}
@@ -315,17 +315,17 @@ function Card({ children }: { children: React.ReactNode }) {
   return <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm ring-1 ring-slate-900/[0.03] px-4 py-3">{children}</div>;
 }
 function Label({ children }: { children: React.ReactNode }) {
-  return <div className="text-[9px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mb-1">{children}</div>;
+  return <div className="text-[11px] print:text-[9px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mb-1">{children}</div>;
 }
 function Bar({ pct, done }: { pct: number; done?: boolean }) {
   return (
     <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-      <div className={`h-full transition-all ${done ? "bg-emerald-500" : "bg-[var(--color-accent)]"}`} style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
+      <div className={`h-full transition-all ${done ? "bg-emerald-500" : "bg-[var(--color-text)]"}`} style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
     </div>
   );
 }
-function Health({ icon, tone, label, value }: { icon: React.ReactNode; tone: "emerald" | "blue" | "amber" | "rose"; label: string; value: number }) {
-  const c = tone === "emerald" ? "text-emerald-600 dark:text-emerald-400" : tone === "blue" ? "text-blue-600 dark:text-blue-400" : tone === "amber" ? "text-amber-600 dark:text-amber-400" : "text-rose-600 dark:text-rose-400";
+function Health({ icon, tone, label, value }: { icon: React.ReactNode; tone: "emerald" | "slate" | "amber" | "rose"; label: string; value: number }) {
+  const c = tone === "emerald" ? "text-emerald-600 dark:text-emerald-400" : tone === "slate" ? "text-[var(--color-text-muted)]" : tone === "amber" ? "text-amber-600 dark:text-amber-400" : "text-rose-600 dark:text-rose-400";
   return (
     <span className="inline-flex items-center gap-1.5">
       <span className={c}>{icon}</span>

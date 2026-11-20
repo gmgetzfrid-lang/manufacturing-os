@@ -11,7 +11,7 @@
 // picked (lib/emailShifts), into one check screen.
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Mic, MicOff, NotebookPen, Loader2, X, Check, AlertTriangle, Search, Paperclip, FileText, Undo2, Plus } from "lucide-react";
+import { Mic, MicOff, NotebookPen, Loader2, X, Check, AlertTriangle, Search, Paperclip, Undo2, Plus } from "lucide-react";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import DateTimePicker from "@/components/projects/DateTimePicker";
 import { supabase } from "@/lib/supabase";
@@ -27,6 +27,12 @@ import { searchFilter } from "@/lib/fuzzySearch";
 import { shiftAt, previousShift, shiftWindow, type ShiftTimes, type ShiftWindow } from "@/lib/shiftReport";
 import { fmtInTz, toDateTimeInput, fromDateTimeInput, dayKey } from "@/lib/scheduleTz";
 import type { Milestone } from "@/types/schema";
+import FileThumb from "@/components/ui/FileThumb";
+import { useFileDrag } from "@/hooks/useFileDrag";
+import { tryUpload } from "@/lib/uploadRetry";
+
+/** A picked file's size: 1.2 MB, 340 KB. */
+const sizeOf = (n: number) => (n >= 1024 * 1024 ? `${(n / (1024 * 1024)).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`);
 
 const HIDE_KEY = "quickUpdate:hidden";
 /** This person's words for tags ("mee too" = E-2), learned from what they
@@ -145,43 +151,61 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
   const found = useMemo(() => (parts ? sectionsFound(parts) : []), [parts]);
 
   // ── A file: its words go into the box first, to read and fix ──
+  // Each file on its own line: what was read from it, or why not, with Try
+  // again. One that fails never stops the others.
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [fileBusy, setFileBusy] = useState<string | null>(null);
-  const [files, setFiles] = useState<Array<{ name: string; chars: number }>>([]);
-  const addFiles = async (list: FileList | null) => {
-    if (!list?.length) return;
-    setErr(null);
-    let text = note.trim();
-    let latest = 0;
-    for (const f of Array.from(list)) {
-      setFileBusy(`Reading ${f.name}…`);
-      try {
-        const r = await readNoteFile(f);
-        let words = r.text;
-        // Pictures (photos, scanned pages): copied out by the AI, 3 at a time.
-        for (let i = 0; i < r.images.length; i += 3) {
-          setFileBusy(`Copying out ${f.name}${r.images.length > 1 ? `, page ${i + 1} of ${r.images.length}` : ""}…`);
-          const res = await fetch("/api/projects/quick-update", {
-            method: "POST", headers: { "content-type": "application/json", ...(await authHeader()) },
-            body: JSON.stringify({ orgId, projectId, action: "transcribe", images: r.images.slice(i, i + 3) }),
-          });
-          const b = (await res.json().catch(() => null)) as { text?: string; error?: string } | null;
-          if (!res.ok || typeof b?.text !== "string") throw new Error(`${f.name}: ${b?.error ?? `couldn't copy out the page (HTTP ${res.status})`}`);
-          words = [words, b.text].filter(Boolean).join("\n\n");
-        }
-        if (!words.trim()) throw new Error(`${f.name}: no words found in it.`);
-        text = [text, words.trim()].filter(Boolean).join("\n\n");
-        setFiles((cur) => [...cur, { name: f.name, chars: words.length }]);
-        latest = Math.max(latest, f.lastModified || 0);
-      } catch (e) { setErr((e as Error).message); }
+  const [files, setFiles] = useState<Array<{ key: string; file: File; chars: number | null; error: string | null }>>([]);
+  /** One file's words (a picture or scanned page copied out by the AI). */
+  const readOne = async (f: File): Promise<string> => {
+    const r = await readNoteFile(f);
+    let words = r.text;
+    // Pictures (photos, scanned pages): copied out by the AI, 3 at a time.
+    for (let i = 0; i < r.images.length; i += 3) {
+      setFileBusy(`Copying out ${f.name}${r.images.length > 1 ? `, page ${i + 1} of ${r.images.length}` : ""}…`);
+      const res = await fetch("/api/projects/quick-update", {
+        method: "POST", headers: { "content-type": "application/json", ...(await authHeader()) },
+        body: JSON.stringify({ orgId, projectId, action: "transcribe", images: r.images.slice(i, i + 3) }),
+      });
+      const b = (await res.json().catch(() => null)) as { text?: string; error?: string } | null;
+      if (!res.ok || typeof b?.text !== "string") throw new Error(`${f.name}: ${b?.error ?? `couldn't copy out the page (HTTP ${res.status})`}`);
+      words = [words, b.text].filter(Boolean).join("\n\n");
     }
-    setFileBusy(null);
-    setDraft(text);
+    if (!words.trim()) throw new Error(`${f.name}: no words found in it.`);
+    return words.trim();
+  };
+  // A file's words go at the end of what's in the box now (also after a
+  // retry from the corner card, when this box may have closed).
+  const appendWords = (words: string) => {
+    const cur = store.get(draftKey(projectId)) ?? "";
+    setDraft([cur.trim(), words].filter(Boolean).join("\n\n"));
+  };
+  const markFile = (key: string, patch: { chars: number | null; error: string | null }) => setFiles((cur) => cur.map((x) => (x.key === key ? { ...x, ...patch } : x)));
+  const readFile = async (key: string, f: File): Promise<number | null> => {
+    setFileBusy(`Reading ${f.name}…`);
+    try {
+      const words = await tryUpload(f.name, () => readOne(f), { onRetried: (w) => { appendWords(w); markFile(key, { chars: w.length, error: null }); } }, key);
+      appendWords(words);
+      markFile(key, { chars: words.length, error: null });
+      return f.lastModified || 0;
+    } catch (e) { markFile(key, { chars: null, error: (e as Error).message }); return null; }
+    finally { setFileBusy(null); }
+  };
+  const addFiles = async (list: FileList | File[] | null) => {
+    const picked = list ? Array.from(list) : [];
+    if (!picked.length) return;
+    setErr(null);
+    const added = picked.map((file, i) => ({ key: `note-file-${Date.now()}-${i}`, file, chars: null, error: null }));
+    setFiles((cur) => [...cur, ...added]);
+    let latest = 0;
+    for (const x of added) { const t = await readFile(x.key, x.file); if (t != null) latest = Math.max(latest, t); }
     // A file typed up over a shift: which shift, from when it was last saved
     // (said plainly, and changeable).
     if (latest && from.id === "now") setFrom({ id: "shift", w: shiftAt(Math.min(latest, Date.now()), tz, times), auto: true });
     if (fileRef.current) fileRef.current.value = "";
   };
+  // Drop files on the note box, as well as Add a file.
+  const drag = useFileDrag((fs) => void addFiles(fs), !!fileBusy || busy);
 
   /** One read of the AI: the words, against the steps, for the shift given. */
   const ask = async (text: string, cat: CatalogStep[], now: number, win: ShiftWindow | undefined) => {
@@ -233,7 +257,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
     // Two at a time: quick, and kind to the AI's limits.
     for (let i = 0; i < todo.length; i += 2) await Promise.all([run(i), ...(i + 1 < todo.length ? [run(i + 1)] : [])]);
     const ok = results.filter((r): r is NonNullable<typeof r> => !!r);
-    if (!ok.length) throw new Error(`Couldn't read it. ${failed.join(" ")} Your note is kept - try again.`);
+    if (!ok.length) throw new Error(`Couldn't read it. ${failed.join(" ")} Your note is kept. Try again.`);
     // Newest shift first; the same thing said in two places, once.
     const order = todo.map((t, i) => ({ i, start: t.p.window.start })).sort((a, b) => b.start - a.start);
     const lines = markAlready(mergeLines(order.flatMap(({ i }) => results[i]?.lines ?? [])), ok[0].cat, now, tz);
@@ -268,7 +292,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
         }),
       });
       const body = (await res.json().catch(() => null)) as (RawReply & { error?: string }) | null;
-      if (!res.ok || !body?.updates) throw new Error(body?.error || `Couldn't read it (HTTP ${res.status}). Your note is kept - try again.`);
+      if (!res.ok || !body?.updates) throw new Error(body?.error || `Couldn't read it (HTTP ${res.status}). Your note is kept. Try again.`);
       const tctx = { now, tz, times, window: win };
       const first = defaultTimes(tctx)[0];
       // Cleaned again here: whatever comes back, nothing malformed reaches the lines.
@@ -312,7 +336,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
     for (const s of [...list].reverse()) {
       if (undone[s.id]) continue;
       const r = await undoQuickStep(s).catch(() => "error" as const);
-      undone[s.id] = r === "ok" ? "Undone" : r === "changed" ? "Changed since - fix it in the step's history" : r === "missing" ? "Undo needs the database update 20261109_history_remove.sql" : "Not undone - fix it in the step's history";
+      undone[s.id] = r === "ok" ? "Undone" : r === "changed" ? "Changed since: fix it in the step's history" : r === "missing" ? "Undo needs the database update 20261109_history_remove.sql" : "Not undone: fix it in the step's history";
     }
     setDone({ ...done, undone });
     setUndoing(false);
@@ -383,9 +407,12 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
             <span className="flex-1 text-[13px] font-bold text-[var(--color-text)]">Update by note</span>
             <button type="button" onClick={() => { recRef.current?.stop(); setOpen(false); }} aria-label="Close" className="p-1 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
           </div>
+          <div {...drag.bind} className={`relative rounded-lg ${drag.ring}`}>
+          {drag.over && <div className="absolute inset-0 z-[1] flex items-center justify-center rounded-lg text-[13px] font-bold text-[var(--color-text)] pointer-events-none">{drag.say}</div>}
           <textarea value={note} onChange={(e) => setDraft(e.target.value)} rows={note.length > 400 ? 10 : 4} aria-label="What happened"
             placeholder={"What happened? Name the equipment or WO, like you'd tell your relief.\nE-02 channel head is on the ground, they pulled it and washed it, staging to put it back.\nV-1 trays 50%. V-3 on hold, scaffold not built."}
             className="w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-2 text-[14px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/40" />
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" onClick={toggleMic} disabled={!canSpeak} title={canSpeak ? undefined : "Use the microphone on your phone's keyboard to speak into the box"}
               className={`inline-flex items-center gap-1.5 h-10 px-3 rounded-lg border text-[13px] font-bold disabled:opacity-50 ${listening ? "border-rose-500 bg-rose-600 text-white" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
@@ -440,9 +467,26 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
           </div>
           {fileBusy && <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> {fileBusy}</div>}
           {files.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5 text-[11.5px] text-[var(--color-text-muted)]">
-              {files.map((f, i) => <span key={`${f.name}${i}`} className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] px-2 py-0.5"><FileText className="w-3 h-3" /> {f.name} · {f.chars.toLocaleString()} characters</span>)}
-              <span>Its words are in the box above: read them over and fix anything before you tap Read it.</span>
+            <div className="space-y-1 text-[11.5px] text-[var(--color-text-muted)]">
+              <ul className="space-y-1">
+                {files.map((f) => (
+                  <li key={f.key} className="flex items-center gap-2 min-w-0">
+                    <FileThumb file={f.file} size={28} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-semibold text-[var(--color-text)]">{f.file.name}</span>
+                      <span className="block">
+                        {sizeOf(f.file.size)} · {f.error ? <span className="font-semibold text-rose-700 dark:text-rose-400">{f.error}</span>
+                          : f.chars != null ? `read ${f.chars.toLocaleString()} characters` : "reading…"}
+                      </span>
+                    </span>
+                    {f.error && (
+                      <button type="button" disabled={!!fileBusy || busy} onClick={() => void readFile(f.key, f.file)}
+                        className="shrink-0 h-8 px-2.5 rounded-md border border-[var(--color-border-strong)] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Try again</button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              {files.some((f) => f.chars != null) && <div>Their words are in the box above: read them over and fix anything before you tap Read it.</div>}
             </div>
           )}
           {/* A pasted email: the shifts it names, and its sections to read or leave out. */}
@@ -502,13 +546,13 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
               </div>
               <div className="mt-1 text-[11.5px] text-[var(--color-text-muted)]">
                 {from.id === "now" ? "A time with no date is the last time it came round: today, or last night."
-                  : <>A log of the <b className="text-[var(--color-text)]">{shSpan(from.w)}</b>{from.auto ? " (from when the file was last saved - change it if that's wrong)" : ""}. Times with no date are in that shift.</>}
+                  : <>A log of the <b className="text-[var(--color-text)]">{shSpan(from.w)}</b>{from.auto ? " (from when the file was last saved; change it if that's wrong)" : ""}. Times with no date are in that shift.</>}
               </div>
             </div>
           )}
           {err && <div role="alert" className="text-[12px] font-semibold text-rose-700 dark:text-rose-300">{err}</div>}
           {done && (
-            <div role="status" className={`rounded-lg px-3 py-2 text-[12px] ${done.failed.length ? "bg-rose-50 dark:bg-rose-950/40 text-rose-900 dark:text-rose-100" : "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-100"}`}>
+            <div role="status" className={`border-l-2 pl-3 py-1 text-[12px] text-[var(--color-text)] ${done.failed.length ? "border-rose-500" : "border-emerald-500"}`}>
               <div className="flex items-center gap-2">
                 <b className="flex-1">{done.saved.length && done.saved.every((s) => done.undone[s.id] === "Undone") ? "All taken back. Your note is in the box to fix and read again." : done.saved.length ? `Saved ${done.saved.length} step${done.saved.length === 1 ? "" : "s"}.` : "Nothing saved."}</b>
                 {done.saved.some((s) => !done.undone[s.id]) && (
@@ -586,12 +630,12 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
               </li>
             </ul>
             {review.unplaced.length > 0 && (
-              <div className="px-4 py-3 border-t border-[var(--color-border)] bg-amber-50/60 dark:bg-amber-950/20">
-                <div className="text-[12px] font-black uppercase tracking-wider text-amber-900 dark:text-amber-200">Couldn&apos;t place ({review.unplaced.length})</div>
+              <div className="px-4 py-3 border-t border-[var(--color-border)] border-l-2 border-l-amber-500">
+                <div className="text-[12px] font-black uppercase tracking-wider text-amber-800 dark:text-amber-300">Couldn&apos;t place ({review.unplaced.length})</div>
                 <ul className="mt-1 space-y-1 text-[12.5px] text-[var(--color-text)]">
                   {review.unplaced.map((u, i) => (
                     <li key={i} className="flex flex-wrap items-baseline gap-x-2">
-                      <span>“{u.text}” <span className="text-[var(--color-text-muted)]">- {u.why}</span></span>
+                      <span>“{u.text}” <span className="text-[var(--color-text-muted)]">· {u.why}</span></span>
                       <button type="button" onClick={() => addLine(u.text, i)} className="font-bold text-[var(--color-accent)] hover:underline">Put it on a step</button>
                     </li>
                   ))}

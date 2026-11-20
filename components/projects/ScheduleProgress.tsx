@@ -168,13 +168,13 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
       {/* Right column: forecast + upcoming */}
       <div className="space-y-3">
         {/* Forecast / slip card. All phases: each phase's line has its own. */}
-        <div className={`rounded-2xl p-4 border ${
-          byPhase ? "bg-[var(--color-surface)] border-[var(--color-border)]"
+        <div className={`rounded-2xl p-4 border border-[var(--color-border)] bg-[var(--color-surface)] ${
+          byPhase ? ""
           : (finished ? finIsLate : late)
-            ? "bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800"
+            ? "border-l-2 border-l-rose-500"
             : forecastEndAt || finished
-              ? "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800"
-              : "bg-[var(--color-surface-2)] border-[var(--color-border)]"
+              ? "border-l-2 border-l-emerald-500"
+              : ""
         }`}>
           {byPhase ? (
             <>
@@ -200,7 +200,7 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
             {linked
               ? (slipH >= 0.5 ? <><AlertTriangle className="w-3 h-3" /> {fmtH(slipH)} late</> : slipH <= -0.5 ? <><CheckCircle2 className="w-3 h-3" /> {fmtH(-slipH)} early</> : <><CheckCircle2 className="w-3 h-3" /> On plan</>)
               : late
-                ? <><AlertTriangle className="w-3 h-3" /> {!forecastEndAt ? "Behind - no work recorded yet to forecast from" : slipDays > 0 ? `${slipDays}d slip vs plan` : "Behind plan - under a day of slip so far"}</>
+                ? <><AlertTriangle className="w-3 h-3" /> {!forecastEndAt ? "Behind: no work recorded yet to forecast from" : slipDays > 0 ? `${slipDays}d slip vs plan` : "Behind plan: under a day of slip so far"}</>
                 : plannedEndAt ? <><CheckCircle2 className="w-3 h-3" /> On plan</> : "Plan not yet set"
             }
           </div>

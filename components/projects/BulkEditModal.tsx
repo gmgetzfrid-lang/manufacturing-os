@@ -82,7 +82,7 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
   return (
     <Modal onClose={busy ? () => undefined : onClose} size="lg" dismissable={!busy}>
       <ModalHeader icon={Replace} title="Change on many tasks"
-        subtitle="Swap a contractor, crew, company or location everywhere it appears - or set it (or day / night) on the tasks you selected." onClose={busy ? undefined : onClose} />
+        subtitle="Swap a contractor, crew, company or location everywhere it appears, or set it (or day or night) on the tasks you selected." onClose={busy ? undefined : onClose} />
       <ModalBody className="space-y-3">
         <div className="inline-flex rounded-lg bg-[var(--color-surface-2)] p-0.5 text-[12px] font-bold">
           <button onClick={() => setMode("replace")} className={`px-3 py-1.5 rounded-md ${mode === "replace" ? "bg-[var(--color-surface)] shadow-sm text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>Replace a name everywhere</button>

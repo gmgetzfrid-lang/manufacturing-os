@@ -26,6 +26,7 @@
 // pages blank.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { badgeText } from "@/lib/badge";
 import { createPortal } from "react-dom";
 import {
   Printer, ChevronLeft, ChevronRight, ChevronDown, Sun, Moon, Flag, FastForward,
@@ -1002,7 +1003,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       `}</style>
 
       {/* ── Toolbar ─────────────────────────────────────────────────── */}
-      <div className="px-3 py-2 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap rounded-t-2xl bg-gradient-to-b from-white to-slate-50/40 dark:from-transparent dark:to-transparent">
+      <div className="px-3 py-2 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap rounded-t-2xl bg-[var(--color-surface)]">
         {!meetingFixed && <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-lg p-0.5 gap-0.5" role="tablist" aria-label="Meeting">
           {MEETINGS.map(({ id, label, Icon }) => (
             <button key={id} role="tab" aria-selected={meeting === id} onClick={() => { setMeetingPick(id); setPresenting(null); }}
@@ -1052,7 +1053,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           <div className="contents">
             {timesSaved === false && (
               <button onClick={() => setShowTimes((v) => !v)} aria-expanded={showTimes} title="The day / night split is a guess until the shift times are saved"
-                className="inline-flex items-center gap-1 rounded-md border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/50 px-2 py-1 text-[11px] font-bold text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/50">
+                className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1 text-[11px] font-bold text-rose-700 dark:text-rose-300 hover:bg-[var(--color-surface-2)]">
                 <Settings2 className="w-3.5 h-3.5" /> Set shift times
               </button>
             )}
@@ -1072,7 +1073,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
                 {!timesDraft && timesSaved === false && (
                   <div className="flex justify-end pt-0.5">
                     <button onClick={() => { void saveProjectShiftTimes(projectId, times).then(() => setTimesMsg("Saved for everyone on this project.")).catch((e: Error) => setTimesMsg(e.message)); }}
-                      className="px-2.5 py-1 rounded-md font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]">These are right - confirm</button>
+                      className="px-2.5 py-1 rounded-md font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]">These are right: confirm</button>
                   </div>
                 )}
                 {timesDraft && (
@@ -1089,8 +1090,8 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
             {/* Sections left off are always said, never silently gone. */}
             {hiddenSecs.length > 0 && (
               <button type="button" onClick={() => setShowSecs((v) => !v)} aria-expanded={showSecs}
-                className="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]"
-                title="Sections left off the report - on screen and in print">
+                className="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                title="Sections left off the report, on screen and in print">
                 <EyeOff className="w-3.5 h-3.5" /> {hiddenSecs.length} hidden
               </button>
             )}
@@ -1108,7 +1109,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
                     ))}
                   </div>
                   <div className="mt-2 flex items-center justify-between gap-2 border-t border-[var(--color-border)] pt-2">
-                    <span className="text-[10.5px] text-[var(--color-text-muted)] leading-snug">On screen and in print. The email has its own list.</span>
+                    <span className="text-[11px] text-[var(--color-text-muted)] leading-snug">On screen and in print. The email has its own list.</span>
                     {hiddenSecs.length > 0 && <button type="button" onClick={() => setHidden(null, false)} className="shrink-0 font-bold text-[var(--color-accent)] hover:underline">Show all</button>}
                   </div>
                 </div>
@@ -1169,9 +1170,9 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           onClose={() => setPickerOpen(false)} />
       )}
       {recFail && (
-        <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-[13px] text-rose-900 dark:text-rose-100">
-          <span className="flex-1 min-w-[200px]"><b>Didn&apos;t save to the shift&apos;s record:</b> {recFail.msg}</span>
-          <button type="button" onClick={recFail.retry} className="h-9 px-3 rounded-lg border border-rose-300 dark:border-rose-700 bg-[var(--color-surface)] font-bold text-rose-900 dark:text-rose-100 cursor-pointer">Try again</button>
+        <div role="alert" className="mx-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-l-2 border-rose-500 pl-3 py-1 text-[13px] text-[var(--color-text)]">
+          <span className="flex-1 min-w-[200px]"><b className="text-rose-700 dark:text-rose-300">Didn&apos;t save to the shift&apos;s record:</b> {recFail.msg}</span>
+          <button type="button" onClick={recFail.retry} className="h-9 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] cursor-pointer">Try again</button>
         </div>
       )}
       {meeting === "turnover" && (
@@ -1193,10 +1194,10 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
               : "border-[var(--color-border)] text-[var(--color-text)]";
           return (
             <button key={s.id} onClick={() => goTo(s.id)}
-              className={`shrink-0 inline-flex items-center gap-1.5 rounded-full border pl-1 pr-2.5 py-0.5 text-[11px] font-bold hover:brightness-95 ${tone} ${active ? "ring-2 ring-[var(--color-accent)]" : ""}`}>
-              <span className="w-[18px] h-[18px] rounded-full bg-slate-900 text-white text-[10px] font-black flex items-center justify-center">{i + 1}</span>
+              className={`shrink-0 inline-flex items-center gap-1.5 rounded-full border pl-1 pr-2.5 py-0.5 text-[11px] font-bold hover:brightness-95 ${tone} ${active ? "ring-2 ring-[var(--color-text)]" : ""}`}>
+              <span className="w-[18px] h-[18px] rounded-full bg-[var(--color-text)] text-[var(--color-surface)] text-[11px] font-black flex items-center justify-center">{i + 1}</span>
               {s.short}
-              {s.count != null && <span className="font-mono font-bold opacity-70">{s.count}</span>}
+              {s.count != null && <span className="font-mono font-bold opacity-70">{badgeText(s.count)}</span>}
             </button>
           );
         })}
@@ -1206,7 +1207,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         <div className="px-3 pb-1.5 flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-1.5">
           {crews.length > 1 && (
             <div className="min-w-0 w-full sm:w-auto sm:flex-1 flex items-center gap-1 overflow-x-auto scroll-quiet" role="group" aria-label="Show one crew">
-              <span className="shrink-0 text-[9.5px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mr-0.5">Crew</span>
+              <span className="shrink-0 text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mr-0.5">Crew</span>
               {[{ who: null as string | null, steps: 0 }, ...crews].map((x) => {
                 const on = crew === x.who;
                 return (
@@ -1220,13 +1221,13 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
             </div>
           )}
           <div className="shrink-0 flex items-center gap-1" role="group" aria-label="Show only">
-            <span className="text-[9.5px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mr-0.5">Only</span>
+            <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mr-0.5">Only</span>
             <button type="button" aria-pressed={criticalOnly} onClick={() => setOnlyPick((v) => ({ ...v, critical: !v.critical }))}
-              className={`shrink-0 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${criticalOnly ? "bg-rose-600 text-white border-rose-600" : "border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+              className={`shrink-0 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${criticalOnly ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
               Critical path
             </button>
             <button type="button" aria-pressed={addedOnly} onClick={() => setOnlyPick((v) => ({ ...v, added: !v.added }))}
-              className={`shrink-0 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${addedOnly ? "bg-violet-700 text-white border-violet-700" : "border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+              className={`shrink-0 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${addedOnly ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
               Discovery &amp; added
             </button>
           </div>
@@ -1529,7 +1530,7 @@ function CopyUpdate({ doc, meeting, lh, stamps, primary }: { primary?: boolean; 
                   ))}
                 </div>
                 {(d.formCheck?.length ?? 0) > 0 && (
-                  <ul className="rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-1.5 text-[12px] font-semibold text-amber-900 dark:text-amber-200 list-disc pl-6">
+                  <ul className="border-l-2 border-amber-500 py-0.5 text-[12px] font-semibold text-amber-800 dark:text-amber-300 list-disc pl-7">
                     {d.formCheck!.map((c) => <li key={c}>{c}</li>)}
                   </ul>
                 )}
@@ -1678,7 +1679,7 @@ function BreaksEditor({ breaks, onChange, times }: { breaks: ShiftBreak[]; onCha
             {[10, 15, 20, 30, 45, 60].map((m) => <option key={m} value={m}>{m} min</option>)}
           </select>
           <button type="button" onClick={() => onChange(breaks.filter((_, j) => j !== i))} aria-label="Remove this break" className="p-1 text-[var(--color-text-muted)] hover:text-rose-700"><X className="w-3.5 h-3.5" /></button>
-          {outside(b) && <span className="basis-full text-[10.5px] font-semibold text-amber-700 dark:text-amber-400">{c12(b.start)} isn&apos;t on the {b.shift} shift ({c12(b.shift === "day" ? ds : ns)} to {c12(b.shift === "day" ? ns : ds)}) - it won&apos;t show. AM or PM, or the other shift?</span>}
+          {outside(b) && <span className="basis-full text-[11px] font-semibold text-amber-700 dark:text-amber-400">{c12(b.start)} isn&apos;t on the {b.shift} shift ({c12(b.shift === "day" ? ds : ns)} to {c12(b.shift === "day" ? ns : ds)}): it won&apos;t show. AM or PM, or the other shift?</span>}
         </div>
       ))}
       <button type="button" onClick={() => onChange([...breaks, { shift: "day", start: breaks.length ? "12:00" : "09:00", minutes: breaks.length ? 30 : 15, label: breaks.length ? "Lunch" : "Break" }])}
@@ -1981,14 +1982,14 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
           // amber (the hours say how bad) — red is for blocked.
           const detail = x.detail && !(vs && /^behind plan/.test(x.detail))
             ? { t: x.detail, tone: (x.tone === "rose" && kind !== "held" ? "amber" : x.tone ?? "muted") as TagTone } : null;
-          return [vs, detail, kind === "next" || pulled ? waitTag(r) : null, scope ? { t: `${scope}'s scope - coordinate`, tone: "amber" as const } : null, ...pathTags(r)];
+          return [vs, detail, kind === "next" || pulled ? waitTag(r) : null, scope ? { t: `${scope}'s scope: coordinate`, tone: "amber" as const } : null, ...pathTags(r)];
         })(),
       }),
       // The meeting's call on it (never printed): could the next crew try
       // it? One small button on the line; once marked, its crew and note.
       inline: !print && ho && r.leaf.id && kind === "carry" && !goals.byPlan ? (
         <button type="button" disabled={ho.locked} onClick={() => ho.set(r.leaf.id!, { ...ho.decisions[r.leaf.id!], tryIt: true, crew: ho.suggest(r)[0]?.crew ?? null })}
-          className="whitespace-nowrap rounded-full border border-indigo-300 dark:border-indigo-800 px-1.5 py-px text-[10px] font-bold text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 disabled:opacity-60 print:hidden">
+          className="whitespace-nowrap rounded-full border border-[var(--color-border-strong)] px-1.5 py-px text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-60 print:hidden">
           + {next.kind} could try
         </button>
       ) : undefined,
@@ -2012,13 +2013,13 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   // Without a plan, steps can still be pulled forward one by one.
   const addButton = ho?.openPicker && !goals.byPlan ? (
     <button type="button" onClick={ho.openPicker}
-      className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-indigo-400 dark:border-indigo-700 px-3 py-1.5 text-[12px] font-bold text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 print:hidden">
+      className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-1.5 text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden">
       <Zap className="w-3.5 h-3.5" /> Add work for the {next.kind} shift
     </button>
   ) : null;
   const planButton = np?.open ? (
     <button type="button" onClick={np.open}
-      className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-[12px] font-bold text-white hover:bg-indigo-700 print:hidden">
+      className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-1.5 text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden">
       <ListChecks className="w-3.5 h-3.5" /> {goals.byPlan ? `Change the ${next.kind} plan` : `Plan the ${next.kind} shift`}
     </button>
   ) : null;
@@ -2026,7 +2027,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   const askedText = asked.length ? `Asked last turnover: ${askedLine(asked, askedResult)}` : null;
   const otherKind = next.kind === "day" ? "night" : "day";
   const tryLine = tryList.length
-    ? `Could try if possible: ${tryList.length} step${tryList.length === 1 ? "" : "s"}, ${c.hrs(capa.used)}${capa.hours > 0 && ho?.pullSet ? ` of ${c.hrs(capa.hours)}${capa.over ? " - over" : ""} (${ho.pullSet.crew ? `${ho.pullSet.crew}, ` : ""}${ho.pullSet.hands} × ${Math.min(ho.pullSet.hours, shiftHrs)} h)` : ""}.`
+    ? `Could try if possible: ${tryList.length} step${tryList.length === 1 ? "" : "s"}, ${c.hrs(capa.used)}${capa.hours > 0 && ho?.pullSet ? ` of ${c.hrs(capa.hours)}${capa.over ? ", over" : ""} (${ho.pullSet.crew ? `${ho.pullSet.crew}, ` : ""}${ho.pullSet.hands} × ${Math.min(ho.pullSet.hours, shiftHrs)} h)` : ""}.`
     : null;
   const nextSub = [
     `${planList.length} step${planList.length === 1 ? "" : "s"} · ${c.hrs(planHrs)}`,
@@ -2049,7 +2050,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   });
   const afterButton = after?.open && afterNext ? (
     <button type="button" onClick={after.open}
-      className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-[12px] font-bold text-white hover:bg-indigo-700 print:hidden">
+      className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-1.5 text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden">
       <ListChecks className="w-3.5 h-3.5" /> {after.report.goals.byPlan ? `Change the ${afterNext.kind} plan` : `Plan the ${afterNext.kind} shift`}
     </button>
   ) : null;
@@ -2187,13 +2188,13 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
           {!print && o.thisPlan?.open && (
             <div className="flex flex-wrap items-center gap-2">
               <button type="button" onClick={o.thisPlan.open}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-400 dark:border-indigo-700 px-3 py-1.5 text-[12px] font-bold text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 print:hidden">
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-1.5 text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden">
                 <ListChecks className="w-3.5 h-3.5" /> {o.thisPlan.plan ? "Change this shift's plan" : "Plan this shift"}
               </button>
               <span className="text-[11.5px] text-[var(--color-text-muted)]">{o.thisPlan.plan ? `${planSetText(o.thisPlan.plan, c) ?? "Planned."} The update's "Work to be completed" is this plan.` : "The work after the meeting. Not set: the update lists the schedule's work for the shift."}</span>
             </div>
           )}
-          {checkText && <div className="text-[11.5px] font-semibold text-indigo-800 dark:text-indigo-300">{checkText}</div>}
+          {checkText && <div className="text-[11.5px] font-semibold text-[var(--color-text)]">{checkText}</div>}
           {askedText && <div className="text-[11.5px] font-semibold text-slate-700 dark:text-slate-200">{askedText}</div>}
           {doneRows.length > 0 && putBack(print, "done")}
           {doneRows.length > 0 ? (
@@ -2221,11 +2222,11 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       body: (print) => (
         <div className="space-y-2">
           {!print && planButton && <div className="flex flex-wrap items-center gap-2">{planButton}{!goals.byPlan && <span className="text-[11.5px] text-[var(--color-text-muted)]">No plan set: this list is the schedule&apos;s. Tick the work you&apos;re giving the {next.kind} shift.</span>}</div>}
-          {planSet && <div className="text-[11.5px] font-semibold text-indigo-800 dark:text-indigo-300">{planSet} This list is the plan; nothing else is handed to the {next.kind} shift.</div>}
+          {planSet && <div className="text-[11.5px] font-semibold text-[var(--color-text)]">{planSet} This list is the plan; nothing else is handed to the {next.kind} shift.</div>}
           {next.kind === "night" && o.times.nightJobs === undefined && !goals.byPlan && (
             // Not decided: the list follows the schedule file's hours.
-            <div role="alert" className="rounded-md border-2 border-rose-400 dark:border-rose-700 bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-[12px] text-rose-900 dark:text-rose-100">
-              <b>Night shifts aren&apos;t set</b> - this list follows the schedule file&apos;s hours, which can hand day work to nights. Set them once in <b>Schedule setup → Night shifts</b>: which jobs run days and nights.
+            <div role="alert" className="border-l-2 border-rose-500 pl-3 py-1 text-[12px] text-[var(--color-text)]">
+              <b className="text-rose-700 dark:text-rose-300">Night shifts aren&apos;t set:</b> this list follows the schedule file&apos;s hours, which can hand day work to nights. Set them once in <b>Schedule setup → Night shifts</b>: which jobs run days and nights.
             </div>
           )}
           {planList.length + tryList.length > 0 && putBack(print, "next")}
@@ -2235,15 +2236,15 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
           {tryLine && <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">{tryLine}</div>}
           {goals.pulledHeld.length > 0 && (
             <div className="text-[11.5px] font-semibold text-rose-700 dark:text-rose-300">
-              Blocked since it was added - not on the list: {goals.pulledHeld.map((r) => `${r.leaf.name}${r.reason ? ` (${r.reason})` : ""}`).join("; ")}.
+              Blocked since it was added, not on the list: {goals.pulledHeld.map((r) => `${r.leaf.name}${r.reason ? ` (${r.reason})` : ""}`).join("; ")}.
             </div>
           )}
           {offText && <OffPlan text={offText} rows={goals.offPlan} print={print} c={c} />}
           {!print && addButton}
           {!print && o.onPlanNext && (
             <button type="button" onClick={o.onPlanNext}
-              className={`${addButton ? "ml-2 " : ""}inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-accent)] px-3 py-1.5 text-[12px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] print:hidden`}>
-              <CalendarClock className="w-3.5 h-3.5" /> Move schedule dates - swap, pull in, push out
+              className={`${addButton ? "ml-2 " : ""}inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-1.5 text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden`}>
+              <CalendarClock className="w-3.5 h-3.5" /> Move schedule dates: swap, pull in, push out
             </button>
           )}
         </div>
@@ -2267,7 +2268,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       body: (print: boolean) => (
         <div className="space-y-2">
           {!print && afterButton && <div className="flex flex-wrap items-center gap-2">{afterButton}{!after.report.goals.byPlan && <span className="text-[11.5px] text-[var(--color-text-muted)]">No plan set: this list is the schedule&apos;s, with what the {next.kind === "day" ? "night" : "day"} crew leaves open. Tick the work you&apos;re giving the {afterNext.kind} shift.</span>}</div>}
-          {afterSet && <div className="text-[11.5px] font-semibold text-indigo-800 dark:text-indigo-300">{afterSet} This list is the plan; nothing else is handed to the {afterNext.kind} shift.</div>}
+          {afterSet && <div className="text-[11.5px] font-semibold text-[var(--color-text)]">{afterSet} This list is the plan; nothing else is handed to the {afterNext.kind} shift.</div>}
           {afterList.length === 0 ? <Empty>{after.report.goals.byPlan ? "Nothing left open on the plan." : `Nothing is scheduled for the ${afterNext.kind} shift.`}</Empty> : (
             <StepTable print={print} box whenHead="When" rightHead="Done → goal" rows={afterRows()} onEdit={print ? undefined : editRow} />
           )}
@@ -2320,7 +2321,7 @@ function FollowUpsBox({ open, edit, T, onAdd, onDone }: {
             <li key={n.id} className="flex items-start gap-2 text-[12.5px] text-[var(--color-text)]">
               <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" aria-hidden />
               <span className="flex-1 min-w-0 break-words">{n.text}<span className="ml-1.5 text-[11px] text-[var(--color-text-muted)]">{n.from ? `from ${n.from}` : `added ${T(n.at)}`}</span></span>
-              {edit && <button type="button" onClick={() => onDone(n)} className="shrink-0 text-[11.5px] font-bold text-emerald-700 dark:text-emerald-400 hover:underline">Done</button>}
+              {edit && <button type="button" onClick={() => onDone(n)} className="shrink-0 text-[11.5px] font-bold text-[var(--color-text)] hover:underline">Done</button>}
             </li>
           ))}
         </ul>
@@ -2329,7 +2330,7 @@ function FollowUpsBox({ open, edit, T, onAdd, onDone }: {
         <div className="flex gap-2">
           <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") add(); }} placeholder="Add a follow-up item"
             aria-label="Add a follow-up item" className="flex-1 min-w-0 h-9 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12.5px] text-[var(--color-text)]" />
-          <button type="button" onClick={add} disabled={!text.trim()} className="h-9 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-bold disabled:opacity-50">Add</button>
+          <button type="button" onClick={add} disabled={!text.trim()} className="h-9 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[12.5px] font-bold disabled:opacity-50">Add</button>
         </div>
       )}
     </div>
@@ -2383,12 +2384,12 @@ function discoverySection(shift: ShiftWindow, c: Ctx, list: Discovery[], onAdd?:
         {ds.inShift.length === 0 ? <Empty>Nothing added this shift.</Empty> : <DiscoveryList list={ds.inShift} c={c} print={print} />}
         {ds.open.length > 0 && (
           <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">
-            Still open from earlier: {ds.open.map((d) => `${d.task?.name ?? ""} - ${d.record.what} (${d.steps.filter((x) => x.status !== "completed").length} of ${d.steps.length} steps open)`).join("; ")}.
+            Still open from earlier: {ds.open.map((d) => `${d.task?.name ?? ""}: ${d.record.what} (${d.steps.filter((x) => x.status !== "completed").length} of ${d.steps.length} steps open)`).join("; ")}.
           </div>
         )}
         {!print && onAdd && (
           <button type="button" onClick={onAdd}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-violet-400 dark:border-violet-700 px-3 py-1.5 text-[12px] font-bold text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950/40 print:hidden">
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-1.5 text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden">
             <Plus className="w-3.5 h-3.5" /> Add discovery or added scope
           </button>
         )}
@@ -2879,12 +2880,12 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx): Sec[] {
  *  with the note and where they went, so none is forgotten. */
 function cancelledSection(jobs: CancelledJob[], c: Ctx): Sec {
   const when = (j: CancelledJob) => [j.at != null && Number.isFinite(j.at) ? c.D(j.at) : null, j.m.cancelledByName].filter(Boolean).join(" · ");
-  const title = (j: CancelledJob) => (j.crumbs.length ? `${j.crumbs[j.crumbs.length - 1]} - ${j.m.name}` : j.m.name);
+  const title = (j: CancelledJob) => (j.crumbs.length ? `${j.crumbs[j.crumbs.length - 1]}: ${j.m.name}` : j.m.name);
   return {
     id: "cancelled", title: "Cancelled from this schedule", short: "Cancelled", count: jobs.length, flag: "amber",
-    sub: "Still to be done - moved off this schedule",
+    sub: "Still to be done: moved off this schedule",
     body: (print) => (
-      <div className={`rounded-md border border-amber-300 dark:border-amber-800/70 divide-y divide-amber-200 dark:divide-amber-900/60 ${print ? "text-[8.5pt]" : "text-[12.5px]"}`}>
+      <div className={`rounded-md border border-[var(--color-border)] border-l-2 border-l-amber-500 divide-y divide-[var(--color-border)] ${print ? "text-[8.5pt]" : "text-[12.5px]"}`}>
         {jobs.map((j) => (
           <div key={j.m.id ?? j.m.name} className={`keep ${print ? "px-1.5 py-1" : "px-2.5 py-2"} flex flex-col gap-0.5`}>
             <div className="flex items-baseline gap-x-2 flex-wrap">
@@ -2897,7 +2898,7 @@ function cancelledSection(jobs: CancelledJob[], c: Ctx): Sec {
               {j.m.movedTo ? <b>{j.m.movedTo}</b> : <span className="text-[var(--color-text-faint)]">not said</span>}
             </div>
             {j.m.cancelNote && <div className="text-[var(--color-text-muted)] italic">“{j.m.cancelNote}”</div>}
-            <div className="text-[10.5px] text-[var(--color-text-faint)]">Cancelled {when(j)}</div>
+            <div className="text-[11px] print:text-[10.5px] text-[var(--color-text-faint)]">Cancelled {when(j)}</div>
           </div>
         ))}
       </div>
@@ -2924,7 +2925,7 @@ function closeSection(title: string, signers: string[], sub = "Notes, actions an
             <div key={who} className="flex items-end gap-2 text-[11px] text-[var(--color-text-muted)]">
               <span className="w-40 shrink-0">{who}</span>
               <span className="flex-1 border-b border-[var(--color-border-strong)]" />
-              <span className="w-12 border-b border-[var(--color-border-strong)] text-center text-[9px]">time</span>
+              <span className="w-12 border-b border-[var(--color-border-strong)] text-center text-[11px] print:text-[9px]">time</span>
             </div>
           ))}
         </div>
@@ -2966,12 +2967,12 @@ function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehea
           </div>
           <div className={`text-[11px] ${print ? "text-slate-700" : "text-[var(--color-text-muted)]"}`}>
             {print ? <>{when} · </> : null}as of {c.T(meeting === "turnover" ? asOf : now)} {tzAbbrev(c.tz, now)}
-            {crew && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${print ? "border border-slate-700 text-slate-900" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>{crew} only</span>}
-            {criticalOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${print ? "border border-rose-700 text-rose-900" : "bg-rose-200 text-rose-950"}`}>Critical path only</span>}
-            {addedOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${print ? "border border-violet-700 text-violet-900" : "bg-violet-200 text-violet-950"}`}>Discovery &amp; added only</span>}
-            {classOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${print ? "border border-slate-700 text-slate-900" : "bg-slate-200 text-slate-950"}`}>{classOnly} only</span>}
-            {rehearsal && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${print ? "border border-amber-700 text-amber-800" : "bg-amber-400 text-slate-900"}`}>Rehearsal - shift not started</span>}
-            {historyNote && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold ${print ? "border border-slate-500 text-slate-700" : "bg-[var(--color-surface-2)] text-[var(--color-text)]"}`}>Earlier shift: {historyNote}</span>}
+            {crew && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-black uppercase ${print ? "border border-slate-700 text-slate-900" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>{crew} only</span>}
+            {criticalOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-black uppercase ${print ? "border border-rose-700 text-rose-900" : "bg-rose-200 text-rose-950"}`}>Critical path only</span>}
+            {addedOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-black uppercase ${print ? "border border-slate-700 text-slate-900" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>Discovery &amp; added only</span>}
+            {classOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-black uppercase ${print ? "border border-slate-700 text-slate-900" : "bg-slate-200 text-slate-950"}`}>{classOnly} only</span>}
+            {rehearsal && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-black uppercase ${print ? "border border-amber-700 text-amber-800" : "bg-amber-400 text-slate-900"}`}>Rehearsal: shift not started</span>}
+            {historyNote && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-bold ${print ? "border border-slate-500 text-slate-700" : "bg-[var(--color-surface-2)] text-[var(--color-text)]"}`}>Earlier shift: {historyNote}</span>}
           </div>
         </div>
       </div>
@@ -2981,7 +2982,7 @@ function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehea
 
 function Footnote({ meeting, ctx: c, asOf, now, projectName }: { meeting: MeetingKind; ctx: Ctx; asOf: number; now: number; projectName?: string }) {
   return (
-    <footer className="pt-2 mt-2 border-t border-[var(--color-border)] text-[9.5px] text-[var(--color-text-faint)] flex justify-between gap-3 flex-wrap">
+    <footer className="pt-2 mt-2 border-t border-[var(--color-border)] text-[11px] print:text-[9.5px] text-[var(--color-text-faint)] flex justify-between gap-3 flex-wrap">
       <span>
         {meeting === "turnover" ? `Plan % = work the schedule expected done by ${c.DT(asOf)}, hour-weighted; actual % = progress entered. Gap = the difference in planned work-hours. ` : ""}
         Critical = on the chain that drives the finish date. Hours are planned work-hours. Behind {SEVERE_BEHIND_H} h or more shows red; less, amber.
@@ -3169,14 +3170,14 @@ function TagChip({ t, tone }: TagT) {
   const cls = tone === "rose" ? "bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950/40 dark:text-rose-200 dark:border-rose-900"
     : tone === "amber" ? "bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-900"
       : tone === "emerald" ? "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-200 dark:border-emerald-900"
-        : tone === "violet" ? "bg-violet-100 text-violet-800 border-violet-300 dark:bg-violet-950/40 dark:text-violet-200 dark:border-violet-900"
+        : tone === "violet" ? "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border-strong)]"
         : "bg-slate-100 text-slate-600 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700";
-  return <span className={`inline-block max-w-full whitespace-nowrap px-1 py-px rounded border text-[10px] font-bold align-middle ${cls}`}>{t}</span>;
+  return <span className={`inline-block max-w-full whitespace-nowrap px-1 py-px rounded border text-[11px] print:text-[10px] font-bold align-middle ${cls}`}>{t}</span>;
 }
 
 /** The one filled colour on the page: work on the chain that drives the finish. */
 function CriticalTag({ print }: { print?: boolean }) {
-  return <span className={`ml-2 inline-block rounded px-1.5 py-px font-bold leading-snug bg-rose-700 text-white align-[1px] ${print ? "text-[7pt]" : "text-[10.5px]"}`}>Critical</span>;
+  return <span className={`ml-2 inline-block rounded px-1.5 py-px font-bold leading-snug bg-rose-700 text-white align-[1px] ${print ? "text-[7pt]" : "text-[11px]"}`}>Critical</span>;
 }
 
 /** What's going on with a step, as one quiet line: how far behind (red only
@@ -3187,7 +3188,7 @@ const TONE_TEXT: Record<TagTone, string> = {
   emerald: "text-emerald-700 dark:text-emerald-400 font-medium",
   muted: "text-slate-600 dark:text-slate-300",
   wait: "text-slate-600 dark:text-slate-300",
-  violet: "text-violet-700 dark:text-violet-300 font-semibold",
+  violet: "text-[var(--color-text)] font-semibold",
 };
 function StatusLine({ tags, print }: { tags: TagT[]; print?: boolean }) {
   if (!tags.length) return null;
@@ -3393,7 +3394,7 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
                       <StatusLine tags={statusOf(r)} print={print} />
                       {r.note && <div className={`italic text-slate-600 dark:text-slate-300 mt-0.5 ${print ? "text-[7.5pt]" : "text-[11.5px]"}`}>{r.note}</div>}
                       {r.why && <div className={`italic font-medium text-amber-800 dark:text-amber-300 mt-0.5 ${print ? "text-[7.5pt]" : "text-[11.5px]"}`}>Why behind: {r.why}</div>}
-                      {ownerLine && <div className="text-[10px] text-slate-500 mt-0.5">Owner / decision: <span className="inline-block w-44 border-b border-dotted border-slate-400 align-baseline">&nbsp;</span></div>}
+                      {ownerLine && <div className="text-[11px] print:text-[10px] text-slate-500 mt-0.5">Owner / decision: <span className="inline-block w-44 border-b border-dotted border-slate-400 align-baseline">&nbsp;</span></div>}
                     </td>
                     {hasWhen && <td className={`${cell} text-slate-700 dark:text-slate-300 break-words`}>{r.when}</td>}
                     {hasWho && <td className={`${cell} font-medium text-slate-900 dark:text-slate-100 truncate`} title={r.who}>{r.who}</td>}
@@ -3433,7 +3434,7 @@ type DoneTask = ReturnType<typeof doneByTask>[number];
  *  the one still going (each with its time when times are on, its WO when
  *  the task has several, and the comment typed with it). Phone and desktop alike. */
 function DoneLines({ x, stamps, T, print, onEdit }: { x: DoneTask; stamps: boolean; T: (ms: number) => string; print: boolean; onEdit?: (id: string) => void }) {
-  const small = print ? "text-[7pt]" : "text-[10.5px]";
+  const small = print ? "text-[7pt]" : "text-[11px]";
   const line = (label: string, l: DoneLine, more: number, moreWord: string) => {
     const lead = [l.wo ? `WO ${l.wo}` : "", stamps && l.time != null ? T(l.time) : ""].filter(Boolean).join(" ");
     return (
@@ -3442,7 +3443,7 @@ function DoneLines({ x, stamps, T, print, onEdit }: { x: DoneTask; stamps: boole
         {lead && <span className={`font-mono text-slate-600 dark:text-slate-300 mr-1.5 ${print ? "text-[7.5pt]" : "text-[11.5px]"}`}>{lead}</span>}
         <span>{l.name}</span>
         {l.critical && <span className={`ml-1.5 font-bold text-rose-700 dark:text-rose-400 ${small}`}>critical path</span>}
-        {l.discovery && <span className={`ml-1.5 font-bold text-violet-700 dark:text-violet-300 ${small}`}>{l.discovery}</span>}
+        {l.discovery && <span className={`ml-1.5 font-bold text-[var(--color-text)] ${small}`}>{l.discovery}</span>}
         {more > 0 && <span className={`ml-1.5 text-slate-500 dark:text-slate-400 ${small}`}>+{more} more {moreWord}</span>}
         {!print && onEdit && <EditBtn label={l.name} onClick={() => onEdit(l.id)} />}
         {l.note && <div className={`italic text-slate-500 dark:text-slate-400 ml-3 ${print ? "text-[7.5pt]" : "text-[11px]"}`}>“{l.note}”</div>}
@@ -3529,7 +3530,7 @@ function SimpleTable({ head, rows, print }: { head: string[]; rows: Array<{ id: 
         <tbody>
           {rows.map((r) => (
             <tr key={r.id} className="border-t border-slate-200 dark:border-slate-700/60 align-top">
-              {r.cells.map((c, i) => <td key={i} className={`${cell} ${i === 0 ? "" : "whitespace-nowrap font-mono text-[10.5px]"}`}>{c}</td>)}
+              {r.cells.map((c, i) => <td key={i} className={`${cell} ${i === 0 ? "" : "whitespace-nowrap font-mono text-[11px] print:text-[10.5px]"}`}>{c}</td>)}
             </tr>
           ))}
         </tbody>

@@ -26,6 +26,7 @@ import { updateMilestoneNote, setProgressTime, setNoteTime, updateDiscoveryRecor
 import { appConfirm } from "@/components/providers/DialogProvider";
 import type { ProgressLogRow } from "@/lib/progressHistory";
 import { describeChange } from "@/lib/timeLog";
+import { useDraft } from "@/hooks/useDraft";
 
 /** What a change saves (the schedule's one save — ExecutionView.updateStep). */
 export interface StepUpdate {
@@ -296,7 +297,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
     // No comment on it yet: what's typed is added to it, at its time.
     const textAdded = !x.comment && !!text;
     const pctChanged = x.pct != null && fixPct != null && fixPct !== x.pct;
-    if (pctChanged && (fixPct! < 0 || fixPct! > 99)) { setFixMsg("A progress entry is 0–99%. 100% is finished - use Finish."); return; }
+    if (pctChanged && (fixPct! < 0 || fixPct! > 99)) { setFixMsg("A progress entry is 0–99%. 100% is finished: use Finish."); return; }
     if (!timeChanged && !textChanged && !textAdded && !pctChanged) { setFixing(null); return; }
     if (timeChanged) {
       if (t > Date.now() + 60_000) { setFixMsg("That time is in the future."); return; }
@@ -353,6 +354,8 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
   const [startV, setStartV] = useState("");
   const [p, setP] = useState<number | null>(null);
   const [note, setNote] = useState("");
+  // The comment being typed for an update survives a reload until it's saved.
+  const noteDraft = useDraft<string>(canEdit && m.id && action && action !== "edit" ? `step-action:${m.id}:${action}` : null, note, setNote, (v) => !v.trim());
   const [why, setWhy] = useState("");
   const [showWhy, setShowWhy] = useState(false);
   const [holdKind, setHoldKind] = useState<"on_hold" | "blocked">("on_hold");
@@ -520,7 +523,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
       if (ok) {
         const root = rootRef.current;
         if (root) { const sc = scrollParentOf(root); anchor.current = { h: root.offsetHeight, sc, top: sc.scrollTop, slack: sc.scrollHeight - sc.scrollTop - sc.clientHeight }; }
-        setSaved(said); setAction(null);
+        noteDraft.clear(); setSaved(said); setAction(null);
       } else setMsg((x) => x ?? "Not saved.");
     } catch (e) { setMsg((e as Error).message || "Not saved."); }
     finally { setBusy(false); aheadOk.current = false; ampmOk.current = false; }
@@ -599,7 +602,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
       const r = await resetStepProgress(m.id);
       if (r !== "ok") { setResetMsg(r === "missing" ? "Starting over needs the database update (20261109_history_remove.sql) run first." : "Not reset."); return; }
       changed([m.id]);
-      setAction(null); setSaved("Started over - not started, nothing recorded");
+      setAction(null); setSaved("Started over: not started, nothing recorded");
     } catch (e) { setResetMsg((e as Error).message || "Not reset."); }
     finally { setBusy(false); }
   };
@@ -647,7 +650,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
               <div className="flex flex-wrap gap-1" role="group" aria-label="What kind of work">
                 {(["discovery", "added"] as const).map((x) => (
                   <button key={x} type="button" aria-pressed={foundEdit.kind === x} onClick={() => { setFoundEdit({ ...foundEdit, kind: x }); setFoundMsg(null); }}
-                    className={`h-8 px-3 rounded-md border text-[12px] font-bold text-[var(--color-text)] ${foundEdit.kind === x ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] opacity-70"}`}>{ADDED[x].word}</button>
+                    className={`h-8 px-3 rounded-md border text-[12px] font-bold text-[var(--color-text)] ${foundEdit.kind === x ? "border-[var(--color-text)] bg-[var(--color-text)] !text-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] opacity-70"}`}>{ADDED[x].word}</button>
                 ))}
               </div>
               <label className="block">
@@ -710,7 +713,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
           {/* The plan itself — dates, hours, crew, name — in the step's panel. */}
           {canEdit && m.id && <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("step:edit-plan", { detail: { id: m.id } }))} className="font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline">Edit plan</button>}
           {/* A problem, a lesson, a shortfall: kept for the next job. */}
-          {canEdit && m.id && <button type="button" onClick={() => newFinding({ milestoneId: m.id })} title="A problem, a lesson, a material shortfall or missed scope - kept for the next job" className="font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline">+ Finding</button>}
+          {canEdit && m.id && <button type="button" onClick={() => newFinding({ milestoneId: m.id })} title="A problem, a lesson, a material shortfall or missed scope, kept for the next job" className="font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline">+ Finding</button>}
           {/* Not supposed to be there: delete it, or cancel it on the record
               (added work has its own Delete, above). */}
           {canEdit && m.id && !found && <button type="button" onClick={() => askRemoveStep(m.id!)} title="Delete it (put in by mistake) or cancel it (not done on this job)" className="font-semibold text-rose-700 dark:text-rose-400 hover:underline">Remove</button>}
@@ -727,7 +730,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
             <div className="flex gap-1">
               {([["on_hold", "On hold"], ["blocked", "Blocked"]] as const).map(([k, l]) => (
                 <button key={k} type="button" aria-pressed={holdKind === k} onClick={() => setHoldKind(k)}
-                  className={`h-8 px-3 rounded-md border text-[12px] font-bold ${holdKind === k ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>{l}</button>
+                  className={`h-8 px-3 rounded-md border text-[12px] font-bold ${holdKind === k ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>{l}</button>
               ))}
             </div>
           )}
@@ -735,7 +738,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
             <div className="space-y-2.5">
               <div className="text-[11.5px] text-[var(--color-text-muted)]">Every time on this step, in the order it happened. Change any of them, then Save once.</div>
               {timed.map((e) => (
-                <DateTimePicker key={e.key} label={`${e.text}${e.said[0] ? ` - ${e.said[0].text}` : ""}`} value={fixAll[e.key] ?? ""}
+                <DateTimePicker key={e.key} label={`${e.text}${e.said[0] ? `: ${e.said[0].text}` : ""}`} value={fixAll[e.key] ?? ""}
                   onChange={(v) => { setFixAll((x) => ({ ...x, [e.key]: v })); setMsg(null); }} tz={tz} times={times} showNow={false}
                   planned={e.fix === "start" ? ps : e.fix === "finish" ? pf : undefined} />
               ))}
@@ -780,21 +783,21 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
           )}
           {msg && <div role="alert" className="font-semibold text-rose-700 dark:text-rose-400">{msg}</div>}
           {ampmAsk && (
-            <div role="alert" className="rounded-md border border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40 px-2 py-1.5 space-y-1.5">
-              <div className="font-semibold text-amber-900 dark:text-amber-200">{ampmAsk.says} Did you mean {ampmAsk.use}?</div>
+            <div role="alert" className="border-l-2 border-amber-500 pl-2 py-0.5 space-y-1.5">
+              <div className="font-semibold text-amber-800 dark:text-amber-300">{ampmAsk.says} Did you mean {ampmAsk.use}?</div>
               <div className="flex flex-wrap gap-2">
                 <button type="button" disabled={busy} onClick={() => { const a = ampmAsk; setAmpmAsk(null); a.fix(); }}
-                  className="h-8 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-60">Use {ampmAsk.use}</button>
+                  className="h-8 px-3 rounded-lg border border-[var(--color-text)] bg-[var(--color-surface)] text-[var(--color-text)] text-[12.5px] font-bold hover:bg-[var(--color-surface-2)] disabled:opacity-60">Use {ampmAsk.use}</button>
                 <button type="button" disabled={busy} onClick={() => { ampmOk.current = true; setAmpmAsk(null); void save(); }}
-                  className="h-8 px-3 rounded-lg border border-amber-400 text-amber-900 dark:text-amber-200 text-[12.5px] font-bold hover:bg-amber-100 dark:hover:bg-amber-900/40 disabled:opacity-60">Keep {ampmAsk.keep}</button>
+                  className="h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[12.5px] font-bold hover:bg-[var(--color-surface-2)] disabled:opacity-60">Keep {ampmAsk.keep}</button>
               </div>
             </div>
           )}
           {aheadAsk && (
-            <div role="alert" className="rounded-md border border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40 px-2 py-1.5 space-y-1.5">
-              <div className="font-semibold text-amber-900 dark:text-amber-200">{aheadAsk}</div>
+            <div role="alert" className="border-l-2 border-amber-500 pl-2 py-0.5 space-y-1.5">
+              <div className="font-semibold text-amber-800 dark:text-amber-300">{aheadAsk}</div>
               <button type="button" disabled={busy} onClick={() => { aheadOk.current = true; setAheadAsk(null); void save(); }}
-                className="h-8 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-60">Yes, save it</button>
+                className="h-8 px-3 rounded-lg border border-[var(--color-text)] bg-[var(--color-surface)] text-[var(--color-text)] text-[12.5px] font-bold hover:bg-[var(--color-surface-2)] disabled:opacity-60">Yes, save it</button>
             </div>
           )}
           <div className="flex items-center gap-2">

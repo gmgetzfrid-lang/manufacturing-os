@@ -9,7 +9,8 @@
 // turnaround's, the critical path, and the steps it holds up (a forecast —
 // no other step's planned dates are changed).
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useDraft } from "@/hooks/useDraft";
 import { useProjectTypeCtx } from "@/components/projects/ProjectTypeContext";
 import { typeWord } from "@/lib/projectType";
 import { X, Plus, Trash2 } from "lucide-react";
@@ -109,6 +110,20 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
   };
   const pickAfter = (id: string | null) => { setAfterId(id); setHolds(defaultHolds(milestones, taskId, id)); };
   const [what, setWhat] = useState("");
+  // What was found, as typed: comes back after a reload until it's added.
+  const whatDraft = useDraft<string>(`discovery:${milestones.find((m) => m.projectId)?.projectId ?? ""}:${startTask?.id ?? "new"}`, what, setWhat, (v) => !v.trim());
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      // Only the dialog on top closes.
+      const open = document.querySelectorAll('[aria-modal="true"]');
+      if (open.length && open[open.length - 1] !== boxRef.current) return;
+      onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
   // Discovery — found when it was opened — or added scope: known work
   // that wasn't on the schedule.
   // A work order of its own is most often unplanned work: added scope.
@@ -133,10 +148,10 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
   const foundAt = toMs(foundV);
   const startAt = startMode === "set" ? toMs(startV) : null;
   // What's wrong with the times, if anything.
-  const timeProblem = !Number.isFinite(foundAt) ? `Put in when it was ${k.found} - the day and the time.`
-      : startMode === "set" && !Number.isFinite(startAt as number) ? "Pick when the work starts - the day and the time."
+  const timeProblem = !Number.isFinite(foundAt) ? `Put in when it was ${k.found}: the day and the time.`
+      : startMode === "set" && !Number.isFinite(startAt as number) ? "Pick when the work starts: the day and the time."
         : startAt != null && startAt < foundAt ? `The work can't start before it was ${k.found}.`
-          : startAt != null && follows != null && startAt < follows ? `It starts after “${afterName ?? "the step it follows"}”, planned to be done ${fmt(follows)} - pick that or later, or change what it starts after.`
+          : startAt != null && follows != null && startAt < follows ? `It starts after “${afterName ?? "the step it follows"}”, planned to be done ${fmt(follows)}. Pick that or later, or change what it starts after.`
             : null;
 
   // Under a work order, or a new one: what it starts after starts again.
@@ -159,30 +174,30 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
   const taskName = isNew ? woName.trim() || "The new work order" : tasks.find((t) => t.id === taskId)?.name ?? start.name ?? "";
 
   const save = async () => {
-    if (isNew && !woName.trim()) { setMsg("Name the work order - the equipment and the job."); return; }
+    if (isNew && !woName.trim()) { setMsg("Name the work order: the equipment and the job."); return; }
     if (isNew && !underId) { setMsg("Pick where it goes in the schedule."); return; }
     if (!what.trim()) { setMsg(kind === "added" ? "Say what's being added." : "Say what was found."); return; }
     if (!wo.trim() && !noWo) { setMsg(`Put in its work order #${taskWo ? `, or tap Same as the task (${taskWo})` : ""}, or No WO # yet.`); return; }
-    if (!filled.length) { setMsg("Add the work it needs - a step with its hours."); return; }
+    if (!filled.length) { setMsg("Add the work it needs: a step with its hours."); return; }
     if (timeProblem) { setMsg(timeProblem); return; }
     if (foundAt > clock() + 60_000) { setMsg(`When it was ${k.found} can't be in the future.`); return; }
     if (!draft) return;
     setBusy(true); setMsg(null);
     const ok = await onSave({ ...draft, wo: noWo ? null : wo.trim() }, now).catch((e: Error) => { setMsg(e.message); return false; });
     setBusy(false);
-    if (ok) onClose();
+    if (ok) { whatDraft.clear(); onClose(); }
   };
 
   const inp = "h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent-ring)]";
   const lbl = "block font-bold text-[var(--color-text)] mb-1";
   return (
-    <div className="fixed inset-0 z-[185] bg-black/50" onClick={onClose}>
+    <div ref={boxRef} aria-modal="true" className="fixed inset-0 z-[185] bg-black/50" onClick={onClose}>
       <div role="dialog" aria-label="Add work to the schedule" onClick={(e) => e.stopPropagation()}
         className="absolute left-1/2 top-10 -translate-x-1/2 w-[560px] max-w-[96vw] max-h-[88dvh] overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-xl text-[12px] max-sm:left-0 max-sm:right-0 max-sm:top-auto max-sm:bottom-0 max-sm:translate-x-0 max-sm:w-full max-sm:max-w-none max-sm:rounded-b-none max-sm:max-h-[92dvh]">
         <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2">
           <div>
-            <div className="text-[14px] font-black">{isNew ? `New work order - ${k.lower}` : k.word === "Discovery" ? "Discovery work" : "Added scope"}</div>
-            <div className="text-[11px] text-[var(--color-text-muted)]">Work that wasn&apos;t in the plan, into the schedule - and what it does to it.</div>
+            <div className="text-[14px] font-black">{isNew ? `New work order: ${k.lower}` : k.word === "Discovery" ? "Discovery work" : "Added scope"}</div>
+            <div className="text-[11px] text-[var(--color-text-muted)]">Work that wasn&apos;t in the plan, into the schedule, and what it does to it.</div>
           </div>
           <button type="button" onClick={onClose} aria-label="Close" className="w-7 h-7 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
@@ -191,7 +206,7 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
             <div className="flex flex-wrap gap-1" role="group" aria-label="What kind of work">
               {(["discovery", "added"] as const).map((x) => (
                 <button key={x} type="button" aria-pressed={kind === x} onClick={() => { setKind(x); setMsg(null); }}
-                  className={`h-8 px-3 rounded-md border text-[12px] font-bold ${kind === x ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>{ADDED[x].word}</button>
+                  className={`h-8 px-3 rounded-md border text-[12px] font-bold ${kind === x ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>{ADDED[x].word}</button>
               ))}
             </div>
             <div className="text-[11px] text-[var(--color-text-muted)]">{kind === "added" ? "Known work that wasn't on the schedule." : "Found when the equipment was opened."} You can change this later.</div>
@@ -199,17 +214,17 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
           <div className="flex flex-wrap gap-1" role="group" aria-label="Where it goes">
             {([[false, "Under a work order"], [true, "A new work order"]] as const).map(([v, l]) => (
               <button key={l} type="button" aria-pressed={isNew === v} onClick={() => goNew(v)}
-                className={`h-8 px-3 rounded-md border text-[12px] font-bold ${isNew === v ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>{l}</button>
+                className={`h-8 px-3 rounded-md border text-[12px] font-bold ${isNew === v ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>{l}</button>
             ))}
           </div>
           {isNew ? (
             <>
               <label className="block">
-                <span className={lbl}>Work order name <span className="font-bold text-amber-700 dark:text-amber-400">- required</span></span>
-                <input value={woName} onChange={(e) => { setWoName(e.target.value); setMsg(null); }} placeholder="e.g. P-7C - Replace pump seal" className={`${inp} w-full`} />
+                <span className={lbl}>Work order name <span className="font-normal text-[var(--color-text-muted)]">(required)</span></span>
+                <input value={woName} onChange={(e) => { setWoName(e.target.value); setMsg(null); }} placeholder="e.g. P-7C: Replace pump seal" className={`${inp} w-full`} />
               </label>
               <label className="block">
-                <span className={lbl}>Goes under <span className="font-bold text-amber-700 dark:text-amber-400">- required</span></span>
+                <span className={lbl}>Goes under <span className="font-normal text-[var(--color-text-muted)]">(required)</span></span>
                 <select value={underId} onChange={(e) => { setUnderId(e.target.value); setMsg(null); }} aria-label="Goes under" className={`${inp} w-full`}>
                   <option value="">Pick where it goes</option>
                   {groups.map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
@@ -220,36 +235,36 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
             <label className="block">
               <span className={lbl}>Equipment / task</span>
               <select value={taskId} onChange={(e) => pickTask(e.target.value)} className={`${inp} w-full`}>
-                {tasks.map((t) => <option key={t.id} value={t.id!}>{t.name}{t.workOrderRef ? ` - WO ${t.workOrderRef}` : ""}</option>)}
+                {tasks.map((t) => <option key={t.id} value={t.id!}>{t.name}{t.workOrderRef ? ` · WO ${t.workOrderRef}` : ""}</option>)}
               </select>
             </label>
           )}
           <label className="block">
-            <span className={lbl}>{k.what} <span className="font-bold text-amber-700 dark:text-amber-400">- required</span></span>
+            <span className={lbl}>{k.what} <span className="font-normal text-[var(--color-text-muted)]">(required)</span></span>
             <textarea value={what} onChange={(e) => { setWhat(e.target.value); setMsg(null); }} rows={2} placeholder={kind === "added" ? "e.g. Clean the downcomers while the tower is open" : "e.g. Tray 14 cracked at the weld - needs repair before close-up"}
               className={`${inp} w-full h-auto py-1.5`} />
           </label>
           <div className="space-y-1">
-            <span className={lbl}>Work order # <span className="font-bold text-amber-700 dark:text-amber-400">- required</span></span>
+            <span className={lbl}>Work order # <span className="font-normal text-[var(--color-text-muted)]">(required)</span></span>
             <div className="flex flex-wrap items-center gap-1.5">
               <input value={wo} onChange={(e) => { setWo(e.target.value); setNoWo(false); setMsg(null); }} placeholder="e.g. 310990" aria-label="Work order number"
                 className={`${inp} w-36 font-mono`} />
               {taskWo && (
                 <button type="button" aria-pressed={!noWo && wo.trim() === taskWo} onClick={() => { setWo(taskWo); setNoWo(false); setMsg(null); }}
-                  className={`h-8 px-3 rounded-md border text-[12px] font-bold ${!noWo && wo.trim() === taskWo ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>Same as the task: {taskWo}</button>
+                  className={`h-8 px-3 rounded-md border text-[12px] font-bold ${!noWo && wo.trim() === taskWo ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>Same as the task: {taskWo}</button>
               )}
               <button type="button" aria-pressed={noWo} onClick={() => { setNoWo(true); setWo(""); setMsg(null); }}
-                className={`h-8 px-3 rounded-md border text-[12px] font-bold ${noWo ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>No WO # yet</button>
+                className={`h-8 px-3 rounded-md border text-[12px] font-bold ${noWo ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>No WO # yet</button>
             </div>
             {noWo && <div className="text-[11px] text-[var(--color-text-muted)]">{taskWo ? `It shows under the task's WO ${taskWo} until you add its own (the step's Edit).` : "Add it later on the step (Edit)."}</div>}
           </div>
-          <DateTimePicker label={`When was it ${k.found}?`} hint="- required" value={foundV} onChange={(v) => { setFoundV(v); setMsg(null); }} tz={tz} times={times} />
+          <DateTimePicker label={`When was it ${k.found}?`} hint="(required)" value={foundV} onChange={(v) => { setFoundV(v); setMsg(null); }} tz={tz} times={times} />
           <div>
             <span className={lbl}>Work it adds</span>
             <div className="space-y-1.5">
               {rows.map((r, i) => (
                 <div key={i} className="flex flex-wrap items-center gap-1.5">
-                  <input value={r.name} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} placeholder="Step - e.g. Weld repair tray 14" aria-label="Step"
+                  <input value={r.name} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} placeholder="Step, e.g. Weld repair tray 14" aria-label="Step"
                     className={`${inp} flex-1 min-w-[180px]`} />
                   <CrewPicker value={r.crew} onChange={(v) => setRows(rows.map((x, j) => (j === i ? { ...x, crew: v } : x)))} crews={crews} className="w-40" />
                   <span className="inline-flex items-center gap-1">
@@ -270,7 +285,7 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
             <label className="block">
               <span className={lbl}>Starts after</span>
               <select value={afterId ?? ""} onChange={(e) => pickAfter(e.target.value || null)} className={`${inp} w-full`}>
-                <option value="">{startMode === "set" ? "Nothing before it" : "Nothing - starts now"}</option>
+                <option value="">{startMode === "set" ? "Nothing before it" : "Nothing, starts now"}</option>
                 {steps.map((s) => <option key={s.id} value={s.id!}>{s.name}{s.status === "completed" ? " (done)" : s.status === "in_progress" ? " (under way)" : ""}</option>)}
               </select>
               {/* After work that isn't done: it waits for it — say so, so two
@@ -282,7 +297,7 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
               )}
             </label>
             <div>
-              <span className={lbl}>Holds up <span className="font-normal text-[var(--color-text-muted)]">- can&apos;t start until it&apos;s done</span></span>
+              <span className={lbl}>Holds up <span className="font-normal text-[var(--color-text-muted)]">(can&apos;t start until it&apos;s done)</span></span>
               <div className="max-h-28 overflow-y-auto rounded-md border border-[var(--color-border)] px-2 py-1 space-y-0.5">
                 {steps.filter((s) => s.id !== afterId && s.status !== "completed").map((s) => (
                   <label key={s.id} className="flex items-start gap-1.5">
@@ -298,14 +313,14 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
           <div className="space-y-1.5">
             <span className={lbl}>When can the work start?</span>
             <div className="flex flex-wrap gap-1" role="group" aria-label="When the work starts">
-              {([["asap", `As soon as it can - ${fmt(asap)}`], ["set", "At a set time"]] as const).map(([k, l]) => (
+              {([["asap", `As soon as it can: ${fmt(asap)}`], ["set", "At a set time"]] as const).map(([k, l]) => (
                 <button key={k} type="button" aria-pressed={startMode === k} onClick={() => { setStartMode(k); setMsg(null); if (k === "set" && !startV) setStartV(toDateTimeInput(asap, tz)); }}
-                  className={`h-8 px-3 rounded-md border text-[12px] font-bold ${startMode === k ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>{l}</button>
+                  className={`h-8 px-3 rounded-md border text-[12px] font-bold ${startMode === k ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>{l}</button>
               ))}
             </div>
             {startMode === "asap"
               ? <div className="text-[11px] text-[var(--color-text-muted)]">{(() => {
-                if (afterStep && afterStep.status !== "completed") return follows != null && follows >= now ? `When “${afterName}” is planned to be done.` : `When “${afterName}” is done - it isn't yet, so from now.`;
+                if (afterStep && afterStep.status !== "completed") return follows != null && follows >= now ? `When “${afterName}” is planned to be done.` : `When “${afterName}” is done. It isn't yet, so from now.`;
                 const end = afterStep ? ms(afterStep.actualAt ?? afterStep.plannedAt) : NaN;
                 if (Number.isFinite(end) && Number.isFinite(foundMs) && end > foundMs) return `When “${afterName}” was done.`;
                 return `Right when it was ${k.found}.`;
@@ -313,19 +328,19 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
               : <DateTimePicker label="Planned start" value={startV} onChange={(v) => { setStartV(v); setMsg(null); }} tz={tz} times={times} future showNow={false} />}
           </div>
           <label className="block">
-            <span className={lbl}>Approved by <span className="font-normal text-[var(--color-text-muted)]">- optional</span></span>
+            <span className={lbl}>Approved by <span className="font-normal text-[var(--color-text-muted)]">(optional)</span></span>
             <input value={approvedBy} onChange={(e) => setApprovedBy(e.target.value)} placeholder={`e.g. ${ptype.short} manager / owner rep`} className={`${inp} w-full`} />
           </label>
 
           {/* What it does to the schedule — before it's saved. */}
-          <div className={`rounded-lg border px-3 py-2 space-y-1 ${plan?.impact.critical ? "border-rose-300 bg-rose-50 dark:border-rose-900 dark:bg-rose-950/30" : "border-[var(--color-border)] bg-[var(--color-surface-2)]"}`}>
+          <div className={`rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 space-y-1 ${plan?.impact.critical ? "border-l-2 border-l-rose-500" : ""}`}>
             <div className="font-black text-[11px] uppercase tracking-wider text-[var(--color-text-muted)]">What it does to the schedule</div>
             {!plan ? <div className="text-[var(--color-text-muted)]">{timeProblem && filled.length ? timeProblem : "Add the work it needs (a step and its hours) to see."}</div> : (
               <>
                 <div className="font-bold">{impactLine(plan.impact, hrs, typeWord(ptype))}</div>
                 <div>{isNew ? <>{taskName}: done <b>{fmt(plan.impact.taskFinish[1])}</b></> : <>{taskName}: finish {fmt(plan.impact.taskFinish[0])} → <b>{fmt(plan.impact.taskFinish[1])}</b></>}</div>
                 <div>{ptype.word} (forecast): {fmt(plan.impact.finish[0])} → <b className={plan.impact.finish[1] > plan.impact.finish[0] + 6 * 60_000 ? "text-rose-700 dark:text-rose-400" : ""}>{fmt(plan.impact.finish[1])}</b>
-                  {!isNew && plan.impact.finish[1] <= plan.impact.finish[0] + 6 * 60_000 && plan.impact.taskFinish[1] > plan.impact.taskFinish[0] ? " - it fits in the float" : ""}</div>
+                  {!isNew && plan.impact.finish[1] <= plan.impact.finish[0] + 6 * 60_000 && plan.impact.taskFinish[1] > plan.impact.taskFinish[0] ? ": it fits in the float" : ""}</div>
                 <div className="text-[var(--color-text-muted)]">New work: {plan.steps.map((s) => `${s.name} ${fmt(Date.parse(s.plannedStartAt))} → ${fmt(Date.parse(s.plannedAt))}`).join("; ")}</div>
                 {plan.impact.pushed.length > 0 && (
                   <div>Holds up {plan.impact.pushed.length} planned step{plan.impact.pushed.length === 1 ? "" : "s"} (forecast): {plan.impact.pushed.slice(0, 5).map((p) => `${p.name} +${hrs(p.hours)}`).join(", ")}{plan.impact.pushed.length > 5 ? ` + ${plan.impact.pushed.length - 5} more` : ""}. Their planned dates don&apos;t change.</div>
@@ -343,7 +358,7 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
           </div>
           <div className="text-[11px] text-[var(--color-text-faint)]">{isNew
             ? <>It goes in as a new work order{underId ? ` under ${groups.find((g) => g.id === underId)?.label.split(" › ").pop()}` : ""}, its steps marked as {k.lower}. No other step&apos;s planned dates change.</>
-            : <>It goes in as steps under {taskName}, marked as {k.lower}, linked after the step it follows; what it holds up waits on it. No other step&apos;s planned dates change - the delay shows as the forecast finish, against the plan.</>}</div>
+            : <>It goes in as steps under {taskName}, marked as {k.lower}, linked after the step it follows; what it holds up waits on it. No other step&apos;s planned dates change: the delay shows as the forecast finish, against the plan.</>}</div>
         </div>
       </div>
     </div>

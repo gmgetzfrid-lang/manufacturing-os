@@ -15,7 +15,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Layers, Plus, Trash2, Loader2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/ui/Modal";
-import { appConfirm } from "@/components/providers/DialogProvider";
+import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 import {
   type ProjectPhase, evenShares, fitShares, moveDivider, setShare, phaseAmount, shareOfAmount,
   startPhases, newPhaseId, phaseDates, phaseProblems,
@@ -156,6 +156,9 @@ export function PhasesSetup({ orgId, projectId, projectName, phases: saved, uid,
         supabase.from("milestones").select("planned_at").eq("project_id", projectId).not("planned_at", "is", null).order("planned_at", { ascending: false }).limit(1),
       ]);
       if (!live) return;
+      // A read that failed says so (the AFE and dates would look blank).
+      const failed = [p, lines, first, last].find((r) => r.error);
+      if (failed?.error) setErr(`Couldn't read the project's AFE and dates: ${failed.error.message}`);
       const row = (p.data ?? null) as { afe_number?: string | null; charge_account?: string | null; authorized_amount?: number | null; budget_doc_id?: string | null } | null;
       const a = { number: row?.afe_number ?? null, account: row?.charge_account ?? null, authorized: row?.authorized_amount == null ? null : Number(row.authorized_amount), docId: row?.budget_doc_id ?? null };
       setAfe(a);
@@ -211,12 +214,16 @@ export function PhasesSetup({ orgId, projectId, projectName, phases: saved, uid,
       if (name.trim() && name.trim() !== projectName) patch.name = noEmDash(name.trim());
       const { data, error } = await supabase.from("projects").update(patch).eq("id", projectId).select("id");
       if (error) { setErr(`Not saved. The database said: ${error.message}`); return; }
-      if (!data?.length) { setErr("Not saved - only the project's owner, a co-owner or an admin can change the phases."); return; }
-      // A copy in the phases column, when the database has it.
-      void supabase.from("projects").update({ phases: keep }).eq("id", projectId).then(() => undefined, () => undefined);
+      if (!data?.length) { setErr("Not saved: only the project's owner, a co-owner or an admin can change the phases."); return; }
+      // A copy in the phases column, when the database has it (an older
+      // database without the column is fine; any other failure is said).
+      void supabase.from("projects").update({ phases: keep }).eq("id", projectId).then(({ error: copyErr }) => {
+        if (copyErr && !/column|schema cache/i.test(copyErr.message)) void appAlert(`The phases were saved, but their second copy wasn't: ${copyErr.message}`);
+      });
       onSaved();
       onClose();
-    } finally { setBusy(false); }
+    } catch (e) { setErr(`Not saved: ${(e as Error).message}`); }
+    finally { setBusy(false); }
   };
 
   const input = "h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px] text-[var(--color-text)]";

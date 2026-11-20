@@ -1,102 +1,51 @@
 "use client";
 
 // ExecutionGuide — the single, always-available "how this works" for
-// the Execution view. Two pieces:
-//
-//   * A one-time first-run banner so a brand-new user gets oriented
-//     without hunting.
-//   * A "How it works" button (always in the toolbar) that opens a
-//     plain-language cheat sheet, using the SAME icons the UI uses, so
-//     nothing depends on discovering a hidden gesture.
+// the Execution view: a ? button in the toolbar that opens a
+// plain-language cheat sheet, using the SAME icons the UI uses, so
+// nothing depends on discovering a hidden gesture.
 //
 // Design rule for this tool: every capability is named here. If we add
 // an interaction, it gets a line here too — this is the contract that
 // keeps the field user from being lost.
 
-import React, { useEffect, useState, useSyncExternalStore } from "react";
-import { supabase } from "@/lib/supabase";
+import React, { useEffect, useState } from "react";
 import {
   HelpCircle, X as XIcon, GripVertical, ChevronRight, ChevronLeft,
-  CalendarRange, ListTree, CalendarDays, MousePointerClick,
+  CalendarRange, ListTree, CalendarDays,
 } from "lucide-react";
 
-const SEEN_KEY = "exec.guide.seen.v1";
-const subscribeNever = () => () => {};
-
-/** Has this person run a schedule before? Something of theirs on it (a
- *  task they made or finished, a note they wrote) - here or on any
- *  project. Known from the records, not this browser's memory: a new
- *  device or link doesn't make anyone new. */
-function useExperienced(userId?: string, here?: boolean): boolean | null {
-  const [state, setState] = useState<{ userId?: string; v: boolean | null }>({ userId, v: null });
-  useEffect(() => {
-    if (here || !userId) return;
-    let live = true;
-    void supabase.from("milestone_notes").select("id").eq("created_by", userId).limit(1)
-      .then(({ data, error }) => { if (live) setState({ userId, v: !error && !!data && data.length > 0 }); });
-    return () => { live = false; };
-  }, [userId, here]);
-  if (here) return true;
-  return state.userId === userId ? state.v : null;
-}
-
-export default function ExecutionGuide({ userId, worked }: {
-  userId?: string;
-  /** Something on this schedule is theirs (a task they made or finished). */
-  worked?: boolean;
-} = {}) {
+// One home for the guide: the ? button. (The first-run "New here?" banner
+// that also opened it is gone: one way in, and no banner over the work.)
+export default function ExecutionGuide() {
   const [open, setOpen] = useState(false);
-  const experienced = useExperienced(userId, worked);
-  // First-run: show the banner until the user has opened the guide or
-  // dismissed it once. Hydration-safe read (server snapshot: seen) — a lazy
-  // useState initializer here made the client's first render disagree with
-  // the server HTML for anyone who hadn't dismissed it (React #418).
-  const seen = useSyncExternalStore(
-    subscribeNever,
-    () => { try { return window.localStorage.getItem(SEEN_KEY) === "1"; } catch { return true; } },
-    () => true,
-  );
-  const [sessionDismissed, setSessionDismissed] = useState(false);
-  // Someone who has run a schedule before isn't new; until that's known, nothing shows.
-  const bannerDismissed = seen || sessionDismissed || experienced !== false;
-
-  const markSeen = () => {
-    try { window.localStorage.setItem(SEEN_KEY, "1"); } catch { /* noop */ }
-    setSessionDismissed(true);
-  };
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
 
   return (
     <>
-      {/* Toolbar trigger — always present. */}
+      {/* Toolbar trigger: always present. */}
       <button
-        onClick={() => { setOpen(true); markSeen(); }}
+        onClick={() => setOpen(true)}
         className="inline-flex items-center justify-center w-8 h-8 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
         title="How this view works" aria-label="How this view works"
       >
         <HelpCircle className="w-4 h-4" />
       </button>
 
-      {/* First-run banner. */}
-      {!bannerDismissed && (
-        <div className="w-full flex items-center gap-2 border border-[var(--color-accent-ring)]/40 rounded-lg px-3 py-2 text-xs text-[var(--color-text)] bg-[var(--color-surface-2)]">
-          <MousePointerClick className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-          <span className="flex-1">
-            <b>New here?</b> This board runs the schedule day-by-day - move work, mark progress, and drill into sub-steps.
-            <button onClick={() => { setOpen(true); markSeen(); }} className="ml-1 font-bold text-[var(--color-accent)] hover:underline">Show me how →</button>
-          </span>
-          <button onClick={markSeen} className="p-0.5 rounded hover:bg-black/5 text-[var(--color-text-faint)] transition-colors" title="Dismiss"><XIcon className="w-3.5 h-3.5" /></button>
-        </div>
-      )}
-
       {/* Cheat-sheet panel. */}
       {open && (
-        <div className="fixed inset-0 z-[300] flex items-start sm:items-center justify-center overflow-y-auto p-4" onClick={() => setOpen(false)}>
+        <div role="dialog" aria-modal="true" aria-label="How this view works" className="fixed inset-0 z-[300] flex items-start sm:items-center justify-center overflow-y-auto p-4" onClick={() => setOpen(false)}>
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-in fade-in" />
           <div className="relative w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl ring-1 ring-slate-900/10 overflow-hidden max-h-[85vh] flex flex-col animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
             <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-2 bg-[var(--color-surface-2)]">
               <HelpCircle className="w-5 h-5 text-[var(--color-text-muted)]" />
-              <h2 className="font-black text-[var(--color-text)]">How the Execution board works</h2>
-              <button onClick={() => setOpen(false)} className="ml-auto p-1.5 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors"><XIcon className="w-4 h-4" /></button>
+              <h2 className="font-black text-[var(--color-text)]">How this view works</h2>
+              <button onClick={() => setOpen(false)} aria-label="Close" className="ml-auto p-1.5 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors"><XIcon className="w-4 h-4" /></button>
             </div>
 
             <div className="overflow-y-auto p-5 space-y-5 text-sm text-[var(--color-text)]">
@@ -111,7 +60,7 @@ export default function ExecutionGuide({ userId, worked }: {
 
               <Section title="Mark what's done (or doing, on-hold, blocked)">
                 <Row icon={<span className="w-3.5 h-3.5 rounded-full bg-slate-400 border border-black/10 inline-block" />} label="The status dot">
-                  Click the colored dot on any task or sub-item. A menu lets you set <b>Planned · In progress · Done · On hold · Blocked · Missed</b> - the same everywhere. On-hold and Blocked let you type a quick reason.
+                  Click the colored dot on any task or sub-item. A menu lets you set <b>Planned · In progress · Done · On hold · Blocked · Missed</b>, the same everywhere. On-hold and Blocked let you type a quick reason.
                 </Row>
               </Section>
 
@@ -120,7 +69,7 @@ export default function ExecutionGuide({ userId, worked }: {
                   Each task chip has a small grip on its right. Drag <i>that</i> onto another day. (Clicking the rest of the chip opens it.)
                 </Row>
                 <Row icon={<CalendarRange className="w-4 h-4 text-[var(--color-text-muted)]" />} label="Or open it & use the buttons">
-                  Click a task to open it, then use the move buttons - no dragging needed.
+                  Click a task to open it, then use the move buttons. No dragging needed.
                 </Row>
               </Section>
 
@@ -129,11 +78,11 @@ export default function ExecutionGuide({ userId, worked }: {
                   On the calendar, click a task&apos;s <b>▸</b> arrow (or flip <b>Show → Sub-items</b>). Its steps drop onto their own days.
                 </Row>
                 <Row icon={<GripVertical className="w-4 h-4 text-[var(--color-text-muted)]" />} label="Then move the one step">
-                  Drag that step&apos;s grip handle to another day - or open the task and use the <ChevronLeft className="inline w-3 h-3" /> <ChevronRight className="inline w-3 h-3" /> buttons on each sub-step row.
+                  Drag that step&apos;s grip handle to another day, or open the task and use the <ChevronLeft className="inline w-3 h-3" /> <ChevronRight className="inline w-3 h-3" /> buttons on each sub-step row.
                 </Row>
-                <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-[12px] text-emerald-900">
-                  <b>The schedule keeps itself honest:</b> moving one step leaves the others where they were and stretches the parent to cover both. Example - you did 3 of 10 steps early; only those 3 move, the rest stay on plan, and the task now spans both.
-                </div>
+                <p className="text-[12px] text-[var(--color-text-muted)]">
+                  Moving one step leaves the others where they were and stretches the task to cover both. Did 3 of 10 steps early? Only those 3 move; the rest stay on plan.
+                </p>
               </Section>
 
               <Section title="Fix the plan to match the field">
@@ -143,7 +92,7 @@ export default function ExecutionGuide({ userId, worked }: {
               </Section>
             </div>
 
-            <div className="px-5 py-3 border-t border-[var(--color-border)] bg-slate-50/60 flex justify-end">
+            <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex justify-end">
               <button onClick={() => setOpen(false)} className="text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-lg transition-colors">Got it</button>
             </div>
           </div>
