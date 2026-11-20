@@ -11,7 +11,7 @@
 // reads beside them, else in a strip under it, else not at all
 // (lib/reviewFiles picPlace).
 
-import { picPlace, type SlidePicture, type SlideSpec } from "@/lib/reviewFiles";
+import { picPlace, type DeckFit, type SlidePicture, type SlideSpec } from "@/lib/reviewFiles";
 import { normalizeTag } from "@/lib/assets";
 
 /** A picture chosen for a slide, as saved with the review. */
@@ -24,7 +24,7 @@ export interface ReadyPic extends SlidePicture { path: string }
 /** How many pictures a slide has room for: the cover one (when it has a
  *  spot for it), a table slide two (when its table still reads beside or
  *  above them), anything else none. */
-export const picRoom = (s: SlideSpec, coverSpot = true, area?: { w: number; h: number }) => (s.body.k === "cover" ? (coverSpot ? 1 : 0) : picPlace(s, area) ? 2 : 0);
+export const picRoom = (s: SlideSpec, coverSpot = true, area?: DeckFit) => (s.body.k === "cover" ? (coverSpot ? 1 : 0) : picPlace(s, area) ? 2 : 0);
 
 const TAG = /\b([A-Z]{1,4}-?\d{1,4}[A-Z]?)\b/g;
 /** Every equipment tag a slide names, in the order it matters: its title,
@@ -45,7 +45,7 @@ export function captionOf(tag: string, capturedAt: string | null, caption?: stri
 }
 
 /** Each slide's pictures as the app would pick them (by slide key). */
-export function autoPictures(specs: SlideSpec[], photos: Map<string, PhotoOption[]>, coverSpot = true, area?: { w: number; h: number }): Record<string, SlidePicChoice[]> {
+export function autoPictures(specs: SlideSpec[], photos: Map<string, PhotoOption[]>, coverSpot = true, area?: DeckFit): Record<string, SlidePicChoice[]> {
   const out: Record<string, SlidePicChoice[]> = {};
   const firstPhoto = (tag: string) => photos.get(normalizeTag(tag))?.[0];
   const score = specs.find((s) => s.key === "score");

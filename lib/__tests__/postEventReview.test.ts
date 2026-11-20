@@ -310,7 +310,8 @@ describe("the files open on the point of the meeting", () => {
   const rk = read(accepted);
   it("the slides are the findings written on the job; what the records suggest waits for a person", () => {
     const deck = deckSlides(r, o);
-    expect(deck.map((x) => x.kicker.split(" · ")[0])).toEqual(["Post-event review", "1", "2", "3"]);
+    // In order; a part runs on over more slides when its table needs them.
+    expect([...new Set(deck.map((x) => x.kicker.split(" · ")[0]))]).toEqual(["Post-event review", "1", "2", "3"]);
     // Nothing the records drafted is on the slide without a click.
     expect(r.findings.every((f) => f.status !== "kept" && !f.auto)).toBe(true);
     expect(bookOf(r, "Phase 1", tz).actions).toEqual([]);

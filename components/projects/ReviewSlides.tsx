@@ -14,7 +14,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, Download, Loader2, Maximize2, Pencil, X } from "lucide-react";
 import { noEmDash } from "@/lib/noEmDash";
-import { DEFAULT_LOOK, PIC_SIDE, PIC_STRIP, picPlace, TONE_HEX, tablePt, type SlidePicture, type SlideItem, type SlideMore, type SlidePane, type SlideSpan, type SlideSpec, type SlideTag } from "@/lib/reviewFiles";
+import { DEFAULT_LOOK, PIC_SIDE, PIC_STRIP, picPlace, TABLE_PT, TONE_HEX, tablePt, type SlidePicture, type SlideItem, type SlideMore, type SlidePane, type SlideSpan, type SlideSpec, type SlideTag } from "@/lib/reviewFiles";
 import type { DeckLook } from "@/lib/deckLook";
 import type { ScreenDeck } from "@/lib/slidePreview";
 import SlideFrame from "@/components/slides/SlideFrame";
@@ -45,9 +45,10 @@ const groupsOf = (n: number, span?: SlideSpan) => {
 };
 const itemOf = (it: SlideItem) => (typeof it === "string" ? { text: it, sub: false, bold: false } : { sub: false, bold: false, ...it });
 /** A first cell of two lines: what it is in bold, the fact under it plain. */
-const cell = (t: string, first: boolean) => {
+const cell = (t: string, first: boolean, tag: React.ReactNode = null) => {
   const [lead, ...more] = t.split("\n");
-  return first && more.length ? <><b>{T(lead)}</b><br /><span style={{ fontWeight: 400 }}>{T(more.join(" "))}</span></> : T(t);
+  // What it is in bold, its verdict beside it, the fact under it.
+  return first && (more.length || tag) ? <><b>{T(lead)}</b>{tag}{more.length > 0 && <><br /><span style={{ fontWeight: 400 }}>{T(more.join(" "))}</span></>}</> : T(t);
 };
 
 export default function ReviewSlides({ slides, name, onClose, onDownload, downloading, ready, look = DEFAULT_LOOK, template = null, deck = null, deckState = null, choice = null, edit = null }: {
@@ -115,6 +116,8 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
   if (!slides.length) return null;
   const openRow = (r: number) => { if (editing) { setSel({ at, row: r }); return; } const b = spec?.body; const m = b?.k === "table" ? b.more?.[r] : null; if (m) setMore(m); };
   const picked = sel?.at === at ? sel.row : null;
+  // One title size for every slide after the cover, as in the download.
+  const titlePt = slides.some((x) => x.body.k !== "cover" && x.title.length > 70) ? 21 : 25;
   const pickCtx = { pick: editing ? (r: number) => setSel({ at, row: r }) : undefined, picked };
   // What the tapped line is: a finding's words, a count from the records, or the same in every review.
   const sb = spec?.body;
@@ -181,7 +184,7 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
         )) : box && spec && (wide ? (
           <div data-slide={at} onClick={full ? (e) => go(e.clientX > box.w / 2 ? 1 : -1) : undefined}
             style={{ position: "absolute", left: (box.w - W * scale) / 2, top: (box.h - H * scale) / 2, width: W, height: H, transform: `scale(${scale})`, transformOrigin: "top left", background: C.bg, color: C.ink, fontFamily: `"${look.font}", Arial, Helvetica, sans-serif`, overflow: "hidden", cursor: full ? "pointer" : undefined }}>
-            <Canvas spec={spec} open={full || editing ? undefined : setMore} mark />
+            <Canvas spec={spec} open={full || editing ? undefined : setMore} mark titlePt={titlePt} />
           </div>
         ) : (
           <div key={at} data-slide={at} className="absolute inset-0 overflow-y-auto" style={{ background: C.bg, color: C.ink }}><Page spec={spec} open={editing ? undefined : setMore} /></div>
@@ -245,7 +248,7 @@ function SlidePics({ pics, dir }: { pics: SlidePicture[]; dir: "col" | "row" }) 
   );
 }
 
-function Canvas({ spec, open, mark }: { spec: SlideSpec; open?: Open; mark?: boolean }) {
+function Canvas({ spec, open, mark, titlePt = 25 }: { spec: SlideSpec; open?: Open; mark?: boolean; titlePt?: number }) {
   const b = spec.body;
   const coverPic = b.k === "cover" ? spec.pics?.[0] : undefined;
   // eslint-disable-next-line @next/next/no-img-element
@@ -283,7 +286,7 @@ function Canvas({ spec, open, mark }: { spec: SlideSpec; open?: Open; mark?: boo
     <div style={{ position: "absolute", inset: 0, padding: "26px 58px 0", display: "flex", flexDirection: "column" }}>
       {bar}
       <div style={{ fontSize: pt(12), fontWeight: 700, color: C.acc }}>{T(spec.kicker)}</div>
-      <div style={{ fontSize: pt(spec.title.length > 70 ? 21 : 25), fontWeight: 700, lineHeight: 1.12, marginTop: 6, color: C.heading, minHeight: b.k === "table" && spec.title.length <= 60 ? 40 : 74 }}>{T(spec.title)}</div>
+      <div style={{ fontSize: pt(titlePt), fontWeight: 700, lineHeight: 1.12, marginTop: 6, color: C.heading, minHeight: 40 }}>{T(spec.title)}</div>
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden", marginTop: 10 }}>
         {b.k === "asks" ? (
           <div>
@@ -299,11 +302,18 @@ function Canvas({ spec, open, mark }: { spec: SlideSpec; open?: Open; mark?: boo
             ))}
           </div>
         ) : b.k === "table" ? (() => {
-          const table = <FitTable key={`${spec.kicker}|${spec.title}|${spec.pics?.length ?? 0}`} body={b} open={open} />;
           const where = spec.pics?.length ? picPlace(spec) : null;
-          if (where === "right") return <div style={{ display: "flex", gap: 24, height: "100%" }}><div style={{ flex: `0 0 calc(${(1 - PIC_SIDE) * 100}% - 24px)`, minWidth: 0, height: "100%" }}>{table}</div><div style={{ flex: 1, minWidth: 0, height: "100%" }}><SlidePics pics={spec.pics!} dir="col" /></div></div>;
-          if (where === "below") return <div style={{ display: "flex", flexDirection: "column", height: "100%" }}><div style={{ flex: 1, minHeight: 0 }}>{table}</div><div style={{ paddingTop: 12 }}><SlidePics pics={spec.pics!} dir="row" /></div></div>;
-          return table;
+          if (!where) return <FitTable key={`${spec.kicker}|${spec.title}`} body={b} open={open} />;
+          // The line above and the counts run the full width; the pictures sit level with the table.
+          const table = <FitTable key={`${spec.kicker}|${spec.title}|${spec.pics?.length ?? 0}`} body={b} open={open} bare />;
+          return (
+            <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+              <LeadTally body={b} />
+              {where === "right"
+                ? <div style={{ flex: 1, minHeight: 0, display: "flex", gap: 24 }}><div style={{ flex: `0 0 calc(${(1 - PIC_SIDE) * 100}% - 24px)`, minWidth: 0, height: "100%" }}>{table}</div><div style={{ flex: 1, minWidth: 0, height: "100%" }}><SlidePics pics={spec.pics!} dir="col" /></div></div>
+                : <><div style={{ flex: 1, minHeight: 0 }}>{table}</div><div style={{ paddingTop: 12 }}><SlidePics pics={spec.pics!} dir="row" /></div></>}
+            </div>
+          );
         })() : (
           <div style={{ display: "flex", gap: 29, height: "100%" }}>
             <div style={{ flex: `0 0 calc(${(b.ratio ?? 0.5) * 100}% - 15px)`, minWidth: 0 }}><PaneView pane={b.left} /></div>
@@ -345,9 +355,23 @@ function PaneView({ pane }: { pane: SlidePane }) {
 }
 /** A slide's table, set in the largest type that fits the slide: it starts
  *  large and steps down until nothing is cut off. */
-function FitTable({ body: b, open }: { body: Extract<SlideSpec["body"], { k: "table" }>; open?: Open }) {
+/** The line said above a table, and the counts. */
+function LeadTally({ body: b }: { body: Extract<SlideSpec["body"], { k: "table" }> }) {
+  return (
+    <>
+      {b.lead && <div style={{ fontSize: pt(16), fontWeight: 700, color: C.acc, marginBottom: 10, lineHeight: 1.2 }} data-slide-lead>{T(b.lead)}</div>}
+      {b.tally && b.tally.length > 0 && (
+        <div style={{ display: "flex", gap: 34, alignItems: "baseline", marginBottom: 12 }} data-slide-tally>
+          {b.tally.map((t) => <div key={t.label}><span style={{ fontSize: pt(24), fontWeight: 700, color: `#${TONE_HEX[t.tone].fg}` }}>{t.n}</span><span style={{ fontSize: pt(13), color: C.soft, marginLeft: 8 }}>{T(t.label)}</span></div>)}
+        </div>
+      )}
+    </>
+  );
+}
+function FitTable({ body: b, open, bare }: { body: Extract<SlideSpec["body"], { k: "table" }>; open?: Open; bare?: boolean }) {
   const box = useRef<HTMLDivElement>(null);
-  const start = Math.min(16, tablePt(b.rows) + 3);
+  // The deck's one table size; smaller only when a slide can't hold it (as in the download).
+  const start = TABLE_PT;
   // Sized on the page itself after each draw: the table's type steps down until the slide holds it all.
   useLayoutEffect(() => {
     const el = box.current, t = el?.querySelector("table");
@@ -357,12 +381,7 @@ function FitTable({ body: b, open }: { body: Extract<SlideSpec["body"], { k: "ta
   });
   return (
     <div ref={box} style={{ height: "100%", overflow: "hidden" }} data-slide-fit>
-      {b.lead && <div style={{ fontSize: pt(16), fontWeight: 700, color: C.acc, marginBottom: 10, lineHeight: 1.2 }} data-slide-lead>{T(b.lead)}</div>}
-      {b.tally && b.tally.length > 0 && (
-        <div style={{ display: "flex", gap: 34, alignItems: "baseline", marginBottom: 12 }} data-slide-tally>
-          {b.tally.map((t) => <div key={t.label}><span style={{ fontSize: pt(24), fontWeight: 700, color: `#${TONE_HEX[t.tone].fg}` }}>{t.n}</span><span style={{ fontSize: pt(13), color: C.soft, marginLeft: 8 }}>{T(t.label)}</span></div>)}
-        </div>
-      )}
+      {!bare && <LeadTally body={b} />}
       <SlideTable head={b.head} rows={b.rows} widths={b.widths} tags={b.tags} more={b.more} open={open} size={start} span={b.span} source={b.source} />
     </div>
   );
@@ -389,7 +408,7 @@ function SlideTable({ head, rows, widths, size, tags, more, open, span, source }
               if (down === 0) return null;
               return (
                 <td key={i} rowSpan={down > 1 ? down : undefined} style={{ padding: "0.38em 8px", verticalAlign: "top", fontWeight: i === 0 ? 700 : 400, overflowWrap: "anywhere", background: bg, borderTop: under ? `1px solid ${C.line}` : undefined }}>
-                  {i === 0 ? <>{cell(r[i] ?? "", true)}{tags?.[ri] && <div style={{ marginTop: 4 }}><Tag tag={tags[ri]!} size="0.78em" /></div>}</> : lines(r[i] ?? "", i === source)}
+                  {i === 0 ? cell(r[i] ?? "", true, tags?.[ri] ? <> <Tag tag={tags[ri]!} size="0.78em" /></> : null) : lines(r[i] ?? "", i === source)}
                 </td>
               );
             })}

@@ -189,7 +189,8 @@ describe("pictures on the template's slides", () => {
     const { data, info } = await leanTemplate(await companyTemplate());
     // A tiny real JPEG (1x1).
     const jpeg = Uint8Array.from(atob("/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q=="), (c) => c.charCodeAt(0));
-    const specs = testSlides(info).map((s) => (s.body.k === "table" ? { ...s, pics: [{ url: "", bytes: jpeg, w: 1, h: 1, caption: "E-12 · Oct 29, 2026" }] } : s));
+    // A short table, so the slide has room beside it.
+    const specs = testSlides(info).map((s) => (s.body.k === "table" ? { ...s, body: { ...s.body, rows: s.body.rows.slice(0, 2), tags: s.body.tags?.slice(0, 2), lead: undefined, tally: undefined }, pics: [{ url: "", bytes: jpeg, w: 1, h: 1, caption: "E-12 · Oct 29, 2026" }] } : s));
     const out = await deckOnTemplate(specs, { info, data, look: lookFromPalette({ primary: "#0b1f6b", secondary: "#d4a017" }), title: "t" });
     const z = await JSZip.loadAsync(out);
     const media = Object.keys(z.files).filter((n) => /^ppt\/media\/review-s\d+-\d+\.jpg$/.test(n));

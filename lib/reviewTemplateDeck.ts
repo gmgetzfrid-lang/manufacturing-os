@@ -7,8 +7,8 @@
 // template's slide size, so a wide 20 inch template reads the same as a
 // standard one.
 
-import { fitTablePt, PIC_SIDE, PIC_STRIP, picPlace, TONE_HEX, type SlidePicture, type SlideItem, type SlidePane, type SlideSpan, type SlideSpec, type SlideTag } from "@/lib/reviewFiles";
-import { bodyBoxes, EMU, fitPt, layoutFor, lineCount, pictureBox, SlideDraft, titleBox, writeDeck, type Cell, type LayoutInfo, type LayoutRole, type Para, type Rect, type TemplateInfo } from "@/lib/slideTemplate";
+import { charWOf, fitTablePt, PIC_SIDE, PIC_STRIP, picPlace, TONE_HEX, type DeckFit, type SlidePicture, type SlideItem, type SlidePane, type SlideSpan, type SlideSpec, type SlideTag } from "@/lib/reviewFiles";
+import { bodyBoxes, EMU, fitPt, layoutFor, lineCount, pictureBox, SlideDraft, templateFonts, titleBox, writeDeck, type Cell, type LayoutInfo, type LayoutRole, type Para, type Rect, type TemplateInfo } from "@/lib/slideTemplate";
 import type { DeckLook } from "@/lib/deckLook";
 
 export interface TemplateDeckOpts {
@@ -21,6 +21,21 @@ export interface TemplateDeckOpts {
    *  slide's place in `specs` (null: a slide of its own, like what the review measures). */
   forScreen?: boolean;
   slideOf?: Array<number | null>;
+}
+
+/** The room for a content slide's body on a layout: its body box (or the
+ *  slide under the title), lined up with the title's words (not the edge
+ *  of its box), and below the slide's label when the label can't sit above
+ *  the title. EMU. */
+function contentRoom(info: TemplateInfo, l: LayoutInfo): { room: Rect; labelAbove: boolean } {
+  const k = info.slide.w / (13.333 * EMU);
+  let room = l.room ?? { x: info.slide.w * 0.06, y: info.slide.h * 0.2, w: info.slide.w * 0.88, h: info.slide.h * 0.72 };
+  const tb = titleBox(l);
+  if (!tb?.rect) return { room: { ...room, y: room.y + 1.15 * EMU * k, h: room.h - 1.15 * EMU * k }, labelAbove: false };
+  if (Math.abs(room.x - tb.rect.x) < 0.3 * EMU * k) room = { ...room, x: room.x + 91440, w: room.w - 182880 };
+  const labelAbove = tb.rect.y >= 0.42 * EMU * k;
+  if (!labelAbove) room = { ...room, y: room.y + 0.38 * EMU * k, h: room.h - 0.38 * EMU * k };
+  return { room, labelAbove };
 }
 
 export async function deckOnTemplate(specs: SlideSpec[], o: TemplateDeckOpts): Promise<Uint8Array> {
@@ -37,23 +52,28 @@ export async function deckOnTemplate(specs: SlideSpec[], o: TemplateDeckOpts): P
 
   const roomOf = (l: LayoutInfo): Rect => l.room ?? { x: info.slide.w * 0.06, y: info.slide.h * 0.2, w: info.slide.w * 0.88, h: info.slide.h * 0.72 };
 
+  // One title size for every slide after the cover: the size the longest
+  // of them fits its title box at.
+  const ctb = titleBox(content);
+  const measuresTitle = (sp: SlideSpec) => (sp.body.k === "cover" ? sp.body.tableTitle ?? "What this review measures" : sp.title);
+  const contentTitles = specs.filter((sp) => sp.body.k !== "cover" || sp.body.table).map(measuresTitle);
+  const titlePt = ctb?.rect && contentTitles.length
+    ? Math.min(...contentTitles.map((t) => fitPt(t, ctb.rect!, Math.min(ctb.pt ?? PT(25), PT(25)), PT(14), 0.6, 1.25)))
+    : PT(contentTitles.some((t) => t.length > 70) ? 21 : 25);
+
   /** The title in the layout's title box (or drawn, when it has none),
    *  the label above it, and the room left for the body. */
-  const head = (d: SlideDraft, kicker: string, title: string, maxPt: number): Rect => {
-    let room = { ...roomOf(d.layout) };
+  const head = (d: SlideDraft, kicker: string, title: string): Rect => {
+    const { room, labelAbove } = contentRoom(info, d.layout);
     const tb = titleBox(d.layout);
+    const label = [{ runs: [run(kicker, PT(11), { b: true, color: look.kicker })] }];
     if (tb?.rect) {
-      const pt = fitPt(title, tb.rect, Math.min(tb.pt ?? maxPt, maxPt), PT(14), 0.6, 1.25);
-      d.fill(tb, [{ runs: [{ text: title, pt }] }]);
-      if (kicker) {
-        const above = tb.rect.y;
-        if (above >= IN(0.42)) d.text({ x: tb.rect.x + 91440, y: tb.rect.y - IN(0.36), w: tb.rect.w - 182880, h: IN(0.3) }, [{ runs: [run(kicker, PT(11), { b: true, color: look.kicker })] }], { anchor: "b", name: "Label" });
-        else { d.text({ x: room.x, y: room.y, w: room.w, h: IN(0.3) }, [{ runs: [run(kicker, PT(11), { b: true, color: look.kicker })] }], { name: "Label" }); room = { ...room, y: room.y + IN(0.38), h: room.h - IN(0.38) }; }
-      }
+      d.fill(tb, [{ runs: [{ text: title, pt: titlePt }] }]);
+      if (kicker && labelAbove) d.text({ x: tb.rect.x + 91440, y: tb.rect.y - IN(0.36), w: tb.rect.w - 182880, h: IN(0.3) }, label, { anchor: "b", name: "Label" });
+      else if (kicker) d.text({ x: room.x, y: room.y - IN(0.38), w: room.w, h: IN(0.3) }, label, { name: "Label" });
     } else {
-      const lines = [kicker ? { runs: [run(kicker, PT(11), { b: true, color: look.kicker })], after: 4 } : null, { runs: [{ ...run(title, PT(title.length > 70 ? 21 : 25), { b: true, color: look.heading }), font: look.titleFont }] }].filter(Boolean) as Para[];
-      d.text({ x: room.x, y: room.y, w: room.w, h: IN(1.05) }, lines, { name: "Title" });
-      room = { ...room, y: room.y + IN(1.15), h: room.h - IN(1.15) };
+      const top = room.y - IN(1.15);
+      d.text({ x: room.x, y: top, w: room.w, h: IN(1.05) }, [...(kicker ? [{ ...label[0], after: 4 }] : []), { runs: [{ ...run(title, titlePt, { b: true, color: look.heading }), font: look.titleFont }] }], { name: "Title" });
     }
     return room;
   };
@@ -68,19 +88,19 @@ export async function deckOnTemplate(specs: SlideSpec[], o: TemplateDeckOpts): P
   /** A table in the room, sized to fill it at the largest type that fits. */
   const table = (d: SlideDraft, R: Rect, t: { head: string[]; rows: string[][]; widths: number[] }, size?: number, tags?: Array<SlideTag | null>, span?: SlideSpan, source?: number): number => {
     const total = t.widths.reduce((a, c) => a + c, 0);
-    const fs = size ?? fitTablePt(t.head, t.rows, t.widths, R.w / EMU / k, R.h / EMU / k, tags, span);
+    const fs = size ?? fitTablePt(t.head, t.rows, t.widths, R.w / EMU / k, R.h / EMU / k, tags, span, charWOf(look.font));
     const pt = PT(fs), small = PT(Math.max(9, fs - 2));
     const cols = t.widths.map((c) => (c / total) * R.w);
     const pad = { x: 6 * k * 12700, y: 4 * k * 12700 };
     let band = -1;
     const bands = t.rows.map((_, ri) => (!span || (span.rows[ri] ?? 1) > 0 ? ++band : band));
-    const cellLines = (text: string, ci: number, p: number) => lineCount(text, Math.max(0.3, (cols[ci] - 2 * pad.x) / EMU), p, 0.5);
     const rows: Cell[][] = [t.head.map((h) => ({ paras: [{ runs: [run(h, small, { b: true, color: look.headText })] }], fill: look.head }))];
-    const heights = [pad.y * 2 + Math.max(...t.head.map((h, ci) => cellLines(h, ci, small))) * small * 1.2 / 72 * EMU];
+    // Each row's least height: one line. PowerPoint grows a row to its words.
+    const oneLine = (p: number) => pad.y * 2 + p * 1.2 / 72 * EMU;
+    const heights = [oneLine(small)];
     t.rows.forEach((row, ri) => {
       const fill = bands[ri] % 2 ? look.band : look.bg;
       const under = !!span && (span.rows[ri] ?? 1) === 0;
-      let tall = 0;
       rows.push(t.head.map((_, i) => {
         const down = span && i < span.cols ? span.rows[ri] ?? 1 : 1;
         if (down === 0) return { paras: [], fill, merged: true };
@@ -89,15 +109,16 @@ export async function deckOnTemplate(specs: SlideSpec[], o: TemplateDeckOpts): P
         const tag = i === 0 ? tags?.[ri] : null;
         let paras: Para[];
         if (i === 0 && (more.length || tag)) {
-          paras = [{ runs: [run(lead, pt, { b: true })] }, ...(more.length ? [{ runs: [run(more.join(" "), pt)] }] : []), ...(tag ? [{ runs: [run(tag.text, small, { b: true, color: TONE_HEX[tag.tone].fg })] }] : [])];
+          // What it is in bold with its verdict beside it, then the fact under it.
+          paras = [{ runs: [run(lead, pt, { b: true }), ...(tag ? [run(`  ${tag.text}`, small, { b: true, color: TONE_HEX[tag.tone].fg })] : [])] }, ...(more.length ? [{ runs: [run(more.join(" "), pt)] }] : [])];
         } else if (more.length) {
           const all = [lead, ...more];
           paras = all.map((x, j) => ({ runs: [run(x, i === source && j === all.length - 1 ? small : pt, { color: i === source && j === all.length - 1 ? look.soft : look.ink })], after: j < all.length - 1 ? 4 * k : 0 }));
         } else paras = [{ runs: [run(row[i] ?? "", pt, { b: i === 0 })] }];
-        if (down <= 1) tall = Math.max(tall, cellLines(row[i] ?? "", i, pt) * pt * 1.2 / 72 * EMU + (tag ? small * 1.2 / 72 * EMU : 0));
+
         return { paras, fill, rowSpan: down > 1 ? down : undefined, ruleTop: rule };
       }));
-      heights.push(pad.y * 2 + tall);
+      heights.push(oneLine(pt));
     });
     const used = heights.reduce((a, c) => a + c, 0);
     d.table({ x: R.x, y: R.y, w: R.w, h: used }, cols, rows, heights, pad);
@@ -106,8 +127,8 @@ export async function deckOnTemplate(specs: SlideSpec[], o: TemplateDeckOpts): P
 
   /** Pictures down the right of the room, each with what it shows under it;
    *  returns the room left for the table. */
-  const side = (d: SlideDraft, R: Rect, pics: SlidePicture[] | undefined, spec: SlideSpec, area: { w: number; h: number }): Rect => {
-    const where = pics?.length ? picPlace(spec, area) : null;
+  const side = (d: SlideDraft, R: Rect, pics: SlidePicture[] | undefined, spec: SlideSpec, fit: DeckFit): Rect => {
+    const where = pics?.length ? picPlace(spec, fit) : null;
     if (!pics?.length || !where) return R;
     const n = Math.min(2, pics.length), cap = IN(0.3);
     if (where === "below") {
@@ -171,7 +192,7 @@ export async function deckOnTemplate(specs: SlideSpec[], o: TemplateDeckOpts): P
         const r = tb?.rect ? { x: tb.rect.x + 91440, y: tb.rect.y + tb.rect.h + IN(0.1), w: tb.rect.w, h: IN(0.9) } : roomOf(cover);
         d.text(r, lines.map((t, i) => ({ runs: [run(t, PT(i ? 13 : 16), { color: look.soft })], after: 4 * k })), { name: "Subtitle" });
       }
-      if (!tb?.rect) head(d, spec.kicker, spec.title, PT(36));
+      if (!tb?.rect) head(d, spec.kicker, spec.title);
       // The cover's picture goes in the layout's own picture box.
       const pb = pictureBox(cover), pic = spec.pics?.[0];
       if (pb && pic) d.fillPicture(pb, pic);
@@ -180,14 +201,14 @@ export async function deckOnTemplate(specs: SlideSpec[], o: TemplateDeckOpts): P
       // What the review measures, on a slide of its own.
       if (b.table) {
         const m = new SlideDraft(content);
-        const room = head(m, spec.kicker, b.tableTitle ?? "What this review measures", PT(25));
+        const room = head(m, spec.kicker, b.tableTitle ?? "What this review measures");
         table(m, room, b.table, undefined);
         slides.push(m); o.slideOf?.push(null);
       }
       continue;
     }
     const d = new SlideDraft(content);
-    let room = head(d, spec.kicker, spec.title, PT(spec.title.length > 70 ? 21 : 25));
+    let room = head(d, spec.kicker, spec.title);
     d.notes = spec.notes;
     if (b.k === "asks") {
       room = foot(d, room, b.foot);
@@ -200,16 +221,18 @@ export async function deckOnTemplate(specs: SlideSpec[], o: TemplateDeckOpts): P
         d.text({ x: room.x + IN(0.65), y, w: room.w - IN(0.65), h: rowH - IN(0.05) }, [{ runs: [run(it.ask, PT(big ? 20 : 17), { b: true })] }, { runs: [run(it.because, PT(big ? 15 : 13), { color: look.soft })] }], { name: "Action" });
       });
     } else if (b.k === "table") {
-      const area = { w: room.w / EMU / k, h: room.h / EMU / k };
+      const fit: DeckFit = { w: room.w / EMU / k, h: room.h / EMU / k, footInside: true, charW: charWOf(look.font) };
       room = foot(d, room, b.foot);
-      room = side(d, room, spec.pics, spec, area);
+      // The line above the table and the counts run the full width.
       let y = room.y;
       if (b.lead) { d.text({ x: room.x, y, w: room.w, h: IN(0.42) }, [{ runs: [run(b.lead, PT(16), { b: true, color: look.kicker })] }], { anchor: "ctr", name: "Lead" }); y += IN(0.48); }
       if (b.tally?.length) {
         d.text({ x: room.x, y, w: room.w, h: IN(0.45) }, [{ runs: b.tally.flatMap((t, i) => [run(`${i ? "     " : ""}${t.n} `, PT(20), { b: true, color: TONE_HEX[t.tone].fg }), run(t.label, PT(13), { color: look.soft })]) }], { anchor: "ctr", name: "Tally" });
         y += IN(0.55);
       }
-      table(d, { x: room.x, y, w: room.w, h: room.y + room.h - y }, b, undefined, b.tags, b.span, b.source);
+      // Pictures level with the table: down its right, or in a strip under it.
+      const tableBox = side(d, { x: room.x, y, w: room.w, h: room.y + room.h - y }, spec.pics, spec, fit);
+      table(d, tableBox, b, undefined, b.tags, b.span, b.source);
     } else if (b.k === "split") {
       room = foot(d, room, b.foot);
       const lw = room.w * (b.ratio ?? 0.5) - IN(0.15);
@@ -223,14 +246,11 @@ export async function deckOnTemplate(specs: SlideSpec[], o: TemplateDeckOpts): P
 
 /** The room under a content slide's title on this template, in inches at
  *  the standard slide size (what picPlace measures against). */
-export function templateArea(info: TemplateInfo, pick?: Partial<Record<LayoutRole, string>>): { w: number; h: number } {
+export function templateArea(info: TemplateInfo, pick?: Partial<Record<LayoutRole, string>>): DeckFit {
   const l = layoutFor(info, "content", pick) ?? layoutFor(info, "cover", pick) ?? info.layouts[0];
   const k = info.slide.w / (13.333 * EMU);
-  const r = l?.room ?? { x: 0, y: 0, w: info.slide.w * 0.88, h: info.slide.h * 0.72 };
-  // The label above the title takes room from the body when it can't sit above it.
-  const tb = l ? titleBox(l) : null;
-  const label = tb?.rect && tb.rect.y >= 0.42 * EMU * k ? 0 : 0.38;
-  return { w: r.w / EMU / k, h: r.h / EMU / k - label };
+  const { room } = contentRoom(info, l);
+  return { w: room.w / EMU / k, h: room.h / EMU / k, footInside: true, charW: charWOf(templateFonts(l).body) };
 }
 /** Whether the template's cover has a spot for a picture. */
 export const coverHasPicture = (info: TemplateInfo, pick?: Partial<Record<LayoutRole, string>>) => { const c = layoutFor(info, "cover", pick); return !!(c && pictureBox(c)); };

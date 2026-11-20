@@ -53,13 +53,14 @@ import { lookFromPalette, lookFromTemplate } from "@/lib/deckLook";
 import { loadSlideTemplate } from "@/lib/slideTemplateStore";
 import { saveSlidesChoice, useSlidesChoice } from "@/lib/slidesChoice";
 import type { ScreenDeck } from "@/lib/slidePreview";
-import { PLAIN_AREA } from "@/lib/reviewFiles";
+import { PLAIN_FIT, type DeckFit } from "@/lib/reviewFiles";
 import { coverHasPicture, templateArea } from "@/lib/reviewTemplateDeck";
 import { autoPictures, captionOf, equipmentFor, loadEquipmentPhotos, picRoom, readyPic, slideTags, type PhotoOption, type SlidePicChoice } from "@/lib/slidePictures";
 import { resolveFileUrl, uploadToPath } from "@/lib/storage";
 import { createPhotoRecord, invalidateAssetCache, parseCapturedAtFromFilename } from "@/lib/assets";
 import type { SlideEdit } from "@/components/projects/SlideEditPanel";
 import type { SlideSpec } from "@/lib/reviewFiles";
+import type { TemplateInfo } from "@/lib/slideTemplate";
 import { useProjectFindings, useProjectUnit } from "@/components/projects/Findings";
 import { categoriesOf, guessCategories, isLive, leadTag, type Category } from "@/lib/findings";
 import { useProjectType } from "@/lib/shiftTimesStore";
@@ -325,16 +326,31 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
       const o = fileOpts();
       const made = kind === "word"
         ? { data: await reviewDocx(review, o, wordLook), name: `${fileStem(o)}.docx`, mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }
-        : { data: await reviewPptx(review, o, { specs: (await picturesOn(deckSlides(review, o))).specs, look: slideLook, template: useTpl && tpl ? { ...(await loadSlideTemplate(tpl)), pick: tpl.pick } : null }), name: `${fileStem(o)} slides.pptx`, mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation" };
+        : await (async () => {
+          const t = useTpl && tpl ? await loadSlideTemplate(tpl) : null;
+          const specs = (await picturesOn(deckSlides(review, o, t ? templateArea(t.info, tpl?.pick) : PLAIN_FIT))).specs;
+          return { data: await reviewPptx(review, o, { specs, look: slideLook, template: t && tpl ? { ...t, pick: tpl.pick } : null }), name: `${fileStem(o)} slides.pptx`, mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation" };
+        })();
       if (!(await saveFile(made.data, made.name, made.mime))) setHeld(made);
     } catch (e) { setErr(`The file couldn't be made: ${(e as Error).message}`); }
     finally { setBusy(null); }
   };
   const saveHeld = async () => { if (held && (await saveFile(held.data, held.name, held.mime))) setHeld(null); };
+  // The template, measured, when the slides go onto it: its room decides
+  // where each slide splits (one table size the deck through).
+  const [tplInfo, setTplInfo] = useState<{ path: string; info: TemplateInfo | null } | null>(null);
+  useEffect(() => {
+    if (!useTpl || !tpl) return;
+    let live = true;
+    void loadSlideTemplate(tpl).then((x) => { if (live) setTplInfo({ path: tpl.path, info: x.info }); }).catch(() => { if (live) setTplInfo({ path: tpl.path, info: null }); });
+    return () => { live = false; };
+  }, [useTpl, tpl]);
+  const tplMeasured = useTpl && tpl && tplInfo?.path === tpl.path ? tplInfo : null;
+  const deckFit: DeckFit | null = !useTpl ? PLAIN_FIT : tplMeasured ? (tplMeasured.info ? templateArea(tplMeasured.info, tpl?.pick) : PLAIN_FIT) : null;
   // The slides on show, made once when the viewer opens (and again when the review changes).
-  const baseSpecs = useMemo<SlideSpec[] | null>(() => (viewing && review ? deckSlides(review, fileOpts()) : null),
+  const baseSpecs = useMemo<SlideSpec[] | null>(() => (viewing && review && deckFit ? deckSlides(review, fileOpts(), deckFit) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [viewing, review]);
+    [viewing, review, deckFit?.w, deckFit?.h, deckFit?.footInside]);
 
   // ── Pictures ──
   // Each slide that names equipment shows its photo, when it has one; a
@@ -344,7 +360,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
   const [pics, setPics] = useState<{ specs: SlideSpec[]; photos: Map<string, PhotoOption[]>; auto: Record<string, SlidePicChoice[]>; area: { w: number; h: number }; coverSpot: boolean; base: SlideSpec[] } | null>(null);
   const picturesOn = async (base: SlideSpec[]) => {
     const info = useTpl && tpl ? (await loadSlideTemplate(tpl)).info : null;
-    const area = info ? templateArea(info, tpl?.pick) : PLAIN_AREA;
+    const area = info ? templateArea(info, tpl?.pick) : PLAIN_FIT;
     const coverSpot = info ? coverHasPicture(info, tpl?.pick) : true;
     const tags = [...new Set(base.flatMap(slideTags))];
     const photos = orgId ? await loadEquipmentPhotos(orgId, tags, unit?.code ?? null, { from: review?.metrics.start ?? null, to: review?.metrics.actualFinish ?? null }).catch(() => new Map<string, PhotoOption[]>()) : new Map<string, PhotoOption[]>();

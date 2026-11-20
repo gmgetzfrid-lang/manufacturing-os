@@ -292,33 +292,76 @@ export interface SlideMore { title: string; sections: Array<{ title: string; lin
 /** Rows that share their first cells: the first `cols` cells of row i run
  *  down rows[i] rows (0: the row is under the one above). */
 export interface SlideSpan { cols: number; rows: number[] }
-/** The type size a slide table is set in, by how much there is to read: as large as fills the slide. */
-/** The largest type (9 to 15 pt) at which a slide table fits the room it
- *  has: each cell's lines at that size and width, a first cell's tag under
- *  it, and the cell margins. Inches throughout. */
-export function fitTablePt(head: string[], rows: string[][], widths: number[], w: number, h: number, tags?: Array<SlideTag | null>, span?: SlideSpan): number {
-  const total = widths.reduce((a, c) => a + c, 0);
-  const pad = 8 / 72;
-  const linesIn = (text: string, cellW: number, fs: number) => text.split("\n").reduce((n, para) => n + Math.max(1, Math.ceil((para.length * fs * 0.46) / 72 / cellW)), 0);
-  for (let fs = 15; fs > 9; fs--) {
-    const lineH = (fs * 1.18) / 72;
-    const cellW = widths.map((c) => Math.max(0.3, (c / total) * w - 12 / 72));
-    const headH = Math.max(...head.map((t, i) => linesIn(t, cellW[i], fs - 2))) * ((fs - 2) * 1.2) / 72 + pad;
-    const cellH = (t: string, i: number, ri: number) => linesIn(t ?? "", cellW[i], fs) * lineH + ((t ?? "").split("\n").length - 1) * (4 / 72) + (i === 0 && tags?.[ri] ? ((fs - 2) * 1.2) / 72 : 0);
-    const rowH = (ri: number, from: number) => pad + Math.max(0, ...rows[ri].map((t, i) => (i < from ? 0 : cellH(t, i, ri))));
-    let body = 0;
-    // A group: its own rows, or the cells it shares down them, whichever is taller.
-    for (let ri = 0; ri < rows.length;) {
-      const k = span ? Math.max(1, span.rows[ri] ?? 1) : 1;
-      if (!span) { body += rowH(ri, 0); ri++; continue; }
-      let own = 0; for (let j = ri; j < ri + k && j < rows.length; j++) own += rowH(j, span.cols);
-      const shared = pad + Math.max(0, ...rows[ri].slice(0, span.cols).map((t, i) => cellH(t, i, ri)));
-      body += Math.max(own, shared); ri += k;
+/** The type every slide table is set in, the whole deck through, so no
+ *  slide reads larger or smaller than the next. Slides split where a table
+ *  would not fit at it. Points, at the standard 13.33 in slide width. */
+export const TABLE_PT = 12;
+
+/** The average width of a character, in ems, with room to spare: Arial
+ *  (the plain slides). Measured from drawn slides. */
+export const CHAR_W = 0.48;
+/** Narrower faces a template may use, measured the same way. */
+export const charWOf = (font: string) => (/^(lato|calibri|carlito|open sans|source sans|roboto|segoe ui|helvetica neue|aptos)\b/i.test(font.trim()) ? 0.44 : CHAR_W);
+/** Line height, in ems. */
+const LINE = 1.2;
+/** Lines a text takes in a width at a size, word by word (inches, points). */
+function wrapLines(text: string, wIn: number, pt: number, wide = 0.5): number {
+  const per = (pt * wide) / 72;
+  let lines = 0;
+  for (const para of text.split("\n")) {
+    let cur = 0, n = 1;
+    for (const word of para.split(/\s+/).filter(Boolean)) {
+      const w = word.length * per;
+      if (cur > 0 && cur + per + w > wIn) { n++; cur = w; } else cur += (cur > 0 ? per : 0) + w;
+      while (cur > wIn) { n++; cur -= wIn; }
     }
-    if (headH + body <= h) return fs;
+    lines += n;
   }
-  return 9;
+  return lines;
 }
+/** How tall a slide table is at a size: each cell's lines at its width, a
+ *  first cell's tag under it, the gaps between a cell's lines, the cell
+ *  margins, the head row. Inches. A little over, never under. */
+export function tableHeight(head: string[], rows: string[][], widths: number[], w: number, pt: number, tags?: Array<SlideTag | null>, span?: SlideSpan, charW = CHAR_W): number {
+  const total = widths.reduce((a, c) => a + c, 0);
+  const pad = 8.5 / 72, small = Math.max(8, pt - 2);
+  const cellW = widths.map((c) => Math.max(0.3, (c / total) * w - 13 / 72));
+  const headH = Math.max(...head.map((t, i) => wrapLines(t, cellW[i], small, charW * 1.1))) * (small * LINE) / 72 + pad;
+  const cellH = (t: string, i: number, ri: number) => {
+    const parts = (t ?? "").split("\n");
+    // A first cell's verdict sits on its first line, after what it is.
+    const text = i === 0 && tags?.[ri] ? [`${parts[0]}  ${tags[ri]!.text}`, ...parts.slice(1)].join("\n") : t ?? "";
+    return wrapLines(text, cellW[i], pt, i === 0 ? charW * 1.08 : charW) * (pt * LINE) / 72 + (parts.length - 1) * (4 / 72);
+  };
+  const rowH = (ri: number, from: number) => pad + Math.max(0, ...rows[ri].map((t, i) => (i < from ? 0 : cellH(t, i, ri))));
+  let body = 0;
+  // A group: its own rows, or the cells it shares down them, whichever is taller.
+  for (let ri = 0; ri < rows.length;) {
+    const k = span ? Math.max(1, span.rows[ri] ?? 1) : 1;
+    if (!span) { body += rowH(ri, 0); ri++; continue; }
+    let own = 0; for (let j = ri; j < ri + k && j < rows.length; j++) own += rowH(j, span.cols);
+    const shared = pad + Math.max(0, ...rows[ri].slice(0, span.cols).map((t, i) => cellH(t, i, ri)));
+    body += Math.max(own, shared); ri += k;
+  }
+  return (headH + body) * 1.04;
+}
+/** The deck's table size, unless one table can't be split small enough
+ *  (a single very long line): then the largest size at which it fits. */
+export function fitTablePt(head: string[], rows: string[][], widths: number[], w: number, h: number, tags?: Array<SlideTag | null>, span?: SlideSpan, charW = CHAR_W): number {
+  for (let fs = TABLE_PT; fs > 8; fs -= 0.5) if (tableHeight(head, rows, widths, w, fs, tags, span, charW) <= h) return fs;
+  return 8;
+}
+/** Where a slide's tables go and how much room they have: the room under
+ *  the title, in inches at the standard slide width, and whether a note
+ *  under the table sits inside it (a template's room) or below it (the
+ *  plain slides). */
+export interface DeckFit { w: number; h: number; footInside?: boolean;
+  /** The body face's average character width, in ems (narrow faces like Lato fit more on a line). */
+  charW?: number }
+export const PLAIN_FIT: DeckFit = { w: 12.1, h: 5.25 };
+/** The height a table has on a slide, after the line above it, the counts and the note. */
+export const tableRoom = (fit: DeckFit, b: { lead?: string; tally?: unknown[]; foot?: string }) =>
+  fit.h - (b.lead ? 0.48 : 0) - (b.tally?.length ? 0.55 : 0) - (fit.footInside ? 0.44 : 0);
 
 /** Every column wide enough for its longest word at this size (no word
  *  broken across lines). */
@@ -338,17 +381,14 @@ export const PIC_STRIP = 1.55;
  *  reads beside them (10 pt or more, no word broken), else in a strip under
  *  it while the table still reads at 11 pt above, else nowhere: the table
  *  needs the whole slide. */
-/** The room under a slide's title, inches at the standard slide size: the
- *  plain slides' (a template's is measured from its layout). */
-export const PLAIN_AREA = { w: 12.1, h: 5.25 };
-export function picPlace(spec: SlideSpec, area: { w: number; h: number } = PLAIN_AREA): "right" | "below" | null {
+export function picPlace(spec: SlideSpec, fit: DeckFit = PLAIN_FIT): "right" | "below" | null {
   const b = spec.body;
   if (b.k !== "table") return null;
-  const h = area.h - (b.lead ? 0.48 : 0) - (b.tally?.length ? 0.55 : 0) - (b.foot ? 0.44 : 0) + (area === PLAIN_AREA && b.foot ? 0.44 : 0);
-  const tw = area.w * (1 - PIC_SIDE) - 0.25;
-  const right = fitTablePt(b.head, b.rows, b.widths, tw, h - (b.lead ? 0.2 : 0), b.tags, b.span);
-  if (right >= 10 && wordsFit(b.head, b.rows, b.widths, tw, right)) return "right";
-  if (fitTablePt(b.head, b.rows, b.widths, area.w, h - PIC_STRIP - 0.45, b.tags, b.span) >= 11) return "below";
+  // The line above the table and the counts run the full width; the pictures start level with the table.
+  const h = tableRoom(fit, b);
+  const tw = fit.w * (1 - PIC_SIDE) - 0.25;
+  if (tableHeight(b.head, b.rows, b.widths, tw, TABLE_PT, b.tags, b.span, fit.charW) <= h && wordsFit(b.head, b.rows, b.widths, tw, TABLE_PT)) return "right";
+  if (tableHeight(b.head, b.rows, b.widths, fit.w, TABLE_PT, b.tags, b.span, fit.charW) <= h - PIC_STRIP - 0.45) return "below";
   return null;
 }
 
@@ -404,7 +444,7 @@ const part = (i: number, n: number) => (n > 1 ? ` (${i + 1} of ${n})` : "");
  *  areas (went well, did not, root cause, action), and the action plan (what,
  *  how, benefit, who, by what date, cost). Each thing is said once. The record
  *  behind a line opens from the line in the app, and is in the report. */
-export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
+export function deckSlides(r: Review, o: ReviewFileOpts, fit: DeckFit = PLAIN_FIT): SlideSpec[] {
   const s: SlideSpec[] = [], pt = point(r, o), bk = bookFor(r, o);
   const dates = eventDates(r, o.tz);
   const PARTS = ["The score: plan against actual", "What went well, what did not, and why", "What we do about it"];
@@ -414,27 +454,38 @@ export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
     body: { k: "cover", sub: projectLine(o), meta: [o.preparedBy, `Written ${o.date}`].filter(Boolean).join("  ·  "), agenda: PARTS,
       table: { head: ["Category", "What is measured", "Where it is addressed"], rows: bk.categories.map((c) => [c.name, c.measures, c.where]), widths: [1.3, 4.2, 2.3] } } });
 
-  // 1. The score.
+  // 1. The score. One slide when it fits at the deck's table size; else it
+  // runs on (the line above it and the counts stay on the first).
   const sc = bk.score;
-  s.push({
-    key: "score", kicker: "1 · The score: plan against actual", title: pt.headline, notes: [pt.headline, sc.line].filter(Boolean).join(" "), part: partOf(1),
-    body: {
-      k: "table", head: ["Measure", "Target", "Actual", "Result"], widths: [1.4, 2.4, 3.4, 1.7], lead: bk.delay,
-      rows: sc.rows.map((x) => [measureCell(x), x.plan, x.actual, x.result]),
-      // The verdict under the measure, unless the result already says it.
-      tags: sc.rows.map((x) => (x.result.toLowerCase() === VERDICT_WORD[x.verdict].toLowerCase() ? null : { text: VERDICT_WORD[x.verdict], tone: VERDICT_TONE[x.verdict] })),
-      more: sc.rows.map((x) => {
-        const what = { title: "What it measures", lines: [x.means] };
-        if (x.key === "duration" && pt.lines.length) return { title: "Where the late hours went", sections: [{ title: "From the records", lines: pt.lines }] };
-        if (x.key === "added" && r.found.length) return { title: "Added work", sections: [what, ...(["added", "discovery"] as const).map((k) => ({ title: k === "added" ? "Added scope: known work, not on the plan" : "Discovery: found when opened or inspected", lines: r.found.filter((f) => (f.kind === "added") === (k === "added")).map((f) => `${orderWord(f.on)}: ${f.what}. ${f.hours} h${f.critical ? ", on the critical path" : ""}.`) })).filter((g) => g.lines.length)] };
-        if (x.key === "quality" && r.failedTests.length) return { title: "Quality", sections: [what, { title: "From the records", lines: r.failedTests.map((f) => `${orderWord(f.order)} ${f.step}: "${f.said}"`) }, ...(x.guide ? guideMore(GUIDES[x.guide]).sections.slice(1) : [])] };
-        if (x.key === "safety" && r.standDowns.length) return { title: "Safety", sections: [what, { title: "Stand-downs, from the records", lines: r.standDowns.map((h) => `${orderWord(h.order)} ${h.name}: ${h.hours} h. "${h.reason}"`) }, ...(x.guide ? guideMore(GUIDES[x.guide]).sections.slice(1) : [])] };
-        return x.guide ? { ...guideMore(GUIDES[x.guide]), sections: [what, ...guideMore(GUIDES[x.guide]).sections.slice(1)] } : { title: x.measure, sections: [what] };
-      }),
-      tally: [{ n: sc.met, label: "met", tone: "good" as Tone }, { n: sc.missed, label: "missed", tone: "bad" as Tone }, { n: sc.untargeted, label: "no target set", tone: "warn" as Tone }, { n: sc.unmeasured, label: "not measured", tone: "none" as Tone }].filter((x) => x.n > 0),
-      foot: [sc.untargeted ? "No target set: set it on the line in the review." : "", sc.unmeasured ? "Not measured: the event did not record it. Open the line for how to set it up." : ""].filter(Boolean).join(" "),
-    },
+  const SC_HEAD = ["Measure", "Target", "Actual", "Result"], SC_W = [1.4, 2.4, 3.4, 1.7];
+  const scRows = sc.rows.map((x) => [measureCell(x), x.plan, x.actual, x.result]);
+  // The verdict under the measure, unless the result already says it.
+  const scTags = sc.rows.map((x) => (x.result.toLowerCase() === VERDICT_WORD[x.verdict].toLowerCase() ? null : { text: VERDICT_WORD[x.verdict], tone: VERDICT_TONE[x.verdict] }));
+  const scMore = sc.rows.map((x) => {
+    const what = { title: "What it measures", lines: [x.means] };
+    if (x.key === "duration" && pt.lines.length) return { title: "Where the late hours went", sections: [{ title: "From the records", lines: pt.lines }] };
+    if (x.key === "added" && r.found.length) return { title: "Added work", sections: [what, ...(["added", "discovery"] as const).map((k) => ({ title: k === "added" ? "Added scope: known work, not on the plan" : "Discovery: found when opened or inspected", lines: r.found.filter((f) => (f.kind === "added") === (k === "added")).map((f) => `${orderWord(f.on)}: ${f.what}. ${f.hours} h${f.critical ? ", on the critical path" : ""}.`) })).filter((g) => g.lines.length)] };
+    if (x.key === "quality" && r.failedTests.length) return { title: "Quality", sections: [what, { title: "From the records", lines: r.failedTests.map((f) => `${orderWord(f.order)} ${f.step}: "${f.said}"`) }, ...(x.guide ? guideMore(GUIDES[x.guide]).sections.slice(1) : [])] };
+    if (x.key === "safety" && r.standDowns.length) return { title: "Safety", sections: [what, { title: "Stand-downs, from the records", lines: r.standDowns.map((h) => `${orderWord(h.order)} ${h.name}: ${h.hours} h. "${h.reason}"`) }, ...(x.guide ? guideMore(GUIDES[x.guide]).sections.slice(1) : [])] };
+    return x.guide ? { ...guideMore(GUIDES[x.guide]), sections: [what, ...guideMore(GUIDES[x.guide]).sections.slice(1)] } : { title: x.measure, sections: [what] };
   });
+  const scTally = [{ n: sc.met, label: "met", tone: "good" as Tone }, { n: sc.missed, label: "missed", tone: "bad" as Tone }, { n: sc.untargeted, label: "no target set", tone: "warn" as Tone }, { n: sc.unmeasured, label: "not measured", tone: "none" as Tone }].filter((x) => x.n > 0);
+  const scFoot = [sc.untargeted ? "No target set: set it on the line in the review." : "", sc.unmeasured ? "Not measured: the event did not record it. Open the line for how to set it up." : ""].filter(Boolean).join(" ");
+  const scParts: number[][] = [];
+  sc.rows.forEach((_, i) => {
+    const cur = scParts[scParts.length - 1];
+    const room = tableRoom(fit, { lead: scParts.length <= 1 ? bk.delay : undefined, tally: scParts.length <= 1 ? scTally : undefined, foot: "x" });
+    if (cur && tableHeight(SC_HEAD, [...cur, i].map((j) => scRows[j]), SC_W, fit.w, TABLE_PT, [...cur, i].map((j) => scTags[j]), undefined, fit.charW) <= room) cur.push(i); else scParts.push([i]);
+  });
+  if (!scParts.length) scParts.push([]);
+  scParts.forEach((ix, i) => s.push({
+    key: i ? `score-${i + 1}` : "score", kicker: `1 · The score: plan against actual${part(i, scParts.length)}`, title: pt.headline, notes: i ? "" : [pt.headline, sc.line].filter(Boolean).join(" "), part: partOf(1),
+    body: {
+      k: "table", head: SC_HEAD, widths: SC_W, ...(i ? {} : { lead: bk.delay, tally: scTally }),
+      rows: ix.map((j) => scRows[j]), tags: ix.map((j) => scTags[j]), more: ix.map((j) => scMore[j]),
+      foot: i === scParts.length - 1 ? scFoot : "",
+    },
+  }));
 
   // 2. The seven areas: each finding on its own row, with its own root
   // cause and action, under its area. Areas split over slides when they
@@ -466,7 +517,8 @@ export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
   // Rows grouped under their area; a group that would not read at 11 pt on
   // a slide of its own goes on over the next ("Planning, continued").
   type Unit = { rows: string[][]; tag: SlideTag | null; more: SlideMore | null };
-  const reads = (us: Unit[]) => fitTablePt(AREA_HEAD, us.flatMap((u) => u.rows), AREA_W, 12.1, 6.8 - 1.55, us.flatMap((u) => u.rows.map((_, i) => (i ? null : u.tag))), { cols: 2, rows: us.flatMap((u) => u.rows.map((_, i) => (i ? 0 : u.rows.length))) }) >= 11;
+  // Rows go on a slide while its table fits at the deck's one size.
+  const reads = (us: Unit[]) => tableHeight(AREA_HEAD, us.flatMap((u) => u.rows), AREA_W, fit.w, TABLE_PT, us.flatMap((u) => u.rows.map((_, i) => (i ? null : u.tag))), { cols: 2, rows: us.flatMap((u) => u.rows.map((_, i) => (i ? 0 : u.rows.length))) }, fit.charW) <= tableRoom(fit, { foot: "x" });
   const units: Unit[] = [];
   for (const g of areaGroups) {
     let part: string[][] = [], first = true;
@@ -495,15 +547,20 @@ export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
     },
   }));
 
-  // 3. The action plan, seven to a slide.
+  // 3. The action plan: as many to a slide as fit at the deck's one size.
+  const ACT_HEAD = ["What we will do", "How it will be done", "Benefit", "Who", "By", "Cost"], ACT_W = [2.7, 3.0, 2.6, 1.2, 0.95, 0.95];
+  const actRow = (a: (typeof bk.actions)[number]) => [`${a.n}. ${a.what}\n${a.areaName} · ${appliesWord(a.applies, o.kind)}`, a.how, a.benefit || NOT_WRITTEN, a.who || NOT_SET, a.by || NOT_SET, a.cost || NOT_SET];
   const groups: Array<typeof bk.actions> = [];
-  for (let i = 0; i < bk.actions.length; i += 7) groups.push(bk.actions.slice(i, i + 7));
+  for (const a of bk.actions) {
+    const cur = groups[groups.length - 1];
+    if (cur && tableHeight(ACT_HEAD, [...cur, a].map(actRow), ACT_W, fit.w, TABLE_PT, undefined, undefined, fit.charW) <= tableRoom(fit, { foot: "x" })) cur.push(a); else groups.push([a]);
+  }
   if (!groups.length) s.push({ key: "actions-1", kicker: "3 · What we do about it", part: partOf(3), title: bk.pending ? "No actions accepted yet" : "No actions for the next event", notes: bk.pending ? `${bk.pending} findings wait for a decision in the review.` : "Nothing in the records calls for a change.", body: { k: "asks", items: [], foot: "" } });
   groups.forEach((g, i) => s.push({
     key: `actions-${i + 1}`, kicker: `3 · What we do about it${part(i, groups.length)}`, part: partOf(3), title: `${bk.actions.length === 1 ? "1 action" : `${bk.actions.length} actions`} for the next event`, notes: g.map((a) => `${a.n}. ${a.what}${a.benefit ? ` Benefit: ${a.benefit}` : ""}`).join(" "),
     body: {
-      k: "table", head: ["What we will do", "How it will be done", "Benefit", "Who", "By", "Cost"], widths: [2.7, 3.0, 2.6, 1.2, 0.95, 0.95],
-      rows: g.map((a) => [`${a.n}. ${a.what}\n${a.areaName} · ${appliesWord(a.applies, o.kind)}`, a.how, a.benefit || NOT_WRITTEN, a.who || NOT_SET, a.by || NOT_SET, a.cost || NOT_SET]),
+      k: "table", head: ACT_HEAD, widths: ACT_W,
+      rows: g.map(actRow),
       rowKeys: g.map((a) => a.keys[0] ?? null),
       // Behind each action: how it will be done, then each finding it came from, with its own root cause.
       more: g.map((a) => {
@@ -540,8 +597,8 @@ export function base64Of(bytes: Uint8Array): string {
 export async function reviewPptx(r: Review, o: ReviewFileOpts, opts: SlidesOpts = {}): Promise<Blob | Uint8Array> {
   const look = opts.look ?? DEFAULT_LOOK;
   if (opts.template) {
-    const { deckOnTemplate } = await import("@/lib/reviewTemplateDeck");
-    return deckOnTemplate(opts.specs ?? deckSlides(r, o), { info: opts.template.info, data: opts.template.data, look, pick: opts.template.pick, title: `${eventName(o)} post-event review` });
+    const { deckOnTemplate, templateArea } = await import("@/lib/reviewTemplateDeck");
+    return deckOnTemplate(opts.specs ?? deckSlides(r, o, templateArea(opts.template.info, opts.template.pick)), { info: opts.template.info, data: opts.template.data, look, pick: opts.template.pick, title: `${eventName(o)} post-event review` });
   }
   const Pptx = (await import("pptxgenjs")).default;
   const p = new Pptx();
@@ -550,7 +607,10 @@ export async function reviewPptx(r: Review, o: ReviewFileOpts, opts: SlidesOpts 
   const BG = look.bg, INK = look.ink, KICK = look.kicker, SOFT = look.soft, HEAD = look.heading;
   const face = look.font;
   const T = (v: string) => noEmDash(v);
-  for (const spec of opts.specs ?? deckSlides(r, o)) {
+  const list = opts.specs ?? deckSlides(r, o);
+  // One title size for every slide after the cover.
+  const titlePt = list.some((x) => x.body.k !== "cover" && x.title.length > 70) ? 21 : 25;
+  for (const spec of list) {
     const s = p.addSlide();
     s.background = { color: BG };
     const b = spec.body;
@@ -599,7 +659,8 @@ export async function reviewPptx(r: Review, o: ReviewFileOpts, opts: SlidesOpts 
           // A first cell: what it is in bold, then the fact or the verdict under it.
           const [lead, ...more] = (row[i] ?? "").split("\n");
           const tag = i === 0 ? tags?.[ri] : null;
-          if (i === 0 && (more.length || tag)) return { text: [{ text: T(lead), options: { bold: true, breakLine: true } }, ...(more.length ? [{ text: T(more.join(" ")), options: { bold: false, breakLine: !!tag } }] : []), ...(tag ? [{ text: T(tag.text), options: { bold: true, fontSize: Math.max(9, fs - 2), color: TONE_HEX[tag.tone].fg } }] : [])], options };
+          // What it is in bold with its verdict beside it, then the fact under it.
+          if (i === 0 && (more.length || tag)) return { text: [{ text: T(lead), options: { bold: true, breakLine: !tag } }, ...(tag ? [{ text: T(`  ${tag.text}`), options: { bold: true, fontSize: Math.max(9, fs - 2), color: TONE_HEX[tag.tone].fg, breakLine: more.length > 0 } }] : []), ...(more.length ? [{ text: T(more.join(" ")), options: { bold: false } }] : [])], options };
           // Several lines in a cell: one under the other; where the line came from set quieter.
           if (more.length) return { text: [lead, ...more].map((t, k, all) => ({ text: T(t), options: { breakLine: k < all.length - 1, paraSpaceAfter: 4, ...(i === source && k === all.length - 1 ? { color: SOFT, fontSize: Math.max(9, fs - 2) } : {}) } })), options };
           return { text: T(row[i] ?? ""), options: { ...options, bold: i === 0 } };
@@ -652,7 +713,7 @@ export async function reviewPptx(r: Review, o: ReviewFileOpts, opts: SlidesOpts 
     }
     mark(0.6, 0.27);
     s.addText(T(spec.kicker), { x: 0.6, y: 0.35, w: 12.1, h: 0.3, fontFace: face, fontSize: 12, bold: true, color: KICK });
-    s.addText(T(spec.title), { x: 0.6, y: 0.65, w: 12.1, h: 0.8, fontFace: face, fontSize: spec.title.length > 70 ? 21 : 25, bold: true, color: HEAD, valign: "top" });
+    s.addText(T(spec.title), { x: 0.6, y: 0.65, w: 12.1, h: 0.8, fontFace: face, fontSize: titlePt, bold: true, color: HEAD, valign: "top" });
     if (b.k === "asks") {
       const big = b.items.length <= 4;
       const rowH = Math.min(1.25, 5.1 / Math.max(1, b.items.length));
@@ -664,13 +725,15 @@ export async function reviewPptx(r: Review, o: ReviewFileOpts, opts: SlidesOpts 
       });
       foot(b.foot);
     } else if (b.k === "table") {
-      // Pictures down the right; the lead, the tally and the table beside them.
-      const { tw, bottom } = side(spec.pics, 1.55);
-      // The tally sits in a line above the table: "1 met · 1 missed · 4 not measured".
+      // The line above the table and the counts run the full width:
+      // "Where the 33.5 h went: ...", then "1 met · 1 missed · 4 not measured".
       let y = 1.5;
-      if (b.lead) { s.addText(T(b.lead), { x: 0.6, y, w: tw, h: tw < 12 ? 0.62 : 0.42, fontFace: face, fontSize: tw < 12 ? 14 : 16, bold: true, color: KICK, valign: "middle" }); y += tw < 12 ? 0.68 : 0.48; }
-      if (b.tally?.length) { s.addText(b.tally.flatMap((t, i) => [{ text: `${i ? "     " : ""}${t.n} `, options: { bold: true, fontSize: 20, color: TONE_HEX[t.tone].fg } }, { text: T(t.label), options: { fontSize: 13, color: SOFT } }]), { x: 0.6, y, w: tw, h: 0.45, fontFace: face, valign: "middle" }); y += 0.55; }
-      table(b.head, b.rows, b.widths, 0.6, y === 1.5 ? 1.55 : y, tw, undefined, b.tags, b.span, b.source, bottom);
+      if (b.lead) { s.addText(T(b.lead), { x: 0.6, y, w: 12.1, h: 0.42, fontFace: face, fontSize: 16, bold: true, color: KICK, valign: "middle" }); y += 0.48; }
+      if (b.tally?.length) { s.addText(b.tally.flatMap((t, i) => [{ text: `${i ? "     " : ""}${t.n} `, options: { bold: true, fontSize: 20, color: TONE_HEX[t.tone].fg } }, { text: T(t.label), options: { fontSize: 13, color: SOFT } }]), { x: 0.6, y, w: 12.1, h: 0.45, fontFace: face, valign: "middle" }); y += 0.55; }
+      const top = y === 1.5 ? 1.55 : y;
+      // Pictures level with the table: down its right, or in a strip under it.
+      const { tw, bottom } = side(spec.pics, top);
+      table(b.head, b.rows, b.widths, 0.6, top, tw, undefined, b.tags, b.span, b.source, bottom);
       foot(b.foot);
     } else if (b.k === "split") {
       const lw = 12.1 * (b.ratio ?? 0.5) - 0.15;
