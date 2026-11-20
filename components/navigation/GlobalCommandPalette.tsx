@@ -418,7 +418,7 @@ export default function GlobalCommandPalette() {
             {query.trim().length >= 2 && !showShortcuts && (
               <button
                 onClick={() => { setOpen(false); router.push(`/search?q=${encodeURIComponent(query)}`); }}
-                className="font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]"
+                className="font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)]"
               >
                 See all results →
               </button>

@@ -445,7 +445,7 @@ export default function DashboardGrid() {
               type="button"
               onClick={() => setAddOpen(true)}
               style={{ minHeight: 2 * ROW_UNIT + GAP }}
-              className="min-w-0 rounded-2xl border-2 border-dashed border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] transition-colors flex flex-col items-center justify-center gap-2"
+              className="min-w-0 rounded-2xl border-2 border-dashed border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent-text)] transition-colors flex flex-col items-center justify-center gap-2"
             >
               <Plus className="w-6 h-6" />
               <span className="text-[13px] font-bold">Add widget</span>
@@ -554,7 +554,7 @@ export default function DashboardGrid() {
               type="button"
               onClick={() => setAddOpen(true)}
               style={{ gridColumn: `${addSlot.x + 1} / span 3`, gridRow: `${addSlot.y + 1} / span 2`, zIndex: 10 }}
-              className="min-w-0 rounded-2xl border-2 border-dashed border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] transition-colors flex flex-col items-center justify-center gap-2"
+              className="min-w-0 rounded-2xl border-2 border-dashed border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent-text)] transition-colors flex flex-col items-center justify-center gap-2"
             >
               <Plus className="w-6 h-6" />
               <span className="text-[13px] font-bold">Add widget</span>

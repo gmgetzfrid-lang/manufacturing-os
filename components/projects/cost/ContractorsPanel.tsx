@@ -296,7 +296,7 @@ function ContractorPage(p: ContractorsProps & {
         <>
           <CrewsSection {...p} co={co} busy={busy} act={act} />
           <PlanSection {...p} co={co} busy={busy} act={act} />
-          <p className="text-[12.5px] text-[var(--color-text-muted)]">The same plan shows on {co}&apos;s page in Costs › Contractors, with its rate sheet, quote and every shift&apos;s cost. <button type="button" onClick={() => openContractor(co)} className="font-bold text-[var(--color-accent)] hover:underline cursor-pointer">Open it there</button></p>
+          <p className="text-[12.5px] text-[var(--color-text-muted)]">The same plan shows on {co}&apos;s page in Costs › Contractors, with its rate sheet, quote and every shift&apos;s cost. <button type="button" onClick={() => openContractor(co)} className="font-bold text-[var(--color-accent-text)] hover:underline cursor-pointer">Open it there</button></p>
         </>
       ) : (<>
       <Answer x={x} scope={p.scope} />
@@ -401,7 +401,7 @@ function MoneySection(p: SectionProps) {
         <div className="space-y-1">
           <span className={label}>Quote</span>
           {x.quote ? <div className="text-[13.5px] text-[var(--color-text)]"><b>{money(x.quote.totalAmount)}</b> awarded{x.quote.fileName ? `, ${x.quote.fileName}` : ""}</div>
-            : <div className="text-[13px] text-[var(--color-text-muted)]">{quotes.length ? `${plural(quotes.length, "quote")} in, none awarded.` : "None awarded."} <button type="button" onClick={p.onQuotes} className="font-bold text-[var(--color-accent)] hover:underline">{quotes.length ? "Award one in Quotes" : "Add it in Quotes"}</button></div>}
+            : <div className="text-[13px] text-[var(--color-text-muted)]">{quotes.length ? `${plural(quotes.length, "quote")} in, none awarded.` : "None awarded."} <button type="button" onClick={p.onQuotes} className="font-bold text-[var(--color-accent-text)] hover:underline">{quotes.length ? "Award one in Quotes" : "Add it in Quotes"}</button></div>}
         </div>
         <div className="space-y-1">
           <span className={label}>Budget line</span>

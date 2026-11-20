@@ -123,7 +123,7 @@ export default function RelatedPanel({
         <Waypoints className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
         <span className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest flex-1">Related</span>
         <button onClick={() => openRelationshipGraph(documentId)}
-          className="text-[11px] font-bold text-[var(--color-accent)] hover:underline">Open graph</button>
+          className="text-[11px] font-bold text-[var(--color-accent-text)] hover:underline">Open graph</button>
         {shortLink && (
           <button
             onClick={() => {
@@ -153,7 +153,7 @@ export default function RelatedPanel({
                   <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
                   {r.target ? (
                     <Link href={`/documents/${r.target.library_id}?doc=${r.target_document_id}`}
-                      className="flex-1 min-w-0 text-xs font-bold text-[var(--color-text)] hover:text-[var(--color-accent)] truncate">
+                      className="flex-1 min-w-0 text-xs font-bold text-[var(--color-text)] hover:text-[var(--color-accent-text)] truncate">
                       {r.target.document_number || r.target.title || "Document"}
                       {r.label && <span className="font-normal text-[var(--color-text-muted)]"> · {r.label}</span>}
                     </Link>
@@ -165,7 +165,7 @@ export default function RelatedPanel({
                 <>
                   <Globe className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                   <a href={r.url ?? "#"} target="_blank" rel="noreferrer"
-                    className="flex-1 min-w-0 text-xs font-bold text-[var(--color-text)] hover:text-[var(--color-accent)] truncate">
+                    className="flex-1 min-w-0 text-xs font-bold text-[var(--color-text)] hover:text-[var(--color-accent-text)] truncate">
                     {r.label || r.url}
                   </a>
                 </>
@@ -261,7 +261,7 @@ export default function RelatedPanel({
           {proposals.map((p) => (
             <div key={p.id} className="space-y-1">
               <Link href={p.target ? `/documents/${p.target.library_id}?doc=${p.target.id}` : "#"}
-                className="block text-[11px] font-bold text-[var(--color-text)] hover:text-[var(--color-accent)] truncate">
+                className="block text-[11px] font-bold text-[var(--color-text)] hover:text-[var(--color-accent-text)] truncate">
                 {p.target?.document_number || p.target?.title || "Document"}
               </Link>
               <div className="text-[11px] text-[var(--color-text-muted)]">

@@ -415,7 +415,7 @@ function CheckoutRow({ row, showProject }: { row: CheckoutWithContext; showProje
               </span>
             )}
             {showProject && row.project && (
-              <Link href={`/projects/${row.project.id}`} className="inline-flex items-center gap-1 text-[var(--color-accent)] hover:underline">
+              <Link href={`/projects/${row.project.id}`} className="inline-flex items-center gap-1 text-[var(--color-accent-text)] hover:underline">
                 <Briefcase className="w-3 h-3" /> {row.project.name}
               </Link>
             )}

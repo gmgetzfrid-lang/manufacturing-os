@@ -511,7 +511,7 @@ export default function AnalyticsPage() {
                                   <p className="text-[15px] font-bold text-[var(--color-text)]">{t.revisionCount}</p>
                                 </div>
                                 <Link href={`/requests/${t.id}`} target="_blank">
-                                  <button className="p-2 bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-faint)] hover:text-[var(--color-accent)] hover:border-[var(--color-accent-ring)] rounded-lg shadow-sm transition-all">
+                                  <button className="p-2 bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-faint)] hover:text-[var(--color-accent-text)] hover:border-[var(--color-accent-ring)] rounded-lg shadow-sm transition-all">
                                     <ExternalLink className="w-4 h-4" />
                                   </button>
                                 </Link>

@@ -488,7 +488,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
                         ))}
                         {f.evidence.length > 0 && f.source !== "job" && (
                           <details className="mt-1.5">
-                            <summary className="cursor-pointer text-[12px] font-bold text-[var(--color-accent)]">From the records ({f.evidence.length})</summary>
+                            <summary className="cursor-pointer text-[12px] font-bold text-[var(--color-accent-text)]">From the records ({f.evidence.length})</summary>
                             <ul className="mt-1 space-y-1 text-[12px] text-[var(--color-text-muted)] list-disc pl-4">{f.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul>
                           </details>
                         )}
@@ -496,7 +496,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
                       {closes && <>
                         {f.practice && <><dt className={`${label} pt-0.5`}>Done well</dt><dd className="text-[var(--color-text-muted)]">{f.practice}</dd></>}
                         <dt className={`${label} pt-0.5`}>Root cause</dt>
-                        <dd data-root-cause>{f.gap || <span className="text-[var(--color-text-muted)]">Not written.{canManage && <> <button type="button" onClick={() => { setEditing(f.key); setAdding(false); }} className="font-bold text-[var(--color-accent)] hover:underline">Write it</button></>}</span>}</dd>
+                        <dd data-root-cause>{f.gap || <span className="text-[var(--color-text-muted)]">Not written.{canManage && <> <button type="button" onClick={() => { setEditing(f.key); setAdding(false); }} className="font-bold text-[var(--color-accent-text)] hover:underline">Write it</button></>}</span>}</dd>
                         <dt className={`${label} pt-0.5`}>{f.status === "kept" || f.source === "person" ? "Do differently" : "Suggested change"}</dt><dd>{f.next || <span className="text-[var(--color-text-muted)]">None suggested. Write one with Edit.</span>}{f.owner && <span className="ml-1.5 text-[11px] font-extrabold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)] whitespace-nowrap">Owner: {f.owner}</span>}</dd>
                         {f.year && <><dt className={`${label} pt-0.5`}>Longer term</dt><dd>{f.year}</dd></>}
                       </>}
@@ -516,8 +516,8 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
                         <button type="button" onClick={() => { setInfoFor(null); setInfoText(""); }} className={btn}>Cancel</button>
                       </div>
                     )}
-                    {f.key === "materials" && f.status !== "discarded" && <button type="button" onClick={() => onTab("materials")} className="mt-2 text-[12.5px] font-bold text-[var(--color-accent)] hover:underline">Open the materials register</button>}
-                    {f.key === "organization" && f.status !== "discarded" && <button type="button" onClick={() => onTab("members")} className="mt-2 text-[12.5px] font-bold text-[var(--color-accent)] hover:underline">{organization?.recorded ? "Open the event organization (Members)" : "Record the roles and who fills each (Members)"}</button>}
+                    {f.key === "materials" && f.status !== "discarded" && <button type="button" onClick={() => onTab("materials")} className="mt-2 text-[12.5px] font-bold text-[var(--color-accent-text)] hover:underline">Open the materials register</button>}
+                    {f.key === "organization" && f.status !== "discarded" && <button type="button" onClick={() => onTab("members")} className="mt-2 text-[12.5px] font-bold text-[var(--color-accent-text)] hover:underline">{organization?.recorded ? "Open the event organization (Members)" : "Record the roles and who fills each (Members)"}</button>}
                     {canManage && infoFor !== f.key && (
                       <div className="mt-3 flex gap-1.5 flex-wrap">
                         {f.status === "discarded" ? <button type="button" disabled={!!busy} onClick={() => restore(f)} className={btn}><RotateCcw className="w-4 h-4" /> Restore</button> : <>
@@ -715,8 +715,8 @@ function ScoreLine({ row, entry, busy, canManage, onSave }: { row: ScoreRow; ent
             <button key={t} type="button" disabled={busy} onClick={() => setTarget(t)} aria-pressed={row.plan === t}
               className={`h-8 px-2.5 rounded-full border text-[12.5px] font-bold ${row.plan === t ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-border)]/40"}`}>{t}</button>
           ))}
-          <button type="button" onClick={() => { setE(entry ?? {}); setOpen(open === "target" ? null : "target"); }} className="h-8 px-2.5 rounded-full border border-dashed border-[var(--color-border)] text-[12.5px] font-bold text-[var(--color-accent)]">{row.picks.length ? "Other" : "Type it"}</button>
-          {!row.fromRecords && <button type="button" onClick={() => { setE(entry ?? {}); setOpen(open === "result" ? null : "result"); }} className="h-8 px-2.5 rounded-full text-[12.5px] font-bold text-[var(--color-accent)]">{entry?.actual ? "Change the result" : "Enter the result"}</button>}
+          <button type="button" onClick={() => { setE(entry ?? {}); setOpen(open === "target" ? null : "target"); }} className="h-8 px-2.5 rounded-full border border-dashed border-[var(--color-border)] text-[12.5px] font-bold text-[var(--color-accent-text)]">{row.picks.length ? "Other" : "Type it"}</button>
+          {!row.fromRecords && <button type="button" onClick={() => { setE(entry ?? {}); setOpen(open === "result" ? null : "result"); }} className="h-8 px-2.5 rounded-full text-[12.5px] font-bold text-[var(--color-accent-text)]">{entry?.actual ? "Change the result" : "Enter the result"}</button>}
         </div>
       )}
       {open === "target" && (
@@ -736,7 +736,7 @@ function ScoreLine({ row, entry, busy, canManage, onSave }: { row: ScoreRow; ent
       )}
       {g && (
         <details className="mt-1.5 text-[12.5px]" data-guide={g.id}>
-          <summary className="cursor-pointer font-bold text-[var(--color-accent)]">How to record it next time: {g.title.toLowerCase()}</summary>
+          <summary className="cursor-pointer font-bold text-[var(--color-accent-text)]">How to record it next time: {g.title.toLowerCase()}</summary>
           <p className="mt-1 text-[var(--color-text)]">{g.what}</p>
           <ol className="mt-1 list-decimal pl-5 space-y-0.5 text-[var(--color-text)]">{g.steps.map((t, i) => <li key={i}>{t}</li>)}</ol>
           <p className="mt-1 text-[var(--color-text-muted)]">In the app: {g.inApp}</p>

@@ -784,7 +784,7 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, p
                 {it.partyId && partyName.get(it.partyId) && <span className="text-[11px] text-[var(--color-text-muted)]">{partyName.get(it.partyId)}</span>}
                 {it.documentId && (
                   docs.get(it.documentId)
-                    ? <Link href={docs.get(it.documentId)!.href} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:underline"><Paperclip className="w-3 h-3" /> {docs.get(it.documentId)!.label}</Link>
+                    ? <Link href={docs.get(it.documentId)!.href} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent-text)] hover:underline"><Paperclip className="w-3 h-3" /> {docs.get(it.documentId)!.label}</Link>
                     : <span className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-muted)]"><Paperclip className="w-3 h-3" /> document attached</span>
                 )}
                 {canManage && busy !== it.id && (

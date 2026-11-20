@@ -198,7 +198,7 @@ function DailyBriefBody() {
                 <span className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${n.severity === "high" ? "bg-rose-500" : "bg-amber-500"}`} />
                 <span className="flex-1">{n.message}</span>
                 {n.actionLabel && n.href && (
-                  <Link href={n.href} className="font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] inline-flex items-center gap-0.5 shrink-0">
+                  <Link href={n.href} className="font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)] inline-flex items-center gap-0.5 shrink-0">
                     {n.actionLabel} <ChevronRight className="w-3 h-3" />
                   </Link>
                 )}
@@ -308,7 +308,7 @@ function SuggestedActionsBody() {
               <span className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${n.severity === "high" ? "bg-rose-500" : "bg-amber-500"}`} />
               <span className="flex-1">{n.message}</span>
               {n.actionLabel && n.href && (
-                <Link href={n.href} className="font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] inline-flex items-center gap-0.5 shrink-0">
+                <Link href={n.href} className="font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)] inline-flex items-center gap-0.5 shrink-0">
                   {n.actionLabel} <ChevronRight className="w-3 h-3" />
                 </Link>
               )}
@@ -405,7 +405,7 @@ function OutstandingBody() {
             <ul className="space-y-1.5">
               {snap.markupRequestsToMe.slice(0, 6).map((mr) => (
                 <li key={mr.id} className="text-xs">
-                  <Link href="/documents" className="text-[var(--color-accent)] hover:underline font-bold">
+                  <Link href="/documents" className="text-[var(--color-accent-text)] hover:underline font-bold">
                     {mr.documentNumber || mr.documentTitle || mr.documentId.slice(0, 8)}
                   </Link>
                   {mr.requestedByName && <span className="text-[var(--color-text-muted)]"> · from {mr.requestedByName}</span>}
@@ -447,7 +447,7 @@ function OutstandingBody() {
                     <DocThumb documentId={s.documentId} width={28} />
                   </DocHoverPreview>
                   <span className="font-mono text-[var(--color-text-muted)]">{s.mode}</span>
-                  <Link href={`/documents/${s.libraryId ?? ""}?doc=${s.documentId}`} className="text-[var(--color-accent)] hover:underline font-bold">
+                  <Link href={`/documents/${s.libraryId ?? ""}?doc=${s.documentId}`} className="text-[var(--color-accent-text)] hover:underline font-bold">
                     {s.documentId.slice(0, 8)}
                   </Link>
                   {s.purpose && <span className="text-[var(--color-text-faint)] truncate">- {s.purpose}</span>}
@@ -480,7 +480,7 @@ function OutstandingBody() {
             <ul className="space-y-1.5">
               {snap.transmittalsAwaitingAck.slice(0, 6).map((t) => (
                 <li key={t.id} className="text-xs flex items-center gap-2">
-                  <Link href="/transmittals" className="font-mono font-bold text-[var(--color-accent)] hover:underline shrink-0">{t.number}</Link>
+                  <Link href="/transmittals" className="font-mono font-bold text-[var(--color-accent-text)] hover:underline shrink-0">{t.number}</Link>
                   <span className="text-[var(--color-text-faint)] truncate flex-1">{t.subject || [t.recipientName, t.recipientCompany].filter(Boolean).join(" · ") || `${t.documentCount} doc${t.documentCount === 1 ? "" : "s"}`}</span>
                   <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
                     (t.__ageDays ?? 0) >= 14 ? "bg-rose-100 text-rose-800"
@@ -490,7 +490,7 @@ function OutstandingBody() {
                 </li>
               ))}
             </ul>
-            <Link href="/transmittals" className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">
+            <Link href="/transmittals" className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)]">
               Transmittal register <ChevronRight className="w-3 h-3" />
             </Link>
           </WidgetCard>

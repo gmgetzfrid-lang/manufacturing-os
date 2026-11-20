@@ -12,7 +12,7 @@
 // distinct brand colors. ONE source of truth for brand color.
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { rolesOf, bandFor, sideTokens, buttonText, mix, luminance, actionText, DEFAULT_ROLES } from "@/lib/themeRoles";
+import { rolesOf, bandFor, sideTokens, buttonText, mix, luminance, actionText, readableOn, DEFAULT_ROLES } from "@/lib/themeRoles";
 
 export type ThemeMode = "light" | "dark";
 
@@ -73,6 +73,9 @@ function applyTheme(mode: ThemeMode, p: Palette) {
   set("--side-bg", side.bg); set("--side-surface", side.surface); set("--side-text", side.text);
   set("--side-muted", side.muted); set("--side-faint", side.faint);
   set("--side-border", side.border); set("--side-border-strong", side.borderStrong);
+  set("--side-accent-text", readableOn(r.action, side.bg));
+  // Viewers and toasts stay charcoal whatever the menu color.
+  set("--charcoal-accent-text", readableOn(r.action, mode === "dark" ? "#0a0c10" : "#11141a"));
   // The menu's "you are here" sits on the band color; on a light menu it
   // needs white text, which the band always carries.
 

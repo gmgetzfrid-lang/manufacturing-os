@@ -249,7 +249,7 @@ export default function AssetHubPage() {
           {docs.length > docLimit && (
             <div className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] flex items-center justify-between text-[13px]">
               <span className="text-[var(--color-text-muted)]">{docLimit} of {docs.length} shown</span>
-              <button type="button" onClick={() => setDocLimit((n) => n + 50)} className="font-bold text-[var(--color-accent)] hover:underline">
+              <button type="button" onClick={() => setDocLimit((n) => n + 50)} className="font-bold text-[var(--color-accent-text)] hover:underline">
                 Show {Math.min(50, docs.length - docLimit)} more
               </button>
             </div>

@@ -582,7 +582,7 @@ export default function DayAgendaPanel({
                               onFixTimes={onFixTimes ? async (t) => { const ok = await onFixTimes(id, t); setNotesTick((x) => x + 1); return ok; } : undefined} />
                             <div className="px-3 pl-7 pb-2 flex items-center justify-between text-[12px]">
                               <button type="button" onClick={() => onOpenDetail(r.leaf)} className="font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Details</button>
-                              {nx && <button type="button" onClick={() => { setOpenId(nx); openGroupOf(nx); }} className="font-bold text-[var(--color-accent)] hover:underline">Next step ›</button>}
+                              {nx && <button type="button" onClick={() => { setOpenId(nx); openGroupOf(nx); }} className="font-bold text-[var(--color-accent-text)] hover:underline">Next step ›</button>}
                             </div>
                           </div>
                         );
@@ -956,7 +956,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
           )}
           {own && (
             <button disabled={ro} onClick={() => { if (noteMode === "edit") { setNoteMode("new"); setNote(""); sentNote.current = null; } else { setNoteMode("edit"); setNote(latest!.body); sentNote.current = latest!.body.trim(); } }}
-              className="shrink-0 text-[11px] font-bold text-[var(--color-accent)] hover:underline">
+              className="shrink-0 text-[11px] font-bold text-[var(--color-accent-text)] hover:underline">
               {noteMode === "edit" ? "New comment instead" : "Edit my last one"}
             </button>
           )}

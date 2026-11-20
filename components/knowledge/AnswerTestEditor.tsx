@@ -137,7 +137,7 @@ export default function AnswerTestEditor({ initial, citations = [], onSave, onCa
             </div>
           );
         })}
-        <button type="button" onClick={() => setPages((ps) => [...ps, { document: "", page: "" }])} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:underline">
+        <button type="button" onClick={() => setPages((ps) => [...ps, { document: "", page: "" }])} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent-text)] hover:underline">
           <Plus className="w-3 h-3" /> A page the answer missed
         </button>
       </div>
@@ -166,7 +166,7 @@ export default function AnswerTestEditor({ initial, citations = [], onSave, onCa
             <button type="button" aria-label="Remove rule" onClick={() => setTerms((ts) => ts.filter((_, j) => j !== i))} className="px-1 text-[var(--color-text-muted)] hover:text-rose-600"><X className="w-3.5 h-3.5" /></button>
           </div>
         ))}
-        <button type="button" onClick={() => setTerms((ts) => [...ts, { term: "", not: "" }])} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:underline">
+        <button type="button" onClick={() => setTerms((ts) => [...ts, { term: "", not: "" }])} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent-text)] hover:underline">
           <Plus className="w-3 h-3" /> A term rule
         </button>
         <div className="text-[11px] text-[var(--color-text-faint)]">Common related terms are checked on every test already; add one when your standards draw a line the system can&apos;t know.</div>

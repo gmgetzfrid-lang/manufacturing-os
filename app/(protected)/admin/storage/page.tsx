@@ -910,7 +910,7 @@ export default function StorageBackupPage() {
                       className="text-[var(--color-text-muted)] font-bold">Cancel</button>
                   </>
                 ) : (
-                  <button onClick={() => setEditingQuota(true)} className="inline-flex items-center gap-1 font-bold text-[var(--color-accent)] hover:underline">
+                  <button onClick={() => setEditingQuota(true)} className="inline-flex items-center gap-1 font-bold text-[var(--color-accent-text)] hover:underline">
                     <Gauge className="w-3.5 h-3.5" /> {isRealQuota ? "Change storage limit" : "Set your storage limit"}
                   </button>
                 )}
@@ -1068,7 +1068,7 @@ export default function StorageBackupPage() {
                     setR2LimitDraft(String(Math.round((stats.freeTier!.r2LimitBytes / 1024 ** 3) * 10) / 10));
                     setDbLimitDraft(String(Math.round(stats.freeTier!.dbLimitBytes / 1024 ** 2)));
                     setEditingLimits(true);
-                  }} className="font-bold text-[var(--color-accent)] hover:underline">
+                  }} className="font-bold text-[var(--color-accent-text)] hover:underline">
                     {stats.freeTier.source === "settings" ? "Change plan limits" : "Upgraded your plan? Set the real limits"}
                   </button>
                 </p>
@@ -1481,7 +1481,7 @@ export default function StorageBackupPage() {
                       {finderNote && <div className="text-[var(--color-text-muted)] mt-1"><b>Finder note:</b> {finderNote}</div>}
                       <div className="text-[var(--color-text-faint)] mt-1">Anyone asked to view an archived file is pointed to the exact path under here{finderNote ? ", plus your note" : ""}.</div>
                     </div>
-                    <button onClick={() => setEditingLoc(true)} className="text-[11px] font-bold text-[var(--color-accent)] hover:underline shrink-0">Edit</button>
+                    <button onClick={() => setEditingLoc(true)} className="text-[11px] font-bold text-[var(--color-accent-text)] hover:underline shrink-0">Edit</button>
                   </div>
                 ) : (
                   <div>
@@ -1524,13 +1524,13 @@ export default function StorageBackupPage() {
             </button>
             <div className="mt-3 space-y-2 text-[11px]">
               <div className="flex items-center gap-4 flex-wrap">
-                <Link href="/admin/archive-view" className="inline-flex items-center gap-1.5 font-bold text-[var(--color-accent)] hover:underline">
+                <Link href="/admin/archive-view" className="inline-flex items-center gap-1.5 font-bold text-[var(--color-accent-text)] hover:underline">
                   <Archive className="w-3.5 h-3.5" /> View from a backup →
                 </Link>
-                <Link href="/admin/restore" className="inline-flex items-center gap-1.5 font-bold text-[var(--color-accent)] hover:underline">
+                <Link href="/admin/restore" className="inline-flex items-center gap-1.5 font-bold text-[var(--color-accent-text)] hover:underline">
                   <UploadCloud className="w-3.5 h-3.5" /> Restore from a backup →
                 </Link>
-                <Link href="/admin/data-export" className="inline-flex items-center gap-1.5 font-bold text-[var(--color-accent)] hover:underline">
+                <Link href="/admin/data-export" className="inline-flex items-center gap-1.5 font-bold text-[var(--color-accent-text)] hover:underline">
                   <ServerCog className="w-3.5 h-3.5" /> Scheduled push to your own bucket →
                 </Link>
               </div>

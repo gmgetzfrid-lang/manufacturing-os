@@ -71,7 +71,7 @@ export function CommandDeck({
   const rest = items.filter((i) => i !== first);
   const more = Math.max(0, rest.length - (SHOWN - 1));
   const iconBtn = "h-8 w-8 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40";
-  const tool = "flex items-center gap-2 min-w-0 py-2.5 text-[13px] text-[var(--color-text)] hover:text-[var(--color-accent)]";
+  const tool = "flex items-center gap-2 min-w-0 py-2.5 text-[13px] text-[var(--color-text)] hover:text-[var(--color-accent-text)]";
 
   const row = (it: AttentionItem, lead: boolean) => {
     const [ref, rest] = it.source === "ticket" ? splitRef(it.title) : [null, it.title];
@@ -123,7 +123,7 @@ export function CommandDeck({
                 {rest.slice(0, SHOWN - 1).map((it) => row(it, false))}
                 {more > 0 && (
                   <button type="button" onClick={() => openCenter("all")}
-                    className="w-full text-left border-t border-[var(--color-border)] pt-2.5 pb-1 text-[13px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">
+                    className="w-full text-left border-t border-[var(--color-border)] pt-2.5 pb-1 text-[13px] font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)]">
                     Show {more} more
                   </button>
                 )}

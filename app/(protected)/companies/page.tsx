@@ -153,7 +153,7 @@ export default function CompaniesPage() {
           {shown.length > limit && (
             <Card className="flex items-center justify-between text-[13px]">
               <span className="text-[var(--color-text-muted)]">{limit} of {shown.length} shown</span>
-              <button type="button" onClick={() => setLimit((n) => n + 40)} className="font-bold text-[var(--color-accent)] hover:underline">
+              <button type="button" onClick={() => setLimit((n) => n + 40)} className="font-bold text-[var(--color-accent-text)] hover:underline">
                 Show {Math.min(40, shown.length - limit)} more
               </button>
             </Card>

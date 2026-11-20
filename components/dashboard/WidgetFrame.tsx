@@ -129,7 +129,7 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings,
             </button>
           )}
           <Link href={meta.href} title={meta.cta}
-            className="ml-0.5 inline-flex items-center gap-0.5 pl-2 pr-1 py-2 sm:py-1.5 rounded-lg text-[12.5px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] hover:bg-[var(--color-surface-2)] transition-colors">
+            className="ml-0.5 inline-flex items-center gap-0.5 pl-2 pr-1 py-2 sm:py-1.5 rounded-lg text-[12.5px] font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)] hover:bg-[var(--color-surface-2)] transition-colors">
             Open
             <ChevronRight className="w-3.5 h-3.5 transition-transform group-hover/widget:translate-x-0.5" />
           </Link>

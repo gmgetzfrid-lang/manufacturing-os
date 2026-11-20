@@ -130,7 +130,7 @@ export default function LogoUploadModal({ onClose }: { onClose: () => void }) {
           )}
 
           <Link href="/admin/branding" onClick={onClose}
-            className="block text-center text-[11px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors">
+            className="block text-center text-[11px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-accent-text)] transition-colors">
             Full branding settings (colors &amp; palette) →
           </Link>
         </div>

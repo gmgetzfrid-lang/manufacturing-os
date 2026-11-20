@@ -185,7 +185,7 @@ function CenterPanel({
           <Link
             href="/inbox"
             onClick={onClose}
-            className="inline-flex items-center gap-1.5 text-[13px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-colors"
+            className="inline-flex items-center gap-1.5 text-[13px] font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)] transition-colors"
           >
             <Inbox className="w-3.5 h-3.5" /> Open the full inbox
           </Link>

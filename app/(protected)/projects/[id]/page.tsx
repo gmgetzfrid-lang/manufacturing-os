@@ -440,8 +440,8 @@ export default function ProjectDetailPage() {
             {error === "Project not found" || !error ? "This project wasn't found. It may have been deleted, or you're not on it." : `Couldn't load the project: ${error}`}
           </p>
           <div className="mt-3 flex gap-4 text-[13px] font-bold">
-            {error && error !== "Project not found" && <button onClick={() => void refresh()} className="text-[var(--color-accent)] hover:underline">Try again</button>}
-            <Link href="/projects" className="text-[var(--color-accent)] hover:underline">All projects</Link>
+            {error && error !== "Project not found" && <button onClick={() => void refresh()} className="text-[var(--color-accent-text)] hover:underline">Try again</button>}
+            <Link href="/projects" className="text-[var(--color-accent-text)] hover:underline">All projects</Link>
           </div>
         </Card>
       </PageBody>
@@ -1256,11 +1256,11 @@ function MembersTab({
                           onKeyDown={(e) => { if (e.key === "Enter") void saveResp(m); if (e.key === "Escape") setEditingResp((p) => { const n = { ...p }; delete n[m.userId]; return n; }); }}
                           placeholder="What is this member responsible for?"
                           className="flex-1 px-2 py-1 border border-[var(--color-accent-ring)] rounded text-xs focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
-                        <button onClick={() => void saveResp(m)} className="text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] px-1.5">Save</button>
+                        <button onClick={() => void saveResp(m)} className="text-[11px] font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)] px-1.5">Save</button>
                       </div>
                     ) : (
                       <button onClick={() => setEditingResp((p) => ({ ...p, [m.userId]: m.responsibility ?? "" }))}
-                        className="mt-1 text-left text-xs text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors inline-flex items-center gap-1">
+                        className="mt-1 text-left text-xs text-[var(--color-text-muted)] hover:text-[var(--color-accent-text)] transition-colors inline-flex items-center gap-1">
                         <Target className="w-3 h-3 text-[var(--color-text-faint)]" />
                         {m.responsibility ? <span className="italic">{m.responsibility}</span> : <span className="text-[var(--color-text-faint)]">Add responsibility…</span>}
                       </button>

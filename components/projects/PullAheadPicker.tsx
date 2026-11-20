@@ -108,7 +108,7 @@ export function PullAheadPicker({ items, onLists, next, shiftHours, picked, coun
             </label>
             {onSaveDefault && !locked && (
               <button type="button" onClick={() => { const p = pull; onSaveDefault(p).then(() => setDefaultState({ for: p, ok: true }), (e: Error) => setDefaultState({ for: p, ok: false, msg: e.message })); }}
-                className="text-[11.5px] font-semibold text-[var(--color-accent)] hover:underline">
+                className="text-[11.5px] font-semibold text-[var(--color-accent-text)] hover:underline">
                 {defaultNow?.ok ? "✓ Default for every shift" : "Make this the default"}
               </button>
             )}
@@ -218,7 +218,7 @@ export function PullAheadPicker({ items, onLists, next, shiftHours, picked, coun
             </div>
           )}
           {!more && list.length > SHOW && (
-            <button type="button" onClick={() => setMore(true)} className="w-full py-2.5 text-[12px] font-semibold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]">Show all {list.length}</button>
+            <button type="button" onClick={() => setMore(true)} className="w-full py-2.5 text-[12px] font-semibold text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]">Show all {list.length}</button>
           )}
         </div>
       </ModalBody>

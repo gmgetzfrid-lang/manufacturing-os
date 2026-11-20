@@ -789,7 +789,7 @@ export default function KnowledgeLibraryPage() {
             </ul>
             {shownDocs.length > docLimit && (
               <button onClick={() => setDocLimit((n) => n + 500)}
-                className="mt-2 w-full h-9 text-left text-[13px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">
+                className="mt-2 w-full h-9 text-left text-[13px] font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)]">
                 {docLimit.toLocaleString()} of {shownDocs.length.toLocaleString()} shown. Show {Math.min(500, shownDocs.length - docLimit).toLocaleString()} more
               </button>
             )}
@@ -888,14 +888,14 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
           <div className="mt-1 text-[13px] text-[var(--color-text-muted)]">
             Answers come only from the indexed documents, cited to the page.
             {instructionCount > 0 && (
-              <Link href="/admin/ai-instructions" className="ml-1.5 font-bold text-[var(--color-accent)] dark:text-[var(--color-text)] hover:underline">
+              <Link href="/admin/ai-instructions" className="ml-1.5 font-bold text-[var(--color-accent-text)] dark:text-[var(--color-text)] hover:underline">
                 {instructionCount} standing instruction{instructionCount === 1 ? "" : "s"} apply
               </Link>
             )}
           </div>
         </div>
         <Link href={askHref}
-          className="inline-flex items-center gap-1.5 h-9 -ml-3 sm:ml-0 px-3 rounded-lg text-[var(--color-accent)] text-[13px] font-bold hover:bg-[var(--color-surface-2)] transition-colors">
+          className="inline-flex items-center gap-1.5 h-9 -ml-3 sm:ml-0 px-3 rounded-lg text-[var(--color-accent-text)] text-[13px] font-bold hover:bg-[var(--color-surface-2)] transition-colors">
           <MessageSquare className="w-4 h-4" /> All conversations <ArrowRight className="w-3.5 h-3.5" />
         </Link>
       </div>

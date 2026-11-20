@@ -140,7 +140,7 @@ export function BarList({ items, fmt, className = "" }: {
       {items.map((it, i) => (
         <div key={`${it.label}-${i}`} title={`${it.label} · ${fmt(it.value)}`}>
           <div className="flex items-baseline justify-between gap-2 text-[11px]">
-            <span className={`truncate font-bold ${it.highlight ? "text-[var(--color-accent)]" : "text-[var(--color-text)]"}`}>
+            <span className={`truncate font-bold ${it.highlight ? "text-[var(--color-accent-text)]" : "text-[var(--color-text)]"}`}>
               {it.label}
               {it.flag && <span className="ml-1.5 font-black text-[11px] text-rose-600 dark:text-rose-400">{it.flag}</span>}
             </span>

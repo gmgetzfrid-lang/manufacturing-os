@@ -620,7 +620,7 @@ function AssetsPageInner() {
               <BookMarked className="w-4 h-4 shrink-0 mt-0.5" />
               <span>
                 Name your units in the Site Codebook (20 = Crude, 25 = DHT) and this list groups itself by unit, then equipment type.{" "}
-                <Link href="/admin/codebook" className="font-bold text-[var(--color-accent)] hover:underline">Set up the codebook</Link>
+                <Link href="/admin/codebook" className="font-bold text-[var(--color-accent-text)] hover:underline">Set up the codebook</Link>
               </span>
             </p>
           </Card>
@@ -729,7 +729,7 @@ function ShowMoreGrid<T>({ items, render, step = 24 }: { items: T[]; render: (it
       {rest > 0 && (
         <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex items-center justify-between text-[13px]">
           <span className="text-[var(--color-text-muted)]">{Math.min(shown, items.length).toLocaleString()} of {items.length.toLocaleString()} shown</span>
-          <button type="button" onClick={() => setShown((n) => n + step * 2)} className="font-bold text-[var(--color-accent)] hover:underline">
+          <button type="button" onClick={() => setShown((n) => n + step * 2)} className="font-bold text-[var(--color-accent-text)] hover:underline">
             Show {Math.min(rest, step * 2).toLocaleString()} more
           </button>
         </div>
@@ -1173,7 +1173,7 @@ function UnitDocuments({ assetIds, assets }: { assetIds: string[]; assets: Asset
         <div className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] flex items-center justify-between text-[13px]">
           <span className="text-[var(--color-text-muted)]">{shown.length} of {rows.length} shown</span>
           <button type="button" onClick={() => setExpanded((v) => !v)}
-            className="font-bold text-[var(--color-accent)] hover:underline">
+            className="font-bold text-[var(--color-accent-text)] hover:underline">
             {expanded ? "Show fewer" : `Show ${rows.length - shown.length} more`}
           </button>
         </div>
@@ -1616,12 +1616,12 @@ function AssetEditDrawer({
                 {linkedDocs && <span className="text-[var(--color-text-faint)] font-bold">({linkedDocs.length})</span>}
                 <span className="flex-1" />
                 <Link href={`/graph?focus=${encodeURIComponent(`asset:${asset.id}`)}`}
-                  className="inline-flex items-center gap-1 normal-case tracking-normal text-[11px] font-black text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">
+                  className="inline-flex items-center gap-1 normal-case tracking-normal text-[11px] font-black text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)]">
                   <Waypoints className="w-3 h-3" /> See on graph
                 </Link>
                 {canEdit && (
                   <button type="button" onClick={() => setDocPickerOpen(true)}
-                    className="inline-flex items-center gap-1 normal-case tracking-normal px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:border-[var(--color-accent)]">
+                    className="inline-flex items-center gap-1 normal-case tracking-normal px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text-muted)] hover:text-[var(--color-accent-text)] hover:border-[var(--color-accent)]">
                     <Plus className="w-3 h-3" /> Link document
                   </button>
                 )}
@@ -1773,7 +1773,7 @@ function AddUnitModal({ orgId, userId, existingCodes, onClose, onCreated }: {
         </div>
         {error && <div role="alert" className="text-[11px] text-rose-700 dark:text-rose-400">{error}</div>}
         <div className="flex items-center justify-between gap-2">
-          <Link href="/admin/codebook" className="text-[11px] font-bold text-[var(--color-accent)] hover:underline inline-flex items-center gap-1">
+          <Link href="/admin/codebook" className="text-[11px] font-bold text-[var(--color-accent-text)] hover:underline inline-flex items-center gap-1">
             <BookMarkedIcon className="w-3 h-3" /> Full codebook (AI import, decoder)
           </Link>
           <button onClick={() => void save()} disabled={busy}

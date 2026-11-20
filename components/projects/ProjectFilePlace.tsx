@@ -131,7 +131,7 @@ export default function ProjectFilePlace({ orgId, projectId, uid, canManage, hom
           <div className="flex items-start gap-2 text-[12.5px]">
             <MapPin className="w-3.5 h-3.5 mt-0.5 shrink-0 text-[var(--color-text-muted)]" />
             <span className="min-w-0 flex-1 text-[var(--color-text-muted)]">Saved in <b className="text-[var(--color-text)] break-words">{home.words}</b></span>
-            {canManage && <button type="button" onClick={start} className="shrink-0 font-bold text-[var(--color-accent)] hover:underline">Change</button>}
+            {canManage && <button type="button" onClick={start} className="shrink-0 font-bold text-[var(--color-accent-text)] hover:underline">Change</button>}
           </div>
         ) : (
           <div className="border-l-2 border-amber-500 pl-3 py-1 flex items-center gap-2 flex-wrap text-[12.5px] text-amber-900 dark:text-amber-200">

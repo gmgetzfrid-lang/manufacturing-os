@@ -312,7 +312,7 @@ export default function AuditLogPage() {
             <div className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] flex items-center justify-between gap-3 text-[13px]">
               <span className="text-[var(--color-text-muted)]">{filtered.length} of {rows.length} loaded shown</span>
               {rows.length >= limit && (
-                <button type="button" onClick={() => setLimit((n) => n + 200)} className="font-bold text-[var(--color-accent)] hover:underline">
+                <button type="button" onClick={() => setLimit((n) => n + 200)} className="font-bold text-[var(--color-accent-text)] hover:underline">
                   Show 200 more
                 </button>
               )}
@@ -378,7 +378,7 @@ function AuditRowItem({ row, docMeta }: AuditRowItemProps) {
             <span className="text-xs font-mono text-[var(--color-text-muted)] truncate max-w-[40ch]">{row.resourceId}</span>
           )}
           {resourceHref && (
-            <Link href={resourceHref} className="text-[11px] font-bold text-[var(--color-accent)] hover:underline inline-flex items-center gap-0.5">
+            <Link href={resourceHref} className="text-[11px] font-bold text-[var(--color-accent-text)] hover:underline inline-flex items-center gap-0.5">
               Open <ArrowUpRight className="w-3 h-3" />
             </Link>
           )}

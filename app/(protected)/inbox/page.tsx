@@ -230,7 +230,7 @@ export default function InboxPage() {
                         <span className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${n.severity === "high" ? "bg-rose-500" : "bg-amber-500"}`} />
                         <span className="flex-1">{n.message}</span>
                         {n.actionLabel && n.href && (
-                          <Link href={n.href} className="font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] inline-flex items-center gap-0.5 shrink-0">
+                          <Link href={n.href} className="font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)] inline-flex items-center gap-0.5 shrink-0">
                             {n.actionLabel} <ChevronRight className="w-3 h-3" />
                           </Link>
                         )}
@@ -314,7 +314,7 @@ export default function InboxPage() {
                         <DocThumb documentId={s.documentId} width={28} />
                       </DocHoverPreview>
                       <span className="font-mono text-[var(--color-text-muted)]">{s.mode}</span>
-                      <Link href={`/documents/${s.libraryId ?? ""}?doc=${s.documentId}`} className="text-[var(--color-accent)] hover:underline font-bold">
+                      <Link href={`/documents/${s.libraryId ?? ""}?doc=${s.documentId}`} className="text-[var(--color-accent-text)] hover:underline font-bold">
                         {s.documentId.slice(0, 8)}
                       </Link>
                       {s.purpose && <span className="text-[var(--color-text-faint)] truncate">- {s.purpose}</span>}
@@ -336,7 +336,7 @@ export default function InboxPage() {
                     </li>
                   ))}
                 </ul>
-                <Link href="/admin/holds" className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent)] hover:underline">
+                <Link href="/admin/holds" className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent-text)] hover:underline">
                   Hold queue <ChevronRight className="w-3 h-3" />
                 </Link>
               </Card>
@@ -358,7 +358,7 @@ export default function InboxPage() {
                     </li>
                   ))}
                 </ul>
-                <Link href="/transmittals" className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent)] hover:underline">
+                <Link href="/transmittals" className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent-text)] hover:underline">
                   Transmittal register <ChevronRight className="w-3 h-3" />
                 </Link>
               </Card>
@@ -511,7 +511,7 @@ function TicketList({ tickets }: { tickets: TicketListItem[] }) {
         </li>
       ))}
       {tickets.length > 6 && (
-        <li className="pt-2.5"><Link href="/requests" className="text-[13px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">Show {tickets.length - 6} more</Link></li>
+        <li className="pt-2.5"><Link href="/requests" className="text-[13px] font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)]">Show {tickets.length - 6} more</Link></li>
       )}
     </ul>
   );

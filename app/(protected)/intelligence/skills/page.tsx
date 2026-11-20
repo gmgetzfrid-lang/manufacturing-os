@@ -183,7 +183,7 @@ export default function SkillLibraryPage() {
         style={{ animation: "rise 0.45s var(--ease-fluid) both", animationDelay: `${Math.min(delayIndex, 9) * 60}ms` }}
         className="min-h-[9rem] flex flex-col items-center justify-center gap-1.5 bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors p-4">
         <Sparkles className="w-5 h-5" />
-        <span className="text-[14px] font-bold text-[var(--color-accent)]">Build a skill</span>
+        <span className="text-[14px] font-bold text-[var(--color-accent-text)]">Build a skill</span>
         <span className="text-[13px] text-center max-w-[18rem]">{blurb}</span>
       </button>
     ) : null
@@ -341,7 +341,7 @@ export default function SkillLibraryPage() {
           <div className="px-1 flex flex-wrap items-center gap-2 text-[13px] text-[var(--color-text-muted)]">
             <Waypoints className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
             Connection skills run with “Find connections”; reasoning skills ride every question.
-            <Link href="/admin/proposed-links" className="inline-flex items-center gap-0.5 font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">
+            <Link href="/admin/proposed-links" className="inline-flex items-center gap-0.5 font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)]">
               Review what the engine found <ArrowUpRight className="w-3 h-3" />
             </Link>
           </div>

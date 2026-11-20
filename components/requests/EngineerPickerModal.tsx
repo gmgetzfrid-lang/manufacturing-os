@@ -183,7 +183,7 @@ export default function EngineerPickerModal({
                 <div className="p-4 text-sm text-[var(--color-text-muted)] text-center">
                   <p className="font-bold text-[var(--color-text)]">No active engineers in this workspace.</p>
                   <p className="mt-1 text-xs">This step needs someone holding an Engineer role. Ask an Admin to invite one or add the Engineer role to an existing member.</p>
-                  <a href="/admin/users" className="inline-block mt-2 text-xs font-black text-[var(--color-accent)] hover:underline">Open user management →</a>
+                  <a href="/admin/users" className="inline-block mt-2 text-xs font-black text-[var(--color-accent-text)] hover:underline">Open user management →</a>
                 </div>
               ) : (
                 <div className="divide-y divide-[var(--color-border)]">

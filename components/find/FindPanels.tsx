@@ -78,7 +78,7 @@ export function EquipmentCards({ entities, results, onReveal, onUnit }: {
           <div key={e.node} className="rounded-xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50/50 dark:bg-emerald-950/20 p-2.5 text-xs">
             <div className="flex items-center gap-1 flex-wrap text-[11px] text-[var(--color-text-muted)]">
               {e.unitCode ? (
-                <button onClick={() => onUnit?.(e.unitCode!)} className="inline-flex items-center gap-1 font-bold text-[var(--color-accent)] hover:underline" title="Narrow to this unit"><Factory className="w-3 h-3" /> {e.unitLabel ?? e.unitCode}</button>
+                <button onClick={() => onUnit?.(e.unitCode!)} className="inline-flex items-center gap-1 font-bold text-[var(--color-accent-text)] hover:underline" title="Narrow to this unit"><Factory className="w-3 h-3" /> {e.unitLabel ?? e.unitCode}</button>
               ) : <span className="inline-flex items-center gap-1"><Factory className="w-3 h-3" /> no unit on record</span>}
               <ChevronRight className="w-3 h-3" />
               <span className="inline-flex items-center gap-1 font-bold text-emerald-700">{e.kind === "asset" ? <Cpu className="w-3 h-3" /> : <Tag className="w-3 h-3" />} {e.typeName ?? (e.kind === "asset" ? "Equipment" : "Tag")}</span>
@@ -141,7 +141,7 @@ export function PageHits({ pages, onPage }: { pages: FindResult["pages"]; onPage
     <ul className="mt-1 space-y-0.5">
       {pages.slice(0, 3).map((p, i) => (
         <li key={i} className="text-[11px] text-[var(--color-text-muted)]">
-          <button type="button" onClick={() => onPage?.(p.page, p.knowledgeDocId)} className="font-bold text-[var(--color-accent)] hover:underline">p.{p.page}</button> “{p.snippet}”
+          <button type="button" onClick={() => onPage?.(p.page, p.knowledgeDocId)} className="font-bold text-[var(--color-accent-text)] hover:underline">p.{p.page}</button> “{p.snippet}”
         </li>
       ))}
     </ul>

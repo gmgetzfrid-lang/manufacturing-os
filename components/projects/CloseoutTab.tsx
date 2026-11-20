@@ -501,7 +501,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
           {readFailed.length > 0 && (
             <div role="alert" className="mb-3 text-[13px] font-semibold text-rose-700 dark:text-rose-300 flex flex-wrap items-center gap-x-3">
               <span>Couldn&apos;t load {readFailed.join(", ")}. What&apos;s shown may be missing items.</span>
-              <button type="button" onClick={reload} className="text-[var(--color-accent)] font-bold hover:underline">Try again</button>
+              <button type="button" onClick={reload} className="text-[var(--color-accent-text)] font-bold hover:underline">Try again</button>
             </div>
           )}
           {err && <div role="alert" className="mb-3 text-[13px] font-semibold text-rose-700 dark:text-rose-300 whitespace-pre-line">{err}</div>}

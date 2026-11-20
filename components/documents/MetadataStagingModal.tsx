@@ -967,7 +967,7 @@ export default function MetadataStagingModal({
               {!showAllRows && items.length > 200 && (
                 <tr>
                   <td colSpan={99} className="text-center py-3">
-                    <button onClick={() => setShowAllRows(true)} className="text-xs font-bold text-[var(--color-accent)] hover:underline">
+                    <button onClick={() => setShowAllRows(true)} className="text-xs font-bold text-[var(--color-accent-text)] hover:underline">
                       Showing 200 of {items.length.toLocaleString()} - show all (slower)
                     </button>
                   </td>

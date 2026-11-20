@@ -54,7 +54,7 @@ async function load(orgId: string): Promise<ConnectorChecks> {
 }
 
 const href = (s: SheetRef) => `/documents/${s.libraryId}?doc=${s.id}`;
-const SheetLink = ({ s }: { s: SheetRef }) => <Link href={href(s)} className="font-bold text-[var(--color-text)] underline decoration-dotted underline-offset-2 hover:text-[var(--color-accent)] hover:decoration-solid">{s.label}</Link>;
+const SheetLink = ({ s }: { s: SheetRef }) => <Link href={href(s)} className="font-bold text-[var(--color-text)] underline decoration-dotted underline-offset-2 hover:text-[var(--color-accent-text)] hover:decoration-solid">{s.label}</Link>;
 
 export default function ConnectorChecksPage() {
   const { activeOrgId } = useRole();

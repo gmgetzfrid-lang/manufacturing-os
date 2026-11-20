@@ -918,7 +918,7 @@ function GraphPageInner() {
                         {h.snippet.replace(/<\/?b>/g, "")}
                       </div>
                       <Link href={`/knowledge/${h.libraryId}?doc=${h.knowledgeDocumentId}&page=${h.page}`}
-                        className="inline-flex items-center gap-1 text-[11px] font-black text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] mt-1">
+                        className="inline-flex items-center gap-1 text-[11px] font-black text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)] mt-1">
                         Open at page {h.page} <ArrowUpRight className="w-3 h-3" />
                       </Link>
                     </div>

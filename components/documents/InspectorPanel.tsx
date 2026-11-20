@@ -1015,7 +1015,7 @@ function TransmittalTrail({ orgId, documentId, currentRev }: { orgId: string; do
           const stale = !!(r.rev && currentRev && r.rev !== currentRev);
           return (
             <li key={r.id} className="flex items-center gap-2 text-[11px] flex-wrap">
-              <NextLink href={`/transmittals?t=${r.id}`} className="font-mono font-black text-[var(--color-accent)] hover:underline">{r.number}</NextLink>
+              <NextLink href={`/transmittals?t=${r.id}`} className="font-mono font-black text-[var(--color-accent-text)] hover:underline">{r.number}</NextLink>
               <span className="text-[var(--color-text-muted)]">
                 Rev {r.rev ?? "-"} · {r.purpose ?? "-"} · to {r.recipient}
                 {r.issuedAt ? ` · ${new Date(r.issuedAt).toLocaleDateString()}` : ""}

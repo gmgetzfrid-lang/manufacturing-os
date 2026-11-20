@@ -215,7 +215,7 @@ export default function LibraryHomeBoard({
                   <button onClick={() => movePart(p.id, -1)} title="Move earlier" className="p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><ChevronUp className="w-3.5 h-3.5" /></button>
                   <button onClick={() => movePart(p.id, 1)} title="Move later" className="p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><ChevronDown className="w-3.5 h-3.5" /></button>
                   <button onClick={() => cycleWidth(p.id, p.width)} title="Resize" className="p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><Maximize2 className="w-3.5 h-3.5" /></button>
-                  <button onClick={() => remove(p.id)} title="Remove" className="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]"><Trash2 className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => remove(p.id)} title="Remove" className="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]"><Trash2 className="w-3.5 h-3.5" /></button>
                 </div>
                 <div className="text-[11px] text-[var(--color-text-faint)] font-semibold uppercase tracking-wider mb-1">{M.label} · {(p.width ?? "half")}</div>
                 {p.type === "recentDocs" && (

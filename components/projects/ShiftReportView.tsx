@@ -1140,7 +1140,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
                   </div>
                   <div className="mt-2 flex items-center justify-between gap-2 border-t border-[var(--color-border)] pt-2">
                     <span className="text-[11px] text-[var(--color-text-muted)] leading-snug">On screen and in print. The email has its own list.</span>
-                    {hiddenSecs.length > 0 && <button type="button" onClick={() => setHidden(null, false)} className="shrink-0 font-bold text-[var(--color-accent)] hover:underline">Show all</button>}
+                    {hiddenSecs.length > 0 && <button type="button" onClick={() => setHidden(null, false)} className="shrink-0 font-bold text-[var(--color-accent-text)] hover:underline">Show all</button>}
                   </div>
                 </div>
               </>
@@ -1336,7 +1336,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
                   {x.title.split(" - ")[0]} <Eye className="inline w-3 h-3 -mt-px" />
                 </button>
               ))}
-              <button type="button" onClick={() => setHidden(null, false)} className="ml-auto font-bold text-[var(--color-accent)] hover:underline">Show all</button>
+              <button type="button" onClick={() => setHidden(null, false)} className="ml-auto font-bold text-[var(--color-accent-text)] hover:underline">Show all</button>
             </div>
           )}
           <Footnote meeting={meeting} ctx={ctx} asOf={asOf} now={now} projectName={projectName} />
@@ -1732,7 +1732,7 @@ function BreaksEditor({ breaks, onChange, times }: { breaks: ShiftBreak[]; onCha
         </div>
       ))}
       <button type="button" onClick={() => onChange([...breaks, { shift: "day", start: breaks.length ? "12:00" : "09:00", minutes: breaks.length ? 30 : 15, label: breaks.length ? "Lunch" : "Break" }])}
-        className="font-semibold text-[var(--color-accent)] hover:underline">+ Add a break</button>
+        className="font-semibold text-[var(--color-accent-text)] hover:underline">+ Add a break</button>
     </div>
   );
 }
@@ -2188,7 +2188,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
           {!print && o.pathSource && (
             <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-[var(--color-text-muted)] print:hidden">
               <span>Critical path: <b className="text-[var(--color-text)]">{o.pathSource.label}</b> ({o.pathSource.theirs} step{o.pathSource.theirs === 1 ? "" : "s"}). From the schedule&apos;s links it&apos;s {o.pathSource.calculated}, recalculated as work moves - near-critical and float come with it.</span>
-              {o.pathSource.onUse && <button type="button" onClick={o.pathSource.onUse} className="font-bold text-[var(--color-accent)] hover:underline">Use the calculated path</button>}
+              {o.pathSource.onUse && <button type="button" onClick={o.pathSource.onUse} className="font-bold text-[var(--color-accent-text)] hover:underline">Use the calculated path</button>}
               {o.pathSource.msg && <span className="font-semibold text-amber-700 dark:text-amber-400">{o.pathSource.msg}</span>}
             </div>
           )}
@@ -2252,7 +2252,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
             <Empty>
               Nothing was {nothingLast ? "planned" : "completed"}{forCrew} on this shift.
               {nothingLast && o.onJump && o.jumpTarget && !print && (
-                <button onClick={o.onJump} className="ml-2 inline-flex items-center gap-1 font-bold text-[var(--color-accent)] hover:underline">
+                <button onClick={o.onJump} className="ml-2 inline-flex items-center gap-1 font-bold text-[var(--color-accent-text)] hover:underline">
                   <FastForward className="w-3.5 h-3.5" /> Jump to {o.jumpTarget.kind} shift, {c.D(o.jumpTarget.start)}
                 </button>
               )}

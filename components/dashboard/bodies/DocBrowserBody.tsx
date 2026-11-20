@@ -131,7 +131,7 @@ export default function DocBrowserBody() {
 
   if (topLoading) return <Skeleton />;
   if (libs.length === 0) {
-    return <Empty><Link href="/admin/libraries" className="font-bold text-[var(--color-accent)] hover:underline">No libraries yet - create your first library →</Link></Empty>;
+    return <Empty><Link href="/admin/libraries" className="font-bold text-[var(--color-accent-text)] hover:underline">No libraries yet - create your first library →</Link></Empty>;
   }
 
   // ── The map: always beside the list, showing where you are ────────
@@ -238,19 +238,19 @@ export default function DocBrowserBody() {
         <ArrowUp className="w-3.5 h-3.5" /> Up
       </button>
       <nav className="min-w-0 flex-1 flex items-center gap-0.5 overflow-x-auto no-scrollbar text-[11px] font-bold">
-        <button type="button" onClick={() => go(null)} className="shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-accent)]" title="All libraries">
+        <button type="button" onClick={() => go(null)} className="shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-accent-text)]" title="All libraries">
           <Home className="w-3.5 h-3.5" />
         </button>
         <ChevronRight className="w-3 h-3 shrink-0 text-[var(--color-text-faint)]" />
         <button type="button" onClick={() => { setPath([]); setQ(""); }}
-          className={`shrink-0 px-1 rounded truncate max-w-[10rem] ${path.length ? "text-[var(--color-text-muted)] hover:text-[var(--color-accent)]" : "text-[var(--color-text)]"}`}>
+          className={`shrink-0 px-1 rounded truncate max-w-[10rem] ${path.length ? "text-[var(--color-text-muted)] hover:text-[var(--color-accent-text)]" : "text-[var(--color-text)]"}`}>
           {lib?.name ?? "Library"}
         </button>
         {path.map((f, i) => (
           <React.Fragment key={f.id}>
             <ChevronRight className="w-3 h-3 shrink-0 text-[var(--color-text-faint)]" />
             <button type="button" onClick={() => { setPath((p) => p.slice(0, i + 1)); setQ(""); }}
-              className={`shrink-0 px-1 rounded truncate max-w-[10rem] ${i === path.length - 1 ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"}`}>
+              className={`shrink-0 px-1 rounded truncate max-w-[10rem] ${i === path.length - 1 ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-accent-text)]"}`}>
               {f.name}
             </button>
           </React.Fragment>
@@ -258,7 +258,7 @@ export default function DocBrowserBody() {
         {refreshing && <Loader2 className="w-3 h-3 ml-1 shrink-0 animate-spin text-[var(--color-text-faint)]" />}
       </nav>
       <Link href={openHere} title="Open this folder in Documents"
-        className="shrink-0 inline-flex items-center gap-1 h-7 px-2 rounded-lg text-[11px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]">
+        className="shrink-0 inline-flex items-center gap-1 h-7 px-2 rounded-lg text-[11px] font-bold text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]">
         Open here <ArrowUpRight className="w-3.5 h-3.5" />
       </Link>
     </div>
@@ -292,7 +292,7 @@ export default function DocBrowserBody() {
                 {here.docs.map((d) => <DocLine key={d.id} d={{ ...d, library_id: d.library_id ?? libId }} />)}
               </div>
               {here.docCount > here.docs.length && (
-                <Link href={openHere} className="mt-1 block px-2 py-1.5 text-[11px] font-bold text-[var(--color-accent)] hover:underline">
+                <Link href={openHere} className="mt-1 block px-2 py-1.5 text-[11px] font-bold text-[var(--color-accent-text)] hover:underline">
                   See all {here.docCount.toLocaleString()} in Documents →
                 </Link>
               )}

@@ -155,7 +155,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
       ) : readErr ? (
         <div role="alert" className="mx-4 my-3 border-l-2 border-rose-500 pl-3 text-xs text-rose-700 dark:text-rose-300 flex flex-wrap items-center gap-x-3">
           <span>Couldn&apos;t load change orders: {readErr}</span>
-          <button onClick={() => void refresh()} className="font-bold text-[var(--color-accent)] hover:underline">Try again</button>
+          <button onClick={() => void refresh()} className="font-bold text-[var(--color-accent-text)] hover:underline">Try again</button>
         </div>
       ) : cos.length === 0 ? (
         <div className="px-4 py-6 text-center text-xs text-[var(--color-text-muted)]">

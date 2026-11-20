@@ -93,7 +93,7 @@ export function PreviewButton({ file, label = "Preview", className = "" }: { fil
   return (
     <>
       <button type="button" onClick={(e) => { e.stopPropagation(); setOpen(true); }} title={`See ${file.name ?? "the file"}`}
-        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] ${className}`}>
+        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)] ${className}`}>
         <Eye className="w-3 h-3" /> {label}
       </button>
       {open && <FilePreviewModal file={file} onClose={() => setOpen(false)} />}

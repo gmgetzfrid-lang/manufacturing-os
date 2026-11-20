@@ -499,7 +499,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                 </datalist>
                 <div className="flex items-center gap-3">
                   <button onClick={() => setBudgetRows([...budgetRows, { name: "", budget: "", type: "subcontract", supplier: "" }])}
-                    className="inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent)]"><Plus className="w-3.5 h-3.5" /> Add line</button>
+                    className="inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent-text)]"><Plus className="w-3.5 h-3.5" /> Add line</button>
                   <BudgetTotal rows={budgetRows} authorized={fromDoc?.parsed.authorizedAmount ?? null} currency={fromDoc?.parsed.currency ?? "USD"} />
                 </div>
               </div>
@@ -521,7 +521,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                   </div>
                 ))}
                 <button onClick={() => setMilestoneRows([...milestoneRows, { name: "", date: "" }])}
-                  className="inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent)]"><Plus className="w-3.5 h-3.5" /> Add milestone</button>
+                  className="inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent-text)]"><Plus className="w-3.5 h-3.5" /> Add milestone</button>
               </div>
             </>
           )}
@@ -548,7 +548,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                   {companies.map((c) => <option key={c.id} value={c.name} />)}
                 </datalist>
                 <button onClick={() => setPartyRows([...partyRows, { name: "", kind: "contractor", trade: "" }])}
-                  className="inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent)]"><Plus className="w-3.5 h-3.5" /> Add company</button>
+                  className="inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent-text)]"><Plus className="w-3.5 h-3.5" /> Add company</button>
               </div>
             </>
           )}

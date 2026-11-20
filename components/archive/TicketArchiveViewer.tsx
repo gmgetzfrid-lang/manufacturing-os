@@ -212,7 +212,7 @@ export default function TicketArchiveViewer({
                   <div className="px-2.5 py-1.5 border-b border-[var(--color-border)] flex items-center gap-2 bg-[var(--color-surface-2)]">
                     <Eye className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                     <span className="text-[11px] font-bold text-[var(--color-text)] truncate flex-1">{preview.name}</span>
-                    <a href={preview.url} download={preview.name} className="text-[11px] font-bold text-[var(--color-accent)] inline-flex items-center gap-1"><Download className="w-3 h-3" /> Save</a>
+                    <a href={preview.url} download={preview.name} className="text-[11px] font-bold text-[var(--color-accent-text)] inline-flex items-center gap-1"><Download className="w-3 h-3" /> Save</a>
                   </div>
                   <div className="bg-[var(--color-surface-2)] grid place-items-center max-h-[40vh] overflow-auto">
                     {preview.kind === "pdf" ? (

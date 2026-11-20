@@ -136,7 +136,7 @@ export function DraftingRequestsBody() {
           {inScope.length === 0
             ? scope === "assigned" ? "Nothing assigned to you right now." : scope === "mine" ? "You have no open requests." : "No open requests."
             : "Nothing matches that filter."}{" "}
-          <Link href="/requests/new" className="font-semibold text-[var(--color-accent)] hover:underline">Raise one →</Link>
+          <Link href="/requests/new" className="font-semibold text-[var(--color-accent-text)] hover:underline">Raise one →</Link>
         </Empty>
       ) : (
         <div className={`mt-2 space-y-0.5 ${SCROLL}`}>

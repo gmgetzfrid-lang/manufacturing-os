@@ -66,7 +66,7 @@ function Inline({ text, onCite }: { text: string; onCite: (n: number) => void })
         if (cite) {
           return cite[1].split(/\s*,\s*/).map((n) => (
             <button key={`${i}-${n}`} type="button" onClick={() => onCite(Number(n))}
-              className="align-super mx-px px-1 rounded bg-[var(--color-surface-2)] text-[var(--color-accent)] text-[11px] font-black hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)] transition-colors">
+              className="align-super mx-px px-1 rounded bg-[var(--color-surface-2)] text-[var(--color-accent-text)] text-[11px] font-black hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)] transition-colors">
               {n}
             </button>
           ));
@@ -199,7 +199,7 @@ export default function AskKnowledgeBody() {
     return (
       <Empty>
         No AI knowledge library yet.{" "}
-        <Link href="/knowledge" className="font-bold text-[var(--color-accent)] hover:underline">Create one and add your standards →</Link>
+        <Link href="/knowledge" className="font-bold text-[var(--color-accent-text)] hover:underline">Create one and add your standards →</Link>
       </Empty>
     );
   }
@@ -338,7 +338,7 @@ export default function AskKnowledgeBody() {
                       <span className="mt-1 flex flex-wrap gap-1">
                         {parts.followup.options.slice(0, 4).map((o) => (
                           <button key={o} type="button" onClick={() => void ask(o)}
-                            className="px-2 py-0.5 rounded-md border border-[var(--color-accent)]/50 text-[11px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)]">
+                            className="px-2 py-0.5 rounded-md border border-[var(--color-accent)]/50 text-[11px] font-bold text-[var(--color-accent-text)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)]">
                             {o}
                           </button>
                         ))}

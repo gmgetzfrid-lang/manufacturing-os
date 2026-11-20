@@ -157,7 +157,7 @@ export function CostGlossary() {
         className="w-full px-4 py-2.5 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
         <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">What do these words mean?</span>
         <span className="text-[11px] text-[var(--color-text-muted)]">Plain-language guide to every term on this page</span>
-        <span className="ml-auto text-[11px] font-black text-[var(--color-accent)]">{open ? "Hide" : "Show"}</span>
+        <span className="ml-auto text-[11px] font-black text-[var(--color-accent-text)]">{open ? "Hide" : "Show"}</span>
       </button>
       {open && (
         <dl className="px-4 pb-4 pt-1 grid md:grid-cols-2 gap-x-6 gap-y-2 border-t border-[var(--color-border)]">

@@ -187,7 +187,7 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
           {flows === null ? "" : `${confirmed.length} confirmed${proposed.length > 0 ? ` · ${proposed.length} proposed` : ""}`}
         </span>
         <span className="flex-1" />
-        <Link href="/graph" className="text-[11px] font-black text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">
+        <Link href="/graph" className="text-[11px] font-black text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)]">
           Process lens →
         </Link>
         {isAdmin && flows !== null && (
@@ -684,7 +684,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
 
         {/* The PFD isn't anywhere yet? The door is one click away, not a maze. */}
         <div className="px-3 py-2.5 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] shrink-0">
-          Don&apos;t see your PFD book at all? <Link href="/knowledge" className="font-black text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] underline">Upload it to a knowledge library</Link> or file it in Documents inside a linked folder.
+          Don&apos;t see your PFD book at all? <Link href="/knowledge" className="font-black text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)] underline">Upload it to a knowledge library</Link> or file it in Documents inside a linked folder.
         </div>
       </div>
     </div>

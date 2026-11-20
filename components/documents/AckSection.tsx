@@ -208,7 +208,7 @@ export default function AckSection({ doc, orgId, canManage }: {
             <div className="space-y-1 pt-1 border-t border-[var(--color-border)]">
               <div className="flex items-center justify-between">
                 <div className="text-[11px] font-bold text-[var(--color-text-muted)]">{summary.done} of {summary.required} acknowledged{summary.waived ? ` · ${summary.waived} waived` : ""}</div>
-                {canManage && <button onClick={report} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:underline"><FileDown className="w-3 h-3" /> Report</button>}
+                {canManage && <button onClick={report} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent-text)] hover:underline"><FileDown className="w-3 h-3" /> Report</button>}
               </div>
               <div className="max-h-40 overflow-y-auto space-y-0.5">
                 {roster.map((r) => (

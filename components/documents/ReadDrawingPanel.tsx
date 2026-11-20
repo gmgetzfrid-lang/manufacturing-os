@@ -91,7 +91,7 @@ function AddMissing({ orgId, documentId, onDone }: { orgId: string; documentId: 
   const [name, setName] = useState("");
   const [page, setPage] = useState("1");
   const [state, setState] = useState<{ busy: boolean; note: string | null; error: string | null; runId: string | null }>({ busy: false, note: null, error: null, runId: null });
-  if (!open) return <button onClick={() => setOpen(true)} className="text-[11px] text-[var(--color-accent)] hover:underline">Reader missed a piece of equipment? Add it</button>;
+  if (!open) return <button onClick={() => setOpen(true)} className="text-[11px] text-[var(--color-accent-text)] hover:underline">Reader missed a piece of equipment? Add it</button>;
   const add = async () => {
     if (!tag.trim()) return;
     const runId = newRunId();

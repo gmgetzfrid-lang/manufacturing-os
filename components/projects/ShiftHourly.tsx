@@ -347,7 +347,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
       {removed.length > 0 && (
         <div className="text-[11.5px] text-[var(--color-text-muted)]">
           Taken off the log: {removed.map((x, i) => (
-            <span key={x.key}>{i > 0 ? ", " : ""}{titleOf(x) || "Hour"}{edit && <button type="button" onClick={() => void setOff(x, false)} className="ml-1 font-semibold text-[var(--color-accent)] hover:underline">Put back</button>}</span>
+            <span key={x.key}>{i > 0 ? ", " : ""}{titleOf(x) || "Hour"}{edit && <button type="button" onClick={() => void setOff(x, false)} className="ml-1 font-semibold text-[var(--color-accent-text)] hover:underline">Put back</button>}</span>
           ))}
         </div>
       )}
@@ -371,7 +371,7 @@ function HoldCost({ ot, crew, hands, until }: { ot: OtCtx; crew: string; hands: 
   const co = companyOf(crew, s.manpower);
   if (co === "Kern Energy") return null;
   const sheet = s.rateSheets[co] ?? null, plan = s.staffing[co] ?? null;
-  if (!sheet || !Object.keys(sheet.crafts).length) return <span className="basis-full text-[11px] text-[var(--color-text-muted)]">No rate sheet for {co}: <button type="button" onClick={() => openContractor(co)} className="font-bold text-[var(--color-accent)] hover:underline">add it</button> to see what this costs.</span>;
+  if (!sheet || !Object.keys(sheet.crafts).length) return <span className="basis-full text-[11px] text-[var(--color-text-muted)]">No rate sheet for {co}: <button type="button" onClick={() => openContractor(co)} className="font-bold text-[var(--color-accent-text)] hover:underline">add it</button> to see what this costs.</span>;
   const paid = paidHoursOf(sheet, ot.shiftHours ?? 12);
   const mix = (ot.shiftKey && plan?.byCraft?.[ot.shiftKey]) || {};
   const hours = until != null ? Math.max(0, (until - ot.shiftEnd) / 3_600_000) : null;
@@ -381,7 +381,7 @@ function HoldCost({ ot, crew, hands, until }: { ot: OtCtx; crew: string; hands: 
   return (
     <span className="basis-full text-[11.5px] text-[var(--color-text)]" data-hold-cost>
       {hours != null && hours > 0 ? <><b>{m(holdCost(sheet, mix, plan?.crafts, paid, hands, hours) ?? perHour * hours)}</b> for {hands} hands, {Math.round(hours * 10) / 10} h past the shift</> : <><b>{m(perHour)}</b> for each hour {hands} hands stay past the shift</>}
-      {" "}at {co}&apos;s rates. <button type="button" onClick={() => openContractor(co)} className="font-bold text-[var(--color-accent)] hover:underline">{co}&apos;s cost to date</button>
+      {" "}at {co}&apos;s rates. <button type="button" onClick={() => openContractor(co)} className="font-bold text-[var(--color-accent-text)] hover:underline">{co}&apos;s cost to date</button>
     </span>
   );
 }
@@ -430,7 +430,7 @@ function HoldOverForm({ ot, adding, onDone, onError }: { ot: OtCtx; adding: bool
           <HoldCost ot={ot} crew={x.crew} hands={Number(x.hands) || 0} until={x.until ? timeAfter(ot.shiftEnd, x.until, ot.tz, timeOnDay, dayKey) : null} />
         </div>
       ))}
-      <button type="button" onClick={() => setRows([...rows, blank()])} className="text-[11px] font-semibold text-[var(--color-accent)] hover:underline">+ Another crew</button>
+      <button type="button" onClick={() => setRows([...rows, blank()])} className="text-[11px] font-semibold text-[var(--color-accent-text)] hover:underline">+ Another crew</button>
       {err && <div role="alert" className="text-[11.5px] font-semibold text-rose-700 dark:text-rose-400">{err}</div>}
       <div className="flex items-center gap-2">
         <button type="button" disabled={busy} onClick={() => void save()} className={saveBtn}>Save</button>

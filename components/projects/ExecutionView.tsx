@@ -1906,7 +1906,7 @@ function OutlineRow({
         <span key={i} className="absolute top-0 bottom-0 w-px bg-[var(--color-border)]" style={{ left: 12 + i * 16 }} aria-hidden />
       ))}
       {canEdit && (
-        <button onClick={onToggleSelected} className="shrink-0 text-slate-300 hover:text-[var(--color-accent)] transition-colors" title={selected ? "Deselect" : "Select"}>
+        <button onClick={onToggleSelected} className="shrink-0 text-slate-300 hover:text-[var(--color-accent-text)] transition-colors" title={selected ? "Deselect" : "Select"}>
           {selected ? <CheckSquare className="w-4 h-4 text-[var(--color-text-muted)]" /> : <Square className="w-4 h-4" />}
         </button>
       )}
@@ -1977,7 +1977,7 @@ function OutlineRow({
         </button>
       )}
       {canEdit && hasChildren && onSequence && (
-        <button onClick={onSequence} title="Sequence sub-tasks end-to-end (each starts when the prior finishes)" className="shrink-0 p-1 rounded text-slate-300 hover:text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] opacity-60 sm:opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 transition-opacity">
+        <button onClick={onSequence} title="Sequence sub-tasks end-to-end (each starts when the prior finishes)" className="shrink-0 p-1 rounded text-slate-300 hover:text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)] opacity-60 sm:opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 transition-opacity">
           <ListOrdered className="w-3.5 h-3.5" />
         </button>
       )}

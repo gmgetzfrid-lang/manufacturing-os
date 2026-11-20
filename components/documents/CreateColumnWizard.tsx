@@ -201,7 +201,7 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
                       </div>
                     ))}
                   </div>
-                  <button onClick={handleAddOption} className="text-xs font-bold text-[var(--color-accent)] hover:underline flex items-center"><Plus className="w-3 h-3 mr-1" /> Add Choice</button>
+                  <button onClick={handleAddOption} className="text-xs font-bold text-[var(--color-accent-text)] hover:underline flex items-center"><Plus className="w-3 h-3 mr-1" /> Add Choice</button>
                   
                   <div className="mt-4 pt-4 border-t border-[var(--color-border)]">
                     <label className="flex items-center cursor-pointer">

@@ -143,7 +143,7 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
               <AnswerTestEditor initial={editing} onSave={save} onCancel={() => setEditing(null)} />
             </div>
           ) : (
-            <button onClick={() => setEditing({ question: "", expect: {}, tags: [] })} className="inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent)] hover:underline">
+            <button onClick={() => setEditing({ question: "", expect: {}, tags: [] })} className="inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent-text)] hover:underline">
               <Plus className="w-3.5 h-3.5" /> Add a test
             </button>
           )}
@@ -157,7 +157,7 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
                 ))}
               </select>
               {shownRun && !shownRun.is_baseline && shownRun.status !== "running" && (
-                <button onClick={() => void setAnswerTestBaseline(orgId, shownRun.id).then(() => load(shownRun.id), (e: unknown) => setError(`Not kept as the baseline: ${e instanceof Error ? e.message : String(e)}`))} className="inline-flex items-center gap-1 font-bold text-[var(--color-accent)] hover:underline">
+                <button onClick={() => void setAnswerTestBaseline(orgId, shownRun.id).then(() => load(shownRun.id), (e: unknown) => setError(`Not kept as the baseline: ${e instanceof Error ? e.message : String(e)}`))} className="inline-flex items-center gap-1 font-bold text-[var(--color-accent-text)] hover:underline">
                   <Flag className="w-3 h-3" /> Keep as baseline
                 </button>
               )}

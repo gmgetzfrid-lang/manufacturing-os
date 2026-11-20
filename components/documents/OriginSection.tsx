@@ -63,7 +63,7 @@ export default function OriginSection({ doc, orgId, canManage }: {
         {!loading && !editing && (
           <div className="ml-auto flex items-center gap-2">
             {origin === "external" ? <OriginBadge origin="external" source={source} reference={reference} edition={edition} /> : <span className="text-[11px] text-[var(--color-text-muted)]">Internal</span>}
-            {canManage && <button onClick={() => setEditing(true)} className="text-[11px] font-bold text-[var(--color-accent)] hover:underline">Edit</button>}
+            {canManage && <button onClick={() => setEditing(true)} className="text-[11px] font-bold text-[var(--color-accent-text)] hover:underline">Edit</button>}
           </div>
         )}
       </div>
@@ -93,7 +93,7 @@ export default function OriginSection({ doc, orgId, canManage }: {
       ) : origin === "external" && (edition || url) ? (
         <div className="text-[11px] text-[var(--color-text-muted)]">
           {edition && <span>Edition {edition}</span>}
-          {url && <>{edition ? " · " : ""}<a href={url} target="_blank" rel="noopener noreferrer" className="text-[var(--color-accent)] hover:underline">source</a></>}
+          {url && <>{edition ? " · " : ""}<a href={url} target="_blank" rel="noopener noreferrer" className="text-[var(--color-accent-text)] hover:underline">source</a></>}
         </div>
       ) : null}
     </div>

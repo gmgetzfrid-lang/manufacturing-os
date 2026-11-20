@@ -304,7 +304,7 @@ function EntryRow({ entry, withPrefixes, canWrite, orgId, uid, onChanged, onErro
       <td className="px-2 py-1.5">
         {editing
           ? <Input value={label} onChange={(e) => setLabel(e.target.value)} className="h-7" />
-          : <button className={`text-left ${canWrite ? "hover:text-[var(--color-accent)]" : "cursor-default"}`} onClick={() => canWrite && setEditing(true)}>{entry.label}</button>}
+          : <button className={`text-left ${canWrite ? "hover:text-[var(--color-accent-text)]" : "cursor-default"}`} onClick={() => canWrite && setEditing(true)}>{entry.label}</button>}
       </td>
       {withPrefixes && (
         <td className="px-2 py-1.5 font-mono">
@@ -851,7 +851,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
                   standing instruction — taught once, obeyed on every future
                   import. */}
               <Link href="/admin/ai-instructions?scope=codebook"
-                className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-accent)] hover:underline">
+                className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-accent-text)] hover:underline">
                 <GraduationCap className="w-3.5 h-3.5" />
                 Spotted something it keeps getting wrong? Teach the AI a standing rule →
               </Link>

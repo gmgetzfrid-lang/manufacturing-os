@@ -381,7 +381,7 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
                           {w.waits.map((r, i) => (
                             <div key={i} className="text-[11px] text-amber-800 dark:text-amber-300">
                               Waited {r.shifts} shift{r.shifts === 1 ? "" : "s"}: {r.why.length ? r.why.map((x) => `"${x}"`).join(" · ") : "no reason recorded"}
-                              {p.canEdit && r.why.length > 0 && <button type="button" onClick={() => setPlanning({ step: s.id, run: i })} className="ml-1 font-bold underline cursor-pointer text-[var(--color-accent)]">Plan for it next time</button>}
+                              {p.canEdit && r.why.length > 0 && <button type="button" onClick={() => setPlanning({ step: s.id, run: i })} className="ml-1 font-bold underline cursor-pointer text-[var(--color-accent-text)]">Plan for it next time</button>}
                               {planning?.step === s.id && planning.run === i && <PlanFor run={r} stepName={s.name} crews={work.crews.map((c) => c.crew)} doneBefore={progressBefore(w.moved, r, idx)} onCancel={() => setPlanning(null)} onSave={(c) => { p.onAdd({ ...c, ...(c.kind === "split" ? { actId: s.id } : {}) } as PlanChange); setPlanning(null); }} />}
                             </div>
                           ))}
@@ -701,8 +701,8 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
                     <div className="font-bold"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(crew) }} />{crew}</div>
                     {first >= 0 && <div className="text-[11px] text-[var(--color-text)]">On site {dayLabel(plan.shifts[first].start)} {plan.shifts[first].kind} to {dayLabel(plan.shifts[last].start)} {plan.shifts[last].kind}, {works.night ? (works.day ? "days and nights" : "nights") : "days"}{idle ? <b className="text-amber-800 dark:text-amber-300"> · {idle} shift{idle === 1 ? "" : "s"} with nothing to do</b> : ""}{over ? <b className="text-rose-700 dark:text-rose-400"> · {over} shift{over === 1 ? "" : "s"} busier than any this year ({most} job{most === 1 ? "" : "s"})</b> : ""}</div>}
                     {sp.plant ? <div className="text-[11px] text-[var(--color-text-muted)]">Kern Energy crew: no contractor staffing plan.</div>
-                      : sum ? <div className="text-[11px] text-[var(--color-text-muted)]">Staffing plan ({sp.plan!.file || "typed in"}): days {sum.day.direct} on the tools{sum.night.direct ? `, nights ${sum.night.direct}` : ""} at the most. <button type="button" onClick={() => openContractor(sp.co)} className="font-bold text-[var(--color-accent)] hover:underline cursor-pointer">Open it</button></div>
-                      : <div className="text-[11px] text-[var(--color-text-muted)]">No staffing plan yet. <button type="button" onClick={() => openContractor(sp.co)} className="font-bold text-[var(--color-accent)] hover:underline cursor-pointer">Put in {sp.co}&apos;s</button></div>}
+                      : sum ? <div className="text-[11px] text-[var(--color-text-muted)]">Staffing plan ({sp.plan!.file || "typed in"}): days {sum.day.direct} on the tools{sum.night.direct ? `, nights ${sum.night.direct}` : ""} at the most. <button type="button" onClick={() => openContractor(sp.co)} className="font-bold text-[var(--color-accent-text)] hover:underline cursor-pointer">Open it</button></div>
+                      : <div className="text-[11px] text-[var(--color-text-muted)]">No staffing plan yet. <button type="button" onClick={() => openContractor(sp.co)} className="font-bold text-[var(--color-accent-text)] hover:underline cursor-pointer">Put in {sp.co}&apos;s</button></div>}
                   </td>
                   <td className={cellN}>{Math.max(0, ...jobs)}<div className="text-[11px] font-normal text-[var(--color-text-muted)]">most in a shift</div></td><td className="col-x" /><td className="col-x" />
                   <td className="p-0"><div className="relative h-10" style={{ width }}><Grid shifts={plan.shifts} />
@@ -801,7 +801,7 @@ function Taught(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBui
                   <span className="rounded bg-[var(--color-surface-2)] px-1.5 text-[11px] font-black uppercase tracking-wide text-[var(--color-text-muted)]">{AREA_WORD[l.area]}</span>
                   <b className="order-last basis-full sm:order-none sm:basis-0 sm:flex-1 min-w-0 text-[13.5px] text-[var(--color-text)]">{l.title}</b>
                   {!out && <span className={`text-[12px] font-bold ${(effects[l.id] ?? 0) >= 0.5 ? "text-emerald-700 dark:text-emerald-400" : (effects[l.id] ?? 0) <= -0.5 ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-muted)]"}`}>{effectWord(effects[l.id])}</span>}
-                  {p.canEdit && <button type="button" onClick={() => skip(l.id, !out)} className="text-[12px] font-bold text-[var(--color-accent)] hover:underline cursor-pointer">{out ? "Put back" : "Leave out"}</button>}
+                  {p.canEdit && <button type="button" onClick={() => skip(l.id, !out)} className="text-[12px] font-bold text-[var(--color-accent-text)] hover:underline cursor-pointer">{out ? "Put back" : "Leave out"}</button>}
                 </div>
                 <p className="mt-0.5 text-[12.5px] text-[var(--color-text-muted)]">{l.saw}</p>
                 <p className="mt-0.5 text-[12.5px] text-[var(--color-text)]">{out ? "Left out of the suggested schedule." : l.does}</p>
@@ -828,7 +828,7 @@ function Taught(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBui
               </li>
             ))}
           </ul>
-          {still.length > 0 && <button type="button" onClick={() => setAllRisks(!allRisks)} className="mt-1 text-[12px] font-bold text-[var(--color-accent)] hover:underline cursor-pointer">{allRisks ? "Hide the ones that don't move the finish" : `${still.length} more that don't move the finish`}</button>}
+          {still.length > 0 && <button type="button" onClick={() => setAllRisks(!allRisks)} className="mt-1 text-[12px] font-bold text-[var(--color-accent-text)] hover:underline cursor-pointer">{allRisks ? "Hide the ones that don't move the finish" : `${still.length} more that don't move the finish`}</button>}
         </div>
       )}
       <p className="text-[11.5px] text-[var(--color-text-muted)]">From this job&apos;s record, the same facts the post-event review reads. Each one&apos;s effect is against leaving it out{lessons.some((l) => l.honest) ? "; for time off site, against the real time away on this year's dates" : ""}.</p>

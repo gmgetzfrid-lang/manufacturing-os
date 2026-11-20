@@ -412,7 +412,7 @@ export function OutlookCard({ outlook: o, rollup, cur, authorized, onQuotes }: {
                   ? <>: <b className={o.variance > 0 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300"}>{fmtMoney(Math.abs(o.variance), cur)} {o.variance > 0 ? "over" : "under"} budget</b></>
                   : ": on budget"}
                 {vsAuth != null && vsAuth > 0.5 && <>, <b className="text-rose-700 dark:text-rose-300">{fmtMoney(vsAuth, cur)} over the authorization</b> (a supplement may be needed)</>}.</>
-            : <>No quotes awarded yet, so the forecast is just the budget. <button onClick={onQuotes} className="font-bold text-[var(--color-accent)] hover:underline">Award quotes</button> and this becomes a real forecast.</>}
+            : <>No quotes awarded yet, so the forecast is just the budget. <button onClick={onQuotes} className="font-bold text-[var(--color-accent-text)] hover:underline">Award quotes</button> and this becomes a real forecast.</>}
         </li>
         {over.map(({ r, ol }) => (
           <li key={r.account.id} className="text-[var(--color-text-muted)]">

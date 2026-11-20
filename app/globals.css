@@ -182,10 +182,9 @@ body {
    ring + soft shadow), so every card reads identically. `hover-lift`
    adds the subtle rise-on-hover used for clickable cards/tiles. Both
    compose with Tailwind utilities and are theme/dark-mode aware. */
-/* The side menu is the charcoal half of the pair: its own colors, so
-   everything inside it reads light on dark. */
-.surface-charcoal {
-  /* Set from the workspace's base color by ThemeProvider (--side-*). */
+/* The side menu: the workspace's base color (charcoal by default; set by
+   ThemeProvider as --side-*), so everything inside reads on it. */
+.surface-side {
   --color-canvas: var(--side-bg, #11141a);
   --color-surface: var(--side-surface, #1b1f27);
   --color-surface-2: var(--side-surface, #1b1f27);
@@ -194,9 +193,27 @@ body {
   --color-text-faint: var(--side-faint, #747d8c);
   --color-border: var(--side-border, #262b35);
   --color-border-strong: var(--side-border-strong, #353b47);
+  --color-accent-text: var(--side-accent-text, #fb923c);
   background-color: var(--side-bg, #11141a);
   color: var(--side-text, #f3f4f6);
 }
+
+/* Charcoal that stays charcoal whatever the menu color: the frame around
+   a drawing, toasts. */
+.surface-charcoal {
+  --color-canvas: #11141a;
+  --color-surface: #1b1f27;
+  --color-surface-2: #1b1f27;
+  --color-text: #f3f4f6;
+  --color-text-muted: #a3abb8;
+  --color-text-faint: #747d8c;
+  --color-border: #262b35;
+  --color-border-strong: #353b47;
+  --color-accent-text: var(--charcoal-accent-text, #fb923c);
+  background-color: #11141a;
+  color: #f3f4f6;
+}
+.dark .surface-charcoal { --color-canvas: #0a0c10; background-color: #0a0c10; }
 
 @utility card-surface {
   background-color: var(--color-surface);

@@ -197,7 +197,7 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
                 </span>
                 <span className="ml-auto shrink-0">{statusChip(r)}</span>
                 {canManage && r.slot === "alternate" && !r.activated && r.status === "pending" && (
-                  <button title="Activate alternate" onClick={() => void activate(r.id)} disabled={busy} className="shrink-0 p-1 rounded hover:bg-[var(--color-surface)] text-[var(--color-accent)]"><UserPlus className="w-3 h-3" /></button>
+                  <button title="Activate alternate" onClick={() => void activate(r.id)} disabled={busy} className="shrink-0 p-1 rounded hover:bg-[var(--color-surface)] text-[var(--color-accent-text)]"><UserPlus className="w-3 h-3" /></button>
                 )}
               </div>
             ))}

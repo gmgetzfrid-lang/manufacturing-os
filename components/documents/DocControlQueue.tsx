@@ -278,7 +278,7 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
                 <GitBranch className="w-4 h-4 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
                 <div className="flex-1 min-w-0 text-xs">
                   <b>Unreconciled branch</b> on{" "}
-                  <Link href={docLink(b.documentId, meta?.libraryId ?? null)} className="font-bold text-[var(--color-accent)] hover:underline">
+                  <Link href={docLink(b.documentId, meta?.libraryId ?? null)} className="font-bold text-[var(--color-accent-text)] hover:underline">
                     {meta?.label ?? "Document"}
                   </Link>{" "}
                   by <b>{b.createdByName || b.createdBy}</b> · {new Date(b.createdAt).toLocaleDateString()}
@@ -332,7 +332,7 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
             <Flag className="w-4 h-4 mt-0.5 text-red-600 shrink-0" />
             <div className="flex-1 min-w-0 text-xs">
               <b>Rev {rev.revisionLabel}</b> of{" "}
-              <Link href={docLink(rev.recordId, rev.libraryId)} className="font-bold text-[var(--color-accent)] hover:underline">
+              <Link href={docLink(rev.recordId, rev.libraryId)} className="font-bold text-[var(--color-accent-text)] hover:underline">
                 {rev.docLabel}
               </Link>{" "}
               was published with <b>no recorded checkout or download trail</b>
@@ -359,7 +359,7 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
             <div key={s.sessionId} className="rounded-xl border border-amber-200 bg-[var(--color-surface)] p-3 flex items-start gap-2">
               <KeyRound className="w-4 h-4 mt-0.5 text-amber-600 shrink-0" />
               <div className="flex-1 min-w-0 text-xs">
-                <Link href={docLink(s.documentId, s.libraryId)} className="font-bold text-[var(--color-accent)] hover:underline">
+                <Link href={docLink(s.documentId, s.libraryId)} className="font-bold text-[var(--color-accent-text)] hover:underline">
                   {s.docLabel}
                 </Link>{" "}
                 has been checked out by <b>{s.userName || "a user"}</b> for <b>{days} days</b>
@@ -377,7 +377,7 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
           <div key={req.auditId} className="rounded-xl border border-rose-200 bg-[var(--color-surface)] p-3 flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 mt-0.5 text-rose-600 shrink-0" />
             <div className="flex-1 min-w-0 text-xs">
-              <Link href={docLink(req.documentId, req.libraryId)} className="font-bold text-[var(--color-accent)] hover:underline">
+              <Link href={docLink(req.documentId, req.libraryId)} className="font-bold text-[var(--color-accent-text)] hover:underline">
                 {req.label}
               </Link>{" "}
               - <b>deletion requested</b> by {req.requestedBy || "the owner"} on {new Date(req.requestedAt).toLocaleDateString()}.

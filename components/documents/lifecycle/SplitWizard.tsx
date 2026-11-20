@@ -332,7 +332,7 @@ function Step1Targets({
         ))}
       </div>
 
-      <button onClick={onAdd} className="text-xs font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] inline-flex items-center gap-1">
+      <button onClick={onAdd} className="text-xs font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)] inline-flex items-center gap-1">
         <Plus className="w-3 h-3" /> Add another target sheet
       </button>
     </div>

@@ -172,7 +172,7 @@ export function AnswerMenu({ answerMode, onAnswerMode, skills, picked, onPick, q
           <div className="my-1.5 h-px bg-[var(--color-border)]" />
           <div className="flex items-center justify-between pr-1">
             <Head>Skills for this question</Head>
-            {picked && <button type="button" onClick={() => onPick(null)} className="text-[11px] font-bold text-[var(--color-accent)] hover:underline">Back to workspace defaults</button>}
+            {picked && <button type="button" onClick={() => onPick(null)} className="text-[11px] font-bold text-[var(--color-accent-text)] hover:underline">Back to workspace defaults</button>}
           </div>
           <div className="px-2 pb-1 text-[11px] text-[var(--color-text-muted)]">A skill applies itself when the question fits. <b>fits</b> marks the ones that match what you typed.</div>
           {skills === null && <div className="px-2 py-1.5 text-[11px] text-[var(--color-text-muted)]">Loading skills…</div>}
@@ -195,7 +195,7 @@ export function AnswerMenu({ answerMode, onAnswerMode, skills, picked, onPick, q
           })}
           <div className="my-1.5 h-px bg-[var(--color-border)]" />
           <div className="flex items-center justify-between gap-2 px-2 py-1 text-[11px]">
-            <Link href="/intelligence/skills" className="inline-flex items-center gap-1 font-bold text-[var(--color-accent)] hover:underline"><Wand2 className="w-3 h-3" /> Skill Library: write your own</Link>
+            <Link href="/intelligence/skills" className="inline-flex items-center gap-1 font-bold text-[var(--color-accent-text)] hover:underline"><Wand2 className="w-3 h-3" /> Skill Library: write your own</Link>
             {onOpenInstructions && (
               <button type="button" onClick={() => { setOpen(false); onOpenInstructions(); }} className="inline-flex items-center gap-1 font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
                 <SlidersHorizontal className="w-3 h-3" /> Instructions{instructionCount ? ` (${instructionCount})` : ""}

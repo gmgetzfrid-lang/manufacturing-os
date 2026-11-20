@@ -623,7 +623,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
                             <PreviewButton file={fileOfDoc(doc)} className="ml-1" />
                             {known && (
                               <Link href={`/companies/${known.id}`}
-                                className="ml-1.5 inline-flex items-center gap-1 text-[11px] font-bold px-1.5 py-0.5 rounded border border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:border-[var(--color-accent-ring)] transition-colors"
+                                className="ml-1.5 inline-flex items-center gap-1 text-[11px] font-bold px-1.5 py-0.5 rounded border border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-accent-text)] hover:border-[var(--color-accent-ring)] transition-colors"
                                 title="In your Known Companies registry - open their full record"
                                 onClick={(ev) => ev.stopPropagation()}>
                                 known{known.qualityManualScore != null ? ` · QM ${Math.round(known.qualityManualScore)}%` : ""}

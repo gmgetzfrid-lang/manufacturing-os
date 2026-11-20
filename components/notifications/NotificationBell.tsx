@@ -163,7 +163,7 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
                 <button
                   type="button"
                   onClick={() => { setOpen(false); openCenter("all"); }}
-                  className="text-[12px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]"
+                  className="text-[12px] font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)]"
                   title="Open the full notification center"
                 >
                   See all

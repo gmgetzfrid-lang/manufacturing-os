@@ -93,7 +93,7 @@ export default function HomeStrips() {
           <div className="flex items-baseline gap-3 mb-3 px-1">
             <h2 className={label}>Your libraries</h2>
             <div className="flex-1" />
-            <Link href="/documents" className="text-[13px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">Documents</Link>
+            <Link href="/documents" className="text-[13px] font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)]">Documents</Link>
           </div>
           <CardStrip>
             {libs.map((l) => (
@@ -122,7 +122,7 @@ export default function HomeStrips() {
           <div className="flex items-baseline gap-3 mb-3 px-1">
             <h2 className={label}>{projects.length === 1 ? "Your project" : "Active projects"}</h2>
             <div className="flex-1" />
-            <Link href="/projects" className="text-[13px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">Projects</Link>
+            <Link href="/projects" className="text-[13px] font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)]">Projects</Link>
           </div>
           {projects.length === 1 ? (
             <ProjectRow p={projects[0]} />

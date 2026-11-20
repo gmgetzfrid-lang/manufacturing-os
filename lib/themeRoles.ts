@@ -119,15 +119,19 @@ export function rolesOf(p: PaletteLike | null | undefined): ThemeRoles {
   return { base, main, action };
 }
 
-/** The action color as text (links, small labels): darkened on light pages,
- *  lightened on dark ones, until it reads (4.5:1). Yellow buttons stay
- *  yellow; yellow links turn a readable gold. */
-export function actionText(mode: "light" | "dark", action: string): string {
-  const bg = mode === "dark" ? "#111827" : "#f4f3f0";
-  const toward = mode === "dark" ? "#ffffff" : "#000000";
-  let c = action;
+/** A color as text on `bg`: lightened on a dark background, darkened on a
+ *  light one, until it reads (4.5:1). */
+export function readableOn(color: string, bg: string): string {
+  const toward = luminance(bg) < 0.35 ? "#ffffff" : "#000000";
+  let c = color;
   for (let i = 0; i < 14 && contrast(c, bg) < 4.5; i++) c = mix(c, toward, 0.1);
   return c;
+}
+
+/** The action color as text (links, small labels) on the page. Yellow
+ *  buttons stay yellow; yellow links turn a readable gold. */
+export function actionText(mode: "light" | "dark", action: string): string {
+  return readableOn(action, mode === "dark" ? "#111827" : "#f4f3f0");
 }
 
 /** The band in dark mode: a shade deeper. */

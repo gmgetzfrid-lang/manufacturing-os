@@ -249,7 +249,7 @@ function Picker({ items, out, next, span, onBack, onPick }: {
           );
         })}
       </div>
-      {!more && shown.length > SHOW && <button type="button" onClick={() => setMore(true)} className="w-full py-2.5 text-[12px] font-semibold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]">Show all {shown.length}</button>}
+      {!more && shown.length > SHOW && <button type="button" onClick={() => setMore(true)} className="w-full py-2.5 text-[12px] font-semibold text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]">Show all {shown.length}</button>}
     </div>
   );
 }
@@ -358,7 +358,7 @@ function Where({ r }: { r: ShiftRow }) {
 }
 
 function BackLink({ onClick }: { onClick: () => void }) {
-  return <button type="button" onClick={onClick} className="inline-flex items-center gap-1 text-[12px] font-semibold text-[var(--color-accent)] hover:underline"><ArrowLeft className="w-3.5 h-3.5" /> Back to the list</button>;
+  return <button type="button" onClick={onClick} className="inline-flex items-center gap-1 text-[12px] font-semibold text-[var(--color-accent-text)] hover:underline"><ArrowLeft className="w-3.5 h-3.5" /> Back to the list</button>;
 }
 
 function Tag({ tone, children }: { tone: "rose" | "amber" | "emerald" | "slate"; children: React.ReactNode }) {

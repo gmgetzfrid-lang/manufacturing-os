@@ -260,7 +260,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
           </tbody>
         </table>
         <button onClick={() => setLines((ls) => [...ls, { key: `n${Date.now()}`, include: true, name: "", amount: null, supplier: null, costType: "other", note: null }])}
-          className="mt-1 inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)]"><Plus className="w-3 h-3" /> Add line</button>
+          className="mt-1 inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent-text)]"><Plus className="w-3 h-3" /> Add line</button>
       </div>
 
       <div className="px-4 py-2.5 border-t border-[var(--color-border)] flex items-center gap-2 flex-wrap">

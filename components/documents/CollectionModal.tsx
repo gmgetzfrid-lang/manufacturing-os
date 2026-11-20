@@ -389,7 +389,7 @@ export default function CollectionModal({
                         <button onClick={() => void sortBySheet()} disabled={busy || itemsHydrated.length < 2} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40" title="Reorder the book by sheet number, the book opens in this order">
                           <ArrowUpDown className="w-3 h-3" /> Sort by Sheet #
                         </button>
-                        <button onClick={() => setShowPicker(true)} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">
+                        <button onClick={() => setShowPicker(true)} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)]">
                           <Plus className="w-3 h-3" /> Add documents
                         </button>
                       </div>

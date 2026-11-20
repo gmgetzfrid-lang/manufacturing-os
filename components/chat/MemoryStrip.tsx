@@ -36,7 +36,7 @@ export default function MemoryStrip({ past, changed, onReview, onReuse, onDismis
       <button onClick={onReview} className="shrink-0 inline-flex items-center gap-1 font-bold text-[var(--color-text)] hover:underline">
         <Eye className="w-3.5 h-3.5" /> Review
       </button>
-      <button onClick={onReuse} className="shrink-0 inline-flex items-center gap-1 font-bold text-[var(--color-accent)] hover:underline">
+      <button onClick={onReuse} className="shrink-0 inline-flex items-center gap-1 font-bold text-[var(--color-accent-text)] hover:underline">
         <Redo2 className="w-3.5 h-3.5" /> Use it
       </button>
       <button onClick={onDismiss} title="Ask fresh" aria-label="Dismiss, ask fresh" className="shrink-0 w-7 h-7 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]">

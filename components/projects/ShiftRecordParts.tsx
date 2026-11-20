@@ -360,7 +360,7 @@ export function AddCompany({ onAdd }: { onAdd: (name: string) => void }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const add = () => { if (name.trim()) { onAdd(name.trim()); setName(""); setOpen(false); } };
-  if (!open) return <button type="button" onClick={() => setOpen(true)} className="mt-1 text-[11px] font-semibold text-[var(--color-accent)] hover:underline">+ Add a company</button>;
+  if (!open) return <button type="button" onClick={() => setOpen(true)} className="mt-1 text-[11px] font-semibold text-[var(--color-accent-text)] hover:underline">+ Add a company</button>;
   return (
     <div className="mt-1 flex items-center gap-1.5">
       <input autoFocus value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") add(); if (e.key === "Escape") setOpen(false); }}

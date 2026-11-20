@@ -179,7 +179,7 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
           {grouped.length > visibleCount && (
             <button
               onClick={() => setVisibleCount((v) => v + 30)}
-              className="w-full py-2.5 text-[13px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]"
+              className="w-full py-2.5 text-[13px] font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)]"
             >
               Show {Math.min(30, grouped.length - visibleCount)} more ({grouped.length - visibleCount} hidden)
             </button>

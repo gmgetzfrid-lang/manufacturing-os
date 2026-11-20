@@ -354,7 +354,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
                 <span><b className="text-[var(--color-text)]">Add on its own after each drawing is read</b>
                   <span className="block text-[11.5px] text-[var(--color-text-muted)]">Only equipment whose ID is printed on the sheet and reads as a unit and type in the site codebook. Everything else waits here for you.</span></span>
               </label>
-              <Link href="/admin/ai-instructions?scope=equipment" className="inline-flex items-center gap-1 text-[11.5px] font-bold text-[var(--color-accent)] dark:text-[var(--color-text)] hover:underline">
+              <Link href="/admin/ai-instructions?scope=equipment" className="inline-flex items-center gap-1 text-[11.5px] font-bold text-[var(--color-accent-text)] dark:text-[var(--color-text)] hover:underline">
                 <GraduationCap className="w-3.5 h-3.5" /> Teach the AI how your drawings print tags and IDs
               </Link>
             </div>
@@ -440,7 +440,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
                       <div className="px-3 py-1.5 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] flex flex-wrap items-baseline gap-x-2">
                         <b className="text-[12.5px] text-[var(--color-text)]">{sh ? `Sheet ${sh}${d?.sheetTotal ? ` of ${d.sheetTotal}` : ""}` : r.documentLabel}</b>
                         <span className="text-[11.5px] text-[var(--color-text-muted)]">{[d?.number ?? (sh ? r.documentLabel : null), d?.rev ? `Rev ${d.rev}` : null].filter(Boolean).join(" · ")}</span>
-                        <Link href={`/documents/${libraryId}?doc=${r.document_id}`} target="_blank" className="ml-auto inline-flex items-center gap-1 text-[12px] font-bold text-[var(--color-accent)] hover:underline">Open sheet <ExternalLink className="w-3 h-3" /></Link>
+                        <Link href={`/documents/${libraryId}?doc=${r.document_id}`} target="_blank" className="ml-auto inline-flex items-center gap-1 text-[12px] font-bold text-[var(--color-accent-text)] hover:underline">Open sheet <ExternalLink className="w-3 h-3" /></Link>
                       </div>
                       <ul className="divide-y divide-[var(--color-border)]">
                         {list.map((x) => (

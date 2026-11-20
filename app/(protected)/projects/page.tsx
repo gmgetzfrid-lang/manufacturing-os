@@ -221,7 +221,7 @@ export default function ProjectsPage() {
           <Card>
             <div role="alert" className="text-[14px] text-rose-700 dark:text-rose-300 flex flex-wrap items-center gap-x-3 gap-y-1">
               <span>Couldn&apos;t load projects: {error}</span>
-              <button onClick={() => void refresh()} className="text-[13px] font-bold text-[var(--color-accent)] hover:underline">Try again</button>
+              <button onClick={() => void refresh()} className="text-[13px] font-bold text-[var(--color-accent-text)] hover:underline">Try again</button>
             </div>
           </Card>
         ) : projects.length === 0 ? (
@@ -230,7 +230,7 @@ export default function ProjectsPage() {
               <p className="text-[14px] text-[var(--color-text-muted)]">
                 {searchQ ? <>Nothing named &ldquo;{searchQ}&rdquo; {statusFilter !== "all" ? `in ${statusFilter}` : ""}.</> : `Nothing in ${statusFilter}.`}
               </p>
-              <button onClick={() => { setSearch(""); setStatusFilter("all"); }} className="mt-2 text-[13px] font-bold text-[var(--color-accent)] hover:underline">
+              <button onClick={() => { setSearch(""); setStatusFilter("all"); }} className="mt-2 text-[13px] font-bold text-[var(--color-accent-text)] hover:underline">
                 Clear filters
               </button>
             </Card>

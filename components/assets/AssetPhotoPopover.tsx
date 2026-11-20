@@ -300,7 +300,7 @@ export default function AssetPhotoPopover({
       <div className="px-3 py-2 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between gap-2">
         <span className="text-[11px] text-[var(--color-text-muted)]">
           {photos.length > 0 ? `${activeIdx + 1} of ${photos.length}` : "No photos"}
-          {photos.length > 0 && <> · <button onClick={onExpandFull} className="font-bold text-[var(--color-accent)] hover:underline">Open full view</button></>}
+          {photos.length > 0 && <> · <button onClick={onExpandFull} className="font-bold text-[var(--color-accent-text)] hover:underline">Open full view</button></>}
         </span>
         {canManage && onUploadClick && photos.length > 0 && (
           <button

@@ -245,7 +245,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
           <div className="text-[13px] text-[var(--color-text-muted)]">
             {status?.boundLibrary ? (
               <>
-                Backed by <Link href={`/knowledge/${status.boundLibrary.id}`} className="font-black text-[var(--color-accent)] dark:text-[var(--color-text)] hover:underline">{status.boundLibrary.name}</Link>
+                Backed by <Link href={`/knowledge/${status.boundLibrary.id}`} className="font-black text-[var(--color-accent-text)] dark:text-[var(--color-text)] hover:underline">{status.boundLibrary.name}</Link>
                 {" · "}{status.counts.ready} readable{status.counts.pending > 0 ? ` · ${status.counts.pending} indexing` : ""}
                 {" · "}{status.sources.length} watched source{status.sources.length === 1 ? "" : "s"}
               </>
@@ -351,7 +351,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
             <span><b>{flowCount ?? "…"}</b> process flow{flowCount === 1 ? "" : "s"}</span>
             <span>· <b>{docLinkCount ?? "…"}</b> linked document{docLinkCount === 1 ? "" : "s"}</span>
             <span>· <b>{plotMarkCount ?? "…"}</b> plot marker{plotMarkCount === 1 ? "" : "s"}</span>
-            <Link href="/plot-plans" className="font-bold text-[var(--color-accent)] dark:text-[var(--color-text)] hover:underline">Plot plans <ExternalLink className="w-2.5 h-2.5 inline" /></Link>
+            <Link href="/plot-plans" className="font-bold text-[var(--color-accent-text)] dark:text-[var(--color-text)] hover:underline">Plot plans <ExternalLink className="w-2.5 h-2.5 inline" /></Link>
           </span>
         </Step>
         <Step n={4} title="Link equipment files to assets"

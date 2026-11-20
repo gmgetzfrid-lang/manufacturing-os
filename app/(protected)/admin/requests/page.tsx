@@ -604,7 +604,7 @@ function FieldEditor({
           ))}
           <button
             onClick={() => onChange({ options: [...(field.options ?? []), { label: "Option", value: "" }] })}
-            className="text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-colors inline-flex items-center"
+            className="text-[11px] font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)] transition-colors inline-flex items-center"
           >
             <Plus className="w-3 h-3 mr-1" /> Add Choice
           </button>

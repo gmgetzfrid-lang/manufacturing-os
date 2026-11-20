@@ -223,7 +223,7 @@ function CoordinationInner() {
           {snap.failed.length > 0 && (
             <div role="alert" className="mb-3 text-[13px] text-rose-700 dark:text-rose-300 flex flex-wrap items-center gap-x-3">
               <span>Couldn&apos;t load {snap.failed.join(", ")}. The numbers for {snap.failed.length === 1 ? "it" : "them"} below may be missing.</span>
-              <button onClick={() => void load()} className="text-[13px] font-bold text-[var(--color-accent)] hover:underline">Try again</button>
+              <button onClick={() => void load()} className="text-[13px] font-bold text-[var(--color-accent-text)] hover:underline">Try again</button>
             </div>
           )}
           {isEmpty && !setupNeeded && (
@@ -244,7 +244,7 @@ function CoordinationInner() {
           {/* Equipment state distribution */}
           <Panel title="Equipment state" span={2}>
             {totalEquip === 0 ? (
-              <div className="text-[13px] text-[var(--color-text-muted)]">No equipment tracked yet. <Link href="/admin/assets" className="text-[var(--color-accent)] font-bold hover:underline">Register assets</Link> to see how it&apos;s tracking.</div>
+              <div className="text-[13px] text-[var(--color-text-muted)]">No equipment tracked yet. <Link href="/admin/assets" className="text-[var(--color-accent-text)] font-bold hover:underline">Register assets</Link> to see how it&apos;s tracking.</div>
             ) : (
               <>
                 <p className="text-[14px] mb-3"><b>{totalEquip} tracked equipment item{totalEquip === 1 ? "" : "s"}.</b>{blocked > 0 && <span className="ml-1 text-rose-700 dark:text-rose-400 font-bold">{blocked} blocked.</span>}</p>
@@ -295,7 +295,7 @@ function CoordinationInner() {
           {/* Plot plans */}
           <Panel title="Spatial boards" span={3}>
             {snap.plotPlans.length === 0 ? (
-              <div className="text-[13px] text-[var(--color-text-muted)]">No plot plans yet. <Link href="/plot-plans" className="text-[var(--color-accent)] font-bold hover:underline">Create one</Link> to find equipment on a map.</div>
+              <div className="text-[13px] text-[var(--color-text-muted)]">No plot plans yet. <Link href="/plot-plans" className="text-[var(--color-accent-text)] font-bold hover:underline">Create one</Link> to find equipment on a map.</div>
             ) : (
               <div className="flex flex-wrap gap-2">
                 {snap.plotPlans.slice(0, 8).map((p) => (
@@ -303,7 +303,7 @@ function CoordinationInner() {
                     <MapIcon className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {p.name} <span className="text-[var(--color-text-muted)]">{p.markers.length}</span>
                   </Link>
                 ))}
-                {snap.plotPlans.length > 8 && <Link href="/plot-plans" className="inline-flex items-center h-9 px-2 text-[13px] font-bold text-[var(--color-accent)] hover:underline">Show {snap.plotPlans.length - 8} more</Link>}
+                {snap.plotPlans.length > 8 && <Link href="/plot-plans" className="inline-flex items-center h-9 px-2 text-[13px] font-bold text-[var(--color-accent-text)] hover:underline">Show {snap.plotPlans.length - 8} more</Link>}
               </div>
             )}
           </Panel>
@@ -393,7 +393,7 @@ function CoordinationRadar({
         </div>
         {overlaps.length > 8 && (
           <div className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)]">
-            <Link href="/checkouts" className="text-[13px] font-bold text-[var(--color-accent)] hover:underline">Show {overlaps.length - 8} more</Link>
+            <Link href="/checkouts" className="text-[13px] font-bold text-[var(--color-accent-text)] hover:underline">Show {overlaps.length - 8} more</Link>
           </div>
         )}
       </Card>

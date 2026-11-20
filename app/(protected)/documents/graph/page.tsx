@@ -941,7 +941,7 @@ function GraphPageInner() {
                 {readAsk.libs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
               </select>
             )}
-            {readAsk.note && <div className="text-xs text-[var(--color-text)]">{readAsk.note}{readAsk.pick && readAsk.note.startsWith("Linked") && <> <Link href={`/knowledge/${readAsk.pick}`} className="font-bold text-[var(--color-accent)] hover:underline">Open the library →</Link></>}</div>}
+            {readAsk.note && <div className="text-xs text-[var(--color-text)]">{readAsk.note}{readAsk.pick && readAsk.note.startsWith("Linked") && <> <Link href={`/knowledge/${readAsk.pick}`} className="font-bold text-[var(--color-accent-text)] hover:underline">Open the library →</Link></>}</div>}
             <div className="flex justify-end gap-2">
               <button onClick={() => setReadAsk(null)} disabled={readAsk.busy} className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-sm">Close</button>
               {!readAsk.note?.startsWith("Linked") && readAsk.libs.length > 0 && (
@@ -1158,7 +1158,7 @@ function EntityPanel({ orgId, sat, data, entryById, nodeById, serverFind: liveFi
         <span className="w-8 h-8 rounded-full grid place-items-center text-white shrink-0" style={{ background: sat.color }}><Icon className="w-4 h-4" /></span>
         <div className="min-w-0 flex-1">
           <div className="text-[11px] text-[var(--color-text-muted)] flex items-center gap-1 flex-wrap">
-            {unit && kind !== "unit" ? <><button onClick={() => onNarrow(unit.code)} className="font-bold text-[var(--color-accent)] hover:underline">{unit.label}</button><ChevronRight className="w-3 h-3" /></> : null}
+            {unit && kind !== "unit" ? <><button onClick={() => onNarrow(unit.code)} className="font-bold text-[var(--color-accent-text)] hover:underline">{unit.label}</button><ChevronRight className="w-3 h-3" /></> : null}
             <span className="font-bold" style={{ color: sat.color }}>{kind === "asset" ? "Equipment" : kind === "unit" ? "Unit" : kind === "project" ? "Project" : "Tag read off the drawings"}</span>
           </div>
           <div className="text-base font-black leading-tight">{sat.label}</div>

@@ -187,7 +187,7 @@ function AttachmentPane({ att, header }: {
           <div className="flex items-center gap-2 text-[13.5px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Loading the file…</div>
         )}
         {url && (
-          <a href={url} target="_blank" rel="noopener noreferrer" className="inline-block text-[13px] font-bold text-[var(--color-accent)] hover:underline">Open in a new tab</a>
+          <a href={url} target="_blank" rel="noopener noreferrer" className="inline-block text-[13px] font-bold text-[var(--color-accent-text)] hover:underline">Open in a new tab</a>
         )}
       </div>
     </div>
@@ -268,7 +268,7 @@ function InstructionsPane({
             {standingCount > 0
               ? <>{standingCount} org playbook instruction{standingCount === 1 ? "" : "s"} appl{standingCount === 1 ? "ies" : "y"} to every library answer. </>
               : <>No org playbook instructions yet. </>}
-            <Link href="/admin/ai-instructions" className="font-bold text-[var(--color-accent)] hover:underline">Open playbooks</Link>
+            <Link href="/admin/ai-instructions" className="font-bold text-[var(--color-accent-text)] hover:underline">Open playbooks</Link>
           </p>
         </section>
 

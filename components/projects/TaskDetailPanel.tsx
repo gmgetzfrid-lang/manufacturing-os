@@ -440,7 +440,7 @@ export default function TaskDetailPanel({
                         )}
                         <span className="flex justify-end gap-2">
                           <button onClick={() => setActualEdit(null)} className="text-[11px] text-[var(--color-text-muted)]">Cancel</button>
-                          <button onClick={() => void saveActuals()} className="text-[11px] font-bold text-[var(--color-accent)]">Save ({tzAbbrev(tz)})</button>
+                          <button onClick={() => void saveActuals()} className="text-[11px] font-bold text-[var(--color-accent-text)]">Save ({tzAbbrev(tz)})</button>
                         </span>
                       </span>
                     ) : (
@@ -450,7 +450,7 @@ export default function TaskDetailPanel({
                         {m.status === "completed" ? (m.actualAt ? ` · finished ${fmtInTz(m.actualAt as string, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}` : " · finish time not recorded") : ""}
                         {canEdit && (m.actualStartAt || m.status !== "planned") && (
                           <button onClick={() => setActualEdit({ start: toDateTimeInput(m.actualStartAt as string | null, tz), finish: toDateTimeInput(m.actualAt as string | null, tz) })}
-                            className="ml-1.5 text-[11px] font-bold text-[var(--color-accent)] hover:underline" title="Correct when the work really started or finished - the shift that did it gets the credit">correct</button>
+                            className="ml-1.5 text-[11px] font-bold text-[var(--color-accent-text)] hover:underline" title="Correct when the work really started or finished - the shift that did it gets the credit">correct</button>
                         )}
                       </span>
                     )}
@@ -682,7 +682,7 @@ export default function TaskDetailPanel({
                       className="flex-1 text-xs px-2 py-1.5 border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]"
                       onKeyDown={(e) => { if (e.key === "Enter") void addNote(); }}
                     />
-                    <button onClick={() => void addNote()} disabled={!noteDraft.trim()} className="p-1.5 rounded-md text-[var(--color-accent)] dark:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40" title="Add note">
+                    <button onClick={() => void addNote()} disabled={!noteDraft.trim()} className="p-1.5 rounded-md text-[var(--color-accent-text)] dark:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40" title="Add note">
                       <MessageSquarePlus className="w-4 h-4" />
                     </button>
                   </div>
@@ -710,7 +710,7 @@ export default function TaskDetailPanel({
                             <input value={editNote.body} autoFocus onChange={(e) => setEditNote({ id: editNote.id, body: e.target.value })}
                               onKeyDown={(e) => { if (e.key === "Enter") void saveNoteEdit(); if (e.key === "Escape") setEditNote(null); }}
                               className="flex-1 text-xs px-2 py-1 border border-[var(--color-border-strong)] rounded-md bg-[var(--color-surface)]" />
-                            <button onClick={() => void saveNoteEdit()} className="text-[11px] font-bold text-[var(--color-accent)]">Save</button>
+                            <button onClick={() => void saveNoteEdit()} className="text-[11px] font-bold text-[var(--color-accent-text)]">Save</button>
                             <button onClick={() => setEditNote(null)} className="text-[11px] text-[var(--color-text-muted)]">Cancel</button>
                           </div>
                         ) : n.body && (
@@ -1137,7 +1137,7 @@ function DependencyEditor({
                   </>
                 ) : linkShort(l) ? <span className="text-[11px]">{linkShort(l)}</span> : null}
                 {canEdit && (
-                  <button type="button" disabled={saving} onClick={() => void save(deps.filter((dd) => dd !== id))} className="p-0.5 rounded-full hover:bg-[var(--color-border)] text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]" title="Remove dependency">
+                  <button type="button" disabled={saving} onClick={() => void save(deps.filter((dd) => dd !== id))} className="p-0.5 rounded-full hover:bg-[var(--color-border)] text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)]" title="Remove dependency">
                     <XIcon className="w-3 h-3" />
                   </button>
                 )}

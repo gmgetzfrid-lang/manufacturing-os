@@ -767,7 +767,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                   <div key={key} style={{ gridColumn: `${2 * i + 1} / span 2` }} className="flex items-center justify-center gap-1 px-1 border-r border-[var(--color-border)]">
                     <button type="button" onClick={() => { setAgendaFocus(null); setAgendaDay(key); }}
                       title="Open this day's list: every step, with progress entry"
-                      className={`min-w-0 truncate px-1 py-1.5 text-center text-[12px] font-semibold hover:text-[var(--color-accent)] ${isToday ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>
+                      className={`min-w-0 truncate px-1 py-1.5 text-center text-[12px] font-semibold hover:text-[var(--color-accent-text)] ${isToday ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>
                       {fmtInTz(day, tz, { weekday: "short" })} {wallClock(day.getTime(), tz).day}
                       {(() => { const n = uniqueOf(key).filter((p) => !p.idleToday).length; return n > 0 ? <span className="ml-1 font-semibold normal-case tracking-normal text-[var(--color-text-faint)]">· {n}</span> : null; })()}
                     </button>
@@ -892,7 +892,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                       type="button"
                       onClick={() => setAgendaDay(key)}
                       title={`Open ${fmtInTz(day, tz, { weekday: "long", month: "long", day: "numeric" })} - every step due that day, with progress entry`}
-                      className={`inline-flex items-center gap-1 text-[11px] font-bold rounded px-1 -ml-1 hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-accent)] transition-colors ${isToday ? "text-rose-600 dark:text-rose-400" : inMonth ? "text-[var(--color-text)]" : "text-slate-300"}`}
+                      className={`inline-flex items-center gap-1 text-[11px] font-bold rounded px-1 -ml-1 hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-accent-text)] transition-colors ${isToday ? "text-rose-600 dark:text-rose-400" : inMonth ? "text-[var(--color-text)]" : "text-slate-300"}`}
                     >
                       {wallClock(day.getTime(), tz).day}
                       {items.length > 0 && <span className="text-[11px] font-black uppercase tracking-wider opacity-0 group-hover/tile:opacity-70">Open day</span>}
@@ -1057,7 +1057,7 @@ function DayScroller({ children, fade }: { children: React.ReactNode; fade: stri
           <button type="button"
             onClick={(e) => { e.stopPropagation(); ref.current?.scrollBy({ top: (ref.current?.clientHeight ?? 120) * 0.8, behavior: "smooth" }); }}
             title="Scroll for the rest of this day's tasks"
-            className="absolute bottom-0.5 left-1/2 -translate-x-1/2 inline-flex items-center gap-0.5 whitespace-nowrap rounded-full bg-[var(--color-surface)] border border-[var(--color-border)] shadow-sm px-2 py-[1px] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:border-[var(--color-accent-ring)]">
+            className="absolute bottom-0.5 left-1/2 -translate-x-1/2 inline-flex items-center gap-0.5 whitespace-nowrap rounded-full bg-[var(--color-surface)] border border-[var(--color-border)] shadow-sm px-2 py-[1px] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent-text)] hover:border-[var(--color-accent-ring)]">
             <ChevronDown className="w-3 h-3" /> {below} more
           </button>
         </>

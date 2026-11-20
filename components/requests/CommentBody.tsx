@@ -90,8 +90,8 @@ function renderInline(line: string): React.ReactNode[] {
     if (m[1]) out.push(<strong key={`b${i++}`} className="font-bold">{m[2]}</strong>);
     else if (m[3]) out.push(<em key={`i${i++}`} className="italic">{m[4] ?? m[5]}</em>);
     else if (m[6]) out.push(<code key={`c${i++}`} className="px-1 py-0.5 rounded bg-[var(--color-surface-2)] text-[11px] font-mono">{m[7]}</code>);
-    else if (m[8]) out.push(<a key={`l${i++}`} href={m[10]} target="_blank" rel="noopener noreferrer" className="text-[var(--color-accent)] underline hover:text-[var(--color-accent-hover)] transition-colors">{m[9]}</a>);
-    else if (m[11]) out.push(<a key={`a${i++}`} href={m[11]} target="_blank" rel="noopener noreferrer" className="text-[var(--color-accent)] underline hover:text-[var(--color-accent-hover)] transition-colors break-all">{m[11]}</a>);
+    else if (m[8]) out.push(<a key={`l${i++}`} href={m[10]} target="_blank" rel="noopener noreferrer" className="text-[var(--color-accent-text)] underline hover:text-[var(--color-accent-hover)] transition-colors">{m[9]}</a>);
+    else if (m[11]) out.push(<a key={`a${i++}`} href={m[11]} target="_blank" rel="noopener noreferrer" className="text-[var(--color-accent-text)] underline hover:text-[var(--color-accent-hover)] transition-colors break-all">{m[11]}</a>);
     last = m.index + m[0].length;
   }
   if (last < line.length) out.push(<React.Fragment key={`t${i}`}>{line.slice(last)}</React.Fragment>);

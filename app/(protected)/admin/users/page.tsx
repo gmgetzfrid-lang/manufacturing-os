@@ -374,7 +374,7 @@ export default function AdminUsersPage() {
           {members.length > memberLimit && (
             <div className="px-5 py-3 border-t border-[var(--color-border)] flex items-center justify-between text-[13px]">
               <span className="text-[var(--color-text-muted)]">{memberLimit} of {members.length} shown</span>
-              <button type="button" onClick={() => setMemberLimit((n) => n + 100)} className="font-bold text-[var(--color-accent)] hover:underline">
+              <button type="button" onClick={() => setMemberLimit((n) => n + 100)} className="font-bold text-[var(--color-accent-text)] hover:underline">
                 Show {Math.min(100, members.length - memberLimit)} more
               </button>
             </div>
@@ -487,7 +487,7 @@ function RoleAddPicker({
         type="button"
         disabled={disabled}
         onClick={() => setOpen((o) => !o)}
-        className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[11px] font-bold border border-dashed border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:border-[var(--color-accent-ring)] hover:text-[var(--color-accent)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[11px] font-bold border border-dashed border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:border-[var(--color-accent-ring)] hover:text-[var(--color-accent-text)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
       >
         <Plus className="w-3 h-3" /> Add role
       </button>

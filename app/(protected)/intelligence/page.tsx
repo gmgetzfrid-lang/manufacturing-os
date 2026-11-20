@@ -338,7 +338,7 @@ function StatusCard({ ok, title, okText, fixText, href, cta, pending }: {
         {ok ? okText : fixText}
       </p>
       {!ok && (
-        <Link href={href} className="mt-1.5 inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">
+        <Link href={href} className="mt-1.5 inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)]">
           {cta} <ArrowRight className="w-3 h-3" />
         </Link>
       )}

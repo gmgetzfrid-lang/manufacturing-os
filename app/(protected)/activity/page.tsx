@@ -275,7 +275,7 @@ export default function ActivityFeedPage() {
                           <span className="font-bold text-[var(--color-text)]">{r.userEmail?.split("@")[0] ?? "Someone"}</span>
                           {" "}<span className="text-[var(--color-text-muted)]">{verb}</span>{" "}
                           {href ? (
-                            <Link href={href} className="font-bold text-[var(--color-text)] hover:text-[var(--color-accent)] underline-offset-2 hover:underline transition-colors">
+                            <Link href={href} className="font-bold text-[var(--color-text)] hover:text-[var(--color-accent-text)] underline-offset-2 hover:underline transition-colors">
                               {resourceLabel}
                             </Link>
                           ) : (
@@ -292,7 +292,7 @@ export default function ActivityFeedPage() {
 
             {rows.length >= limit && (
               <div className="px-1">
-                <button type="button" onClick={() => setLimit((n) => n + 200)} className="text-[13px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">
+                <button type="button" onClick={() => setLimit((n) => n + 200)} className="text-[13px] font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)]">
                   Show 200 more
                 </button>
               </div>

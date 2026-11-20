@@ -191,7 +191,7 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
               {effOwner?.source && effOwner.source !== "document" && <span className="text-[var(--color-text-muted)]"> · from {effOwner.source === "collection" ? "folder" : "library"}</span>}
             </span>
             {canManage && !ownerPicking && (
-              <button onClick={() => setOwnerPicking(true)} className="ml-auto shrink-0 text-[11px] font-bold text-[var(--color-accent)] hover:underline">{effOwner?.userId ? "Reassign" : "Assign"}</button>
+              <button onClick={() => setOwnerPicking(true)} className="ml-auto shrink-0 text-[11px] font-bold text-[var(--color-accent-text)] hover:underline">{effOwner?.userId ? "Reassign" : "Assign"}</button>
             )}
           </div>
           {canManage && ownerPicking && (

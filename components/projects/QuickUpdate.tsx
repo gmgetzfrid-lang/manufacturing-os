@@ -385,7 +385,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
   if (hidden) {
     return (
       <div className="flex justify-end">
-        <button type="button" onClick={() => { setHidden(false); store.set(HIDE_KEY, null); }} className="text-[11px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-accent)]">
+        <button type="button" onClick={() => { setHidden(false); store.set(HIDE_KEY, null); }} className="text-[11px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-accent-text)]">
           Show Update by note
         </button>
       </div>
@@ -628,7 +628,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
               })}
               {review.lines.length === 0 && <li className="px-4 py-6 text-center text-[13px] text-[var(--color-text-muted)]">Nothing in the note matched a step.</li>}
               <li className="px-4 py-2.5">
-                <button type="button" onClick={() => addLine("")} className="inline-flex items-center gap-1.5 text-[12.5px] font-bold text-[var(--color-accent)] hover:underline"><Plus className="w-4 h-4" /> Add a line it missed</button>
+                <button type="button" onClick={() => addLine("")} className="inline-flex items-center gap-1.5 text-[12.5px] font-bold text-[var(--color-accent-text)] hover:underline"><Plus className="w-4 h-4" /> Add a line it missed</button>
               </li>
             </ul>
             {review.unplaced.length > 0 && (
@@ -638,7 +638,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
                   {review.unplaced.map((u, i) => (
                     <li key={i} className="flex flex-wrap items-baseline gap-x-2">
                       <span>“{u.text}” <span className="text-[var(--color-text-muted)]">· {u.why}</span></span>
-                      <button type="button" onClick={() => addLine(u.text, i)} className="font-bold text-[var(--color-accent)] hover:underline">Put it on a step</button>
+                      <button type="button" onClick={() => addLine(u.text, i)} className="font-bold text-[var(--color-accent-text)] hover:underline">Put it on a step</button>
                     </li>
                   ))}
                 </ul>
@@ -700,7 +700,7 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
               {l.found === "meaning" && <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">Matched by meaning (no word in common with the step&apos;s name). Check it&apos;s the right step.</div>}
               {l.woNote && <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">{l.woNote}</div>}
               {l.group && <div className="text-[11.5px] text-[var(--color-text-muted)]">Your note says this about {l.group} steps: it goes on each of them.</div>}
-              <button type="button" onClick={() => onEdit({ stepId: null, options: l.options.length ? l.options : [step.id] })} className="text-[11.5px] font-semibold text-[var(--color-accent)] hover:underline">Wrong step? Pick another</button>
+              <button type="button" onClick={() => onEdit({ stepId: null, options: l.options.length ? l.options : [step.id] })} className="text-[11.5px] font-semibold text-[var(--color-accent-text)] hover:underline">Wrong step? Pick another</button>
             </div>
           ) : (
             <div className="space-y-1">
@@ -713,7 +713,7 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
                   </button>
                 ))}
                 {onAll && options.length > 1 && (
-                  <button type="button" onClick={onAll} className="rounded-lg border border-dashed border-[var(--color-accent)] px-2.5 py-1.5 text-[12px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]">
+                  <button type="button" onClick={onAll} className="rounded-lg border border-dashed border-[var(--color-accent)] px-2.5 py-1.5 text-[12px] font-bold text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]">
                     All {options.length} of these
                   </button>
                 )}
@@ -766,7 +766,7 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
               <span className="text-[var(--color-text)]">
                 <b>{whenWords(l.at, tz, times)}</b>
                 <span className="text-[var(--color-text-muted)]"> · {l.timeFrom === "said" ? `you said “${l.timeWords}”` : l.timeFrom === "picked" ? "picked" : `no time said: ${defaultLabel.split(",")[0].toLowerCase()}`}</span>
-                {!changing && <button type="button" onClick={() => setChanging(true)} className="ml-2 font-semibold text-[var(--color-accent)] hover:underline">Change time</button>}
+                {!changing && <button type="button" onClick={() => setChanging(true)} className="ml-2 font-semibold text-[var(--color-accent-text)] hover:underline">Change time</button>}
               </span>
             ) : l.ampm ? (
               <span className="flex flex-wrap items-center gap-1.5">

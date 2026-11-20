@@ -111,7 +111,7 @@ export default function AddToPackageButton({ doc, orgId, userId, userName, openS
                 <div className="px-2 py-1.5 text-[11px] text-[var(--color-text-muted)]">No open packages yet.</div>
               )}
               <button onClick={() => void createAndAdd()}
-                className="w-full text-left px-2 py-1.5 rounded-lg text-xs font-bold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] inline-flex items-center gap-1.5">
+                className="w-full text-left px-2 py-1.5 rounded-lg text-xs font-bold text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)] inline-flex items-center gap-1.5">
                 <Plus className="w-3 h-3" /> New package with this drawing…
               </button>
             </>
