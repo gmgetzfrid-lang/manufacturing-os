@@ -16,6 +16,8 @@
 //   5. Stale-checkout escalation: checkouts held past 14 days notify the
 //      org's DocCtrl/Admin pool (a stale lock stops being the holder's
 //      private secret).
+//   6. One-time passwords not replaced by the end of their day: the
+//      account is suspended until an admin resets it.
 //
 // Auth: server-to-server. If CRON_SECRET is set, require it as a Bearer
 // token. Degrades gracefully if optional env vars are missing.
@@ -40,6 +42,7 @@ import { resolveAllOrgs } from "@/lib/estate/resolverServer";
 import { registryAllOrgs } from "@/lib/estate/connectServer";
 import { supabaseAdmin as estateAdmin } from "@/lib/supabaseAdmin";
 import { runPlatformStorageAlerts } from "@/lib/storageUsage";
+import { suspendExpiredTempPasswords } from "@/lib/signinPolicyServer";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -75,6 +78,7 @@ async function handler(req: NextRequest) {
     knowledgeSync?: { libraries: number; added: number; refreshed: number; removed: number };
     knowledgeIngest?: { docs: number; pages: number; completed: number };
     platformStorage?: { r2Pct: number; dbPct: number; alerts: number };
+    tempPasswords?: { checked: number; suspended: number };
     embedDrain?: { libraries: number; embedded: number };
     estateResolve?: { orgs: number; applied: number; pending: number };
     estateRegistry?: { libraries: number; applied: number; assets: number };
@@ -287,6 +291,15 @@ async function handler(req: NextRequest) {
     result.platformStorage = { r2Pct: status.r2.pct, dbPct: status.db.pct, alerts };
   } catch (e) {
     result.errors.push(`platform-storage: ${(e as Error).message}`);
+  }
+
+  // 9b. ONE-TIME PASSWORDS past their day: suspend the account until an
+  //     admin resets it. (Sign-in also checks, so this is the backstop for
+  //     anyone who never came back.)
+  try {
+    result.tempPasswords = await suspendExpiredTempPasswords();
+  } catch (e) {
+    result.errors.push(`temp-passwords: ${(e as Error).message}`);
   }
 
   // 10. MEANING-INDEX DRAIN — advance consented embedding builds. This rides

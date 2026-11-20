@@ -12,6 +12,7 @@ import { supabase, setPreferMicrosoft } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
+import ChangePassword from "@/components/admin/ChangePassword";
 import { Pill } from "@/components/admin/kit";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import FileThumb from "@/components/ui/FileThumb";
@@ -234,6 +235,8 @@ export default function ProfilePage() {
             </div>
           </form>
         </Card>
+
+        <ChangePassword />
 
         <Card label={<span className="inline-flex items-center gap-2.5"><span aria-hidden className="ui-icon-tile is-sm is-solid"><Building2 className="w-4 h-4" /></span>Workspaces{orgs.length > 1 ? <span className="ui-count is-solid">{orgs.length}</span> : null}</span>} pad={false} className="overflow-hidden">
           {orgs.length === 0 ? (

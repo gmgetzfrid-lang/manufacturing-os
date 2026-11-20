@@ -1,6 +1,7 @@
 "use client";
 
 import { AuthCard } from "@/components/marketing/AuthCard";
+import { checkSignin } from "@/lib/signinCheck";
 import React, { useCallback, useEffect, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { supabase, setRememberSession, setPreferMicrosoft, prefersMicrosoft } from '@/lib/supabase';
@@ -204,13 +205,31 @@ export default function LoginPage() {
     setError(null);
     setRememberSession(keepSignedIn);
 
-    const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
+    const { data: signedIn, error: authError } = await supabase.auth.signInWithPassword({ email, password });
     if (authError) {
       let msg = "Failed to sign in. Please try again.";
       if (authError.message.includes("Invalid login credentials")) msg = "Invalid email or password.";
       else if (authError.message.includes("Email not confirmed")) msg = "Please confirm your email before signing in.";
       else if (authError.message.includes("Too many requests")) msg = "Too many failed attempts. Try again later.";
       setError(msg);
+      setLoading(false);
+      return;
+    }
+    // The workspace's sign-in rules decide what happens next.
+    const verdict = await checkSignin(signedIn.session?.access_token ?? null);
+    if (verdict.action === "use_microsoft") {
+      await supabase.auth.signOut();
+      setError("Your company account signs in with Microsoft. Use Sign in with Microsoft below.");
+      setLoading(false);
+    } else if (verdict.action === "expired") {
+      await supabase.auth.signOut();
+      setError("Your one-time password expired at the end of the day it was issued, so the account is suspended. Ask your admin to reset it.");
+      setLoading(false);
+    } else if (verdict.action === "set_password") {
+      router.push('/set-password');
+    } else if (verdict.action === "error") {
+      await supabase.auth.signOut();
+      setError("Couldn't finish signing you in. Check your connection and try again.");
       setLoading(false);
     } else {
       router.push('/dashboard');
@@ -284,6 +303,7 @@ export default function LoginPage() {
           </p>
           <Link href="/about" className={link}>About Manufacturing OS</Link>
         </div>
+        <p className="text-[13px] text-[var(--color-text-muted)]">Forgot your password? Ask your workspace admin to reset it. Company accounts reset through Microsoft.</p>
         <p className="text-[13px] text-[var(--color-text-muted)]">Version 2.1.0. Authorized use only.</p>
       </>}
     >

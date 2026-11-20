@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { passwordProblem } from "@/lib/signinPolicy";
 
 const TRIAL_DAYS = 60;
 
@@ -45,6 +46,10 @@ export async function POST(req: NextRequest) {
 
     const { email, password, displayName, companyName } = await req.json();
 
+    // The same password rules as everywhere else (12+ characters, not a
+    // common one); checked here so the browser can't skip them.
+    const weak = typeof password === "string" ? passwordProblem(password, email) : "Enter a password.";
+    if (weak) return NextResponse.json({ error: weak }, { status: 400 });
     if (!email || !password || !displayName || !companyName) {
       await recordSignupAttempt(ip, null, "error");
       return NextResponse.json({ error: "All fields are required." }, { status: 400 });
@@ -92,6 +97,8 @@ export async function POST(req: NextRequest) {
       email,
       password,
       user_metadata: { display_name: displayName },
+      // They chose this password themselves.
+      app_metadata: { password_owned: true },
       email_confirm: true,
     });
 

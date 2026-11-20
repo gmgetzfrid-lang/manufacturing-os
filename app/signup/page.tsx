@@ -1,5 +1,6 @@
 "use client";
 
+import { passwordProblem } from "@/lib/signinPolicy";
 import React, { useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
@@ -42,8 +43,9 @@ export default function SignupPage() {
     setLoading(true);
     setError(null);
 
-    if (formData.password.length < 6) {
-      setError("Password must be at least 6 characters.");
+    const weak = passwordProblem(formData.password, formData.email);
+    if (weak) {
+      setError(weak);
       setLoading(false);
       return;
     }
@@ -194,7 +196,7 @@ export default function SignupPage() {
                       <Lock className={iconCls} />
                       <input id="su-password" type="password" value={formData.password} onChange={(e) => setFormData({...formData, password: e.target.value})}
                         className={inputCls}
-                        placeholder="At least 6 characters" autoComplete="new-password" minLength={6} required />
+                        placeholder="At least 12 characters" autoComplete="new-password" minLength={12} required />
                     </div>
                   </div>
                   <div>
@@ -203,7 +205,7 @@ export default function SignupPage() {
                       <Lock className={iconCls} />
                       <input id="su-confirm" type="password" value={formData.confirmPassword} onChange={(e) => setFormData({...formData, confirmPassword: e.target.value})}
                         className={inputCls}
-                        placeholder="Repeat your password" autoComplete="new-password" minLength={6} required />
+                        placeholder="Repeat your password" autoComplete="new-password" minLength={12} required />
                     </div>
                   </div>
                   </div>

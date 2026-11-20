@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { ALL_ROLES } from "@/types/schema";
+import { mustUseMicrosoft, domainOf } from "@/lib/signinPolicy";
+import { generateTempPassword, getSigninPolicy, sanitizeExpiry, tempMeta } from "@/lib/signinPolicyServer";
 
 // Bounded lookup of an auth user by email. Only used in the rare path where the
 // auth account already exists (e.g. they signed in with Microsoft first) but
@@ -30,12 +32,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { email, password, orgId, role, displayName } = await req.json() as {
+  // No password comes from the admin: company emails sign in with
+  // Microsoft, and everyone else gets a one-time password issued here that
+  // they must replace the same day (see lib/signinPolicy).
+  const { email, orgId, role, displayName, expiresAt } = await req.json() as {
     email: string;
-    password: string;
     orgId: string;
     role: string;
     displayName?: string;
+    /** The end of the admin's day, from their browser. */
+    expiresAt?: string;
   };
 
   if (!email?.trim()) {
@@ -71,6 +77,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Only an Admin can grant the Admin role" }, { status: 403 });
   }
 
+  const policy = await getSigninPolicy(orgId);
+  const viaMicrosoft = mustUseMicrosoft(email, policy);
+  if (!viaMicrosoft && !policy.allowPasswords) {
+    return NextResponse.json({ error: `This workspace only lets people in with Microsoft. ${domainOf(email) || "That email"} isn't one of its Microsoft domains.` }, { status: 400 });
+  }
+  let tempPassword: string | null = null;
+  let tempExpires: string | null = null;
+
   // Resolve the target auth user. Reuse an existing account when the email is
   // already registered — e.g. the person already signed in with Microsoft, or
   // they belong to another workspace — rather than failing on a duplicate email.
@@ -87,11 +101,11 @@ export async function POST(req: NextRequest) {
   }
 
   if (!userId) {
-    const { data, error } = await supabaseAdmin.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-    });
+    if (!viaMicrosoft) { tempPassword = generateTempPassword(); tempExpires = sanitizeExpiry(expiresAt); }
+    const { data, error } = await supabaseAdmin.auth.admin.createUser(viaMicrosoft
+      // Signs in with Microsoft: no password at all on the account.
+      ? { email, email_confirm: true }
+      : { email, password: tempPassword!, email_confirm: true, app_metadata: tempMeta(caller.id, tempExpires!) });
     if (data?.user) {
       userId = data.user.id;
       createdNewUser = true;
@@ -169,5 +183,11 @@ export async function POST(req: NextRequest) {
     updated_at: new Date().toISOString(),
   });
 
-  return NextResponse.json({ uid: userId });
+  return NextResponse.json({
+    uid: userId,
+    signIn: viaMicrosoft ? "microsoft" : createdNewUser ? "password" : "existing",
+    // Shown once to the admin to pass on; never stored or logged.
+    tempPassword: createdNewUser ? tempPassword : null,
+    expiresAt: createdNewUser ? tempExpires : null,
+  });
 }

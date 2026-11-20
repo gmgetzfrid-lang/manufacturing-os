@@ -26,6 +26,8 @@ import { Spinner } from "@/components/ui/Spinner";
 import { SlowNotice, useElapsed, startOver } from "@/components/system/SlowNotice";
 import { useKeepScroll } from "@/hooks/useKeepScroll";
 import { flushHistory } from "@/lib/historyQueue";
+import { checkSignin } from "@/lib/signinCheck";
+import { useRouter } from "next/navigation";
 
 const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
   const { loading, uid, userEmail, membershipState } = useRole();
@@ -46,6 +48,27 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
     window.addEventListener("online", on);
     return () => { window.clearInterval(t); window.removeEventListener("online", on); };
   }, []);
+
+  // A remembered session gets the workspace's sign-in rules once per visit:
+  // a company email that signed in with a password, or a one-time password
+  // past its day, is signed out; a one-time password still in its day must
+  // be replaced first.
+  const router = useRouter();
+  React.useEffect(() => {
+    if (!uid) return;
+    const key = `signin-checked:${uid}`;
+    try { if (sessionStorage.getItem(key)) return; } catch { /* check every time */ }
+    let alive = true;
+    void (async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      const v = await checkSignin(session?.access_token ?? null);
+      if (!alive) return;
+      if (v.action === "use_microsoft" || v.action === "expired") { await supabase.auth.signOut(); router.replace("/"); return; }
+      if (v.action === "set_password") { router.replace("/set-password"); return; }
+      if (v.action === "ok") { try { sessionStorage.setItem(key, "1"); } catch { /* fine */ } }
+    })();
+    return () => { alive = false; };
+  }, [uid, router]);
 
   if (loading) {
     return (

@@ -8,6 +8,7 @@ import { addableRoles, capabilitiesAdded, primaryRole, CAPABILITY_LABELS } from 
 import {
   UserPlus,
   Trash2,
+  KeyRound,
   AlertCircle,
   Loader2,
   Building2,
@@ -25,6 +26,9 @@ import LoadingBlock from '@/components/ui/LoadingBlock';
 import { Modal, ModalHeader, ModalBody } from '@/components/ui/Modal';
 import UserAvatar from '@/components/ui/UserAvatar';
 import { appAlert, appConfirm } from '@/components/providers/DialogProvider';
+import { DEFAULT_SIGNIN_POLICY, mustUseMicrosoft, endOfDay, type SigninPolicy } from '@/lib/signinPolicy';
+import { loadSigninPolicy } from '@/lib/signinPolicyClient';
+import { TempPasswordNotice } from '@/components/admin/TempPasswordNotice';
 
 interface MemberRow {
   id: string;
@@ -89,9 +93,15 @@ export default function AdminUsersPage() {
     firstName: '',
     lastName: '',
     email: '',
-    password: '',
     role: 'Viewer'
   });
+  // The workspace's sign-in rules: who uses Microsoft, whether others may
+  // have a password account (see lib/signinPolicy).
+  const [policy, setPolicy] = useState<SigninPolicy>(DEFAULT_SIGNIN_POLICY);
+  useEffect(() => { if (activeOrgId) void loadSigninPolicy(activeOrgId).then(setPolicy).catch(() => undefined); }, [activeOrgId]);
+  // A one-time password to show once, after adding or resetting.
+  const [issued, setIssued] = useState<{ email: string; password: string; expiresAt: string | null } | null>(null);
+  const [resettingId, setResettingId] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [memberLimit, setMemberLimit] = useState(100);
@@ -179,6 +189,32 @@ export default function AdminUsersPage() {
   // Remove a member from this workspace. Deletes the org_members row (revokes
   // access immediately) — it does NOT delete their login account, so they can
   // be re-added later. Guards against removing yourself.
+  // A new one-time password for someone who signs in with a password; it
+  // also lifts a suspension from an expired one.
+  const handleResetPassword = async (member: MemberRow) => {
+    if (!activeOrgId || !member.uid) return;
+    const who = member.display_name || member.email || 'this member';
+    if (!(await appConfirm({ message: `Give ${who} a new one-time password? Their current password stops working, and they must set their own today.` }))) return;
+    setResettingId(member.id);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error('Not signed in');
+      const res = await fetch('/api/admin/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ orgId: activeOrgId, uid: member.uid, expiresAt: endOfDay() }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || 'Reset failed');
+      setIssued({ email: member.email, password: body.tempPassword, expiresAt: body.expiresAt ?? null });
+      fetchMembers();
+    } catch (err) {
+      await appAlert({ message: `Couldn't reset the password: ${err instanceof Error ? err.message : String(err)}`, tone: 'danger' });
+    } finally {
+      setResettingId(null);
+    }
+  };
+
   const handleRemoveMember = async (member: MemberRow) => {
     if (!!uid && member.uid === uid) {
       await appAlert("You can't remove yourself from the workspace.");
@@ -221,10 +257,10 @@ export default function AdminUsersPage() {
         },
         body: JSON.stringify({
           email: formData.email,
-          password: formData.password,
           orgId: activeOrgId,
           role: formData.role,
           displayName,
+          expiresAt: endOfDay(),
         }),
       });
 
@@ -232,8 +268,9 @@ export default function AdminUsersPage() {
       if (!res.ok) throw new Error(body.error || 'Failed to create user');
 
       try { localStorage.setItem(LAST_ROLE_KEY, formData.role); } catch { /* private mode */ }
-      setFormData({ firstName: '', lastName: '', email: '', password: '', role: formData.role });
+      setFormData({ firstName: '', lastName: '', email: '', role: formData.role });
       setIsModalOpen(false);
+      if (body.tempPassword) setIssued({ email: formData.email, password: body.tempPassword, expiresAt: body.expiresAt ?? null });
       fetchMembers();
 
     } catch (err) {
@@ -304,7 +341,7 @@ export default function AdminUsersPage() {
                   const isSelf = !!uid && m.uid === uid;
                   const locked = isSelf || savingRoleId === m.id;
                   const status = m.status === 'active'
-                    ? <Pill tone="good">Active</Pill>
+                    ? <span className="inline-flex items-center gap-1.5"><Pill tone="good">Active</Pill>{mustUseMicrosoft(m.email, policy) && <span className="ui-tag" title="Signs in with Microsoft">Microsoft</span>}</span>
                     : <Pill tone={m.status === 'disabled' || m.status === 'removed' ? 'bad' : 'warn'}>{m.status.charAt(0).toUpperCase() + m.status.slice(1)}</Pill>;
                   return (
                     <tr key={m.id} className={`${tbl.tr} max-sm:grid max-sm:grid-cols-[1fr_auto] max-sm:py-1`}>
@@ -356,7 +393,19 @@ export default function AdminUsersPage() {
                       <td className={`${tbl.td} max-md:hidden whitespace-nowrap text-[var(--color-text-muted)]`}>
                         {shortDate(m.created_at) || '-'}
                       </td>
-                      <td className={`${tbl.td} max-sm:col-start-2 max-sm:row-start-1 text-right`}>
+                      <td className={`${tbl.td} max-sm:col-start-2 max-sm:row-start-1 text-right whitespace-nowrap`}>
+                        {!mustUseMicrosoft(m.email, policy) && policy.allowPasswords && !isSelf && (activeRole === 'Admin' || activeRole === 'DocCtrl') && (
+                          <button
+                            type="button"
+                            onClick={() => void handleResetPassword(m)}
+                            disabled={resettingId === m.id}
+                            title={m.status === 'suspended' ? 'Reset the password and lift the suspension' : 'Give them a new one-time password'}
+                            aria-label={`Reset ${m.display_name || m.email}'s password`}
+                            className={`${btnIcon} hover:text-[var(--color-accent-text)]`}
+                          >
+                            {resettingId === m.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />}
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => handleRemoveMember(m)}
@@ -389,6 +438,7 @@ export default function AdminUsersPage() {
       </PageBody>
 
       {/* Add User Modal */}
+      {issued && <TempPasswordNotice email={issued.email} password={issued.password} expiresAt={issued.expiresAt} onClose={() => setIssued(null)} />}
       {isModalOpen && (
         <Modal onClose={() => { if (!processing) setIsModalOpen(false); }} size="sm" dismissable={!processing}>
           <ModalHeader icon={UserPlus} title="Add a member" onClose={processing ? undefined : () => setIsModalOpen(false)} />
@@ -429,14 +479,15 @@ export default function AdminUsersPage() {
                 />
               </div>
 
-              <div>
-                <label className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">Temporary password</label>
-                <Input
-                  required type="text" value={formData.password}
-                  onChange={e => setFormData({...formData, password: e.target.value})}
-                  placeholder="e.g. Welcome2024!"
-                />
-              </div>
+              {formData.email.includes('@') && (
+                mustUseMicrosoft(formData.email, policy) ? (
+                  <p className="flex items-start gap-2 text-[14px] text-[var(--color-text)]"><span className="ui-pill is-solid shrink-0">Microsoft</span> Signs in with their company Microsoft account. No password is made.</p>
+                ) : policy.allowPasswords ? (
+                  <p className="flex items-start gap-2 text-[14px] text-[var(--color-text)]"><span className="ui-pill is-warn shrink-0">Password</span> Gets a one-time password to set their own today. If they don&apos;t, the account is suspended until you reset it.</p>
+                ) : (
+                  <p className="flex items-start gap-2 text-[14px] text-[var(--state-overdue)]"><span className="ui-pill is-bad shrink-0">Not allowed</span> This workspace only lets people in with Microsoft.</p>
+                )
+              )}
 
               <div>
                 <label className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">Role</label>
@@ -455,7 +506,7 @@ export default function AdminUsersPage() {
                   Create account
                 </Button>
                 <p className="text-[13px] text-center text-[var(--color-text-muted)] mt-2.5">
-                  They can sign in right away with these details.
+                  {mustUseMicrosoft(formData.email, policy) ? "They sign in with Microsoft using this email." : "You'll get a one-time password to give them."}
                 </p>
               </div>
             </form>

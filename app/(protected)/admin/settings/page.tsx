@@ -24,6 +24,8 @@ import { tbl, sheet, field, link, btnPrimary, btnQuiet, FormRow, Section, Pill, 
 import { plural } from "@/components/admin/band";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import { appAlert } from "@/components/providers/DialogProvider";
+import SigninSettings from "@/components/admin/SigninSettings";
+import { domainOf } from "@/lib/signinPolicy";
 
 const ADMIN_ROLES = new Set(["Admin", "DocCtrl"]);
 
@@ -38,7 +40,7 @@ interface OrgSummary {
 }
 
 export default function WorkspaceSettingsPage() {
-  const { activeRole, activeOrgId } = useRole();
+  const { activeRole, activeOrgId, userEmail } = useRole();
   const canRead = !!activeRole && ADMIN_ROLES.has(activeRole);
   const [org, setOrg] = useState<OrgSummary | null>(null);
   const [memberCount, setMemberCount] = useState<number | null>(null);
@@ -169,6 +171,8 @@ export default function WorkspaceSettingsPage() {
         )}
 
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-x-6 gap-y-8 items-start">
+          {activeOrgId && <SigninSettings orgId={activeOrgId} canEdit={activeRole === "Admin"} suggestDomain={domainOf(userEmail) || null} />}
+
           {/* Identity */}
           <Section label="Workspace" icon={Building2}>
             <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
