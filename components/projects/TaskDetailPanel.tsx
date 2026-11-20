@@ -95,7 +95,7 @@ export default function TaskDetailPanel({
   const [notes, setNotes] = useState<MilestoneNote[]>([]);
   const [noteDraft, setNoteDraft] = useState("");
   // A note being typed survives a reload until it's added.
-  useDraft<string>(canEdit && m.id ? `task-note:${m.id}` : null, noteDraft, setNoteDraft, (v) => !v.trim());
+  useDraft<string>(canEdit && milestone.id ? `task-note:${milestone.id}` : null, noteDraft, setNoteDraft, (v) => !v.trim());
   // The activity list couldn't be read: said, not shown as "no activity".
   const [notesErr, setNotesErr] = useState(false);
   // Escape closes the panel, as its X does (an open field's own Escape
