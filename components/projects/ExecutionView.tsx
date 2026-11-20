@@ -32,7 +32,7 @@ import {
   FolderPlus, CalendarRange, X as XIcon, CheckSquare, Square,
   ZoomIn, ZoomOut, ListTree, Crosshair, Info, Zap, Eye, ListOrdered, Link2, Replace,
   Trash2,
-  HelpCircle,
+  HelpCircle, PanelLeftClose, PanelLeftOpen,
 } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import type { CancelledJob } from "@/lib/cancelledJobs";
@@ -230,7 +230,11 @@ export default function ExecutionView({
       if (v >= MIN_LEFT_W && v <= MAX_LEFT_W) setUserLeftW(v);
     } catch { /* private mode */ }
   }, []);
-  const leftW = compact ? 168 : userLeftW;
+  // On a phone the task column is a lean list (status, name, dates) taking
+  // a bit over half the width; folded, it keeps only the status dots so the
+  // bars have the room.
+  const [namesFolded, setNamesFolded] = useState(false);
+  const leftW = compact ? (namesFolded ? 44 : Math.round(Math.min(260, Math.max(180, viewportW * 0.56)))) : userLeftW;
   const startResize = (e: React.PointerEvent) => {
     e.preventDefault();
     const x0 = e.clientX, w0 = userLeftW;
@@ -1513,13 +1517,21 @@ export default function ExecutionView({
                   onDoubleClick={() => { setUserLeftW(LEFT_W); try { localStorage.removeItem("timeline:leftW"); } catch { /* private mode */ } }}
                   className="absolute top-0 -right-1 z-30 h-full w-2 cursor-col-resize hover:bg-[var(--color-main)]/30 active:bg-[var(--color-main)]/50" />
               )}
-              <div className="sticky top-0 z-10 bg-[var(--color-surface)]/95 backdrop-blur border-b border-[var(--color-border)] flex items-center px-3 text-[13px] font-semibold text-[var(--color-text-muted)]" style={{ height: AXIS_H }}>
-                <ListTree className="w-3.5 h-3.5 mr-1.5 text-[var(--color-text-muted)]" /> Work breakdown
+              <div className={`sticky top-0 z-10 bg-[var(--color-surface)]/95 backdrop-blur border-b border-[var(--color-border)] flex items-center text-[13px] font-semibold text-[var(--color-text-muted)] ${compact && namesFolded ? "justify-center px-1" : "px-3"}`} style={{ height: AXIS_H }}>
+                {!(compact && namesFolded) && <><ListTree className="w-3.5 h-3.5 mr-1.5 text-[var(--color-text-muted)]" /> <span className="flex-1 truncate">Work breakdown</span></>}
+                {compact && (
+                  <button type="button" onClick={() => setNamesFolded((v) => !v)} aria-pressed={!namesFolded}
+                    aria-label={namesFolded ? "Show task names" : "Hide task names for more chart"} title={namesFolded ? "Show task names" : "Hide task names for more chart"}
+                    className="shrink-0 w-8 h-8 -mr-1 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                    {namesFolded ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
+                  </button>
+                )}
               </div>
               {win.first > 0 && <div style={{ height: win.first * ROW_H }} aria-hidden />}
               {rows.slice(win.first, win.last).map((r) => (
                 <OutlineRow
                   key={r.ms.id}
+                  lean={compact ? (namesFolded ? "dot" : "list") : undefined}
                   row={r}
                   span={spanOf(r.ms)}
                   work={r.hasChildren ? null : workShiftOf(r.ms, tz, shiftTimes)}
@@ -1864,9 +1876,12 @@ function Toolbar({
 // ─── Outline row (left, frozen) ────────────────────────────────
 
 function OutlineRow({
-  row, span, work, late, color, collapsed, selected, focused, canEdit, busy,
+  lean, row, span, work, late, color, collapsed, selected, focused, canEdit, busy,
   onToggleCollapse, onToggleSelected, onSetStatus, onSetProgress, onSetProgressNote, onStartNote, onSetDuration, onOpenDetail, onViewOnly, onSequence, criticalMark,
 }: {
+  /** On a phone: "list" keeps the status, the name and the dates (the
+   *  rest is in its panel, a tap on the name); "dot" just the status. */
+  lean?: "list" | "dot";
   row: FlatRow; span: { start: number; finish: number }; work: WorkShift | null;
   /** Past its finish and not done: said on the row itself. */
   late?: boolean;
@@ -1888,6 +1903,43 @@ function OutlineRow({
   const effStatus = hasChildren ? derivedStatus : ms.status;
   const checked = effStatus === "completed";
   const indent = 8 + depth * 16;
+  const status = hasChildren ? (
+    <StatusControl status={derivedStatus} variant="dot" size="md" readOnly title="Phase status: rolls up from sub-tasks" onPick={() => {}} />
+  ) : (
+    <StatusControl status={ms.status} busy={busy} disabled={!canEdit} onDisabledClick={onViewOnly} variant="dot" size="md" onPick={onSetStatus} percent={pct} onSetProgress={onSetProgress} onStartWithNote={onStartNote} />
+  );
+  const problem = !hasChildren && (ms.status === "blocked" || ms.status === "missed" || ms.status === "on_hold" || late)
+    ? (ms.status === "blocked" ? "Blocked" : ms.status === "missed" ? "Missed" : ms.status === "on_hold" ? "On hold" : "Late") : null;
+
+  // On a phone: a lean list row (status, name, dates and %), or just the
+  // status when the names are folded away. Selecting, the % control and
+  // the duration are in the task's panel, a tap on its name.
+  if (lean) {
+    return (
+      <div id={ms.id ? `exec-row-${ms.id}` : undefined}
+        className={`relative flex items-center gap-1.5 border-b border-[var(--color-border)] overflow-hidden ${lean === "dot" ? "justify-center" : "pr-2"} ${focused ? "ring-2 ring-inset ring-[var(--color-accent-ring)] bg-[var(--color-surface-2)]" : selected ? "bg-[var(--color-surface-2)]" : ""}`}
+        style={{ height: ROW_H, paddingLeft: lean === "dot" ? 0 : 6 + Math.min(depth, 5) * 10 }}>
+        <span className={`absolute left-0 top-0 bottom-0 w-[3px] ${problem && problem !== "On hold" ? "bg-[var(--state-overdue)]" : problem ? "bg-[var(--state-held)]" : color.rail} ${problem || depth === 0 ? "" : "opacity-40"}`} aria-hidden />
+        {lean === "list" && (hasChildren ? (
+          <button onClick={onToggleCollapse} aria-label={collapsed ? `Expand ${ms.name}` : `Collapse ${ms.name}`} aria-expanded={!collapsed}
+            className="shrink-0 w-6 h-8 -mx-0.5 inline-flex items-center justify-center rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
+            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${collapsed ? "-rotate-90" : ""}`} strokeWidth={2.5} />
+          </button>
+        ) : <span className="shrink-0 w-5" aria-hidden />)}
+        {status}
+        {lean === "list" && (
+          <button onClick={onOpenDetail} className="flex-1 min-w-0 text-left" title={`${ms.name} - open details`}>
+            <div className={`truncate text-[14px] leading-tight text-[var(--color-text)] ${ms.isSummary || hasChildren ? "font-semibold" : ""} ${checked && !hasChildren ? "text-[var(--color-text-muted)]" : ""}`}>{ms.name}</div>
+            <div className="flex items-center gap-1.5 text-[12px] leading-tight text-[var(--color-text-muted)] min-w-0">
+              {problem && <span className={`shrink-0 font-semibold ${problem === "On hold" ? "text-[var(--state-held)]" : "text-[var(--state-overdue)]"}`}>{problem}</span>}
+              <span className="truncate font-display tabular-nums">{spanLabel(span.start, span.finish, tz)}</span>
+              <span className="ml-auto shrink-0 font-display tabular-nums font-semibold text-[var(--color-text)]">{pct}%</span>
+            </div>
+          </button>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -1963,8 +2015,8 @@ function OutlineRow({
       {hasChildren ? (
         // Summary: read-only rolled-up progress bar.
         <div className="shrink-0 flex items-center gap-1" title={`${pct}% complete (rolled up from ${done}/${total} sub-tasks)`}>
-          <div className="w-9 h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-            <div className={`h-full ${pct === 100 ? "bg-emerald-500" : "bg-[var(--color-text)]"}`} style={{ width: `${pct}%` }} />
+          <div className="w-9 h-1.5 rounded-full bg-[var(--color-accent-soft)] overflow-hidden">
+            <div className="h-full bg-[var(--color-main)]" style={{ width: `${pct}%` }} />
           </div>
           <span className="text-[11px] font-bold tabular-nums text-[var(--color-text-faint)] w-7 text-right">{pct}%</span>
         </div>
@@ -2241,7 +2293,7 @@ function Axis({ domain, pxPerDay, shiftTimes }: { domain: { start: Date; totalDa
             <div key={i} className={`absolute top-0 flex items-center gap-1 overflow-hidden border-b border-slate-200 dark:border-slate-700 ${b.night ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}
               style={{ left: b.x, width: b.w, height: SHIFT_ROW }} title={`${b.night ? "Night" : "Day"} shift from ${clock12(b.label)}`}>
               <div className="absolute top-0 bottom-0 left-0 w-px bg-slate-300 dark:bg-slate-600" />
-              <span className="pl-1 text-[11px] font-black whitespace-nowrap">{b.night ? "☾" : "☀"}{pxPerDay >= 110 ? ` ${b.night ? "Night" : "Day"} ${clock12(b.label)}` : ""}</span>
+              <span className="pl-1 text-[11px] font-semibold whitespace-nowrap">{b.night ? "☾" : "☀"}{pxPerDay >= 110 ? ` ${b.night ? "Night" : "Day"} ${clock12(b.label)}` : ""}</span>
             </div>
           ))}
           {hours.map((h, i) => (

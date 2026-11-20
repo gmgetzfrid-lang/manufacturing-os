@@ -70,7 +70,7 @@ export function BudgetDocDrop({ orgId, projectId, onRead, compact, label }: {
           </span>
         )}
         <span className="min-w-0">
-          <span className="block text-xs font-black text-[var(--color-text)] truncate">
+          <span className="block text-xs font-semibold text-[var(--color-text)] truncate">
             {drag.over ? drag.say : reading ? <><Loader2 className="w-3 h-3 animate-spin inline mr-1" />Reading {reading.name} · {fileSize(reading.size)}</> : label ?? "Drop your AFE, estimate, or budget sheet"}
           </span>
           <span className="block text-[11px] text-[var(--color-text-muted)]">
@@ -148,7 +148,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
       <div className="px-4 pt-3 pb-2 flex items-start gap-3">
         <span className="p-1.5 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)]"><Sparkles className="w-4 h-4" /></span>
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-black text-[var(--color-text)]">
+          <div className="text-sm font-semibold text-[var(--color-text)]">
             {[p.docType, p.docNumber].filter(Boolean).join(" ") || "Budget document"}{p.title ? ` - ${p.title}` : ""}
           </div>
           <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 flex flex-wrap gap-x-3">
@@ -239,7 +239,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
                         placeholder="-" className="w-36 h-7 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 text-[11px]" />
                       {l.supplier && !exists && (
                         <span title={known ? `Matches ${known.name} on this project` : "New company: it will be added"}
-                          className={`text-[11px] font-black ${known ? "text-emerald-600" : "text-[var(--color-text-faint)]"}`}>
+                          className={`text-[11px] font-semibold ${known ? "text-emerald-600" : "text-[var(--color-text-faint)]"}`}>
                           {known ? <Check className="w-3 h-3" /> : "new"}
                         </span>
                       )}
@@ -260,7 +260,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
           </tbody>
         </table>
         <button onClick={() => setLines((ls) => [...ls, { key: `n${Date.now()}`, include: true, name: "", amount: null, supplier: null, costType: "other", note: null }])}
-          className="mt-1 inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent-text)]"><Plus className="w-3 h-3" /> Add line</button>
+          className="mt-1 inline-flex items-center gap-1 text-[13px] text-[var(--color-accent-text)] hover:underline"><Plus className="w-3 h-3" /> Add line</button>
       </div>
 
       <div className="px-4 py-2.5 border-t border-[var(--color-border)] flex items-center gap-2 flex-wrap">
@@ -272,9 +272,9 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
         </span>
         {error && <span className="text-[11px] font-bold text-rose-700 dark:text-rose-300">{error}</span>}
         <span className="ml-auto flex items-center gap-2">
-          <button onClick={onClose} disabled={applying} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1">Cancel</button>
+          <button onClick={onClose} disabled={applying} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
           <button onClick={() => void apply()} disabled={applying || (plan.accountsToCreate.length === 0 && updating === 0 && recon.authorized == null)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {applying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />} {accounts.length ? "Apply" : "Build cost model"}
           </button>
         </span>
@@ -288,7 +288,7 @@ function Fact({ label, value, sub, tone }: { label: string; value: string; sub?:
   return (
     <div className={`rounded-xl border px-3 py-2 ${ring}`}>
       <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">{label}</div>
-      <div className="text-sm font-black tabular-nums text-[var(--color-text)]">{value}</div>
+      <div className="text-sm font-semibold tabular-nums text-[var(--color-text)]">{value}</div>
       {sub && <div className={`text-[11px] font-bold ${tone === "warn" ? "text-amber-700 dark:text-amber-300" : "text-[var(--color-text-muted)]"}`}>{sub}</div>}
     </div>
   );

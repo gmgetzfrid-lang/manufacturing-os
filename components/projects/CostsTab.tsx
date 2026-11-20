@@ -257,13 +257,13 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         {/* ── Burn bar: spent (solid) + committed (ghost) vs budget ── */}
         {rollup.budget > 0 && (
           <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
-            <div className="flex items-center justify-between gap-2 flex-wrap text-[12px] text-[var(--color-text-muted)] mb-1.5">
+            <div className="flex items-center justify-between gap-2 flex-wrap text-[13px] text-[var(--color-text-muted)] mb-1.5">
               <span className="font-semibold">Budget burn (estimated from quotes × schedule progress)</span>
               <span className="tabular-nums">{fmtMoney(outlook.estimatedToDate, cur)} est. to date · {fmtMoney(rollup.committed, cur)} quoted · {fmtMoney(rollup.budget, cur)} budget</span>
             </div>
-            <div className="relative h-2.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-              <div className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-border-strong)] transition-all duration-700" style={{ width: `${commitPct}%` }} />
-              <div className={`absolute inset-y-0 left-0 rounded-full transition-all duration-700 ${burnPct >= 100 ? "bg-rose-500" : "bg-[var(--color-text)]"}`} style={{ width: `${burnPct}%` }} />
+            <div className="relative h-2.5 rounded-full bg-[var(--color-accent-soft)] overflow-hidden">
+              <div className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-main)]/55 transition-all duration-700" style={{ width: `${commitPct}%` }} />
+              <div className={`absolute inset-y-0 left-0 rounded-full transition-all duration-700 ${burnPct >= 100 ? "bg-[var(--state-overdue)]" : "bg-[var(--color-main)]"}`} style={{ width: `${burnPct}%` }} />
             </div>
           </div>
         )}
@@ -412,7 +412,7 @@ export function OutlookCard({ outlook: o, rollup, cur, authorized, onQuotes }: {
                   ? <>: <b className={o.variance > 0 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300"}>{fmtMoney(Math.abs(o.variance), cur)} {o.variance > 0 ? "over" : "under"} budget</b></>
                   : ": on budget"}
                 {vsAuth != null && vsAuth > 0.5 && <>, <b className="text-rose-700 dark:text-rose-300">{fmtMoney(vsAuth, cur)} over the authorization</b> (a supplement may be needed)</>}.</>
-            : <>No quotes awarded yet, so the forecast is just the budget. <button onClick={onQuotes} className="font-bold text-[var(--color-accent-text)] hover:underline">Award quotes</button> and this becomes a real forecast.</>}
+            : <>No quotes awarded yet, so the forecast is just the budget. <button onClick={onQuotes} className="text-[var(--color-accent-text)] hover:underline">Award quotes</button> and this becomes a real forecast.</>}
         </li>
         {over.map(({ r, ol }) => (
           <li key={r.account.id} className="text-[var(--color-text-muted)]">
@@ -463,8 +463,8 @@ function BasisLine({ basis, budget, spent, cur, onOpen }: {
   return (
     <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex items-center gap-x-3 gap-y-1 flex-wrap text-[12px] text-[var(--color-text-muted)]">
       <FileCheck2 className="w-4 h-4 text-[var(--color-text-muted)]" />
-      {basis.afeNumber && <span className="font-black text-[var(--color-text)]">{basis.afeNumber}</span>}
-      {auth != null && <span><span className="font-black tabular-nums text-[var(--color-text)]">{fmtMoney(auth, cur)}</span> authorized</span>}
+      {basis.afeNumber && <span className="font-semibold text-[var(--color-text)]">{basis.afeNumber}</span>}
+      {auth != null && <span><span className="font-semibold tabular-nums text-[var(--color-text)]">{fmtMoney(auth, cur)}</span> authorized</span>}
       {auth != null && gap != null && Math.abs(gap) >= 1 && (
         <span className={gap < 0 ? "font-bold text-rose-700 dark:text-rose-300" : ""}>
           budget lines {gap < 0 ? "exceed" : "leave"} {fmtMoney(Math.abs(gap), cur)} {gap < 0 ? "over the authorization" : "unallocated"}
@@ -475,7 +475,7 @@ function BasisLine({ basis, budget, spent, cur, onOpen }: {
           {Math.round((spent / auth) * 100)}% of authorization spent
         </span>
       )}
-      {onOpen && <button onClick={onOpen} className="ml-auto font-bold text-[var(--color-text)] hover:underline">View the document</button>}
+      {onOpen && <button onClick={onOpen} className="ml-auto hover:underline text-[var(--color-accent-text)]">View the document</button>}
     </div>
   );
 }
@@ -490,7 +490,7 @@ function MoneyRow({ items }: { items: Array<[label: string, value: string, tone?
       {items.map(([k, v, tone, sub]) => (
         <div key={k} className="min-w-0">
           <dt className="text-[12px] text-[var(--color-text-muted)]">{k}</dt>
-          <dd className={`text-[15px] font-extrabold tabular-nums truncate ${tone === "bad" ? "text-rose-700 dark:text-rose-400" : tone === "good" ? "text-emerald-700 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>{v}</dd>
+          <dd className={`text-[15px] font-semibold tabular-nums truncate ${tone === "bad" ? "text-rose-700 dark:text-rose-400" : tone === "good" ? "text-emerald-700 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>{v}</dd>
           {sub && <dd className="text-[12px] text-[var(--color-text-muted)]">{sub}</dd>}
         </div>
       ))}
@@ -546,20 +546,20 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
         <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
           {entries.map((e) => (
             <li key={e.id} className={`px-3 py-2 flex flex-wrap items-center gap-2 text-xs ${e.status === "void" ? "opacity-50" : ""}`}>
-              <span className={`shrink-0 text-[11px] font-black px-1.5 py-0.5 rounded border ${
+              <span className={`shrink-0 text-[11px] font-semibold px-1.5 py-0.5 rounded border ${
                 e.entryType === "commitment" ? "text-[var(--color-text)] dark:text-[var(--color-text)] border-[var(--color-border-strong)] bg-[var(--color-surface-2)]"
                 : e.entryType === "actual" ? "text-[var(--color-text)] dark:text-[var(--color-text)] border-[var(--color-border-strong)] bg-[var(--color-surface-2)]"
                 : "text-amber-700 dark:text-amber-300 border-amber-500/40 bg-amber-500/10"}`}>
                 {e.entryType}
               </span>
-              <span className={`font-black tabular-nums ${e.status === "void" ? "line-through" : ""} text-[var(--color-text)]`}>{fmtMoney(e.amount, cur)}</span>
+              <span className={`font-semibold tabular-nums ${e.status === "void" ? "line-through" : ""} text-[var(--color-text)]`}>{fmtMoney(e.amount, cur)}</span>
               <span className="text-[var(--color-text-muted)] truncate">
                 {e.entryDate ? new Date(e.entryDate).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "-"}
                 {e.reference ? ` · ${e.reference}` : ""}
                 {e.description ? ` · ${e.description}` : ""}
                 {e.createdByName ? ` · ${e.createdByName}` : ""}
               </span>
-              {e.status === "void" && <span className="text-[11px] font-black text-[var(--color-text-faint)]">VOID</span>}
+              {e.status === "void" && <span className="text-[11px] font-semibold text-[var(--color-text-faint)]">VOID</span>}
               {canManage && e.status !== "void" && (
                 <button
                   onClick={async () => {
@@ -631,7 +631,7 @@ function EntryForm({ orgId, projectId, accountId, defaultParty, parties, actor, 
       <div className="inline-flex items-center rounded-lg border border-[var(--color-border)] p-0.5 gap-0.5">
         {ENTRY_TYPES.map((t) => (
           <button key={t.v} onClick={() => setType(t.v)} title={t.hint}
-            className={`px-2 py-1 rounded-md text-[11px] font-black transition-colors ${type === t.v ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
+            className={`px-2 py-1 rounded-md text-[11px] font-semibold transition-colors ${type === t.v ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
             {t.label}
           </button>
         ))}
@@ -651,7 +651,7 @@ function EntryForm({ orgId, projectId, accountId, defaultParty, parties, actor, 
       <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Description"
         className="h-8 flex-1 min-w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
       <button onClick={() => void submit()} disabled={saving}
-        className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
+        className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
         {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Post
       </button>
     </div>
@@ -750,7 +750,7 @@ function PartiesPanel({ orgId, projectId, actor, parties, canManage, onChanged }
           </select>
           <input value={trade} onChange={(e) => setTrade(e.target.value)} placeholder="Trade (piping, E&I…)" className="h-8 w-36 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
           <input value={contract} onChange={(e) => setContract(e.target.value)} placeholder="Contract value" inputMode="decimal" className="h-8 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-display tabular-nums" />
-          <button onClick={() => void add()} disabled={saving} className="h-8 inline-flex items-center gap-1 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[11px] font-black hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+          <button onClick={() => void add()} disabled={saving} className="h-8 inline-flex items-center gap-1 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[11px] font-semibold hover:bg-[var(--color-surface-2)] disabled:opacity-50">
             {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Add
           </button>
           {error && <span className="text-[11px] font-bold text-rose-700 dark:text-rose-300">{error}</span>}
@@ -819,8 +819,8 @@ function PartyEditor({ orgId, projectId, actor, party, onCancel, onSaved }: {
       <div className="flex items-center gap-2">
         {error && <span className="text-[11px] font-bold text-rose-700 dark:text-rose-300">{error}</span>}
         <span className="ml-auto flex items-center gap-2">
-          <button onClick={onCancel} className="px-2 py-1.5 text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
-          <button onClick={() => void save()} disabled={saving} className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+          <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+          <button onClick={() => void save()} disabled={saving} className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Save
           </button>
         </span>

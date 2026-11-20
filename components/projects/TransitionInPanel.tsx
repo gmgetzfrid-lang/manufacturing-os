@@ -145,7 +145,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
   if (candidates.length === 0) return msg ? <Card><div role="alert" className="text-[13px] font-bold text-rose-700 dark:text-rose-300">{msg}</div></Card> : null;
 
   return (
-    <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 space-y-3">
+    <div className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] p-4 sm:p-5 space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Transition in</span>
         <span className="text-[13px] text-[var(--color-text-muted)]">
@@ -173,7 +173,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
             {cols.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
           <button onClick={() => void adoptAllClean()} disabled={busy === "bulk" || cleanCount === 0 || !destLib}
-            className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+            className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {busy === "bulk" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
             Adopt {cleanCount} clean
           </button>
@@ -198,7 +198,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
                     </span>
                   ) : null}
                   {impact?.numberCollision && (
-                    <span className="inline-flex items-center gap-0.5 text-[11px] font-black text-rose-700 dark:text-rose-300"><ShieldAlert className="w-3 h-3" /> number collision</span>
+                    <span className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-rose-700 dark:text-rose-300"><ShieldAlert className="w-3 h-3" /> number collision</span>
                   )}
                   {impact && impact.overlapDocs.length > 0 && (
                     <span className="inline-flex items-center gap-0.5 text-[11px] font-bold text-amber-700 dark:text-amber-400"><Layers className="w-3 h-3" /> {impact.overlapDocs.length} overlap{impact.overlapDocs.length === 1 ? "" : "s"}</span>
@@ -247,12 +247,12 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
                       />
                       <button onClick={() => void adoptOne(c)} disabled={busy === c.docId || !destLib}
                         title={!destLib ? "Pick the destination library above" : undefined}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[11px] font-black disabled:opacity-50">
+                        className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
                         {busy === c.docId ? <Loader2 className="w-3 h-3 animate-spin" /> : <ArrowRightCircle className="w-3 h-3" />} Adopt
                       </button>
                       {!impact.clean && onFlagCollision && (
                         <button onClick={() => onFlagCollision(c, impact)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-amber-500/50 text-amber-700 dark:text-amber-400 text-[11px] font-black hover:bg-amber-500/10">
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-amber-500/50 text-amber-700 dark:text-amber-400 text-[11px] font-semibold hover:bg-amber-500/10">
                           <ShieldAlert className="w-3 h-3" /> Flag to drafting
                         </button>
                       )}

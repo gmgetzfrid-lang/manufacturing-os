@@ -32,7 +32,7 @@ import { woOf } from "@/lib/workOrderCrew";
 /** What the quick view saves for a step. */
 export type { StepUpdate } from "@/components/projects/StepCard";
 
-const DOT: Record<string, string> = { planned: "bg-slate-300", in_progress: "bg-[var(--color-text-muted)]", on_hold: "bg-amber-500", blocked: "bg-rose-600", missed: "bg-rose-800", completed: "bg-emerald-500" };
+const DOT: Record<string, string> = { planned: "bg-[var(--color-border-strong)]", in_progress: "bg-[var(--color-main)]", on_hold: "bg-[var(--state-held)]", blocked: "bg-[var(--state-overdue)]", missed: "bg-[var(--state-overdue)]", completed: "bg-[var(--state-released)]" };
 const WORD: Record<string, string> = { planned: "Not started", in_progress: "In progress", on_hold: "On hold", blocked: "Blocked", missed: "Missed", completed: "Done" };
 const ms = (v: unknown) => (v == null ? NaN : v instanceof Date ? v.getTime() : typeof v === "number" ? v : Date.parse(String(v)));
 
@@ -148,18 +148,18 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
     <div className="px-4 pt-3 pb-2.5 border-b border-[var(--color-border)]">
       <div className="flex items-start gap-2">
         <span className="pt-0.5 text-[13px] leading-snug font-semibold text-[var(--color-text-muted)] flex-1 min-w-0">{dayLabel}{all.length > 1 ? ` · ${onDay.length} of ${all.length} steps ${band ? "this shift" : "this day"}` : ""}</span>
-        {wos.length > 0 && <span className="pt-0.5 font-display tabular-nums text-[11.5px] font-semibold text-[var(--color-text-muted)] shrink-0">WO {wos.join(", ")}</span>}
+        {wos.length > 0 && <span className="pt-0.5 font-display tabular-nums text-[13px] font-semibold text-[var(--color-text-muted)] shrink-0">WO {wos.join(", ")}</span>}
         {onClose && <button type="button" onClick={onClose} aria-label="Close" className="-mr-1.5 w-8 h-8 shrink-0 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>}
       </div>
       <div className="mt-1 flex items-start gap-2">
         <Layers className="w-4 h-4 mt-0.5 text-[var(--color-text-muted)] shrink-0" aria-hidden />
-        <span className="text-[15px] font-bold leading-snug text-[var(--color-text)] flex-1 min-w-0 break-words">{task.name}</span>
+        <span className="font-display text-[17px] font-semibold leading-snug text-[var(--color-text)] flex-1 min-w-0 break-words">{task.name}</span>
       </div>
       {taskPct != null && (
-        <div className="mt-2 flex items-center gap-2 text-[12px] text-[var(--color-text)]">
+        <div className="mt-2 flex items-center gap-2 text-[13px] text-[var(--color-text)]">
           <span className="whitespace-nowrap"><b>Task {taskPct}%</b> done{taskPlan != null ? ` · plan ${taskPlan}%` : ""}</span>
-          <span className="relative flex-1 min-w-[60px] h-1.5 rounded-full bg-[var(--color-border)]" aria-hidden>
-            <span className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-text)]" style={{ width: `${Math.min(100, taskPct)}%` }} />
+          <span className="relative flex-1 min-w-[60px] h-1.5 rounded-full bg-[var(--color-accent-soft)]" aria-hidden>
+            <span className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-main)]" style={{ width: `${Math.min(100, taskPct)}%` }} />
             {taskPlan != null && <span className="absolute -top-[3px] w-0.5 h-3 bg-rose-700" style={{ left: `calc(${Math.min(100, taskPlan)}% - 1px)` }} />}
           </span>
           {Math.abs(taskHours) >= 0.1 && <b className={`font-display tabular-nums whitespace-nowrap ${taskHours < 0 ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>{taskHours > 0 ? "+" : "−"}{Math.abs(taskHours)} h</b>}
@@ -181,8 +181,8 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
           className={`w-full flex items-start gap-2 px-3 py-2 text-left hover:bg-[var(--color-surface-2)] ${isOpen ? "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]" : ""}`}>
           <span className={`mt-1 w-2.5 h-2.5 rounded-full shrink-0 ${DOT[m.status] ?? DOT.planned}`} aria-label={WORD[m.status]} />
           <span className="flex-1 min-w-0">
-            <span className={`block text-[12.5px] font-semibold break-words ${m.status === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{m.name} <PathTag id={m.id} marks={marks} /> <DiscoveryTag m={m} tz={tz} /></span>
-            {!isOpen && <><span className="block text-[11px] text-[var(--color-text-muted)]">
+            <span className={`block text-[14px] font-semibold break-words ${m.status === "completed" ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}>{m.name} <PathTag id={m.id} marks={marks} /> <DiscoveryTag m={m} tz={tz} /></span>
+            {!isOpen && <><span className="block text-[13px] text-[var(--color-text-muted)]">
               {(() => {
                 // Where it actually happened, beside the plan.
                 const b = builtSpan(m);
@@ -205,19 +205,19 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
                 return planned;
               })()}{m.status !== "completed" ? ` · plan ${plan}% by now` : ""}{m.workOrderRef && wos.length > 1 ? ` · WO ${m.workOrderRef}` : ""}
               {/* Who it's on: a blank one stands out (a name taken off by mistake). */}
-              {m.responsibleParty?.trim() ? <> · {m.responsibleParty.trim()}</> : <> · <span className="font-semibold text-amber-700 dark:text-amber-400">no crew named</span></>}
+              {m.responsibleParty?.trim() ? <> · {m.responsibleParty.trim()}</> : <> · <span className="font-semibold text-[var(--state-held)]">no crew named</span></>}
             </span>
             {held && (
-              <span className="block text-[11px] font-semibold text-amber-800 dark:text-amber-300">
+              <span className="block text-[13px] font-semibold text-[var(--state-held)]">
                 {WORD[m.status]}{Number.isFinite(info.since) ? ` since ${fmt(info.since)}` : ""}{m.statusReason ? `: “${m.statusReason}”` : ", no reason given"}
               </span>
             )}
-            {info.comment && <span className="block text-[11px] italic text-[var(--color-text-muted)] break-words">“{info.comment.body}” · {fmt(ms(info.comment.happenedAt ?? info.comment.createdAt))}</span>}
-            {info.why && h < 0 && <span className="block text-[11px] italic font-medium text-amber-800 dark:text-amber-300 break-words">Why behind: {info.why.body}</span>}</>}
+            {info.comment && <span className="block text-[13px] italic text-[var(--color-text-muted)] break-words">“{info.comment.body}” · {fmt(ms(info.comment.happenedAt ?? info.comment.createdAt))}</span>}
+            {info.why && h < 0 && <span className="block text-[13px] italic font-medium text-[var(--state-held)] break-words">Why behind: {info.why.body}</span>}</>}
           </span>
           <span className="shrink-0 flex flex-col items-end gap-0.5">
-            <span className={`rounded-md border px-1 text-[11px] font-bold tabular-nums ${pct >= 100 ? "text-emerald-700 bg-emerald-50 border-emerald-200 dark:text-emerald-300 dark:bg-emerald-950/40 dark:border-emerald-800" : pct > 0 ? "text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]" : "text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]"}`}>{pct}%</span>
-            {Math.abs(h) >= 0.1 && m.status !== "completed" && <span className={`font-display tabular-nums text-[11px] font-bold ${h < 0 ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>{h > 0 ? "+" : "−"}{Math.abs(h)} h</span>}
+            <span className={`rounded-full px-2 py-px font-display text-[13px] font-semibold tabular-nums ${pct >= 100 ? "bg-[color-mix(in_srgb,var(--state-released)_14%,transparent)] text-[var(--state-released)]" : "bg-[var(--color-surface-2)] text-[var(--color-text)] ring-1 ring-inset ring-[var(--color-border)]"}`}>{pct}%</span>
+            {Math.abs(h) >= 0.1 && m.status !== "completed" && <span className={`font-display tabular-nums text-[13px] font-semibold ${h < 0 ? "text-[var(--state-overdue)]" : "text-[var(--state-released)]"}`}>{h > 0 ? "+" : "−"}{Math.abs(h)} h</span>}
           </span>
           {/* A step opens to its card: start, %, finish, history. */}
           <ChevronRight className={`w-3.5 h-3.5 mt-1 shrink-0 text-[var(--color-text-faint)] transition-transform ${isOpen ? "rotate-90" : ""}`} aria-hidden />
@@ -235,7 +235,7 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
     <div>
       {!whole && header}
       {here.main.length === 0
-        ? <div className="px-3 py-3 text-[11px] text-[var(--color-text-faint)]">Nothing under this task is scheduled on {dayLabel}.</div>
+        ? <div className="px-3 py-3 text-[13px] text-[var(--color-text-muted)]">Nothing under this task is scheduled on {dayLabel}.</div>
         : whole ? (
           // The whole work order: its steps under the day each is planned,
           // the days ahead in view, today marked.
@@ -244,7 +244,7 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
             return (
               <React.Fragment key={m.id ?? m.name}>
                 {d !== prev && Number.isFinite(startMsOf(m)) && (
-                  <li className={`px-3 pt-2.5 pb-1 text-[11px] font-extrabold tracking-[0.14em] ${d === dayKey ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+                  <li className={`px-3 pt-2.5 pb-1 text-[13px] font-semibold ${d === dayKey ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
                     {fmtInTz(startMsOf(m), tz, { weekday: "short", month: "short", day: "numeric" })}{d === dayKey ? " · today" : ""}
                   </li>
                 )}
@@ -255,7 +255,7 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
         ) : <ul>{here.main.map((m) => stepRow(m))}</ul>}
       {here.rest.length > 0 && (
         <div className="border-t border-[var(--color-border)]">
-          <button type="button" onClick={() => setShowOthers((v) => !v)} aria-expanded={showOthers} className="w-full px-3 py-2 text-left text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] inline-flex items-center gap-1">
+          <button type="button" onClick={() => setShowOthers((v) => !v)} aria-expanded={showOthers} className="w-full px-3 py-2 text-left text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] inline-flex items-center gap-1">
             <ChevronRight className={`w-3 h-3 transition-transform ${showOthers ? "rotate-90" : ""}`} />
             {here.rest.length} step{here.rest.length === 1 ? "" : "s"} on other {band ? "shifts" : "days"}
           </button>
@@ -263,11 +263,11 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
         </div>
       )}
       {readErr && <div role="alert" className="px-3 py-1.5 border-t border-[var(--color-border)] text-[11px] text-rose-700 dark:text-rose-400">Couldn&apos;t read the comments and history for these steps. Reopen to try again.</div>}
-      <div className="px-3 py-2 border-t border-[var(--color-border)] flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[12px] text-[var(--color-text-muted)]">
+      <div className="px-3 py-2 border-t border-[var(--color-border)] flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[13px] text-[var(--color-text-muted)]">
         {onDiscovery ? (
-          <button type="button" onClick={() => onDiscovery(task)} className="inline-flex items-center gap-1 font-semibold text-[var(--color-text)] hover:underline"><Plus className="w-3.5 h-3.5" /> Discovery or added scope</button>
+          <button type="button" onClick={() => onDiscovery(task)} className="inline-flex items-center gap-1 hover:underline text-[var(--color-accent-text)]"><Plus className="w-3.5 h-3.5" /> Discovery or added scope</button>
         ) : <span>Tap a step to update it.</span>}
-        {onOpenDetail && <button type="button" onClick={() => onOpenDetail(task)} className="font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline">Schedule details (move, depends on) ›</button>}
+        {onOpenDetail && <button type="button" onClick={() => onOpenDetail(task)} className="hover:underline text-[var(--color-accent-text)]">Schedule details (move, depends on) ›</button>}
       </div>
     </div>
   );

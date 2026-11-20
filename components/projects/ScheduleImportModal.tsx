@@ -474,7 +474,7 @@ export default function ScheduleImportModal({
                 <div className="rounded-xl border border-[var(--color-border)] p-3">
                   <div className="flex items-center gap-1.5 mb-1">
                     <Columns3 className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-                    <span className="text-xs font-black text-[var(--color-text)]">{detectedColumns.length} extra column{detectedColumns.length === 1 ? "" : "s"} detected</span>
+                    <span className="text-xs font-semibold text-[var(--color-text)]">{detectedColumns.length} extra column{detectedColumns.length === 1 ? "" : "s"} detected</span>
                   </div>
                   <p className="text-[11px] text-[var(--color-text-muted)] mb-2.5">Rename, drop, or map any of these to a built-in field before importing. Everything else is kept on each task as a custom field.</p>
                   <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
@@ -533,11 +533,11 @@ export default function ScheduleImportModal({
                         <tr key={i}>
                           <td className="px-3 py-1.5">
                             <div className="font-bold text-[var(--color-text)] truncate flex items-center gap-1">
-                              {r.isSummary && <span className="text-[11px] font-black bg-[var(--color-surface-2)] text-[var(--color-text)] px-1 rounded shrink-0">SUM</span>}
+                              {r.isSummary && <span className="text-[11px] font-semibold bg-[var(--color-surface-2)] text-[var(--color-text)] px-1 rounded shrink-0">SUM</span>}
                               <span className="truncate">{r.name}</span>
                               {(r.dependsOnExternalRefs?.length ?? 0) > 0 && (
                                 <span
-                                  className="inline-flex items-center gap-0.5 text-[11px] font-black bg-[var(--color-surface-2)] text-[var(--color-text)] px-1 rounded shrink-0"
+                                  className="inline-flex items-center gap-0.5 text-[11px] font-semibold bg-[var(--color-surface-2)] text-[var(--color-text)] px-1 rounded shrink-0"
                                   title={`${r.dependsOnExternalRefs!.length} predecessor link${r.dependsOnExternalRefs!.length === 1 ? "" : "s"} from the source schedule`}
                                 >
                                   <Link2 className="w-2.5 h-2.5" />{r.dependsOnExternalRefs!.length}
@@ -633,7 +633,7 @@ export default function ScheduleImportModal({
           <div role="alert" className="px-5 py-3 border-t border-[var(--color-border)] text-[13px] text-[var(--color-text)]">
             <b className="text-rose-700 dark:text-rose-300">The import stopped:</b> {failed.message}{" "}
             {failed.back === true ? "The schedule is back the way it was before you pressed Import. Your file is still here: press Try again."
-              : failed.back === false ? <>Putting the schedule back also failed ({failed.backError}). The copy from before is kept in this window: keep it open and press <button type="button" onClick={() => void failed.retry?.()} className="font-bold underline cursor-pointer">Put the schedule back</button>.</>
+              : failed.back === false ? <>Putting the schedule back also failed ({failed.backError}). The copy from before is kept in this window: keep it open and press <button type="button" onClick={() => void failed.retry?.()} className="underline cursor-pointer">Put the schedule back</button>.</>
               : "Nothing was changed. Your file is still here: press Try again."}
           </div>
         )}
@@ -659,7 +659,7 @@ export default function ScheduleImportModal({
 function FormatBadge({ label, hint }: { label: string; hint: string }) {
   return (
     <div className="inline-flex flex-col items-center gap-0.5 px-2.5 py-1 rounded-md bg-[var(--color-surface)] border border-[var(--color-border)]">
-      <span className="text-[11px] font-display tabular-nums font-black text-[var(--color-text)]">{label}</span>
+      <span className="text-[11px] font-display tabular-nums font-semibold text-[var(--color-text)]">{label}</span>
       <span className="text-[11px] text-[var(--color-text-muted)]">{hint}</span>
     </div>
   );
@@ -689,7 +689,7 @@ function XmlExportGuide({ filename, format }: { filename: string; format: "mspro
           <FileText className="w-4 h-4 text-[var(--color-text-muted)]" />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-black text-[var(--color-text)]">This file needs to be exported as XML first</div>
+          <div className="text-sm font-semibold text-[var(--color-text)]">This file needs to be exported as XML first</div>
           <div className="text-[11px] text-[var(--color-text-muted)]">
             <code className="font-mono">{ext}</code> files are not accepted: only MS Project&apos;s XML export is an
             exact copy of your schedule.
@@ -718,7 +718,7 @@ function XmlExportGuide({ filename, format }: { filename: string; format: "mspro
 function Step({ n, children }: { n: number; children: React.ReactNode }) {
   return (
     <li className="flex items-start gap-2.5">
-      <span className="shrink-0 w-5 h-5 rounded-full bg-[var(--color-text)] text-[var(--color-surface)] text-[11px] font-black flex items-center justify-center mt-0.5">{n}</span>
+      <span className="shrink-0 w-5 h-5 rounded-full bg-[var(--color-text)] text-[var(--color-surface)] text-[11px] font-semibold flex items-center justify-center mt-0.5">{n}</span>
       <span className="flex-1">{children}</span>
     </li>
   );

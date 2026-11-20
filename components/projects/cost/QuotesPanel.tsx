@@ -120,7 +120,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
   };
 
   return (
-    <div className="bg-[var(--color-surface)] rounded-2xl overflow-hidden shadow-[var(--shadow-card)]">
+    <div className="bg-[var(--color-surface)] rounded-lg overflow-hidden border border-[var(--color-border)]">
       {section !== "invoices" && (<>
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <ScanSearch className="w-4 h-4 text-[var(--color-text-muted)]" />
@@ -263,7 +263,7 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
         <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Invoices</span>
         {canManage && ready.length > 0 && (
           <button onClick={() => void postReady()} disabled={!!batch}
-            className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors"
+            className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors"
             title="Invoices whose vendor maps to exactly one budget line, with a readable total and no duplicate on file.">
             {batch ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
             {batch ?? `Post ${ready.length} matched`}
@@ -291,7 +291,7 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
                   <PreviewButton file={fileOfDoc(doc)} />
                   {doc.docNumber && <span className="font-display tabular-nums text-[11px] text-[var(--color-text-muted)]">{doc.docNumber}</span>}
                   {doc.docDate && <span className="text-[11px] text-[var(--color-text-muted)]">{doc.docDate}</span>}
-                  {doc.totalAmount != null && <span className="font-black tabular-nums text-[var(--color-text)]">{fmtMoney(doc.totalAmount, doc.currency ?? "USD")}</span>}
+                  {doc.totalAmount != null && <span className="font-semibold tabular-nums text-[var(--color-text)]">{fmtMoney(doc.totalAmount, doc.currency ?? "USD")}</span>}
                   <StatusChip status={doc.status} />
                   {duplicate && (doc.status === "draft" || doc.status === "parsed") && (
                     <span className="inline-flex items-center gap-1 text-[13px] font-semibold px-1.5 py-0.5 rounded border border-rose-500/50 bg-rose-500/10 text-rose-700 dark:text-rose-300"
@@ -303,7 +303,7 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
                     <>
                       <ReadButton busy={busy === doc.id} onClick={() => void readDoc(doc)} />
                       <button onClick={() => void typeTotal(doc)}
-                        className="text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">type total</button>
+                        className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">type total</button>
                     </>
                   )}
                   {canManage && doc.status === "parsed" && (
@@ -332,7 +332,7 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
                     <span className="inline-flex items-center gap-1.5">
                       <PostControls accounts={accounts.filter((a) => a.id !== onLine)} busy={busy === doc.id}
                         onPost={(accountId) => move(doc, onLine, accountId)} label="Move here" />
-                      <button onClick={() => setMoving(null)} className="px-1.5 py-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
+                      <button onClick={() => setMoving(null)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
                     </span>
                   )}
                   {canManage && (doc.status === "draft" || doc.status === "parsed") && (
@@ -552,10 +552,10 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
     <div>
       <button onClick={() => setOpen((v) => !v)} className="w-full px-4 py-2.5 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
         {open ? <ChevronDown className="w-4 h-4 text-[var(--color-text-faint)]" /> : <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)]" />}
-        <span className="text-xs font-black text-[var(--color-text)]">{group}</span>
+        <span className="text-xs font-semibold text-[var(--color-text)]">{group}</span>
         <span className="text-[11px] text-[var(--color-text-muted)]">{groupDocs.length} bid{groupDocs.length === 1 ? "" : "s"}</span>
         {awarded && (
-          <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-700 dark:text-emerald-300">
+          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
             <Trophy className="w-3 h-3" /> Awarded to {awarded.vendorName ?? "vendor"}
           </span>
         )}
@@ -587,7 +587,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
                   <span className="font-bold text-[var(--color-text)] max-w-40 truncate">{d.vendorName ?? d.fileName}</span>
                   <PreviewButton file={fileOfDoc(d)} />
                   {canManage && <ReadButton busy={busy === d.id} onClick={() => void readDoc(d)} />}
-                  {canManage && <button onClick={() => void typeTotal(d)} className="px-1 py-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">type total</button>}
+                  {canManage && <button onClick={() => void typeTotal(d)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">type total</button>}
                   {bidTools(d)}
                 </span>
               ))}
@@ -633,19 +633,19 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
                               <span className="ml-1.5 text-[13px] font-semibold px-1.5 py-0.5 rounded border border-rose-500/50 bg-rose-500/10 text-rose-700 dark:text-rose-300">do not use</span>
                             )}
                             {s?.best && !awarded && (
-                              <span className="ml-1.5 text-[11px] font-black text-[var(--color-text)]" title="Highest weighted value score - not automatically the winner; you decide.">Best value</span>
+                              <span className="ml-1.5 text-[11px] font-semibold text-[var(--color-text)]" title="Highest weighted value score - not automatically the winner; you decide.">Best value</span>
                             )}
-                            {isAwarded && <span className="ml-1.5 inline-flex items-center gap-0.5 text-[11px] font-black text-emerald-700 dark:text-emerald-300"><Trophy className="w-2.5 h-2.5" /> Awarded</span>}
+                            {isAwarded && <span className="ml-1.5 inline-flex items-center gap-0.5 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300"><Trophy className="w-2.5 h-2.5" /> Awarded</span>}
                             {isDeclined && <span className="ml-1.5 text-[11px] font-bold text-[var(--color-text-faint)]">Not selected</span>}
                             {bidTools(doc)}
                           </td>
-                          <td className="px-3 py-2 text-right font-black tabular-nums text-[var(--color-text)]">{fmtMoney(e.total)}</td>
+                          <td className="px-3 py-2 text-right font-semibold tabular-nums text-[var(--color-text)]">{fmtMoney(e.total)}</td>
                           <td className="px-3 py-2 text-right tabular-nums">{e.laborHours > 0 ? e.laborHours.toLocaleString() : <span className="text-[var(--color-text-faint)]" title="This bid doesn't state labor hours - undisclosed manpower scores at the field's floor.">not stated</span>}</td>
                           <td className="px-3 py-2 text-right tabular-nums">{e.dollarsPerHour != null ? fmtMoney(e.dollarsPerHour) : "-"}</td>
                           <td className="px-3 py-2 text-right tabular-nums">{e.peakHeadcount ?? "-"}</td>
                           <td className="px-3 py-2 text-right">
                             {s && (
-                              <span className="font-black tabular-nums text-[var(--color-text)]" title={`Price ${s.parts.price} · Manpower ${s.parts.manpower} · Coverage ${s.parts.coverage} (each 0–100 vs the field)`}>
+                              <span className="font-semibold tabular-nums text-[var(--color-text)]" title={`Price ${s.parts.price} · Manpower ${s.parts.manpower} · Coverage ${s.parts.coverage} (each 0–100 vs the field)`}>
                                 {s.score}
                               </span>
                             )}
@@ -701,7 +701,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
                 <li key={d.id} className={`px-3 py-2 flex items-center gap-2 flex-wrap text-xs ${d.status === "declined" && correcting !== d.id ? "opacity-55" : ""}`}>
                   <span className="font-bold text-[var(--color-text)]">{d.vendorName ?? d.fileName ?? "Bid"}</span>
                   <PreviewButton file={fileOfDoc(d)} />
-                  <span className="font-black tabular-nums text-[var(--color-text)]">{fmtMoney(d.totalAmount ?? 0)}</span>
+                  <span className="font-semibold tabular-nums text-[var(--color-text)]">{fmtMoney(d.totalAmount ?? 0)}</span>
                   <span className="text-[11px] text-[var(--color-text-muted)]" title="The AI couldn't read line detail from this file. It competes on price only, with no manpower or coverage score.">
                     typed total, price only
                   </span>
@@ -751,7 +751,7 @@ function StatusChip({ status }: { status: CostDocument["status"] }) {
 function ReadButton({ busy, onClick }: { busy: boolean; onClick: () => void }) {
   return (
     <button onClick={onClick} disabled={busy}
-      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] text-[11px] font-black hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] text-[11px] font-semibold hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
       title="Reads the printed pages into numbers, on your own AI key. You check them before anything posts.">
       {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Read
     </button>
@@ -776,7 +776,7 @@ function PostControls({ accounts, busy, onPost, label, suggested }: {
         {accounts.map((a) => <option key={a.id} value={a.id}>{a.code ? `${a.code} ` : ""}{a.name}</option>)}
       </select>
       <button onClick={() => accountId && void onPost(accountId)} disabled={busy || !accountId}
-        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[11px] font-black disabled:opacity-50 transition-colors">
+        className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
         {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />} {label}
       </button>
       {suggested && accountId === suggested.accountId && (
@@ -867,10 +867,10 @@ function CorrectForm({ doc, actor, groups, onDone, onCancel, setErr }: {
         </label>
       )}
       <button onClick={() => void save()} disabled={saving}
-        className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+        className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
         {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />} Save
       </button>
-      <button onClick={onCancel} className="h-8 px-2 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
+      <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
     </div>
   );
 }
@@ -931,7 +931,7 @@ function UploadRow({ orgId, projectId, actor, kind, existingGroups, onDone, setE
         </>
       )}
       <button onClick={() => void submit()} disabled={saving || !file}
-        className={`h-8 inline-flex items-center gap-1 px-3 rounded-lg text-[11px] font-black disabled:opacity-50 transition-colors ${file ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>
+        className={`h-8 inline-flex items-center gap-1 px-3 rounded-lg text-[11px] font-semibold disabled:opacity-50 transition-colors ${file ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>
         {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <UploadCloud className="w-3 h-3" />} {failed ? "Try again" : "Upload"}
       </button>
       {failed && <span role="alert" className="basis-full text-[11px] font-semibold text-rose-700 dark:text-rose-300">{file?.name}: {failed}</span>}
@@ -1048,7 +1048,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
           {existingGroups.map((g) => <option key={g} value={g} />)}
         </datalist>
         <button onClick={() => void create()} disabled={saving}
-          className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
+          className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
           {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Link2 className="w-3 h-3" />} Create link
         </button>
       </div>

@@ -55,7 +55,7 @@ function UndoLine({ text, onUndo, onDismiss }: { text: string; onUndo: () => voi
     <div role="status" className="mt-1 flex items-center gap-2 border-l-2 border-[var(--color-border-strong)] pl-2 py-0.5 text-[11px] text-[var(--color-text)]">
       <span className="min-w-0 flex-1 truncate">{text}</span>
       <button type="button" onClick={onUndo} className="inline-flex items-center gap-1 px-2 py-1 rounded border border-[var(--color-border-strong)] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><RotateCcw className="w-3 h-3" /> Undo</button>
-      <button type="button" onClick={onDismiss} className="px-1.5 py-1 font-semibold text-[var(--color-text-muted)] hover:underline">Dismiss</button>
+      <button type="button" onClick={onDismiss} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Dismiss</button>
     </div>
   );
 }
@@ -178,7 +178,7 @@ export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, on
     else if (write) void write(key, (rec) => restoreIncident(rec, x)).catch((e) => setMsg((e as Error).message));
     else onAdd({ at: x.at, kind: x.kind, text: x.text });
   };
-  const btn = (on: boolean) => `px-2 py-0.5 text-[11px] font-semibold ${on ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
+  const btn = (on: boolean) => `px-2 py-0.5 text-[11px] font-semibold ${on ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
   return (
     <div className="text-[11.5px] min-w-0">
       <div className="flex flex-wrap items-center gap-1.5">
@@ -223,7 +223,7 @@ export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, on
           </select>
           <input value={text} onChange={(e) => { setText(e.target.value); setMsg(null); }} onKeyDown={(e) => { if (e.key === "Enter") add(); }} placeholder="What happened, who, what was done" aria-label="What happened" className={`${inputCls} flex-1 min-w-[180px]`} />
           <button type="button" onClick={add} className={addBtn}>{editingId ? "Save" : "Add"}</button>
-          {editingId && <button type="button" onClick={reset} className="h-7 px-2 text-[11px] font-semibold text-[var(--color-text-muted)]">Cancel</button>}
+          {editingId && <button type="button" onClick={reset} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>}
           {msg && <span className="basis-full text-rose-700 dark:text-rose-400 font-semibold">{msg}</span>}
         </div>
       )}
@@ -346,7 +346,7 @@ export function ShiftNotesBox({ notes, edit, print, shift, tz, T, D, onAdd, onCl
           <input value={text} onChange={(e) => { setText(e.target.value); setMsg(null); }} onKeyDown={(e) => { if (e.key === "Enter") add(); }} placeholder="What happened, or what needs doing" aria-label="Note" className={`${inputCls} flex-1 min-w-[160px]`} />
           <label className="inline-flex items-center gap-1 text-[11px]"><input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} /> Follow-up</label>
           <button type="button" onClick={add} className={addBtn}>{editing ? "Save" : "Add"}</button>
-          {editing && <button type="button" onClick={reset} className="h-7 px-2 text-[11px] font-semibold text-[var(--color-text-muted)]">Cancel</button>}
+          {editing && <button type="button" onClick={reset} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>}
           {msg && <span className="basis-full text-[11px] text-rose-700 dark:text-rose-400 font-semibold">{msg}</span>}
         </div>
       )}
@@ -360,7 +360,7 @@ export function AddCompany({ onAdd }: { onAdd: (name: string) => void }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const add = () => { if (name.trim()) { onAdd(name.trim()); setName(""); setOpen(false); } };
-  if (!open) return <button type="button" onClick={() => setOpen(true)} className="mt-1 text-[11px] font-semibold text-[var(--color-accent-text)] hover:underline">+ Add a company</button>;
+  if (!open) return <button type="button" onClick={() => setOpen(true)} className="mt-1 text-[13px] text-[var(--color-accent-text)] hover:underline">+ Add a company</button>;
   return (
     <div className="mt-1 flex items-center gap-1.5">
       <input autoFocus value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") add(); if (e.key === "Escape") setOpen(false); }}

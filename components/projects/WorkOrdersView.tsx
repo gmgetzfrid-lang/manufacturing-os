@@ -261,7 +261,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
           <Search className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="WO #, equipment, step, crew…" aria-label="Search work orders"
             className="flex-1 min-w-0 bg-transparent text-[13px] outline-none" />
-          {query && <button type="button" onClick={() => setQuery("")} className="text-[11px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Clear</button>}
+          {query && <button type="button" onClick={() => setQuery("")} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Clear</button>}
         </label>
         <select value={who ?? "__all"} onChange={(e) => setWho(e.target.value === "__all" ? null : e.target.value)} aria-label="Who"
           className={`h-9 rounded-[10px] border px-2 text-[13px] font-semibold text-[var(--color-text)] ${who != null ? "border-[var(--color-text)] bg-[var(--color-surface)]" : "border-transparent bg-[var(--color-surface-2)]"}`}>
@@ -273,7 +273,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
         {(() => {
           const ALL = [["all", "All"], ["open", "Open"], ["critical", "Critical path"], ["behind", "Behind"], ["notStarted", "Not started"], ["held", "Held"], ["done", "Done"], ["added", "Discovery & added"]] as const;
           const UP_FRONT: Show[] = ["all", "open", "behind", "held"];
-          const chip = (on: boolean) => `h-9 px-3 rounded-full text-[13px] font-semibold ${on ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
+          const chip = (on: boolean) => `h-9 px-3 rounded-full text-[13px] font-semibold ${on ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
           const folded = ALL.filter(([k]) => !UP_FRONT.includes(k));
           const pickedFolded = !showCancelled && !UP_FRONT.includes(show) ? ALL.find(([k]) => k === show) : undefined;
           return (
@@ -304,7 +304,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
         })()}
         {canEdit && onNewWorkOrder && (
           <button type="button" onClick={() => onNewWorkOrder()}
-            className={`ml-auto ${quietMain ? QUIET : "inline-flex items-center gap-1.5 h-9 px-3.5 rounded-[10px] bg-[var(--color-accent)] text-[13px] font-extrabold text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] shadow-[0_10px_20px_-10px_var(--color-accent)]"}`}>
+            className={`ml-auto ${quietMain ? QUIET : "inline-flex items-center gap-1.5 h-9 px-3.5 rounded-[10px] bg-[var(--color-accent)] text-[13px] font-semibold text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] shadow-[0_10px_20px_-10px_var(--color-accent)]"}`}>
             <Plus className="w-3.5 h-3.5" /> New work order
           </button>
         )}

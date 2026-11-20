@@ -56,7 +56,7 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
   }, [health]);
 
   if (!health) return (
-    <div role="status" className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] px-4 sm:px-5 py-3 flex items-center gap-2 text-[14px]">
+    <div role="status" className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] px-4 sm:px-5 py-3 flex items-center gap-2 text-[14px]">
       <Sparkles className="w-4 h-4 text-[var(--color-text-muted)]" />
       <span className="font-bold text-[var(--color-text)]">Health</span>
       <span className="text-[13px] text-[var(--color-text-muted)]">{failed ? "Couldn't be checked right now." : "Checking…"}</span>
@@ -65,13 +65,13 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
   const shown = showAll ? items : items.slice(0, 4);
 
   return (
-    <div className="rounded-2xl bg-[var(--color-surface)] overflow-hidden shadow-[var(--shadow-card)]">
+    <div className="rounded-lg bg-[var(--color-surface)] overflow-hidden border border-[var(--color-border)]">
       <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="w-full px-4 sm:px-5 py-3 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
         {open ? <ChevronDown className="w-4 h-4 text-[var(--color-text-faint)]" /> : <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)]" />}
         <Sparkles className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-[14px] font-bold text-[var(--color-text)]">Health</span>
         {health.score != null && (
-          <span className="text-[12px] font-black tabular-nums whitespace-nowrap" style={{ color: scoreBandColor(health.score) }}>
+          <span className="text-[12px] font-semibold tabular-nums whitespace-nowrap" style={{ color: scoreBandColor(health.score) }}>
             {health.score} · {band}
           </span>
         )}
@@ -129,7 +129,7 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
               </ul>
             )}
             {items.length > 4 && (
-              <button onClick={() => setShowAll((v) => !v)} className="mt-1.5 px-2.5 text-[13px] font-bold text-[var(--color-text)] hover:underline">
+              <button onClick={() => setShowAll((v) => !v)} className="mt-1.5 px-2.5 text-[13px] hover:underline text-[var(--color-accent-text)]">
                 {showAll ? "Show fewer" : `Show ${items.length - 4} more`}
               </button>
             )}

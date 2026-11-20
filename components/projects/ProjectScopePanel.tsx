@@ -97,7 +97,7 @@ export default function ProjectScopePanel({ orgId, projectId, projectName, canMa
                     <Icon id={e.b} />
                     {l.href ? <Link href={l.href} className="font-bold hover:underline">{l.label}</Link> : <span className="font-bold">{l.label}</span>}
                     {e.status === "pending" && <span className="text-[11px] text-amber-700 dark:text-amber-300">proposed · {Math.round(e.confidence * 100)}%</span>}
-                    {canManage && e.status === "pending" && <button onClick={() => accept(e)} disabled={busy} className="text-[11px] font-bold text-[var(--color-accent-text)] hover:underline">accept</button>}
+                    {canManage && e.status === "pending" && <button onClick={() => accept(e)} disabled={busy} className="text-[13px] text-[var(--color-accent-text)] hover:underline">accept</button>}
                     {canManage && <button onClick={() => drop(e)} disabled={busy} className="opacity-50 hover:opacity-100" title={e.origin === "human" ? "Remove" : "Dismiss"} aria-label={`${e.origin === "human" ? "Remove" : "Dismiss"} ${l.label}`}><X className="w-3 h-3" /></button>}
                   </span>
                 );

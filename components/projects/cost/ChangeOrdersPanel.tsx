@@ -116,12 +116,12 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
   const decided = (cos ?? []).filter((c) => c.status !== "proposed");
 
   return (
-    <div className="bg-[var(--color-surface)] rounded-2xl overflow-hidden shadow-[var(--shadow-card)]">
+    <div className="bg-[var(--color-surface)] rounded-lg overflow-hidden border border-[var(--color-border)]">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <GitPullRequestArrow className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Change orders</span>
         {open.length > 0 && (
-          <span className="text-[11px] font-black px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40">
+          <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40">
             {open.length} awaiting decision
           </span>
         )}
@@ -155,7 +155,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
       ) : readErr ? (
         <div role="alert" className="mx-4 my-3 border-l-2 border-rose-500 pl-3 text-xs text-rose-700 dark:text-rose-300 flex flex-wrap items-center gap-x-3">
           <span>Couldn&apos;t load change orders: {readErr}</span>
-          <button onClick={() => void refresh()} className="font-bold text-[var(--color-accent-text)] hover:underline">Try again</button>
+          <button onClick={() => void refresh()} className="text-[var(--color-accent-text)] hover:underline">Try again</button>
         </div>
       ) : cos.length === 0 ? (
         <div className="px-4 py-6 text-center text-xs text-[var(--color-text-muted)]">
@@ -207,16 +207,16 @@ function CoRow({ co, canManage, busy, partyName, accountLabel, accounts, decide,
   return (
     <li className={`px-4 py-2.5 text-xs ${!isOpen && co.status !== "approved" ? "opacity-60" : ""}`}>
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="font-display tabular-nums text-[11px] font-black text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{co.coNumber}</span>
+        <span className="font-display tabular-nums text-[11px] font-semibold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{co.coNumber}</span>
         <span className="font-bold text-[var(--color-text)]">{co.title}</span>
-        <span className={`font-black tabular-nums ${co.amount < 0 ? "text-emerald-700 dark:text-emerald-300" : "text-[var(--color-text)]"}`}>
+        <span className={`font-semibold tabular-nums ${co.amount < 0 ? "text-emerald-700 dark:text-emerald-300" : "text-[var(--color-text)]"}`}>
           {co.amount < 0 ? `credit ${fmtMoney(Math.abs(co.amount))}` : fmtMoney(co.amount)}
         </span>
         <span className="text-[13px] font-semibold px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)]"
           title="Reason codes score both sides: scope gaps land on the contractor's record, design errors and owner requests on ours.">
           {CO_REASON_LABEL[co.reasonCode]}
         </span>
-        <span className={`text-[11px] font-black px-1.5 py-0.5 rounded border ${
+        <span className={`text-[11px] font-semibold px-1.5 py-0.5 rounded border ${
           co.status === "approved" ? "border-emerald-500/40 bg-emerald-500/[0.07] text-emerald-700 dark:text-emerald-300"
           : co.status === "proposed" ? "border-amber-500/40 bg-amber-500/[0.07] text-amber-700 dark:text-amber-300"
           : "border-[var(--color-border)] text-[var(--color-text-faint)]"}`}>
@@ -233,11 +233,11 @@ function CoRow({ co, canManage, busy, partyName, accountLabel, accounts, decide,
               </select>
             )}
             <button onClick={() => void decide(co, "approved", accountPick || undefined)} disabled={busy}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[11px] font-black disabled:opacity-50 transition-colors">
+              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
               {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Approve
             </button>
             <button onClick={() => void decide(co, "rejected")} disabled={busy}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-rose-500/50 text-rose-700 dark:text-rose-300 text-[11px] font-black hover:bg-rose-500/10 disabled:opacity-50 transition-colors">
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-rose-500/50 text-rose-700 dark:text-rose-300 text-[11px] font-semibold hover:bg-rose-500/10 disabled:opacity-50 transition-colors">
               <XIcon className="w-3 h-3" /> Reject
             </button>
             <button onClick={onEdit} disabled={busy} title="Change the title, amount, reason or where it posts"
@@ -354,9 +354,9 @@ function ProposeForm({ orgId, projectId, actor, accounts, parties, onDone, onCan
       <div className="flex items-center gap-2">
         {error && <span role="alert" className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-700 dark:text-rose-300">{error}</span>}
         <span className="ml-auto flex items-center gap-2">
-          <button onClick={onCancel} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1">Cancel</button>
+          <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
           <button onClick={() => void submit()} disabled={saving}
-            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} {editing ? `Save ${editing.coNumber}` : "Propose"}
           </button>
         </span>

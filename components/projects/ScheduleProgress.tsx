@@ -62,12 +62,12 @@ const LABEL = "text-[13px] font-semibold text-[var(--color-text-muted)] mb-2";
 
 const STATUS_META: Record<MilestoneStatus, { label: string; tone: string; bar: string; Icon: React.ComponentType<{ className?: string }> }> = {
   // The same colours as the timeline and calendar dots.
-  planned:     { label: "Planned",     tone: "text-slate-600 dark:text-slate-300",  bar: "bg-slate-400",   Icon: Circle },
-  in_progress: { label: "In progress", tone: "text-[var(--color-text)] dark:text-[var(--color-text)]",    bar: "bg-[var(--color-text-muted)]",    Icon: PauseCircle },
-  completed:   { label: "Completed",   tone: "text-emerald-700 dark:text-emerald-300", bar: "bg-emerald-500", Icon: CheckCircle2 },
-  missed:      { label: "Missed",      tone: "text-rose-700 dark:text-rose-300",    bar: "bg-rose-600",    Icon: XCircle },
-  blocked:     { label: "Blocked",     tone: "text-rose-700 dark:text-rose-300",    bar: "bg-rose-500",    Icon: MinusCircle },
-  on_hold:     { label: "On hold",     tone: "text-amber-700 dark:text-amber-300",   bar: "bg-amber-500",   Icon: PauseCircle },
+  planned:     { label: "Planned",     tone: "text-slate-600 dark:text-slate-300",  bar: "bg-[var(--color-border-strong)]",   Icon: Circle },
+  in_progress: { label: "In progress", tone: "text-[var(--color-text)] dark:text-[var(--color-text)]",    bar: "bg-[var(--color-main)]/55",    Icon: PauseCircle },
+  completed:   { label: "Completed",   tone: "text-emerald-700 dark:text-emerald-300", bar: "bg-[var(--color-main)]", Icon: CheckCircle2 },
+  missed:      { label: "Missed",      tone: "text-rose-700 dark:text-rose-300",    bar: "bg-[var(--state-overdue)]",    Icon: XCircle },
+  blocked:     { label: "Blocked",     tone: "text-rose-700 dark:text-rose-300",    bar: "bg-[var(--state-overdue)]",    Icon: MinusCircle },
+  on_hold:     { label: "On hold",     tone: "text-amber-700 dark:text-amber-300",   bar: "bg-[var(--state-held)]",   Icon: PauseCircle },
 };
 
 export default function ScheduleProgress({ milestones, metrics, projectId, onShowOverdue, onShowBlocked, head, bare }: Props) {
@@ -250,7 +250,7 @@ function StackedBar({ counts }: { counts: Record<MilestoneStatus, number> }) {
   const total = (Object.values(counts).reduce((a, b) => a + b, 0)) || 1;
   const order: MilestoneStatus[] = ["completed", "in_progress", "planned", "on_hold", "blocked", "missed"];
   return (
-    <div className="h-2 w-full rounded-full bg-[var(--color-surface-2)] overflow-hidden flex">
+    <div className="h-2 w-full rounded-full bg-[var(--color-accent-soft)] overflow-hidden flex">
       {order.map((s) => {
         const pct = (counts[s] / total) * 100;
         if (pct === 0) return null;

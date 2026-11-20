@@ -45,7 +45,7 @@ export default function ExecutionGuide({ open: openProp, onOpenChange, buttonCla
       {open && (
         <div role="dialog" aria-modal="true" aria-label="How this view works" className="fixed inset-0 z-[300] flex items-start sm:items-center justify-center overflow-y-auto p-4" onClick={() => setOpen(false)}>
           <div className="absolute inset-0 bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in" />
-          <div className="relative w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden max-h-[85vh] flex flex-col animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
+          <div className="relative w-full max-w-lg bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] overflow-hidden max-h-[85vh] flex flex-col animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
             <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-2">
               <HelpCircle className="w-5 h-5 text-[var(--color-text-muted)]" />
               <h2 className="text-[15px] font-bold text-[var(--color-text)]">How this view works</h2>
@@ -97,7 +97,7 @@ export default function ExecutionGuide({ open: openProp, onOpenChange, buttonCla
             </div>
 
             <div className="px-5 py-3 border-t border-[var(--color-border)] flex justify-end">
-              <button onClick={() => setOpen(false)} className="h-10 text-[14px] font-extrabold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-5 rounded-xl transition-colors">Got it</button>
+              <button onClick={() => setOpen(false)} className="h-10 text-[14px] font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-5 rounded-xl transition-colors">Got it</button>
             </div>
           </div>
         </div>

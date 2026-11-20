@@ -112,8 +112,8 @@ export function QuickLookCard({ look, goalAt, noteOf, fmt, onOpen, onClose }: {
                         <td className="px-2 py-1 font-display tabular-nums text-[11px] whitespace-nowrap hidden sm:table-cell">{fmt.DTs(s.finish)}</td>
                         <td className="px-2 py-1">
                           {s.isThis ? <b className="text-[var(--color-text)]">{s.name}</b> : link(s, fin ? "text-[var(--color-text-faint)] line-through" : "font-semibold text-[var(--color-text)]")}
-                          {s.isThis && <span className="ml-1.5 rounded border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 py-px text-[11px] font-black text-[var(--color-text)]">This step</span>}
-                          {s.isNext && <span className="ml-1.5 rounded bg-slate-800 px-1 py-px text-[11px] font-black text-white dark:bg-slate-200 dark:text-slate-900">Next</span>}
+                          {s.isThis && <span className="ml-1.5 rounded border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 py-px text-[11px] font-semibold text-[var(--color-text)]">This step</span>}
+                          {s.isNext && <span className="ml-1.5 rounded bg-slate-800 px-1 py-px text-[11px] font-semibold text-white dark:bg-slate-200 dark:text-slate-900">Next</span>}
                         </td>
                         <td className="px-2 py-1 hidden sm:table-cell text-[11px] text-[var(--color-text-muted)]">{s.who}</td>
                         <td className="px-2 py-1 text-right font-display tabular-nums text-[11px]">{fin ? "✓" : `${s.percent}%`}</td>

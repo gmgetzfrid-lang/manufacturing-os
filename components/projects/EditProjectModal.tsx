@@ -162,7 +162,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
       <div className="relative w-full max-w-lg max-h-[85dvh] overflow-y-auto bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-2xl animate-in fade-in zoom-in-95 duration-150">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-2">
           <Pencil className="w-4 h-4 text-[var(--color-text-muted)]" />
-          <span className="text-sm font-black text-[var(--color-text)]">Edit project</span>
+          <span className="text-sm font-semibold text-[var(--color-text)]">Edit project</span>
           <button onClick={onClose} aria-label="Close" className="ml-auto p-1 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
         <div className="p-5 space-y-3">
@@ -230,7 +230,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
                   <div className="mt-1 flex items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/[0.06] px-2.5 py-2 text-sm">
                     <FileText className="w-4 h-4 text-emerald-600 shrink-0" />
                     <span className="font-bold text-[var(--color-text)] truncate">{sowDoc.label}</span>
-                    <button type="button" onClick={() => setSowDoc(null)} className="ml-auto px-2 py-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-rose-600">Change</button>
+                    <button type="button" onClick={() => setSowDoc(null)} className="ml-auto inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Change</button>
                   </div>
                 ) : (
                   <div className="mt-1">
@@ -292,7 +292,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
                   onClick={() => setVisibility(v)}
                   aria-pressed={visibility === v}
                   className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${visibility === v
-                    ? "bg-[var(--color-text)] text-[var(--color-surface)] shadow-sm"
+                    ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 shadow-sm"
                     : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}
                 >
                   <Icon className="w-3.5 h-3.5" /> {label}
@@ -306,8 +306,8 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
           {error && <div role="alert" className="border-l-2 border-rose-500 pl-3 py-1 text-xs font-bold text-rose-700 dark:text-rose-300">{error}</div>}
         </div>
         <div className="px-5 py-3.5 border-t border-[var(--color-border)] flex items-center justify-end gap-2">
-          <button onClick={onClose} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
-          <button onClick={() => void save()} disabled={busy} className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+          <button onClick={onClose} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+          <button onClick={() => void save()} disabled={busy} className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Save changes
           </button>
         </div>

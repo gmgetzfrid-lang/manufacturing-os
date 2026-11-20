@@ -124,7 +124,7 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
   const sharePhase = phase ? phases.find((p) => p.id === phase) ?? null : null;
 
   return (
-    <div className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden">
+    <div className="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] overflow-hidden">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Budget lines</span>
         <span className="text-[11px] text-[var(--color-text-muted)]">{accounts.length - closedCount} open{closedCount ? ` · ${closedCount} closed` : ""}</span>
@@ -154,7 +154,7 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
           )}
           <button type="button" disabled={busy} onClick={() => void close(pickedAccounts.filter((a) => a.status !== "closed"), true)} className="h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] font-bold">Close</button>
           <button type="button" disabled={busy} onClick={() => void remove(pickedAccounts)} className="h-8 px-3 rounded-lg border border-rose-300 bg-[var(--color-surface)] font-bold text-rose-700 dark:text-rose-400">Delete</button>
-          <button type="button" onClick={() => setSel(new Set())} className="h-8 px-2 font-bold text-[var(--color-text-muted)]">Clear</button>
+          <button type="button" onClick={() => setSel(new Set())} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Clear</button>
         </div>
       )}
 
@@ -173,8 +173,8 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
             {accounts.filter((a) => a.id !== moving.from.id && a.status !== "closed").map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
           <button type="button" disabled={!moving.to || busy} onClick={() => { const to = accounts.find((a) => a.id === moving.to); if (!to) return; void run(async () => { const r = await moveSpend({ orgId, projectId, fromId: moving.from.id, toId: to.id, toName: to.name, actor }); return { ok: r.ok, error: r.error }; }, `Spending on ${moving.from.name} moved to ${to.name}. Close ${moving.from.name} if it's no longer needed.`).then((ok) => { if (ok) setMoving(null); }); }}
-            className="h-8 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] font-black disabled:opacity-50">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : "Move"}</button>
-          <button type="button" onClick={() => setMoving(null)} className="h-8 px-2 font-bold text-[var(--color-text-muted)]">Cancel</button>
+            className="h-8 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] font-semibold disabled:opacity-50">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : "Move"}</button>
+          <button type="button" onClick={() => setMoving(null)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
         </div>
       )}
 
@@ -196,8 +196,8 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
               <React.Fragment key={g.key}>
                 {groupBy !== "none" && (
                   <tr className="bg-[var(--color-surface-2)]/60 border-t border-[var(--color-border)]">
-                    <td colSpan={canManage ? 4 + (phases.length ? 1 : 0) : 3 + (phases.length ? 1 : 0)} className={`${td} font-black text-[var(--color-text)]`}>{g.label} <span className="font-semibold text-[var(--color-text-muted)]">· {g.rows.length} line{g.rows.length === 1 ? "" : "s"}</span></td>
-                    <td className={`${td} text-right font-black tabular-nums`}>{fmtMoney(g.budget, cur)}</td>
+                    <td colSpan={canManage ? 4 + (phases.length ? 1 : 0) : 3 + (phases.length ? 1 : 0)} className={`${td} font-semibold text-[var(--color-text)]`}>{g.label} <span className="font-semibold text-[var(--color-text-muted)]">· {g.rows.length} line{g.rows.length === 1 ? "" : "s"}</span></td>
+                    <td className={`${td} text-right font-semibold tabular-nums`}>{fmtMoney(g.budget, cur)}</td>
                     {sharePhase && <td />}
                     <td className={`${td} text-right tabular-nums`}>{fmtMoney(g.committed, cur)}</td><td className={`${td} text-right tabular-nums`}>{fmtMoney(g.spent, cur)}</td>
                     <td className={`${td} text-right tabular-nums`}>{fmtMoney(g.budget - g.spent, cur)}</td><td colSpan={2} />
@@ -243,9 +243,9 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
                         </td>
                         {sharePhase && <td className={`${td} text-right tabular-nums text-[var(--color-text-muted)]`}>{fmtMoney(share, cur)}</td>}
                         <td className={`${td} text-right tabular-nums`}>{fmtMoney(committed, cur)}</td>
-                        <td className={`${td} text-right tabular-nums ${spent > a.budget && a.budget > 0 ? "text-rose-700 dark:text-rose-400 font-bold" : ""}`}>{fmtMoney(spent, cur)}</td>
-                        <td className={`${td} text-right tabular-nums ${left < 0 ? "text-rose-700 dark:text-rose-400 font-bold" : ""}`}>{fmtMoney(left, cur)}</td>
-                        <td className={td}><div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden"><div className={`h-full rounded-full ${spent > a.budget && a.budget > 0 ? "bg-rose-500" : "bg-[var(--color-text-muted)]"}`} style={{ width: `${used}%` }} /></div></td>
+                        <td className={`${td} text-right tabular-nums ${spent > a.budget && a.budget > 0 ? "text-[var(--state-overdue)] font-semibold" : ""}`}>{fmtMoney(spent, cur)}</td>
+                        <td className={`${td} text-right tabular-nums ${left < 0 ? "text-[var(--state-overdue)] font-semibold" : ""}`}>{fmtMoney(left, cur)}</td>
+                        <td className={td}><div className="h-2 rounded-full bg-[var(--color-accent-soft)] overflow-hidden"><div className={`h-full rounded-full ${spent > a.budget && a.budget > 0 ? "bg-[var(--state-overdue)]" : "bg-[var(--color-main)]"}`} style={{ width: `${used}%` }} /></div></td>
                         <td className={`${td} relative`}>
                           {canManage && (
                             <button type="button" onClick={() => setMenu(menu === a.id ? null : a.id)} aria-label={`${a.name} actions`} className="w-8 h-8 rounded-lg hover:bg-[var(--color-surface-2)] flex items-center justify-center"><MoreHorizontal className="w-4 h-4" /></button>
@@ -278,13 +278,13 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
                 <td className={td}><select value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value })} aria-label="New line type" className="h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1">{TYPES.map((t) => <option key={t} value={t}>{cap(t)}</option>)}</select></td>
                 <td className={td} />{phases.length > 0 && <td className={td} />}
                 <td className={td}><input value={draft.budget} onChange={(e) => setDraft({ ...draft, budget: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") void add(); }} inputMode="decimal" placeholder="$0" aria-label="New line budget" className="h-8 w-28 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-right" /></td>
-                <td colSpan={99} className={td}><button type="button" disabled={busy || !draft.name.trim()} onClick={() => void add()} className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] font-black hover:bg-[var(--color-surface-2)] disabled:opacity-50"><Plus className="w-4 h-4" /> Add</button></td>
+                <td colSpan={99} className={td}><button type="button" disabled={busy || !draft.name.trim()} onClick={() => void add()} className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] font-semibold hover:bg-[var(--color-surface-2)] disabled:opacity-50"><Plus className="w-4 h-4" /> Add</button></td>
               </tr>
             )}
           </tbody>
           {rows.length > 0 && (
             <tfoot>
-              <tr className="border-t-2 border-[var(--color-text)]/70 font-black">
+              <tr className="border-t-2 border-[var(--color-text)]/70 font-semibold">
                 <td colSpan={canManage ? 4 + (phases.length ? 1 : 0) : 3 + (phases.length ? 1 : 0)} className={td}>Total (open lines)</td>
                 <td className={`${td} text-right tabular-nums`}>{fmtMoney(totals.budget, cur)}</td>
                 {sharePhase && <td className={`${td} text-right tabular-nums`}>{fmtMoney(rows.filter((r) => r.account.status !== "closed").reduce((s, r) => s + (r.account.phaseId ? (r.account.phaseId === sharePhase.id ? r.account.budget : 0) : phaseAmount(r.account.budget, sharePhase.share)), 0), cur)}</td>}
@@ -325,25 +325,25 @@ export function LinesChart({ rows, cur, bare }: { rows: Array<{ name: string; bu
   if (!shown.length) return null;
   const max = Math.max(...shown.map((r) => Math.max(r.budget, r.committed, r.spent)), 1);
   return (
-    <div className={bare ? "" : "rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] px-4 sm:px-5 py-4"}>
+    <div className={bare ? "" : "rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] px-4 sm:px-5 py-4"}>
       <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
         <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Each budget line</span>
-        <span className="flex items-center gap-3 text-[11px] text-[var(--color-text-muted)]">
-          <span className="inline-flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-[var(--color-border-strong)]" /> Budget</span>
-          <span className="inline-flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-[var(--color-text-muted)]" /> Committed</span>
-          <span className="inline-flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-[var(--color-text)]" /> Spent</span>
+        <span className="flex items-center gap-3 text-[13px] text-[var(--color-text-muted)]">
+          <span className="inline-flex items-center gap-1.5"><span className="w-3 h-2 rounded-sm bg-[var(--color-accent-soft)] ring-1 ring-inset ring-[var(--color-main)]/25" /> Budget</span>
+          <span className="inline-flex items-center gap-1.5"><span className="w-3 h-2 rounded-sm bg-[var(--color-main)]/55" /> Committed</span>
+          <span className="inline-flex items-center gap-1.5"><span className="w-3 h-2 rounded-sm bg-[var(--color-main)]" /> Spent</span>
         </span>
       </div>
       <div className="space-y-2">
         {shown.map((r) => (
-          <div key={r.name} className="grid grid-cols-[minmax(0,180px)_minmax(0,1fr)_auto] gap-2 items-center text-[12px]">
+          <div key={r.name} className="grid grid-cols-[minmax(0,180px)_minmax(0,1fr)_auto] gap-2 items-center text-[13px]">
             <span className="truncate text-[var(--color-text)]" title={r.name}>{r.name}</span>
             <div className="space-y-0.5">
-              <div className="h-2 rounded-sm bg-[var(--color-border-strong)]" style={{ width: `${(r.budget / max) * 100}%` }} />
-              <div className="h-1.5 rounded-sm bg-[var(--color-text-muted)]" style={{ width: `${(r.committed / max) * 100}%` }} />
-              <div className={`h-2 rounded-sm ${r.spent > r.budget && r.budget > 0 ? "bg-rose-500" : "bg-[var(--color-text)]"}`} style={{ width: `${(r.spent / max) * 100}%` }} />
+              <div className="h-2 rounded-sm bg-[var(--color-accent-soft)] ring-1 ring-inset ring-[var(--color-main)]/25" style={{ width: `${(r.budget / max) * 100}%` }} />
+              <div className="h-1.5 rounded-sm bg-[var(--color-main)]/55" style={{ width: `${(r.committed / max) * 100}%` }} />
+              <div className={`h-2 rounded-sm ${r.spent > r.budget && r.budget > 0 ? "bg-[var(--state-overdue)]" : "bg-[var(--color-main)]"}`} style={{ width: `${(r.spent / max) * 100}%` }} />
             </div>
-            <span className={`tabular-nums text-right ${r.spent > r.budget && r.budget > 0 ? "text-rose-700 dark:text-rose-400 font-bold" : "text-[var(--color-text-muted)]"}`}>{fmtMoney(r.spent, cur)} / {fmtMoney(r.budget, cur)}</span>
+            <span className={`font-display tabular-nums text-right ${r.spent > r.budget && r.budget > 0 ? "text-[var(--state-overdue)] font-semibold" : "text-[var(--color-text-muted)]"}`}>{fmtMoney(r.spent, cur)} / {fmtMoney(r.budget, cur)}</span>
           </div>
         ))}
       </div>

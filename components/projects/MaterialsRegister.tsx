@@ -24,14 +24,14 @@ import { appConfirm } from "@/components/providers/DialogProvider";
 import { useDraft, clearDraft } from "@/hooks/useDraft";
 
 const btn = "inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
-const pri = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-black whitespace-nowrap disabled:opacity-50";
+const pri = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-semibold whitespace-nowrap disabled:opacity-50";
 const field = "w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[13px] text-[var(--color-text)]";
 const label = "text-[12px] font-semibold text-[var(--color-text-muted)]";
 const red = "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300";
 const amber = "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300";
 const green = "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300";
 const quiet = "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]";
-const tag = "inline-block text-[11px] font-extrabold px-1.5 py-0.5 rounded whitespace-nowrap";
+const tag = "inline-block text-[11px] font-semibold px-1.5 py-0.5 rounded whitespace-nowrap";
 const statusTone = (s: MaterialStatus) => (s === "to_specify" || s === "short" ? red : arrived(s) ? green : s === "cancelled" ? quiet : amber);
 const dateWord = (d: string | null) => { if (!d) return ""; const [, m, day] = d.split("-"); return `${Number(m)}/${Number(day)}`; };
 
@@ -214,7 +214,7 @@ function MaterialForm({ f, set, phases, workOrders }: { f: MaterialFields; set: 
     <div className="space-y-3">
       <div className="flex gap-1.5">
         {(["material", "offsite"] as const).map((k) => (
-          <button key={k} type="button" aria-pressed={f.kind === k} onClick={() => set({ kind: k })} className={`h-9 px-3 rounded-lg border text-[12.5px] font-extrabold ${f.kind === k ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border-strong)]"}`}>{k === "material" ? "Material to order" : "Off-site repair or calibration"}</button>
+          <button key={k} type="button" aria-pressed={f.kind === k} onClick={() => set({ kind: k })} className={`h-9 px-3 rounded-lg border text-[12.5px] font-semibold ${f.kind === k ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border-strong)]"}`}>{k === "material" ? "Material to order" : "Off-site repair or calibration"}</button>
         ))}
       </div>
       {text("item", "Item", f.kind === "material" ? "Long weld neck flange" : "FV-008B control valve")}

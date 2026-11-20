@@ -172,7 +172,7 @@ export default function ShiftSheetEntry({ milestones, progress, tz, times, targe
         <div className="flex items-start gap-3 px-4 py-3 border-b border-[var(--color-border)]">
           <ClipboardPen className="w-5 h-5 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
           <div className="min-w-0 flex-1">
-            <div className="text-[15px] font-black text-[var(--color-text)]">Enter the shift sheet</div>
+            <div className="text-[15px] font-semibold text-[var(--color-text)]">Enter the shift sheet</div>
             <div className="text-[12.5px] text-[var(--color-text-muted)]">
               {target.kind === "day" ? "Day" : "Night"} shift · {dayWord} · {timeWord(target.start)} to {timeWord(target.end)}
               {" · "}{printed ? "the lines as printed" : "the lines as the sheet would print now"}
@@ -194,7 +194,7 @@ export default function ShiftSheetEntry({ milestones, progress, tz, times, targe
             return (
               <div key={g.key} className="border-b-2 border-[var(--color-border-strong)]">
                 <div className="flex items-baseline gap-2 px-3 pt-2.5 pb-1 bg-[var(--color-surface-2)]/60">
-                  <span className="text-[14px] font-extrabold text-[var(--color-text)]">{t.tag ?? (g.wo ? `WO ${g.wo}` : "No WO")}</span>
+                  <span className="text-[14px] font-semibold text-[var(--color-text)]">{t.tag ?? (g.wo ? `WO ${g.wo}` : "No WO")}</span>
                   <span className="min-w-0 truncate text-[12px] text-[var(--color-text-muted)]">{t.tag && g.wo ? `WO ${g.wo} · ` : ""}{t.rest}</span>
                   {g.key.startsWith("added:") && <span className="text-[12px] font-semibold text-[var(--color-text)]">added</span>}
                 </div>

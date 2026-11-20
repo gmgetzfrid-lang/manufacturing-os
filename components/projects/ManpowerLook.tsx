@@ -261,7 +261,7 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
               </li>
             ))}
           </ul>
-          {wos.length > 10 && <button type="button" onClick={() => setAllWos(!allWos)} className="mt-1 text-[12px] font-bold text-[var(--color-accent-text)]">{allWos ? "Show the top 10" : `Show all ${wos.length}`}</button>}
+          {wos.length > 10 && <button type="button" onClick={() => setAllWos(!allWos)} className="mt-1 text-[13px] text-[var(--color-accent-text)] hover:underline">{allWos ? "Show the top 10" : `Show all ${wos.length}`}</button>}
         </div>
       )}
       {rate.size > 0 && <p className="text-[11px] leading-snug text-[var(--color-text-muted)]">Man-hours per planned hour compare companies and jobs, not a crew rate: the schedule&apos;s hours are clock time, not man-hours. Only finished steps worked wholly on counted shifts are in it.</p>}

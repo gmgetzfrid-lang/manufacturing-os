@@ -11,7 +11,7 @@ import type { WorkShift } from "@/lib/shiftReport";
 export default function ShiftMark({ work, label }: { work: WorkShift; label?: boolean }) {
   const title = work === "both" ? "Worked round the clock" : work === "night" ? "Night-shift work" : "Day-shift work";
   if (work === "both") {
-    return <span title={title} className="shrink-0 inline-flex items-center rounded px-1 text-[11px] font-black leading-[14px] bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)]">24h</span>;
+    return <span title={title} className="shrink-0 inline-flex items-center rounded px-1 text-[11px] font-semibold leading-[14px] bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)]">24h</span>;
   }
   const night = work === "night";
   return (

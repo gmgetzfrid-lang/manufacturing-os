@@ -39,10 +39,10 @@ export const newFinding = (detail: { milestoneId?: string | null; at?: number } 
 export const OPEN_REVIEW_EVENT = "findings:review";
 export const openFindingsReview = () => window.dispatchEvent(new CustomEvent(OPEN_REVIEW_EVENT));
 
-const btn = "inline-flex items-center justify-center gap-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[12.5px] font-bold px-3.5 py-2 shadow-sm disabled:opacity-50";
-// A decision repeated on every row: dark, not orange.
-const dark = "inline-flex items-center justify-center gap-1.5 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[12.5px] font-bold px-3.5 py-2 disabled:opacity-50";
-const quiet = "inline-flex items-center justify-center gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[12px] font-semibold text-[var(--color-text)] px-2.5 py-1.5 disabled:opacity-50";
+const btn = "inline-flex items-center justify-center gap-1.5 h-9 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[14px] font-semibold px-3.5 disabled:opacity-50 transition-colors";
+// A decision repeated on every row: a secondary button, not the accent.
+const dark = "inline-flex items-center justify-center gap-1.5 h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[14px] font-semibold text-[var(--color-text)] px-3.5 disabled:opacity-50 transition-colors";
+const quiet = "inline-flex items-center justify-center gap-1.5 h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)] px-3 disabled:opacity-50 transition-colors";
 const field = "w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1.5 text-[13px] text-[var(--color-text)]";
 const label = "block text-[12px] font-semibold text-[var(--color-text-muted)] mb-1";
 
@@ -526,7 +526,7 @@ export function FindingsReview({ orgId, projectId, projectType: given, projectNa
 
       {r.state.kept.length > 0 && (
         <div>
-          <button type="button" onClick={() => setShowKept((x) => !x)} className="inline-flex items-center gap-1 text-[12px] font-bold text-[var(--color-text)]">
+          <button type="button" onClick={() => setShowKept((x) => !x)} className="inline-flex items-center gap-1 text-[13px] text-[var(--color-accent-text)] hover:underline">
             {showKept ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />} Kept · {r.state.kept.length}
           </button>
           {showKept && (
@@ -547,7 +547,7 @@ export function FindingsReview({ orgId, projectId, projectType: given, projectNa
       )}
       {r.state.dropped.length > 0 && (
         <div>
-          <button type="button" onClick={() => setShowDropped((x) => !x)} className="inline-flex items-center gap-1 text-[12px] font-bold text-[var(--color-text-muted)]">
+          <button type="button" onClick={() => setShowDropped((x) => !x)} className="inline-flex items-center gap-1 text-[13px] text-[var(--color-accent-text)] hover:underline">
             {showDropped ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />} Dropped · {r.state.dropped.length}
           </button>
           {showDropped && (
@@ -688,7 +688,7 @@ export function FindingsGate({ orgId, projectId, onCount, onOpen }: { orgId: str
       ) : left > 0 ? (
         <div className="border-l-2 border-amber-500 pl-3 text-xs text-amber-900 dark:text-amber-200">
           <b>Finish the review first: {left} left.</b> What this job taught reaches the next one only once it&apos;s kept.
-          <button type="button" onClick={onOpen} className="ml-1 font-bold underline">Open the review</button>
+          <button type="button" onClick={onOpen} className="ml-1 underline">Open the review</button>
         </div>
       ) : (
         <div className="flex items-center gap-2 text-xs font-bold text-emerald-700 dark:text-emerald-300"><Check className="w-3.5 h-3.5" /> Reviewed · {r.state.kept.length} kept</div>
@@ -810,7 +810,7 @@ export function PastJobsPanel({ orgId, projectId, projectType: given, milestones
     <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
       <button type="button" onClick={() => setOpen((o) => !o)} className="w-full flex items-center gap-2 px-3 py-2.5 text-left">
         <History className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-[13px] font-black text-[var(--color-text)]">{title}</span>
+        <span className="text-[13px] font-semibold text-[var(--color-text)]">{title}</span>
         <span className="text-[12px] text-[var(--color-text-muted)]">{open_.length ? `${open_.length} to plan for` : "all answered"}{answered.length ? ` · ${answered.length} answered` : ""}</span>
         <span className="ml-auto">{open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}</span>
       </button>
@@ -819,7 +819,7 @@ export function PastJobsPanel({ orgId, projectId, projectType: given, milestones
           {open_.length > 0 && <ul className="divide-y divide-[var(--color-border)]">{open_.map(row)}</ul>}
           {answered.length > 0 && (
             <div className="border-t border-[var(--color-border)] px-3 py-1.5">
-              <button type="button" onClick={() => setShowAnswered((s) => !s)} className="inline-flex items-center gap-1 text-[12px] font-bold text-[var(--color-text-muted)]">
+              <button type="button" onClick={() => setShowAnswered((s) => !s)} className="inline-flex items-center gap-1 text-[13px] text-[var(--color-accent-text)] hover:underline">
                 {showAnswered ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />} Answered · {answered.length}
               </button>
             </div>

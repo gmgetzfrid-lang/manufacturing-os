@@ -153,10 +153,10 @@ function Presenter({ topics, at, label, onMove, onClose }: { topics: SafetyTopic
       </div>
       <div className="flex-1 overflow-y-auto px-6 sm:px-14 py-8 max-w-5xl w-full mx-auto">
         <div className="flex items-center gap-3">
-          <span className={`w-9 h-9 rounded-full ${tone.numDark} text-[18px] font-black flex items-center justify-center`}>{at + 1}</span>
+          <span className={`w-9 h-9 rounded-full ${tone.numDark} text-[18px] font-semibold flex items-center justify-center`}>{at + 1}</span>
           <span className="text-[15px] font-semibold text-white/70">{t.kicker}</span>
         </div>
-        <h2 className="mt-3 text-[34px] sm:text-[48px] font-black leading-[1.05]">{t.title}</h2>
+        <h2 className="mt-3 text-[34px] sm:text-[48px] font-semibold leading-[1.05]">{t.title}</h2>
         <p className="mt-3 text-[18px] sm:text-[22px] text-white/75 leading-snug">{t.why}</p>
         <ol className="mt-8 space-y-6">
           {t.points.map((p, i) => {
@@ -183,7 +183,7 @@ function Presenter({ topics, at, label, onMove, onClose }: { topics: SafetyTopic
             {topics[at + 1].title} <ChevronRight className="w-5 h-5" />
           </button>
         ) : (
-          <button type="button" onClick={onClose} className="px-4 py-2 rounded-lg bg-white text-[var(--color-ink)] text-[14px] font-black">Done</button>
+          <button type="button" onClick={onClose} className="px-4 py-2 rounded-lg bg-white text-[var(--color-ink)] text-[14px] font-semibold">Done</button>
         )}
       </div>
     </div>

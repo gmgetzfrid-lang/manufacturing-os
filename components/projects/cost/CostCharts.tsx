@@ -99,7 +99,7 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
   if (series.length < 2) return null;
 
   return (
-    <div className="rounded-2xl bg-[var(--color-surface)] p-4 sm:p-5 shadow-[var(--shadow-card)] space-y-3">
+    <div className="rounded-lg bg-[var(--color-surface)] p-4 sm:p-5 border border-[var(--color-border)] space-y-3">
       {series.length >= 2 && (
         <div>
           <SectionLabel icon={<LineChartIcon className="w-3.5 h-3.5" />} text="Spend curve: planned pace, promised and spent" />
@@ -152,18 +152,18 @@ const TERMS: Array<{ term: string; plain: string }> = [
 export function CostGlossary() {
   const [open, setOpen] = React.useState(false);
   return (
-    <div className="rounded-2xl bg-[var(--color-surface)] overflow-hidden shadow-[var(--shadow-card)]">
+    <div className="rounded-lg bg-[var(--color-surface)] overflow-hidden border border-[var(--color-border)]">
       <button onClick={() => setOpen((v) => !v)}
         className="w-full px-4 py-2.5 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
         <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">What do these words mean?</span>
         <span className="text-[11px] text-[var(--color-text-muted)]">Plain-language guide to every term on this page</span>
-        <span className="ml-auto text-[11px] font-black text-[var(--color-accent-text)]">{open ? "Hide" : "Show"}</span>
+        <span className="ml-auto text-[11px] font-semibold text-[var(--color-accent-text)]">{open ? "Hide" : "Show"}</span>
       </button>
       {open && (
         <dl className="px-4 pb-4 pt-1 grid md:grid-cols-2 gap-x-6 gap-y-2 border-t border-[var(--color-border)]">
           {TERMS.map((t) => (
             <div key={t.term} className="text-xs">
-              <dt className="font-black text-[var(--color-text)]">{t.term}</dt>
+              <dt className="font-semibold text-[var(--color-text)]">{t.term}</dt>
               <dd className="text-[var(--color-text-muted)] mt-0.5">{t.plain}</dd>
             </div>
           ))}

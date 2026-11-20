@@ -389,10 +389,10 @@ function StatusTag({ status, late }: { status: ProjectStatus; late: boolean }) {
 function ProgressBar({ f, className = "" }: { f: RowFacts; className?: string }) {
   const pr = f.progress;
   if (!pr) return null;
-  const fill = f.late ? "var(--state-overdue)" : pr.pct >= 100 ? "var(--state-released)" : "var(--color-text)";
+  const fill = f.late ? "var(--state-overdue)" : "var(--color-main)";
   return (
     <span className={`inline-flex items-center gap-2 ${className}`} title={`${pr.done} of ${pr.steps} steps done`}>
-      <span className="relative h-1.5 w-24 rounded-full bg-[var(--color-border)] overflow-hidden" role="progressbar" aria-valuenow={pr.pct} aria-valuemin={0} aria-valuemax={100} aria-label="Work done">
+      <span className="relative h-1.5 w-24 rounded-full bg-[var(--color-accent-soft)] overflow-hidden" role="progressbar" aria-valuenow={pr.pct} aria-valuemin={0} aria-valuemax={100} aria-label="Work done">
         <span className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${Math.min(100, Math.max(0, pr.pct))}%`, background: fill }} />
       </span>
       <span className="font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)]">{pr.pct}%</span>

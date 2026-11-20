@@ -8,7 +8,8 @@
 // few things that happened sit underneath.
 
 import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Play, Check, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Play, Check, Trash2, Pencil, Loader2, CalendarRange, Plus } from "lucide-react";
+import MoreMenu from "@/components/ui/MoreMenu";
 import type { Milestone, MilestoneNote, MilestoneStatus } from "@/types/schema";
 import { shiftAt, workHours, type ShiftTimes } from "@/lib/shiftReport";
 import { fmtInTz, toDateTimeInput, fromDateTimeInput, dayKey } from "@/lib/scheduleTz";
@@ -95,6 +96,16 @@ function scrollParentOf(el: HTMLElement): HTMLElement {
   }
   return (document.scrollingElement ?? document.documentElement) as HTMLElement;
 }
+// Buttons: one filled (the step's next move), the rest white with a ruled
+// edge; small icon buttons fill on hover.
+const SEC = "inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
+const PRI = "inline-flex items-center justify-center gap-1.5 h-8 px-3.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors";
+const ICON_BASE = "inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
+const ICON = `${ICON_BASE} w-7 h-7`;
+const ICON_SM = `${ICON_BASE} w-6 h-6`;
+const SEG_ON = "bg-[var(--color-surface)] text-[var(--color-text)] shadow-[0_1px_2px_rgb(31_39_51/0.15)] ring-1 ring-[var(--color-border-strong)]";
+const SEG_OFF = "text-[var(--color-text-muted)] hover:text-[var(--color-text)]";
+const LINK = "text-[13px] text-[var(--color-accent-text)] hover:underline";
 const hoursWords = (h: number) => (h < 1 ? `${Math.max(1, Math.round(h * 60))} min` : `${Math.round(h * 10) / 10} h`);
 const ms = (v: unknown) => (v == null ? NaN : v instanceof Date ? v.getTime() : typeof v === "number" ? v : Date.parse(String(v)));
 const H = 3_600_000;
@@ -163,16 +174,19 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
   const done = m.status === "completed", held = m.status === "on_hold" || m.status === "blocked";
   const started = done || m.status === "in_progress" || held || Number.isFinite(as);
   const allotted = Math.round((m.durationHours != null && m.durationHours > 0 ? m.durationHours : workHours(m, tz)) * 10) / 10;
-  // One tag: how it stands against the plan.
+  // One tag: how it stands against the plan (a soft pill in its status color).
+  const GOOD = "bg-[color-mix(in_srgb,var(--state-released)_14%,transparent)] text-[var(--state-released)]";
+  const BAD = "bg-[color-mix(in_srgb,var(--state-overdue)_14%,transparent)] text-[var(--state-overdue)]";
   const tag = (() => {
     const d = done && Number.isFinite(af) ? af - pf : Number.isFinite(as) ? as - ps : Number.isFinite(ps) && now > ps ? now - ps : NaN;
     if (!Number.isFinite(d)) return null;
     const h = Math.abs(d) / H;
-    if (h < 0.25) return { t: "on time", tone: "text-emerald-700 bg-emerald-50 dark:text-emerald-300 dark:bg-emerald-950/40" };
+    if (h < 0.25) return { t: "On time", tone: GOOD };
     const v = h < 1 ? `${Math.round(h * 60)} min` : `${Math.round(h * 10) / 10} h`;
     const what = done ? "finished" : Number.isFinite(as) ? "started" : "not started";
-    return d > 0 ? { t: what === "not started" ? `${v} past planned start` : `${what} ${v} late`, tone: "text-rose-700 bg-rose-50 dark:text-rose-300 dark:bg-rose-950/40" }
-      : { t: `${what} ${v} early`, tone: "text-emerald-700 bg-emerald-50 dark:text-emerald-300 dark:bg-emerald-950/40" };
+    const say = (x: string) => x[0].toUpperCase() + x.slice(1);
+    return d > 0 ? { t: what === "not started" ? `${v} past planned start` : say(`${what} ${v} late`), tone: BAD }
+      : { t: say(`${what} ${v} early`), tone: GOOD };
   })();
 
   // What's happened, in the order it happened, by shift. Things are
@@ -641,83 +655,92 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
   };
   const pickLabel = action === "start" || action === "resume" ? "Started" : action === "finish" ? "Finished" : action === "hold" ? "Stopped" : action === "edit" ? "Finished" : "When";
   return (
-    <div ref={rootRef} className="px-3 pb-3 pl-7 space-y-2 bg-[var(--color-surface)] text-[12.5px]">
+    <div ref={rootRef} className="px-3 pb-3 pl-7 space-y-2.5 bg-[var(--color-surface)] text-[14px]">
       {found && (
         // Added after the plan: said on a line of its own, marked by a rule, not a box.
-        <div className="border-l-2 border-[var(--color-border-strong)] pl-2.5 py-0.5 text-[var(--color-text)]">
+        <div className="border-l-[3px] border-[var(--color-border-strong)] pl-2.5 py-0.5 text-[var(--color-text)]">
           {foundEdit ? (
             <div className="space-y-2 py-1">
-              <div className="flex flex-wrap gap-1" role="group" aria-label="What kind of work">
+              <div className="inline-flex items-center gap-0.5 p-0.5 rounded-md bg-[var(--color-surface-2)] ring-1 ring-inset ring-[var(--color-border)]" role="group" aria-label="What kind of work">
                 {(["discovery", "added"] as const).map((x) => (
                   <button key={x} type="button" aria-pressed={foundEdit.kind === x} onClick={() => { setFoundEdit({ ...foundEdit, kind: x }); setFoundMsg(null); }}
-                    className={`h-8 px-3 rounded-lg text-[12px] font-bold ${foundEdit.kind === x ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{ADDED[x].word}</button>
+                    className={`h-7 px-3 rounded text-[13px] font-semibold ${foundEdit.kind === x ? SEG_ON : SEG_OFF}`}>{ADDED[x].word}</button>
                 ))}
               </div>
               <label className="block">
                 <span className="block mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]">{ADDED[foundEdit.kind].what}</span>
                 <input value={foundEdit.what} onChange={(e) => { setFoundEdit({ ...foundEdit, what: e.target.value }); setFoundMsg(null); }} aria-label={ADDED[foundEdit.kind].what}
-                  className="h-9 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)]" />
+                  className="h-9 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px] text-[var(--color-text)]" />
               </label>
               <div>
                 <span className="block mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]">Work order #</span>
                 <div className="flex flex-wrap items-center gap-1.5">
                   <input value={foundEdit.wo} onChange={(e) => { setFoundEdit({ ...foundEdit, wo: e.target.value }); setFoundMsg(null); }} aria-label="Work order number" placeholder="e.g. 310990"
-                    className="h-9 w-36 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 font-display tabular-nums text-[12.5px] text-[var(--color-text)]" />
+                    className="h-9 w-36 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 font-display tabular-nums text-[14px] text-[var(--color-text)]" />
                   {!m.workOrderRef?.trim() && wo && foundEdit.wo.trim() !== wo && (
-                    <button type="button" onClick={() => setFoundEdit({ ...foundEdit, wo })} className="h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Same as the task: {wo}</button>
+                    <button type="button" onClick={() => setFoundEdit({ ...foundEdit, wo })} className={SEC}>Same as the task: {wo}</button>
                   )}
                 </div>
               </div>
               <DateTimePicker label={`When was it ${ADDED[foundEdit.kind].found}?`} value={foundEdit.at} onChange={(v) => { setFoundEdit({ ...foundEdit, at: v }); setFoundMsg(null); }} tz={tz} times={times} />
-              {foundMsg && <div role="alert" className="font-semibold text-rose-700 dark:text-rose-400">{foundMsg}</div>}
+              {foundMsg && <div role="alert" className="font-semibold text-[var(--state-overdue)]">{foundMsg}</div>}
               <div className="flex items-center gap-2">
-                <button type="button" onClick={() => void saveFound()} disabled={foundBusy}
-                  className="h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-bold disabled:opacity-60">{foundBusy ? "Saving…" : "Save"}</button>
-                <button type="button" onClick={() => setFoundEdit(null)} className="h-9 px-3 rounded-lg font-semibold text-[var(--color-text-muted)]">Cancel</button>
+                <button type="button" onClick={() => void saveFound()} disabled={foundBusy} className={PRI}>{foundBusy ? "Saving…" : "Save"}</button>
+                <button type="button" onClick={() => setFoundEdit(null)} className={SEC}>Cancel</button>
               </div>
             </div>
           ) : (
             <>
-              <b>{ADDED[kindOf(found)].word}</b>{Number.isFinite(found.foundAt) ? ` · ${ADDED[kindOf(found)].found} ${when(found.foundAt)}` : ""} - “{found.what}”. Not in the original schedule.
-              {!m.workOrderRef?.trim() && <span className="ml-1 font-semibold text-amber-700 dark:text-amber-400">No WO # of its own yet.</span>}
-              {canEdit && m.projectId && <button type="button" onClick={() => { setFoundEdit({ kind: kindOf(found), what: found.what, at: toDateTimeInput(found.foundAt, tz), wo: m.workOrderRef ?? "" }); setFoundMsg(null); }} className="ml-1.5 text-[11.5px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline">Edit</button>}
-              {canEdit && m.projectId && <button type="button" onClick={() => void removeFound()} disabled={foundBusy} title="Put in by mistake: every step it added, gone for good" className="ml-2 text-[11px] font-semibold text-rose-700 dark:text-rose-400 hover:underline disabled:opacity-50">{foundBusy ? "Deleting…" : "Delete"}</button>}
-              {foundMsg && <div role="alert" className="font-semibold text-rose-700 dark:text-rose-400">{foundMsg}</div>}
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="min-w-0 flex-1"><span className="font-semibold">{ADDED[kindOf(found)].word}</span>{Number.isFinite(found.foundAt) ? `, ${ADDED[kindOf(found)].found} ${when(found.foundAt)}` : ""}: “{found.what}”
+                  {!m.workOrderRef?.trim() && <span className="ml-1.5 font-semibold text-[var(--state-held)]">No WO # of its own yet.</span>}</span>
+                {canEdit && m.projectId && <button type="button" onClick={() => { setFoundEdit({ kind: kindOf(found), what: found.what, at: toDateTimeInput(found.foundAt, tz), wo: m.workOrderRef ?? "" }); setFoundMsg(null); }} aria-label={`Edit the ${ADDED[kindOf(found)].lower}`} title="Edit" className={ICON}><Pencil className="w-3.5 h-3.5" /></button>}
+                {canEdit && m.projectId && <button type="button" onClick={() => void removeFound()} disabled={foundBusy} aria-label={`Delete the ${ADDED[kindOf(found)].lower}`} title="Put in by mistake: every step it added, gone for good" className={`${ICON} hover:text-[var(--state-overdue)]`}>{foundBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}</button>}
+              </div>
+              {foundMsg && <div role="alert" className="font-semibold text-[var(--state-overdue)]">{foundMsg}</div>}
             </>
           )}
         </div>
       )}
-      {m.description?.trim() && <div className="text-[var(--color-text-muted)] line-clamp-2 break-words">{m.description.trim()}</div>}
-      <div className="text-[var(--color-text-muted)]">{[wo ? `WO ${wo}` : null, planned || null, `${allotted} h`].filter(Boolean).join(" · ")}
-        {m.actualParty?.trim() && m.actualParty.trim() !== planned && <> · <span className="font-semibold text-[var(--color-text)]">done by {m.actualParty.trim()}</span></>}
-      </div>
-      <table className="text-[12.5px]">
-        <thead><tr className="text-[13px] text-[var(--color-text-muted)]"><th /><th className={`${cell} text-left font-extrabold`}>Start</th><th className={`${cell} text-left font-extrabold`}>Finish</th></tr></thead>
+      {m.description?.trim() && <div className="text-[13px] text-[var(--color-text-muted)] line-clamp-2 break-words">{m.description.trim()}</div>}
+      {/* What it is and when, as labeled cells: plan against actual. */}
+      <dl className="flex flex-wrap gap-x-8 gap-y-2">
+        {wo && <div><dt className="text-[13px] text-[var(--color-text-muted)]">Work order</dt><dd className="font-display tabular-nums text-[var(--color-text)]">{wo}</dd></div>}
+        <div><dt className="text-[13px] text-[var(--color-text-muted)]">Crew</dt><dd className="text-[var(--color-text)]">{planned || "-"}
+          {m.actualParty?.trim() && m.actualParty.trim() !== planned && <div className="text-[13px] font-semibold">done by {m.actualParty.trim()}</div>}</dd></div>
+        <div><dt className="text-[13px] text-[var(--color-text-muted)]">Hours</dt><dd className="font-display tabular-nums text-[var(--color-text)]">{allotted} h</dd></div>
+      </dl>
+      <table className="text-[14px]">
+        <thead><tr className="text-[13px] text-[var(--color-text-muted)]"><th /><th className={`${cell} text-left font-semibold`}>Start</th><th className={`${cell} text-left font-semibold`}>Finish</th></tr></thead>
         <tbody>
-          <tr><td className={`${cell} text-[var(--color-text-muted)]`}>Plan</td><td className={cell}>{Number.isFinite(ps) ? when(ps) : "-"}</td><td className={cell}>{Number.isFinite(pf) ? when(pf) : "-"}</td></tr>
-          <tr className="font-semibold"><td className={`${cell} font-normal text-[var(--color-text-muted)]`}>Actual</td><td className={cell}>{Number.isFinite(as) ? when(as) : "-"}</td><td className={cell}>{Number.isFinite(af) ? when(af) : held ? (m.status === "blocked" ? "blocked" : "on hold") : started ? `${pct}%` : "-"}</td></tr>
+          <tr><td className={`${cell} text-[13px] text-[var(--color-text-muted)]`}>Plan</td><td className={cell}>{Number.isFinite(ps) ? when(ps) : "-"}</td><td className={cell}>{Number.isFinite(pf) ? when(pf) : "-"}</td></tr>
+          <tr className="font-semibold"><td className={`${cell} text-[13px] font-normal text-[var(--color-text-muted)]`}>Actual</td><td className={cell}>{Number.isFinite(as) ? when(as) : "-"}</td><td className={cell}>{Number.isFinite(af) ? when(af) : held ? (m.status === "blocked" ? "blocked" : "on hold") : started ? `${pct}%` : "-"}</td></tr>
         </tbody>
       </table>
-      {tag && <span className={`inline-block rounded px-1.5 py-0.5 text-[11.5px] font-bold ${tag.tone}`}>{tag.t}</span>}
-      {held && m.statusReason && <div className="text-amber-800 dark:text-amber-300">“{m.statusReason}”</div>}
-      {saved && <div role="status" className="font-semibold text-emerald-700 dark:text-emerald-400">✓ {saved}</div>}
+      {tag && <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[13px] font-semibold ${tag.tone}`}>{tag.t}</span>}
+      {held && m.statusReason && <div className="border-l-[3px] border-[var(--state-held)] pl-2.5 text-[var(--color-text)]">“{m.statusReason}”</div>}
+      {saved && <div role="status" className="inline-flex items-center gap-1.5 font-semibold text-[var(--state-released)]"><Check className="w-4 h-4" /> {saved}</div>}
 
       {(main || more.length > 0 || (canEdit && m.id)) && !action && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          {/* The one orange: quiet while something else is open with its own Save (a history entry, what was found). */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* The one filled button: secondary while something else is open with its own Save (a history entry, what was found). */}
           {main && (
-            <button type="button" onClick={() => open(main.a)} className={`inline-flex items-center gap-1 h-9 px-4 rounded-lg text-[13px] font-bold ${fixing || foundEdit ? "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"}`}>
+            <button type="button" onClick={() => open(main.a)} className={fixing || foundEdit ? SEC : PRI}>
               {main.icon}{main.label}
             </button>
           )}
-          {more.map((x) => <button key={x.a} type="button" onClick={() => open(x.a)} className="font-semibold text-[var(--color-text)] hover:underline">{x.label}</button>)}
-          {/* The plan itself — dates, hours, crew, name — in the step's panel. */}
-          {canEdit && m.id && <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("step:edit-plan", { detail: { id: m.id } }))} className="font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline">Edit plan</button>}
-          {/* A problem, a lesson, a shortfall: kept for the next job. */}
-          {canEdit && m.id && <button type="button" onClick={() => newFinding({ milestoneId: m.id })} title="A problem, a lesson, a material shortfall or missed scope, kept for the next job" className="font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline">+ Finding</button>}
-          {/* Not supposed to be there: delete it, or cancel it on the record
-              (added work has its own Delete, above). */}
-          {canEdit && m.id && !found && <button type="button" onClick={() => askRemoveStep(m.id!)} title="Delete it (put in by mistake) or cancel it (not done on this job)" className="font-semibold text-rose-700 dark:text-rose-400 hover:underline">Remove</button>}
+          {more.map((x) => <button key={x.a} type="button" onClick={() => open(x.a)} className={SEC}>{x.label}</button>)}
+          {/* The plan itself (dates, hours, crew, name), adding a finding, and
+              taking it off: in a menu, so the update buttons stay in sight. */}
+          {canEdit && m.id && (
+            <MoreMenu iconOnly label="More for this step" triggerClass="inline-flex items-center justify-center w-8 h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors" items={[
+              { icon: <CalendarRange className="w-4 h-4" />, label: "Edit plan", onClick: () => { window.dispatchEvent(new CustomEvent("step:edit-plan", { detail: { id: m.id } })); } },
+              // A problem, a lesson, a shortfall: kept for the next job.
+              { icon: <Plus className="w-4 h-4" />, label: "Add a finding", onClick: () => { newFinding({ milestoneId: m.id }); } },
+              // Not supposed to be there: delete it, or cancel it on the record (added work has its own Delete, above).
+              ...(!found ? [{ icon: <Trash2 className="w-4 h-4" />, label: "Remove step", onClick: () => { askRemoveStep(m.id!); }, tone: "bad" as const, line: true }] : []),
+            ]} />
+          )}
         </div>
       )}
 
@@ -728,16 +751,16 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
         <div className="border-t border-[var(--color-border)] pt-2.5 space-y-2.5">
           {action === "progress" && <PctSlider value={p ?? Math.round(pct)} was={Math.round(pct)} onChange={(v) => { setP(v); setMsg(null); }} />}
           {action === "hold" && (
-            <div className="flex gap-1">
+            <div className="inline-flex items-center gap-0.5 p-0.5 rounded-md bg-[var(--color-surface-2)] ring-1 ring-inset ring-[var(--color-border)]" role="group" aria-label="On hold or blocked">
               {([["on_hold", "On hold"], ["blocked", "Blocked"]] as const).map(([k, l]) => (
                 <button key={k} type="button" aria-pressed={holdKind === k} onClick={() => setHoldKind(k)}
-                  className={`h-8 px-3 rounded-lg text-[12px] font-bold ${holdKind === k ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{l}</button>
+                  className={`h-7 px-3 rounded text-[13px] font-semibold ${holdKind === k ? SEG_ON : SEG_OFF}`}>{l}</button>
               ))}
             </div>
           )}
           {action === "edit" && (
             <div className="space-y-2.5">
-              <div className="text-[11.5px] text-[var(--color-text-muted)]">Every time on this step, in the order it happened. Change any of them, then Save once.</div>
+              <div className="text-[13px] text-[var(--color-text-muted)]">Every time on this step, in the order it happened. Change any of them, then Save once.</div>
               {timed.map((e) => (
                 <DateTimePicker key={e.key} label={`${e.text}${e.said[0] ? `: ${e.said[0].text}` : ""}`} value={fixAll[e.key] ?? ""}
                   onChange={(v) => { setFixAll((x) => ({ ...x, [e.key]: v })); setMsg(null); }} tz={tz} times={times} showNow={false}
@@ -759,52 +782,51 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
               <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Resource</span>
               {byOther ? (
                 <input value={by} onChange={(e) => { setBy(e.target.value); setMsg(null); }} autoFocus placeholder="Crew or company" aria-label="Resource"
-                  className="h-8 flex-1 min-w-[10rem] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px]" />
+                  className="h-9 flex-1 min-w-[10rem] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px]" />
               ) : (
                 <select value={by} onChange={(e) => { if (e.target.value === "__other__") { setByOther(true); setBy(""); } else setBy(e.target.value); setMsg(null); }} aria-label="Resource"
-                  className="h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] font-semibold text-[var(--color-text)]">
+                  className="h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px] font-semibold text-[var(--color-text)]">
                   {[...new Set([doer, planned, ...crewChoices].filter(Boolean))].map((c) => <option key={c} value={c}>{c}{c === planned && doer !== planned ? " (planned)" : ""}</option>)}
                   {!doer && <option value="">No crew named</option>}
                   <option value={"__other__"}>Other…</option>
                 </select>
               )}
-              {by.trim() && by.trim() !== planned && <span className="text-[11px] text-[var(--color-text-muted)]">planned: {planned || "no crew"}</span>}
+              {by.trim() && by.trim() !== planned && <span className="text-[13px] text-[var(--color-text-muted)]">planned: {planned || "no crew"}</span>}
             </div>
           )}
           {action !== "edit" && (
             <input value={note} onChange={(e) => { setNote(e.target.value); setMsg(null); }} onKeyDown={(e) => { if (e.key === "Enter") void save(); }}
               placeholder={action === "hold" ? "Why? (required)" : action === "reopen" ? "Why reopen? (required)" : action === "comment" ? "The comment" : "Comment (optional)"} aria-label="Comment" autoFocus={action === "comment"}
-              className="h-9 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px]" />
+              className="h-9 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px]" />
           )}
           {hours < -0.05 && !done && (action === "start" || action === "progress" || action === "finish" || action === "resume") && (
             showWhy
               ? <input value={why} onChange={(e) => setWhy(e.target.value)} placeholder="Why it's behind (optional)" aria-label="Why it's behind"
-                className="h-9 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px]" />
-              : <button type="button" onClick={() => setShowWhy(true)} className="text-[12px] font-semibold text-[var(--color-text)] hover:underline">+ Why it&apos;s behind</button>
+                className="h-9 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px]" />
+              : <button type="button" onClick={() => setShowWhy(true)} className={`self-start ${LINK}`}>Add why it&apos;s behind</button>
           )}
-          {msg && <div role="alert" className="font-semibold text-rose-700 dark:text-rose-400">{msg}</div>}
+          {msg && <div role="alert" className="font-semibold text-[var(--state-overdue)]">{msg}</div>}
           {ampmAsk && (
-            <div role="alert" className="border-l-2 border-amber-500 pl-2 py-0.5 space-y-1.5">
-              <div className="font-semibold text-amber-800 dark:text-amber-300">{ampmAsk.says} Did you mean {ampmAsk.use}?</div>
+            <div role="alert" className="border-l-[3px] border-[var(--state-held)] pl-2.5 py-0.5 space-y-1.5">
+              <div className="font-semibold text-[var(--color-text)]">{ampmAsk.says} Did you mean {ampmAsk.use}?</div>
               <div className="flex flex-wrap gap-2">
                 <button type="button" disabled={busy} onClick={() => { const a = ampmAsk; setAmpmAsk(null); a.fix(); }}
-                  className="h-8 px-3 rounded-lg border border-[var(--color-text)] bg-[var(--color-surface)] text-[var(--color-text)] text-[12.5px] font-bold hover:bg-[var(--color-surface-2)] disabled:opacity-60">Use {ampmAsk.use}</button>
+                  className={SEC}>Use {ampmAsk.use}</button>
                 <button type="button" disabled={busy} onClick={() => { ampmOk.current = true; setAmpmAsk(null); void save(); }}
-                  className="h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[12.5px] font-bold hover:bg-[var(--color-surface-2)] disabled:opacity-60">Keep {ampmAsk.keep}</button>
+                  className={SEC}>Keep {ampmAsk.keep}</button>
               </div>
             </div>
           )}
           {aheadAsk && (
-            <div role="alert" className="border-l-2 border-amber-500 pl-2 py-0.5 space-y-1.5">
-              <div className="font-semibold text-amber-800 dark:text-amber-300">{aheadAsk}</div>
+            <div role="alert" className="border-l-[3px] border-[var(--state-held)] pl-2.5 py-0.5 space-y-1.5">
+              <div className="font-semibold text-[var(--color-text)]">{aheadAsk}</div>
               <button type="button" disabled={busy} onClick={() => { aheadOk.current = true; setAheadAsk(null); void save(); }}
-                className="h-8 px-3 rounded-lg border border-[var(--color-text)] bg-[var(--color-surface)] text-[var(--color-text)] text-[12.5px] font-bold hover:bg-[var(--color-surface-2)] disabled:opacity-60">Yes, save it</button>
+                className={SEC}>Yes, save it</button>
             </div>
           )}
           <div className="flex items-center gap-2">
-            <button type="button" onClick={() => void save()} disabled={busy}
-              className="h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-60">{busy ? "Saving…" : action === "progress" && p === 100 ? "Save as finished" : "Save"}</button>
-            <button type="button" onClick={() => setAction(null)} className="h-9 px-3 rounded-lg text-[var(--color-text-muted)] font-semibold hover:text-[var(--color-text)]">Cancel</button>
+            <button type="button" onClick={() => void save()} disabled={busy} className={PRI}>{busy ? "Saving…" : action === "progress" && p === 100 ? "Save as finished" : "Save"}</button>
+            <button type="button" onClick={() => setAction(null)} className={SEC}>Cancel</button>
           </div>
         </div>
       )}
@@ -812,61 +834,60 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
       <div className="border-t border-[var(--color-border)] pt-2">
         <div className="flex items-baseline justify-between gap-2 mb-0.5">
           <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">History</span>
-          {toSet > 0 && <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-400">{toSet === 1 ? "1 time" : `${toSet} times`} to set</span>}
+          {toSet > 0 && <span className="text-[13px] font-semibold text-[var(--state-held)]">{toSet === 1 ? "1 time" : `${toSet} times`} to set</span>}
           {canEdit && onUpdate && (started || history.length > 0) && (
-            <button type="button" onClick={() => void startOver()} disabled={busy} className="ml-auto text-[11px] font-semibold text-rose-700 dark:text-rose-400 hover:underline disabled:opacity-50">Start over</button>
+            <button type="button" onClick={() => void startOver()} disabled={busy} title="Back to not started: every time, %, hold and comment removed" className={`ml-auto ${SEC.replace("h-8", "h-7").replace("text-[var(--color-text)]", "text-[var(--state-overdue)]")}`}>Start over</button>
           )}
         </div>
-        {resetMsg && <div role="alert" className="mb-1 font-semibold text-rose-700 dark:text-rose-400">{resetMsg}</div>}
-        {history.length === 0 ? <div className="text-[var(--color-text-muted)]">Nothing yet.</div> : (
+        {resetMsg && <div role="alert" className="mb-1 font-semibold text-[var(--state-overdue)]">{resetMsg}</div>}
+        {history.length === 0 ? <div className="text-[13px] text-[var(--color-text-muted)]">Nothing yet.</div> : (
           <>
-            {hidden > 0 && <button type="button" onClick={() => setAllHistory(true)} className="mb-0.5 text-[12px] font-semibold text-[var(--color-text)] hover:underline">Show {hidden} earlier</button>}
+            {hidden > 0 && <button type="button" onClick={() => setAllHistory(true)} className={`mb-0.5 ${LINK}`}>Show {hidden} earlier</button>}
             <ol>
               {shown.map((x, i) => {
                 const sh = shiftOf(x.sort), head = i === 0 || shiftOf(shown[i - 1].sort).key !== sh.key;
                 const editable = canEditEntry(x);
                 const time = x.unsure === "unset" ? "set time" : x.unsure === "order" ? `⚠ ${when(x.at)}` : clock(x.at);
-                const timeCls = x.unsure === "unset" ? "rounded px-1 text-[11px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300"
-                  : x.unsure === "order" ? "font-semibold text-amber-700 dark:text-amber-400" : "text-[var(--color-text-muted)]";
+                const timeCls = x.unsure === "unset" ? "rounded-full px-2 py-px text-[12px] font-semibold bg-[color-mix(in_srgb,var(--state-held)_14%,transparent)] text-[var(--state-held)]"
+                  : x.unsure === "order" ? "font-semibold text-[var(--state-held)]" : "font-display tabular-nums text-[var(--color-text-muted)]";
                 const tip = x.unsure === "unset" ? "When it happened wasn't saved - tap to set it" : x.unsure === "order" ? "This time is after what came next - check it" : undefined;
                 return (
-                  <li key={x.key} className="text-[12px] break-words">
-                    {head && <div className="mt-1.5 text-[12px] font-semibold text-[var(--color-text)]">{sh.label}</div>}
-                    <div className="py-0.5 pl-2 border-l-2 border-[var(--color-border)]">
+                  <li key={x.key} className="text-[13px] break-words">
+                    {head && <div className="mt-2 mb-0.5 text-[13px] font-semibold text-[var(--color-text)]">{sh.label}</div>}
+                    <div className="py-0.5 pl-2.5 border-l-2 border-[var(--color-border)]">
                       {x.unsure && editable
                         ? <button type="button" onClick={() => openFix(x)} title={tip} className={`mr-1.5 whitespace-nowrap ${timeCls}`}>{time}</button>
                         : <span title={tip} className={`mr-1.5 whitespace-nowrap ${timeCls}`}>{time}</span>}
-                      {x.text && <b className="text-[var(--color-text)]">{x.text}</b>}
+                      {x.text && <span className="font-semibold text-[var(--color-text)]">{x.text}</span>}
                       {x.said.map((c, k) => <span key={k} className="text-[var(--color-text)]">{x.text || k > 0 ? " - " : ""}{c.text}</span>)}
-                      {editable && fixing !== x.key && <button type="button" onClick={() => openFix(x)} className="ml-1.5 text-[11.5px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline">Edit</button>}
+                      {editable && fixing !== x.key && <button type="button" onClick={() => openFix(x)} aria-label={`Edit ${x.text || "this comment"}`} title="Edit" className={`ml-1 align-middle ${ICON_SM}`}><Pencil className="w-3.5 h-3.5" /></button>}
                       {editable && fixing !== x.key && removable(x) && (
                         <button type="button" onClick={() => void removeEntry(x)} disabled={fixBusy} aria-label={`Remove ${x.text || "this comment"}`} title={removable(x) === "change" ? "Take it back" : "Remove"}
-                          className="ml-1 align-middle inline-flex items-center justify-center w-5 h-5 rounded text-[var(--color-text-muted)] hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 disabled:opacity-50">
+                          className={`align-middle ${ICON_SM} hover:text-[var(--state-overdue)]`}>
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       )}
                     </div>
                     {fixing === x.key && (
-                      <div className="mt-1 mb-2 ml-2 border-l-2 border-[var(--color-text)] pl-2.5 py-1 space-y-2 text-[12.5px]">
+                      <div className="mt-1 mb-2 ml-2 border-l-2 border-[var(--color-border-strong)] pl-2.5 py-1 space-y-2 text-[14px]">
                         {x.pct != null && fixPct != null && <PctSlider value={fixPct} was={x.pct} onChange={(v) => { setFixPct(v); setFixMsg(null); }} disabled={fixBusy} />}
                         {canFix(x) && <DateTimePicker label="When it happened" value={fixV} onChange={(v) => { setFixV(v); setFixMsg(null); }} tz={tz} times={times} showNow={false} disabled={fixBusy} />}
                         {(x.comment || onUpdate) && (
                           <input value={fixText} onChange={(e) => { setFixText(e.target.value); setFixMsg(null); }} onKeyDown={(e) => { if (e.key === "Enter") void saveFix(x); }}
                             placeholder={x.comment ? undefined : "Add a comment (optional)"} aria-label="Comment" disabled={fixBusy}
-                            className="h-9 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px]" />
+                            className="h-9 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px]" />
                         )}
-                        {fixMsg && <div role="alert" className="font-semibold text-rose-700 dark:text-rose-400">{fixMsg}</div>}
+                        {fixMsg && <div role="alert" className="font-semibold text-[var(--state-overdue)]">{fixMsg}</div>}
                         <div className="flex items-center gap-2">
                           {/* One orange: while an update above is open, its Save has it. */}
-                          <button type="button" onClick={() => void saveFix(x)} disabled={fixBusy}
-                            className={`h-9 px-4 rounded-lg text-[13px] font-bold disabled:opacity-60 ${action ? "bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"}`}>{fixBusy ? "Saving…" : "Save"}</button>
-                          <button type="button" onClick={() => setFixing(null)} className="h-9 px-3 rounded-lg text-[var(--color-text-muted)] font-semibold hover:text-[var(--color-text)]">Cancel</button>
+                          <button type="button" onClick={() => void saveFix(x)} disabled={fixBusy} className={action ? SEC : PRI}>{fixBusy ? "Saving…" : "Save"}</button>
+                          <button type="button" onClick={() => setFixing(null)} className={SEC}>Cancel</button>
                           {removable(x) ? (
-                            <button type="button" onClick={() => void removeEntry(x)} disabled={fixBusy} className="ml-auto h-9 px-3 rounded-lg font-semibold text-rose-700 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 disabled:opacity-50">
+                            <button type="button" onClick={() => void removeEntry(x)} disabled={fixBusy} className={`ml-auto ${SEC.replace("text-[var(--color-text)]", "text-[var(--state-overdue)]")}`}>
                               {removable(x) === "change" ? "Take back" : "Remove"}
                             </button>
                           ) : x.logId != null && (
-                            <span className="ml-auto text-[11px] text-[var(--color-text-muted)]">A start, finish or hold comes off only when it&apos;s the latest - or Start over.</span>
+                            <span className="ml-auto text-[13px] text-[var(--color-text-muted)]">A start, finish or hold comes off only when it&apos;s the latest, or with Start over.</span>
                           )}
                         </div>
                       </div>
@@ -875,16 +896,16 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
                 );
               })}
             </ol>
-            {allHistory && history.length > LATEST && <button type="button" onClick={() => setAllHistory(false)} className="mt-0.5 text-[12px] font-semibold text-[var(--color-text)] hover:underline">Less</button>}
+            {allHistory && history.length > LATEST && <button type="button" onClick={() => setAllHistory(false)} className={`mt-0.5 ${LINK}`}>Show fewer</button>}
           </>
         )}
       </div>
 
       {canEdit && onMoveDays && m.id && !started && (
-        <div className="flex items-center gap-1 text-[11px] text-[var(--color-text-muted)]">
-          Move plan a day
-          <button type="button" onClick={() => onMoveDays(m.id!, -1)} title="1 day earlier" className="w-6 h-6 inline-flex items-center justify-center rounded hover:bg-[var(--color-surface-2)]"><ChevronLeft className="w-3.5 h-3.5" /></button>
-          <button type="button" onClick={() => onMoveDays(m.id!, 1)} title="1 day later" className="w-6 h-6 inline-flex items-center justify-center rounded hover:bg-[var(--color-surface-2)]"><ChevronRight className="w-3.5 h-3.5" /></button>
+        <div className="flex items-center gap-1 text-[13px] text-[var(--color-text-muted)]">
+          Move the plan a day
+          <button type="button" onClick={() => onMoveDays(m.id!, -1)} title="1 day earlier" aria-label="Move the plan 1 day earlier" className={ICON}><ChevronLeft className="w-4 h-4" /></button>
+          <button type="button" onClick={() => onMoveDays(m.id!, 1)} title="1 day later" aria-label="Move the plan 1 day later" className={ICON}><ChevronRight className="w-4 h-4" /></button>
         </div>
       )}
       <div ref={roomRef} aria-hidden className="!mt-0" />

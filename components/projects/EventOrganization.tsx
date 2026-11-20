@@ -48,8 +48,8 @@ export default function EventOrganization({ projectId, canManage, actor, people 
 
   return (
     <Card as="section" pad={false} className="overflow-hidden" label="Event organization"
-      action={<span className="inline-flex items-center gap-3">
-        <span className={`inline-flex items-center gap-1.5 text-[13px] font-semibold whitespace-nowrap ${!recorded ? "text-[var(--state-held)]" : all ? "text-[var(--color-text)]" : "text-[var(--state-overdue)]"}`} data-event-organization>
+      action={<span className="inline-flex flex-wrap items-center justify-end gap-x-3 gap-y-1 min-w-0">
+        <span className={`inline-flex items-center gap-1.5 text-[13px] font-semibold ${!recorded ? "text-[var(--state-held)]" : all ? "text-[var(--color-text)]" : "text-[var(--state-overdue)]"}`} data-event-organization>
           <span aria-hidden className="w-2 h-2 rounded-full" style={{ background: !recorded ? "var(--state-held)" : all ? "var(--state-released)" : "var(--state-overdue)" }} />
           {!recorded ? "Not recorded yet" : `${st.filled} of ${st.required} required roles named`}
         </span>

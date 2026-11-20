@@ -13,7 +13,7 @@ export default function PctSlider({ value, was, onChange, disabled }: { value: n
     <div className="space-y-1">
       <div className="flex items-center gap-2">
         <button type="button" aria-label="1% less" disabled={disabled || value <= 0} onClick={() => set(value - 1)} className={nudge}>−</button>
-        <span className="w-14 text-center text-[15px] font-black tabular-nums">{value}%</span>
+        <span className="w-14 text-center text-[15px] font-semibold tabular-nums">{value}%</span>
         <button type="button" aria-label="1% more" disabled={disabled || value >= 100} onClick={() => set(value + 1)} className={nudge}>+</button>
         <span className="text-[12px] text-[var(--color-text-muted)]">{value === was ? "slide to the new %" : value === 100 ? `was ${was}%, finished` : `was ${was}%`}</span>
       </div>

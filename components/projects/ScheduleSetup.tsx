@@ -218,7 +218,7 @@ function SetupPath({ items, at, onPick }: { items: SetupItem[]; at: SetupItemId;
   const dot = (i: SetupItem, n: number, small = false) => {
     const on = i.id === at;
     return (
-      <span aria-hidden className={`relative z-10 ${small ? "w-5 h-5 text-[10px]" : "w-6 h-6 text-[11px]"} rounded-full flex items-center justify-center font-black shrink-0 ${
+      <span aria-hidden className={`relative z-10 ${small ? "w-5 h-5 text-[10px]" : "w-6 h-6 text-[11px]"} rounded-full flex items-center justify-center font-semibold shrink-0 ${
         i.done ? `bg-[var(--color-text)] text-[var(--color-surface)] ${on ? "ring-2 ring-offset-2 ring-offset-[var(--color-surface)] ring-[var(--color-text)]" : ""}`
           : on ? "border-2 border-[var(--color-text)] bg-[var(--color-surface)] text-[var(--color-text)]"
             : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-faint)]"}`}>
@@ -320,7 +320,7 @@ function SetupWizard({ items: given, start, critical, onClose: close, ...rest }:
           </button>
           <span className="flex-1 text-center text-[12px] text-[var(--color-text-muted)]">{counted.filter((i) => i.done).length} of {counted.length} set</span>
           {idx < items.length - 1 ? (
-            <button onClick={() => go(1)} className="inline-flex items-center gap-1 h-9 text-[13px] font-semibold text-[var(--color-text)] px-2">
+            <button onClick={() => go(1)} className="inline-flex items-center gap-1 h-9 text-[13px] px-2 text-[var(--color-accent-text)] hover:underline">
               {item.done ? "Next" : "Skip for now"} <ChevronRight className="w-4 h-4" />
             </button>
           ) : (
@@ -363,7 +363,7 @@ function TypeStep({ projectId, projectName, canManage, onSaved }: Props & { onSa
     finally { setBusy(false); }
   };
   if (!canManage) return <div className="text-[13px]">This project is a <b>{typeWord(now)}</b> ({now.short}).</div>;
-  const pill = (on: boolean) => `h-9 px-3.5 rounded-full border text-[13px] font-bold ${on ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
+  const pill = (on: boolean) => `h-9 px-3.5 rounded-full border text-[13px] font-bold ${on ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
   const w = typeWord({ word: t.word.trim() || "project", short: t.short });
   return (
     <div className="space-y-3">
@@ -581,7 +581,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
     }
     return [...out];
   }, [saved, crews, jobs]);
-  const seg = (on: boolean) => `h-8 px-3 rounded-lg ${on ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`;
+  const seg = (on: boolean) => `h-8 px-3 rounded-lg ${on ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`;
 
   return (
     <div className="space-y-3">
@@ -735,7 +735,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
               <span className="text-[var(--color-text-muted)]">hands ×</span>
               <input type="number" min={0} max={24} step={0.5} disabled={!canManage} value={helpers.hours} onChange={(e) => setHelpers({ ...helpers, hours: Math.max(0, Math.min(24, Number(e.target.value) || 0)) })} aria-label="Hours each" className={`${field} w-16`} />
               <span className="text-[var(--color-text-muted)]">h</span>
-              {chosen && canManage && <button type="button" onClick={() => setEdited(null)} className="text-[11.5px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline">Clear</button>}
+              {chosen && canManage && <button type="button" onClick={() => setEdited(null)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Clear</button>}
             </div>
           </div>
         )}

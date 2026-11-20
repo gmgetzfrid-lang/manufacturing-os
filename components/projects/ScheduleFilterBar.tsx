@@ -47,7 +47,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
   };
 
   // Picked: dark, like every other chip here.
-  const ON = "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]";
+  const ON = "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent";
   const quick = (label: string, icon: React.ReactNode, on: boolean, flip: () => void) => (
     <button type="button" onClick={flip} aria-pressed={on}
       className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-colors ${on ? ON : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"}`}>
@@ -81,7 +81,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
           <button
             onClick={() => setShowMore((v) => !v)}
             aria-expanded={showMore}
-            className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] text-[13px] font-semibold transition-colors ${showMore || filter.statuses.length || filter.groupIds.length || filter.shifts.length ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}
+            className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] text-[13px] font-semibold transition-colors ${showMore || filter.statuses.length || filter.groupIds.length || filter.shifts.length ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}
           >
             {(() => { const n = filter.statuses.length + filter.groupIds.length + filter.shifts.length + [filter.criticalOnly, filter.behindOnly, filter.overdueOnly, filter.notStartedOnly, filter.blockedOnly, !!filter.added?.length].filter(Boolean).length + (filter.units?.length ?? 0) + (filter.types?.length ?? 0); return <><SlidersHorizontal className="w-3.5 h-3.5" /> Filter{n > 0 ? ` (${n})` : ""}</>; })()}
           </button>
@@ -125,7 +125,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
               {groups.map((g) => {
                 const on = !!g.id && filter.groupIds.includes(g.id);
                 return (
-                  <button key={g.id} onClick={() => g.id && toggleGroup(g.id)} className={`px-2 py-1 rounded-full text-[11px] font-semibold border transition-colors ${on ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>
+                  <button key={g.id} onClick={() => g.id && toggleGroup(g.id)} className={`px-2 py-1 rounded-full text-[11px] font-semibold border transition-colors ${on ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>
                     {g.name}
                   </button>
                 );
@@ -138,7 +138,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
               const on = !!filter.added?.includes(k);
               return (
                 <button key={k} aria-pressed={on} onClick={() => onChange({ ...filter, added: on ? (filter.added ?? []).filter((x) => x !== k) : [...(filter.added ?? []), k] })}
-                  className={`px-2 py-1 rounded-full text-[11px] font-semibold border transition-colors ${on ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>
+                  className={`px-2 py-1 rounded-full text-[11px] font-semibold border transition-colors ${on ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>
                   {ADDED[k].word}
                 </button>
               );

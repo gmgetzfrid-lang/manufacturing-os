@@ -322,7 +322,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
           <div className="flex items-center gap-3">
             <div className="p-2 bg-[var(--color-surface-2)] rounded-lg"><Icon className="w-5 h-5 text-[var(--color-text-muted)]" /></div>
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-black text-[var(--color-text)]">New project</div>
+              <div className="text-sm font-semibold text-[var(--color-text)]">New project</div>
               <div className="text-xs text-[var(--color-text-muted)]">
                 {draft.restored ? "Your earlier typing is back. " : ""}Only Basics is needed. Skipped steps come back on the project.
               </div>
@@ -371,7 +371,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                   {JOB_KINDS.map((k) => (
                     <button key={k.v} onClick={() => setJobKind(k.v)}
                       className={`rounded-xl border p-3 text-left transition-colors ${jobKind === k.v ? "border-[var(--color-text)] bg-[var(--color-surface-2)]" : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>
-                      <div className="text-xs font-black text-[var(--color-text)]">{k.label}</div>
+                      <div className="text-xs font-semibold text-[var(--color-text)]">{k.label}</div>
                       <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">{k.hint}</div>
                     </button>
                   ))}
@@ -499,7 +499,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                 </datalist>
                 <div className="flex items-center gap-3">
                   <button onClick={() => setBudgetRows([...budgetRows, { name: "", budget: "", type: "subcontract", supplier: "" }])}
-                    className="inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent-text)]"><Plus className="w-3.5 h-3.5" /> Add line</button>
+                    className="inline-flex items-center gap-1 text-[13px] text-[var(--color-accent-text)] hover:underline"><Plus className="w-3.5 h-3.5" /> Add line</button>
                   <BudgetTotal rows={budgetRows} authorized={fromDoc?.parsed.authorizedAmount ?? null} currency={fromDoc?.parsed.currency ?? "USD"} />
                 </div>
               </div>
@@ -521,7 +521,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                   </div>
                 ))}
                 <button onClick={() => setMilestoneRows([...milestoneRows, { name: "", date: "" }])}
-                  className="inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent-text)]"><Plus className="w-3.5 h-3.5" /> Add milestone</button>
+                  className="inline-flex items-center gap-1 text-[13px] text-[var(--color-accent-text)] hover:underline"><Plus className="w-3.5 h-3.5" /> Add milestone</button>
               </div>
             </>
           )}
@@ -548,7 +548,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                   {companies.map((c) => <option key={c.id} value={c.name} />)}
                 </datalist>
                 <button onClick={() => setPartyRows([...partyRows, { name: "", kind: "contractor", trade: "" }])}
-                  className="inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent-text)]"><Plus className="w-3.5 h-3.5" /> Add company</button>
+                  className="inline-flex items-center gap-1 text-[13px] text-[var(--color-accent-text)] hover:underline"><Plus className="w-3.5 h-3.5" /> Add company</button>
               </div>
             </>
           )}
@@ -569,12 +569,12 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
           <span className="ml-auto flex items-center gap-2">
             {step > 0 && !stepHasContent[stepKey] && (
               <button onClick={() => next(true)} disabled={busy}
-                className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+                className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
                 Skip for now
               </button>
             )}
             <button onClick={() => next(false)} disabled={busy || (step === 0 && (!name.trim() || !description.trim()))}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : step === STEPS.length - 1 ? <Check className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
               {step === STEPS.length - 1 ? "Create project" : "Next"}
             </button>
@@ -617,7 +617,7 @@ function FromDocSummary({ result, onClear }: { result: BudgetReadResult; onClear
       <div className="flex items-start gap-2">
         <Sparkles className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
         <div className="min-w-0 flex-1">
-          <div className="font-black text-[var(--color-text)]">
+          <div className="font-semibold text-[var(--color-text)]">
             Prefilled from {[d.docType, d.docNumber].filter(Boolean).join(" ") || result.source.fileName}
             {d.authorizedAmount != null ? ` · ${fmtMoney(d.authorizedAmount, cur)} authorized` : ""}
           </div>

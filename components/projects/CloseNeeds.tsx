@@ -13,26 +13,26 @@ export default function CloseNeeds({ needs, onGo }: { needs: Need[]; onGo: (go: 
   const all = done === needs.length;
   const next = needs.find((n) => !n.done) ?? null;
   const [open, setOpen] = useState(false);
-  // Only the next one to put in is orange; the rest of the list is quiet.
+  // Each a secondary button: the page's one filled button is in the header.
   const go = (n: Need) => (
     <button type="button" onClick={() => onGo(n.go)}
-      className={`inline-flex items-center gap-1 h-9 px-3 rounded-lg text-[12.5px] font-bold whitespace-nowrap ${n.id !== next?.id ? "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"}`}>
+      className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap transition-colors">
       {n.button} <ArrowRight className="w-3.5 h-3.5" />
     </button>
   );
   return (
-    <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5" data-close-needs>
+    <section className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] p-4 sm:p-5" data-close-needs>
       <div className="flex items-center gap-3 flex-wrap">
         <div className="min-w-0 flex-1 basis-56">
           <b className="block text-[13px] font-semibold text-[var(--color-text-muted)]">What the review needs from you</b>
           <div className="mt-1.5 flex items-center gap-2">
-            <div className="h-1.5 flex-1 max-w-[220px] rounded-full bg-[var(--color-border)] overflow-hidden" aria-hidden>
-              <div className={`h-full rounded-full ${all ? "bg-emerald-600" : "bg-amber-500"}`} style={{ width: `${Math.round((done / Math.max(1, needs.length)) * 100)}%` }} />
+            <div className="h-1.5 flex-1 max-w-[220px] rounded-full bg-[var(--color-accent-soft)] overflow-hidden" aria-hidden>
+              <div className="h-full rounded-full bg-[var(--color-main)]" style={{ width: `${Math.round((done / Math.max(1, needs.length)) * 100)}%` }} />
             </div>
-            <span className="text-[12.5px] text-[var(--color-text-muted)] tabular-nums">{all ? "Everything it measures is in" : `${done} of ${needs.length} in`}</span>
+            <span className="text-[13px] text-[var(--color-text-muted)] tabular-nums">{all ? "Everything it measures is in" : `${done} of ${needs.length} in`}</span>
           </div>
         </div>
-        <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="inline-flex items-center gap-1 h-9 px-2.5 rounded-lg text-[12.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+        <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
           {open ? "Hide the list" : `See all ${needs.length}`} {open ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
         </button>
       </div>
@@ -50,8 +50,8 @@ export default function CloseNeeds({ needs, onGo }: { needs: Need[]; onGo: (go: 
         <ol className="mt-3 grid lg:grid-cols-2 gap-px border-y border-[var(--color-border)] bg-[var(--color-border)] overflow-hidden">
           {needs.map((n) => (
             <li key={n.id} className="flex items-start gap-3 px-3 py-2.5 flex-wrap bg-[var(--color-surface)]" data-need={n.id} data-need-done={n.done ? "1" : "0"}>
-              <span className={`mt-0.5 w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${n.done ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" : "bg-amber-500/15 text-amber-800 dark:text-amber-300"}`}>
-                {n.done ? <Check className="w-4 h-4" /> : <span className="text-[13px] font-black">!</span>}
+              <span className={`mt-0.5 w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${n.done ? "bg-[color-mix(in_srgb,var(--state-released)_14%,transparent)] text-[var(--state-released)]" : "bg-[color-mix(in_srgb,var(--state-held)_14%,transparent)] text-[var(--state-held)]"}`}>
+                {n.done ? <Check className="w-4 h-4" /> : <span className="text-[13px] font-semibold">!</span>}
               </span>
               <span className="min-w-0 flex-1 basis-40">
                 <b className="block text-[13.5px] leading-snug text-[var(--color-text)]">{n.title}</b>

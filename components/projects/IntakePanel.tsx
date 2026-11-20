@@ -340,10 +340,10 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                 <span className="text-[13px] text-[var(--color-text-muted)]">Rev {p.revLabel ?? "-"} · {p.company ?? "external"}{p.submittedAt ? ` · ${new Date(p.submittedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}</span>
                 {canManage && (
                   <span className="ml-auto flex items-center gap-1.5">
-                    <button onClick={() => void approve(p)} disabled={busy === p.docId} className="inline-flex items-center gap-1 h-9 px-3 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[13px] font-bold disabled:opacity-50">
+                    <button onClick={() => void approve(p)} disabled={busy === p.docId} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
                       {busy === p.docId ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Approve
                     </button>
-                    <button onClick={() => void reject(p)} disabled={busy === p.docId} className="inline-flex items-center gap-1 h-9 px-3 rounded-lg border border-rose-500/40 text-rose-700 dark:text-rose-300 text-[13px] font-bold hover:bg-rose-500/10 disabled:opacity-50">
+                    <button onClick={() => void reject(p)} disabled={busy === p.docId} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
                       <X className="w-3 h-3" /> Reject
                     </button>
                   </span>
@@ -375,7 +375,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                 {l.allowAutoSupersede && <span className="inline-flex items-center gap-0.5 text-[11px] font-bold text-[var(--color-text)] dark:text-[var(--color-text)]"><ShieldCheck className="w-3 h-3" /> trusted</span>}
                 <span className="text-[var(--color-text-faint)]">{l.submissionCount} submission{l.submissionCount === 1 ? "" : "s"}{l.expiresAt && !isExpired(l.expiresAt) ? ` · expires ${new Date(l.expiresAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}{l.revokedAt ? " · REVOKED" : ""}</span>
                 {l.expiresAt && isExpired(l.expiresAt) && !l.revokedAt && (
-                  <span className="text-[11px] font-black text-rose-700 dark:text-rose-300">expired {new Date(l.expiresAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+                  <span className="text-[11px] font-semibold text-rose-700 dark:text-rose-300">expired {new Date(l.expiresAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
                 )}
                 {!l.revokedAt && (
                   <span className="ml-auto flex items-center gap-1 flex-wrap">
@@ -402,7 +402,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                 <div className="mt-1.5 pt-1.5 border-t border-[var(--color-border)] flex items-center gap-1.5 flex-wrap">
                   <span className="text-[11px] font-bold text-[var(--color-text-muted)]">Works through:</span>
                   <button onClick={() => void extend(l, extendedExpiry(l.expiresAt, 7))} disabled={busy === l.id}
-                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-[var(--color-text)] text-[var(--color-surface)] text-[11px] font-black disabled:opacity-50">
+                    className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
                     {busy === l.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <CalendarPlus className="w-3 h-3" />} 7 more days
                   </button>
                   <input type="date" value={extendDay} onChange={(e) => setExtendDay(e.target.value)} min={dayOfIso(new Date().toISOString())} aria-label="New end date"
@@ -410,8 +410,8 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                   <button onClick={() => extendDay && void extend(l, endOfDayIso(extendDay))} disabled={busy === l.id || !extendDay}
                     className="px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[11px] font-bold hover:border-[var(--color-accent-ring)] disabled:opacity-50">Set date</button>
                   <button onClick={() => void extend(l, null)} disabled={busy === l.id}
-                    className="px-2 py-1 rounded-md text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">No end date</button>
-                  <button onClick={() => setExtendOpen(null)} className="px-2 py-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
+                    className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">No end date</button>
+                  <button onClick={() => setExtendOpen(null)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
                 </div>
               )}
               {/* Assigned org documents — visible on the company's portal, revisions always come to review. */}
@@ -484,9 +484,9 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
               )}
               <input type="date" value={expires} onChange={(e) => setExpires(e.target.value)} min={new Date().toISOString().slice(0, 10)} className="h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px] [color-scheme:light] dark:[color-scheme:dark]" title="Expiry (optional)" />
             </div>
-            <label className="flex items-center gap-2 text-xs text-[var(--color-text)]">
-              <input type="checkbox" checked={trusted} onChange={(e) => setTrusted(e.target.checked)} />
-              Trusted: their revisions of <b>their own documents</b> publish immediately (skip review)
+            <label className="flex items-start gap-2 text-[13px] text-[var(--color-text)]">
+              <input type="checkbox" checked={trusted} onChange={(e) => setTrusted(e.target.checked)} className="mt-0.5" />
+              <span>Trusted: their revisions of <b>their own documents</b> publish immediately (skip review)</span>
             </label>
             <button onClick={() => void createLink()} disabled={busy === "create"} className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
               {busy === "create" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />} Create link

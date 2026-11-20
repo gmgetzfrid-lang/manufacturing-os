@@ -128,7 +128,7 @@ export function ProgressSlider({ percent, onPick, disabled, busy, commitSame, co
     <div className="w-full">
       <div className="flex items-center justify-between mb-1.5">
         <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Progress</span>
-        <span className="text-sm font-black text-[var(--color-text)] tabular-nums">{val}%</span>
+        <span className="text-sm font-semibold text-[var(--color-text)] tabular-nums">{val}%</span>
       </div>
       <input
         type="range"
@@ -155,7 +155,7 @@ export function ProgressSlider({ percent, onPick, disabled, busy, commitSame, co
             onClick={() => commit(q)}
             className={`flex-1 h-8 text-[12px] font-bold rounded-lg transition-colors disabled:opacity-50 ${
               val === q
-                ? "bg-[var(--color-text)] text-[var(--color-surface)]"
+                ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30"
                 : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
             }`}
           >
@@ -256,7 +256,7 @@ export function ProgressNoteForm({ percent, start, onSave, onCancel, busy }: {
       {choices.length > 0 && <WhenFields choices={choices} idx={whenIdx} setIdx={(i) => { setWhenIdx(i); setMsg(null); }} clock={when} setClock={(v) => { setWhen(v); setMsg(null); }} tz={clockCtx!.tz} times={clockCtx!.times} other={otherDay} setOther={(d) => { setOtherDay(d); setMsg(null); }} disabled={busy || saving} />}
       {msg && <div className="text-rose-700 dark:text-rose-400 font-semibold">{msg}</div>}
       <div className="flex items-center gap-2">
-        {onCancel && <button type="button" onClick={onCancel} className="h-9 px-1 font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>}
+        {onCancel && <button type="button" onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>}
         <button type="button" disabled={!ready} onClick={() => void save()}
           className={`ml-auto h-9 px-3.5 rounded-lg text-[13px] font-bold bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40 pointer-coarse:h-10 ${missing ? "opacity-70" : ""}`}>
           {saving ? "Saving…" : missing ? "Add a comment to save" : `${pick === 100 ? "Mark done" : pick != null ? `Save ${pick}%` : "Save"}${when && pick != null ? ` at ${when}` : ""}`}

@@ -1129,12 +1129,13 @@ function ActivityTab({
         </Card>
       )}
 
-      <Card label={timeline.length ? `Activity · ${timeline.length}` : "Activity"}>
-        <TimelineFeed
+      <Card label={timeline.length ? <>Activity <span className="font-display font-medium tabular-nums text-[var(--color-text-muted)]">{timeline.length}</span></> : "Activity"}>
+        {/* Empty: one plain line on the sheet, not a box inside it. */}
+        {timeline.length === 0 ? <p className="text-[15px] text-[var(--color-text-muted)]">No activity yet. Comments, checkouts and revisions show up here.</p> : <TimelineFeed
           events={timeline.slice(0, shown)}
           showScope={false}
           emptyMessage="No activity yet. Comments, checkouts and revisions show up here."
-        />
+        />}
         {timeline.length > shown && (
           <button type="button" onClick={() => setShown((n) => n + 40)}
             className={`mt-3 ${heroQuiet}`}>

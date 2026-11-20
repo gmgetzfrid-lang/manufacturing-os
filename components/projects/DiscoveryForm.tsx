@@ -192,7 +192,7 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
   const inp = "h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent-ring)]";
   const lbl = "block mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]";
   // A choice: picked is dark, the rest a quiet fill.
-  const chip = (on: boolean) => `h-8 px-3 rounded-lg text-[12px] font-bold ${on ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`;
+  const chip = (on: boolean) => `h-8 px-3 rounded-lg text-[12px] font-bold ${on ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`;
   return (
     <div ref={boxRef} aria-modal="true" className="fixed inset-0 z-[185] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in" onClick={onClose}>
       <div role="dialog" aria-label="Add work to the schedule" onClick={(e) => e.stopPropagation()}
@@ -279,7 +279,7 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
                   {rows.length > 1 && <button type="button" onClick={() => setRows(rows.filter((_, j) => j !== i))} aria-label="Remove this step" className="w-7 h-7 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><Trash2 className="w-3.5 h-3.5" /></button>}
                 </div>
               ))}
-              <button type="button" onClick={() => setRows([...rows, { name: "", crew: rows[rows.length - 1]?.crew ?? "", hours: "" }])} className="inline-flex items-center gap-1 font-semibold text-[var(--color-text)] hover:underline"><Plus className="w-3.5 h-3.5" /> Another step (done after the one above)</button>
+              <button type="button" onClick={() => setRows([...rows, { name: "", crew: rows[rows.length - 1]?.crew ?? "", hours: "" }])} className="inline-flex items-center gap-1 hover:underline text-[var(--color-accent-text)]"><Plus className="w-3.5 h-3.5" /> Another step (done after the one above)</button>
             </div>
           </div>
           {isNew ? (
@@ -356,7 +356,7 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
           <div className="flex items-center justify-end gap-2 pt-1">
             <button type="button" onClick={onClose} className="h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] font-semibold hover:bg-[var(--color-surface-2)]">Cancel</button>
             <button type="button" onClick={() => void save()} disabled={busy}
-              className="h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
+              className="h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
               {busy ? "Adding…" : "Add to the schedule"}
             </button>
           </div>

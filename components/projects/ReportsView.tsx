@@ -606,10 +606,10 @@ export default function ReportsView(p: Props) {
   const detail = (
     <div className="min-w-0 space-y-4">
       <div>
-        <button type="button" onClick={() => setPhoneOpen(false)} className="sm:hidden mb-2 inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-accent-text)]">
+        <button type="button" onClick={() => setPhoneOpen(false)} className="sm:hidden mb-2 inline-flex items-center gap-1 text-[13px] text-[var(--color-accent-text)] hover:underline">
           <ChevronLeft className="w-4 h-4" /> Reports
         </button>
-        <h2 className="text-[15px] font-extrabold text-[var(--color-text)]">{meta.name}</h2>
+        <h2 className="text-[15px] font-semibold text-[var(--color-text)]">{meta.name}</h2>
         <p className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{DESCRIBE[sel]}</p>
       </div>
       {sel === "schedule" ? (

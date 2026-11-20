@@ -407,7 +407,7 @@ export default function DayAgendaPanel({
               <div className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-muted)]">
                 <CalendarDays className="w-3.5 h-3.5 shrink-0" /> The day&apos;s work <span title={`Plant time: ${tz}`}>· {tzAbbrev(tz, dayMs)}</span>
               </div>
-              <div className={`${inline ? "text-[15px] font-bold" : "text-[22px] sm:text-[26px] font-black tracking-[-0.02em] leading-[1.1]"} truncate`}>{label}</div>
+              <div className={`${inline ? "text-[15px] font-bold" : "text-[22px] sm:text-[26px] font-semibold tracking-[-0.02em] leading-[1.1]"} truncate`}>{label}</div>
               <div className="mt-1 text-[12px] text-[var(--color-text-muted)]">
                 {totals.n === 0 ? "Nothing scheduled this day." : <>{totals.n} step{totals.n === 1 ? "" : "s"} · {totals.done} done · {totals.avg}% complete</>}
                 {isToday && live.overdue.length > 0 && <span className="ml-2 font-bold text-rose-700 dark:text-rose-300">{live.overdue.length} carried over</span>}
@@ -418,8 +418,8 @@ export default function DayAgendaPanel({
             {!inline && <button onClick={onClose} className="w-9 h-9 shrink-0 inline-flex items-center justify-center rounded-[10px] hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Close" aria-label="Close"><XIcon className="w-5 h-5" /></button>}
           </div>
           {totals.n > 0 && (
-            <div className="mt-2 h-1.5 rounded-full bg-black/10 dark:bg-white/10 overflow-hidden">
-              <div className={`h-full ${totals.avg >= 100 ? "bg-emerald-500" : "bg-[var(--color-text)]"}`} style={{ width: `${totals.avg}%` }} />
+            <div className="mt-2 h-1.5 rounded-full bg-[var(--color-accent-soft)] overflow-hidden">
+              <div className="h-full bg-[var(--color-main)]" style={{ width: `${totals.avg}%` }} />
             </div>
           )}
           {readErr && <div role="alert" className="mt-1.5 text-[11px] font-semibold text-rose-700 dark:text-rose-400">Couldn&apos;t read the steps&apos; comments and history. Close and reopen the day to try again.</div>}
@@ -455,7 +455,7 @@ export default function DayAgendaPanel({
             {sec.shift === "day" && (
               <div className="sticky top-0 z-[1] px-4 py-1.5 flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] dark:border-[var(--color-border)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)]">
                 <Sun className="w-3.5 h-3.5" aria-hidden />
-                <span className="text-[12px] font-black">Day shift</span>
+                <span className="text-[12px] font-semibold">Day shift</span>
                 <span className="text-[11px] opacity-80">{shiftTimes.dayStart}–{shiftTimes.nightStart}</span>
                 <span className="ml-auto text-[11px] font-semibold opacity-80">{sec.groups.reduce((a, g) => a + g.rows.length, 0)} steps</span>
               </div>
@@ -463,7 +463,7 @@ export default function DayAgendaPanel({
             {sec.shift === "night" && (
               <div ref={nightRef} className="sticky top-0 z-[1] px-4 py-1.5 flex items-center gap-2 bg-[var(--color-surface-2)] text-[var(--color-text)] dark:bg-[var(--color-surface-2)]">
                 <Moon className="w-3.5 h-3.5 text-[var(--color-text-muted)]" aria-hidden />
-                <span className="text-[12px] font-black">Night shift</span>
+                <span className="text-[12px] font-semibold">Night shift</span>
                 <span className="text-[11px] text-[var(--color-text-muted)]">{shiftTimes.nightStart} → {fmtInTz(addDays(dayMs, 1, tz), tz, { weekday: "short" })} {shiftTimes.dayStart}</span>
                 <span className="ml-auto text-[11px] font-semibold text-[var(--color-text-muted)]">{sec.groups.reduce((a, g) => a + g.rows.length, 0)} steps</span>
               </div>
@@ -512,7 +512,7 @@ export default function DayAgendaPanel({
                         {r.live === "overdue" && <span aria-hidden className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r bg-rose-600" />}
                         {/* Day-only or night-only work is marked; round the clock is the norm. */}
                         {(() => { const w = workShiftOf(r.leaf, tz, shiftTimes); return w === "both" ? <span className="w-4 shrink-0" aria-hidden /> : <ShiftMark work={w} />; })()}
-                        <span className={`w-[80px] shrink-0 text-[11px] font-display tabular-nums ${r.live === "overdue" ? "font-black text-rose-700 dark:text-rose-300" : r.live === "started-early" ? "font-bold text-[var(--color-text)] dark:text-[var(--color-text)]" : r.live === "done-ahead" ? "font-bold text-emerald-700 dark:text-emerald-300" : "text-[var(--color-text-muted)]"}`}>{windowOf(r)}</span>
+                        <span className={`w-[80px] shrink-0 text-[11px] font-display tabular-nums ${r.live === "overdue" ? "font-semibold text-rose-700 dark:text-rose-300" : r.live === "started-early" ? "font-bold text-[var(--color-text)] dark:text-[var(--color-text)]" : r.live === "done-ahead" ? "font-bold text-emerald-700 dark:text-emerald-300" : "text-[var(--color-text-muted)]"}`}>{windowOf(r)}</span>
                         <span className="shrink-0">
                           <StatusControl
                             status={r.leaf.status} size="sm" variant="dot" disabled={!canEdit || !onSetStatus || !r.leaf.id}
@@ -545,7 +545,7 @@ export default function DayAgendaPanel({
                         <span className="shrink-0 w-[76px] flex flex-col items-end gap-0.5">
                         <span className="flex items-center justify-end gap-1">
                           <span className="h-1 w-8 rounded-full bg-black/10 dark:bg-white/10 overflow-hidden">
-                            <span className={`block h-full ${pct >= 100 ? "bg-emerald-500" : "bg-[var(--color-text)]"}`} style={{ width: `${pct}%` }} />
+                            <span className={`block h-full bg-[var(--color-main)]`} style={{ width: `${pct}%` }} />
                           </span>
                           <ProgressControl
                             percent={pct}
@@ -581,8 +581,8 @@ export default function DayAgendaPanel({
                               onUpdate={async (u) => { const ok = await onUpdateStep(id, u); setNotesTick((t) => t + 1); return ok; }}
                               onFixTimes={onFixTimes ? async (t) => { const ok = await onFixTimes(id, t); setNotesTick((x) => x + 1); return ok; } : undefined} />
                             <div className="px-3 pl-7 pb-2 flex items-center justify-between text-[12px]">
-                              <button type="button" onClick={() => onOpenDetail(r.leaf)} className="font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Details</button>
-                              {nx && <button type="button" onClick={() => { setOpenId(nx); openGroupOf(nx); }} className="font-bold text-[var(--color-accent-text)] hover:underline">Next step ›</button>}
+                              <button type="button" onClick={() => onOpenDetail(r.leaf)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Details</button>
+                              {nx && <button type="button" onClick={() => { setOpenId(nx); openGroupOf(nx); }} className="text-[var(--color-accent-text)] hover:underline">Next step ›</button>}
                             </div>
                           </div>
                         );
@@ -646,7 +646,7 @@ export default function DayAgendaPanel({
 // ─── Update one step in place ────────────────────────────────────────
 
 // Picked: dark, like every other picked chip.
-const PICKED = "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]";
+const PICKED = "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent";
 const STATUS_BTNS: Array<{ s: MilestoneStatus; label: string; on: string }> = [
   { s: "in_progress", label: "Working", on: PICKED },
   { s: "completed", label: "Done", on: PICKED },
@@ -860,7 +860,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
         <span className="w-16 shrink-0 font-semibold text-[13px] text-[var(--color-text-muted)]">% done</span>
         {PCTS.map((v) => (
           <button key={v} disabled={ro} onClick={() => pickPct(v)}
-            className={`h-7 min-w-[38px] px-1.5 rounded-md border font-bold tabular-nums pointer-coarse:h-9 ${(stagedPct ?? Math.round(pct)) === v ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"} disabled:opacity-40`}>
+            className={`h-7 min-w-[38px] px-1.5 rounded-md border font-bold tabular-nums pointer-coarse:h-9 ${(stagedPct ?? Math.round(pct)) === v ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"} disabled:opacity-40`}>
             {v === 100 ? "100" : v}
           </button>
         ))}
@@ -885,7 +885,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
       </div>
       {hold && (
         <div className="flex items-center gap-1.5">
-          <span className={`w-16 shrink-0 font-black text-[11px] ${timed && holdTouched && !reason.trim() ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-muted)]"}`}>
+          <span className={`w-16 shrink-0 font-semibold text-[11px] ${timed && holdTouched && !reason.trim() ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-muted)]"}`}>
             Blocking it{timed && holdTouched && <span className="block normal-case tracking-normal">required</span>}
           </span>
           <input value={reason} disabled={ro} autoFocus onChange={(e) => { setReason(e.target.value); setHoldTouched(true); setNeedMsg(null); }}
@@ -906,7 +906,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
         <div className="flex flex-wrap items-center gap-1.5">
           {/* When it happened: the shift (this one, or a card further on
               done ahead of plan: now or before) and the time. */}
-          <span className={`w-16 shrink-0 font-black text-[11px] ${whenAt == null ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-muted)]"}`}>
+          <span className={`w-16 shrink-0 font-semibold text-[11px] ${whenAt == null ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-muted)]"}`}>
             When<span className="block normal-case tracking-normal">{whenAt == null ? "required" : "24-hour"}</span>
           </span>
           <span className="inline-flex flex-wrap gap-1" role="group" aria-label="Which shift">
@@ -939,7 +939,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
       {onAddNote && (
         <div className="flex flex-wrap items-center gap-1.5">
           {/* A % being saved needs its comment — said right on the box. */}
-          <span className={`w-16 shrink-0 font-black text-[11px] ${needsNote() ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-muted)]"}`}>
+          <span className={`w-16 shrink-0 font-semibold text-[11px] ${needsNote() ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-muted)]"}`}>
             {needsNote() ? <>{timed && stagedPct === 0 && !starting ? "Why" : starting && (stagedPct ?? 0) <= Math.round(pct) ? "What started" : "What got done"}<span className="block normal-case tracking-normal">required</span></> : noteMode === "edit" ? "Comment" : "Note"}
           </span>
           <input ref={noteRef} value={note} disabled={ro} onChange={(e) => { setNote(e.target.value); setNeedMsg(null); }}
@@ -949,14 +949,14 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
             className={`flex-1 min-w-[180px] h-7 px-2 rounded-md bg-[var(--color-surface)] pointer-coarse:h-9 focus:outline-none focus:border-[var(--color-accent-ring)] ${needMsg && needsNote() ? "border-2 border-rose-500" : needsNote() ? "border-2 border-amber-400 bg-amber-50/60 dark:bg-amber-950/30" : "border border-[var(--color-border-strong)]"}`} />
           {progressPending() && (
             <button disabled={ro} onClick={() => void commit()}
-              className={`shrink-0 h-7 px-2.5 rounded-md font-black bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40 pointer-coarse:h-9 ${needsNote() || needsTime() ? "opacity-70" : ""}`}>
+              className={`shrink-0 h-7 px-2.5 rounded-md font-semibold bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40 pointer-coarse:h-9 ${needsNote() || needsTime() ? "opacity-70" : ""}`}>
               {needsNote() ? "Add a comment to save" : needsTime() ? "Put in the time" : !timed ? `Save ${stagedPct ?? 0}%`
                 : `${(stagedPct ?? 0) >= 100 ? "Mark done" : stagedPct === 0 && !starting ? "Set to not started" : `Save ${stagedPct ?? 0}%`} at ${clock}`}
             </button>
           )}
           {own && (
             <button disabled={ro} onClick={() => { if (noteMode === "edit") { setNoteMode("new"); setNote(""); sentNote.current = null; } else { setNoteMode("edit"); setNote(latest!.body); sentNote.current = latest!.body.trim(); } }}
-              className="shrink-0 text-[11px] font-bold text-[var(--color-accent-text)] hover:underline">
+              className="shrink-0 text-[13px] text-[var(--color-accent-text)] hover:underline">
               {noteMode === "edit" ? "New comment instead" : "Edit my last one"}
             </button>
           )}
@@ -965,7 +965,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
       {needMsg && <div className="pl-[70px] font-semibold text-rose-700 dark:text-rose-400">{needMsg}</div>}
       <div className="flex items-center gap-2">
         {saved && <span className="inline-flex items-center gap-1 font-bold text-emerald-700 dark:text-emerald-400"><Check className="w-3.5 h-3.5" /> {saved}</span>}
-        <button onClick={onOpenDetail} className="ml-auto inline-flex items-center gap-1 font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+        <button onClick={onOpenDetail} className="ml-auto inline-flex items-center gap-1 text-[var(--color-accent-text)] hover:underline">
           <ExternalLink className="w-3 h-3" /> Full details
         </button>
         <button onClick={() => void goNext()}

@@ -34,7 +34,7 @@ export function TryControl({ kind, decision, suggestions, crews, disabled, onCha
       <button type="button" disabled={disabled} aria-pressed={on} title={on ? "Click to take it off the list" : undefined}
         onClick={() => onChange({ ...decision, tryIt: !on, crew: !on ? decision?.crew ?? suggestions[0]?.crew ?? null : decision?.crew })}
         className={`shrink-0 whitespace-nowrap inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-bold transition-colors disabled:opacity-60 ${on
-          ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]"
+          ? "border-transparent bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30"
           : "border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
         {on ? "✓ " : "+ "}{kind === "night" ? "Night" : "Day"} could try
       </button>

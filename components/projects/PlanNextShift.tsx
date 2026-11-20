@@ -80,7 +80,7 @@ export default function PlanNextShift({ milestones, next, now, tz, times, mode, 
             <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-[var(--color-border)] text-[12.5px]">
               <span className="flex-1 text-[13px] text-[var(--color-text-muted)]"><b className="text-[var(--color-text)]">{list.length} step{list.length === 1 ? "" : "s"}</b> on the {next.kind} crew&apos;s list · {report.goals.mustDoHours} h</span>
               <button type="button" onClick={() => { setSaved(null); setView({ v: "pick" }); }}
-                className="inline-flex items-center gap-1.5 h-10 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 text-[13px] font-extrabold text-[var(--color-accent-fg)] shadow-[0_10px_20px_-10px_var(--color-accent)]">
+                className="inline-flex items-center gap-1.5 h-10 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 text-[13px] font-semibold text-[var(--color-accent-fg)] shadow-[0_10px_20px_-10px_var(--color-accent)]">
                 <Plus className="w-3.5 h-3.5" /> Pull in work
               </button>
             </div>
@@ -212,7 +212,7 @@ function Picker({ items, out, next, span, onBack, onPick }: {
               <div className="inline-flex rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5" role="group" aria-label="How far ahead">
                 {WINDOWS.map((w) => (
                   <button key={w.id} type="button" onClick={() => { setWin(w.id); setMore(false); }} aria-pressed={win === w.id}
-                    className={`px-2 py-1 rounded-md font-semibold ${win === w.id ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{w.label}</button>
+                    className={`px-2 py-1 rounded-md font-semibold ${win === w.id ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{w.label}</button>
                 ))}
               </div>
               <button type="button" onClick={() => setReadyOnly((v) => !v)} aria-pressed={readyOnly}
@@ -292,7 +292,7 @@ function Confirm({ milestones, action, next, now, tz, times, mode, crews, when, 
       <div className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
         {plan.in && (
           <div className="px-3 py-2">
-            <span className="inline-block w-10 font-black text-emerald-700 dark:text-emerald-400">In</span>
+            <span className="inline-block w-10 font-semibold text-emerald-700 dark:text-emerald-400">In</span>
             <b>{plan.in.name}</b><span className="text-[var(--color-text-muted)]">{wo(plan.in.wo)}</span>
             <div className="pl-10 text-[var(--color-text-muted)]">{shiftName(next)} shift: {span(plan.in.to[0], plan.in.to[1])} · was planned {when(plan.in.from[0])}</div>
             <label className="pl-10 mt-1 flex flex-wrap items-center gap-1.5">
@@ -306,7 +306,7 @@ function Confirm({ milestones, action, next, now, tz, times, mode, crews, when, 
         )}
         {plan.out && (
           <div className="px-3 py-2">
-            <span className="inline-block w-10 font-black text-amber-700 dark:text-amber-400">Out</span>
+            <span className="inline-block w-10 font-semibold text-amber-700 dark:text-amber-400">Out</span>
             <b>{plan.out.name}</b><span className="text-[var(--color-text-muted)]">{wo(plan.out.wo)}</span>
             <div className="pl-10 text-[var(--color-text-muted)]">to {span(plan.out.to[0], plan.out.to[1])} · was planned {when(plan.out.from[0])}</div>
           </div>
@@ -336,7 +336,7 @@ function Confirm({ milestones, action, next, now, tz, times, mode, crews, when, 
       <div className="flex items-center justify-end gap-2">
         <button type="button" onClick={onBack} className="h-9 px-3 rounded-lg border border-[var(--color-border-strong)] font-semibold">Back</button>
         <button type="button" onClick={() => void save()} disabled={busy}
-          className="h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
+          className="h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
           {busy ? "Saving…" : "Save to the schedule"}
         </button>
       </div>
@@ -358,7 +358,7 @@ function Where({ r }: { r: ShiftRow }) {
 }
 
 function BackLink({ onClick }: { onClick: () => void }) {
-  return <button type="button" onClick={onClick} className="inline-flex items-center gap-1 text-[12px] font-semibold text-[var(--color-accent-text)] hover:underline"><ArrowLeft className="w-3.5 h-3.5" /> Back to the list</button>;
+  return <button type="button" onClick={onClick} className="inline-flex items-center gap-1 text-[13px] text-[var(--color-accent-text)] hover:underline"><ArrowLeft className="w-3.5 h-3.5" /> Back to the list</button>;
 }
 
 function Tag({ tone, children }: { tone: "rose" | "amber" | "emerald" | "slate"; children: React.ReactNode }) {

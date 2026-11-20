@@ -32,7 +32,7 @@ const TONE = {
   rose: "text-rose-700 dark:text-rose-300", emerald: "text-emerald-700 dark:text-emerald-300",
   amber: "text-amber-700 dark:text-amber-300", slate: "text-[var(--color-text)]",
 } as const;
-const BAR = { rose: "bg-rose-500", emerald: "bg-emerald-500", amber: "bg-amber-400", slate: "bg-[var(--color-text)]" } as const;
+const BAR = { rose: "bg-[var(--state-overdue)]", emerald: "bg-[var(--color-main)]", amber: "bg-[var(--state-held)]", slate: "bg-[var(--color-main)]" } as const;
 
 export default function PhaseLines({ rows, print }: { rows: PhaseStanding[]; print?: boolean }) {
   const ph = usePhases();
@@ -58,7 +58,7 @@ export default function PhaseLines({ rows, print }: { rows: PhaseStanding[]; pri
                 {s.steps > 0 && <span className={`${print ? "text-[11.5px]" : "text-[12px]"} text-[var(--color-text-muted)]`}>{s.done} of {s.steps} steps</span>}
               </span>
               {s.steps > 0 && (
-                <span className="relative mt-1.5 block h-1.5 rounded-full bg-[var(--color-surface-2)]">
+                <span className="relative mt-1.5 block h-1.5 rounded-full bg-[var(--color-accent-soft)]">
                   {/* Finished work is a full, plain bar: how it finished is in the words. */}
                   <span className={`absolute inset-y-0 left-0 rounded-full ${s.state === "finished" ? BAR.slate : BAR[w.tone]}`} style={{ width: `${Math.min(100, s.pct)}%` }} />
                   {s.state === "running" && <span className="absolute -top-[3px] h-3 w-0.5 bg-[var(--color-text-muted)]" style={{ left: `calc(${Math.min(100, s.planPct)}% - 1px)` }} title={`Plan by now ${s.planPct}%`} />}

@@ -19,7 +19,7 @@ import FileThumb from "@/components/ui/FileThumb";
 
 const field = "h-9 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px] text-[var(--color-text)]";
 const label = "block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1";
-const primary = "inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50";
+const primary = "inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50";
 const quiet = "inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
 
 const dateOf = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "");
@@ -46,11 +46,11 @@ export function AfeCard({ orgId, projectId, afe, linesTotal, cur, canManage, act
       <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
         <div>
           <div className={label}>AFE</div>
-          <div className="text-[15px] font-black text-[var(--color-text)]">{a.afeNumber || <span className="text-[var(--color-text-faint)] font-bold">No number</span>}</div>
+          <div className="text-[15px] font-semibold text-[var(--color-text)]">{a.afeNumber || <span className="text-[var(--color-text-faint)] font-bold">No number</span>}</div>
         </div>
         <div>
           <div className={label}>Authorized</div>
-          <div className="text-[15px] font-black tabular-nums text-[var(--color-text)]">{a.authorized != null ? fmtMoney(a.authorized, cur) : <span className="text-[var(--color-text-faint)] font-bold">Not set</span>}</div>
+          <div className="text-[15px] font-semibold tabular-nums text-[var(--color-text)]">{a.authorized != null ? fmtMoney(a.authorized, cur) : <span className="text-[var(--color-text-faint)] font-bold">Not set</span>}</div>
         </div>
         {a.chargeAccount && (
           <div>
@@ -77,7 +77,7 @@ export function AfeCard({ orgId, projectId, afe, linesTotal, cur, canManage, act
       )}
       {history && history.length > 0 && (
         <div>
-          <button type="button" onClick={() => setShowHistory((v) => !v)} className="inline-flex items-center gap-1 text-[11.5px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+          <button type="button" onClick={() => setShowHistory((v) => !v)} className="inline-flex items-center gap-1 text-[13px] text-[var(--color-accent-text)] hover:underline">
             <History className="w-3.5 h-3.5" /> {showHistory ? "Hide" : "Show"} AFE changes · {history.filter((h) => h.at).length}
           </button>
           {showHistory && (
@@ -155,7 +155,7 @@ function AfeEditor({ orgId, projectId, afe, actor, cur, onCancel, onSaved }: {
       {err && <div role="alert" className="text-[12px] text-rose-700 dark:text-rose-300">{err}</div>}
       <div className="flex gap-2">
         <button type="button" onClick={() => void save()} disabled={busy || !changed} className={primary}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save AFE</button>
-        <button type="button" onClick={onCancel} disabled={busy} className="text-[12px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2">Cancel</button>
+        <button type="button" onClick={onCancel} disabled={busy} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
       </div>
     </div>
   );
@@ -232,7 +232,7 @@ export function LineEditor({ orgId, projectId, account, parties, actor, onCancel
       {err && <div className="text-[12px] text-rose-700 dark:text-rose-300">{err}</div>}
       <div className="flex gap-2">
         <button type="button" onClick={() => void save()} disabled={busy} className={primary}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save line</button>
-        <button type="button" onClick={onCancel} disabled={busy} className="text-[12px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2">Cancel</button>
+        <button type="button" onClick={onCancel} disabled={busy} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
       </div>
     </div>
   );

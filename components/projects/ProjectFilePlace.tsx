@@ -27,7 +27,7 @@ export function useProjectFileHome(orgId: string, projectId: string): { home: Pr
 }
 
 const btn = "min-h-9 py-1.5 text-left inline-flex items-center gap-1.5 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
-const pri = "min-h-9 py-1.5 text-left inline-flex items-center gap-1.5 px-3.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-black disabled:opacity-50";
+const pri = "min-h-9 py-1.5 text-left inline-flex items-center gap-1.5 px-3.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-semibold disabled:opacity-50";
 
 export default function ProjectFilePlace({ orgId, projectId, uid, canManage, home, onChange, what = "files" }: {
   orgId: string; projectId: string; uid: string; canManage: boolean;
@@ -131,7 +131,7 @@ export default function ProjectFilePlace({ orgId, projectId, uid, canManage, hom
           <div className="flex items-start gap-2 text-[12.5px]">
             <MapPin className="w-3.5 h-3.5 mt-0.5 shrink-0 text-[var(--color-text-muted)]" />
             <span className="min-w-0 flex-1 text-[var(--color-text-muted)]">Saved in <b className="text-[var(--color-text)] break-words">{home.words}</b></span>
-            {canManage && <button type="button" onClick={start} className="shrink-0 font-bold text-[var(--color-accent-text)] hover:underline">Change</button>}
+            {canManage && <button type="button" onClick={start} className="shrink-0 text-[var(--color-accent-text)] hover:underline">Change</button>}
           </div>
         ) : (
           <div className="border-l-2 border-amber-500 pl-3 py-1 flex items-center gap-2 flex-wrap text-[12.5px] text-amber-900 dark:text-amber-200">

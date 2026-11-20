@@ -15,8 +15,9 @@
 // slides) on a computer or a phone.
 
 import { Card } from "@/components/ui/PageHero";
+import HelpTooltip from "@/components/ui/HelpTooltip";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Download, FileText, Loader2, Pencil, Plus, Presentation, RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
+import { Check, Download, FileText, HelpCircle, Loader2, Pencil, Plus, Presentation, RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
 import type { Milestone, MilestoneNote } from "@/types/schema";
 import type { ProgressLogRow } from "@/lib/progressHistory";
 import type { ShiftRecord } from "@/lib/shiftRecord";
@@ -43,7 +44,7 @@ import { changeReview, loadReview, reviewScope, syncLesson } from "@/lib/reviewS
 import { CREWS_HEAD, CREWS_NOTE, CREWS_TITLE, appliesWord, crewsRows, deckSlides, fileStem, reviewDocx, reviewPptx, saveFile, type ReviewFileOpts } from "@/lib/reviewFiles";
 import { GUIDES, VERDICT_WORD, bookOf, scoreInputsFrom, type Action, type ScoreInputs, type ScoreRow, type Verdict } from "@/lib/reviewBook";
 import { phaseStats, type CostEntry, type CostLine } from "@/lib/phaseReport";
-import type { AreaId, ScoreEntry } from "@/lib/postEventReview";
+import type { AreaId, DelayPart, ScoreEntry } from "@/lib/postEventReview";
 import { overloaded } from "@/lib/crewFlow";
 import ReviewSlides from "@/components/projects/ReviewSlides";
 import { useProjectFindings, useProjectUnit } from "@/components/projects/Findings";
@@ -58,15 +59,15 @@ import LoadingBlock from "@/components/ui/LoadingBlock";
 import MoreMenu from "@/components/ui/MoreMenu";
 import { useDraft, clearDraft } from "@/hooks/useDraft";
 
-const btn = "inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
-const dark = "inline-flex items-center gap-1.5 h-9 px-3 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[12.5px] font-black whitespace-nowrap disabled:opacity-50";
-const pri = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-black whitespace-nowrap disabled:opacity-50";
+const btn = "inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50 transition-colors";
+const dark = btn;
+const pri = "inline-flex items-center justify-center gap-1.5 h-9 px-3.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-semibold hover:bg-[var(--color-accent-hover)] whitespace-nowrap disabled:opacity-50 transition-colors";
 const field = "w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[13px] text-[var(--color-text)]";
 const label = "text-[12px] font-semibold text-[var(--color-text-muted)]";
 const RATE_CLS: Record<Rating, string> = {
-  gap: "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300",
-  opportunity: "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300",
-  strength: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300",
+  gap: "bg-[color-mix(in_srgb,var(--state-overdue)_14%,transparent)] text-[var(--state-overdue)]",
+  opportunity: "bg-[color-mix(in_srgb,var(--state-held)_14%,transparent)] text-[var(--state-held)]",
+  strength: "bg-[color-mix(in_srgb,var(--state-released)_14%,transparent)] text-[var(--state-released)]",
   none: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]",
 };
 
@@ -307,6 +308,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
 
   if (!review) return <LoadingBlock what="the review" />;
   const m = review.metrics;
+  const late = m.varianceH != null && m.varianceH >= 1;
   const pt = pointOf(review, phase?.name ?? projectName, tz);
   const bk = bookOf(review, phase?.name ?? projectName, tz, scoreIn);
   // What the review measures that a person has to put in, and where each goes.
@@ -342,7 +344,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
   const day = (t: number | null) => (t == null ? "" : fmtInTz(t, tz, { month: "numeric", day: "numeric" }));
   const when = (t: number) => `${fmtInTz(t, tz, { weekday: "short", month: "numeric", day: "numeric" })} ${fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true })}`;
   const Pill = ({ id, children }: { id: Filter; children: React.ReactNode }) => (
-    <button type="button" onClick={() => setFilter(id)} aria-pressed={filter === id} className={`h-8 px-3 rounded-full border text-[12.5px] font-extrabold whitespace-nowrap ${filter === id ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)]"}`}>{children}</button>
+    <button type="button" onClick={() => setFilter(id)} aria-pressed={filter === id} className={`h-8 px-3 rounded-full border text-[12.5px] font-semibold whitespace-nowrap ${filter === id ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)]"}`}>{children}</button>
   );
 
   return (
@@ -363,7 +365,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
           <span className={label}>Phase</span>
           {phases.map((p) => (
             <button key={p.id} type="button" onClick={() => { setPhaseId(p.id); setEditing(null); setAdding(false); setAnswers({}); }} aria-pressed={p.id === phaseId}
-              className={`h-8 px-3 rounded-full border text-[12.5px] font-extrabold ${p.id === phaseId ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)]"}`}>{p.name}</button>
+              className={`h-8 px-3 rounded-full border text-[12.5px] font-semibold ${p.id === phaseId ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)]"}`}>{p.name}</button>
           ))}
           <span className="text-[12px] text-[var(--color-text-muted)]">One phase at a time; each has its own review.</span>
         </div>
@@ -377,7 +379,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
       {viewing && <ReviewSlides slides={deckSlides(review, fileOpts())} name={`${phase?.name ?? projectName} post-event review`} onClose={() => setViewing(false)} onDownload={() => void download("slides")} downloading={busy === "slides"} ready={held ? { name: held.name, onSave: () => void saveHeld() } : null} />}
 
       {carried.map(({ phase: p, actions }) => (
-        <section key={p.id} className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5" data-review-carried={p.id}>
+        <section key={p.id} className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] p-4 sm:p-5" data-review-carried={p.id}>
           <b className="block text-[14px] text-[var(--color-text)]">Open actions from the {p.name} review: {actions.length}</b>
           <p className="text-[12px] text-[var(--color-text-muted)]">They stay here until each is closed.</p>
           <ul className="mt-2 space-y-2">
@@ -393,20 +395,17 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
 
       {m.steps > 0 && <CloseNeeds needs={needs} onGo={goNeed} />}
 
-      {!m.steps ? <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] px-4 sm:px-5 py-5 text-[14px] text-[var(--color-text-muted)]">No schedule{phase ? ` for ${phase.name}` : ""} yet, so there is nothing to review.</div> : <>
-        <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5" data-review-point>
-          <h3 className="text-[15px] font-extrabold leading-snug text-[var(--color-text)]">{pt.headline}</h3>
-          <p className="text-[12.5px] text-[var(--color-text-muted)]">{pt.span}</p>
-          {pt.delay && <p className="mt-1 text-[14px] font-bold text-[var(--color-text)]" data-review-delay>{pt.delay}</p>}
+      {!m.steps ? <div className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] px-4 sm:px-5 py-5 text-[14px] text-[var(--color-text-muted)]">No schedule{phase ? ` for ${phase.name}` : ""} yet, so there is nothing to review.</div> : <>
+        <section className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] p-4 sm:p-5" data-review-point>
+          <h3 className="sr-only">{pt.headline}</h3>
+          <HowItEnded m={m} delay={late ? review.finish?.delay ?? [] : []} tz={tz} />
 
-          <div className="mt-3" data-review-score>
+          <div className="mt-5" data-review-score>
             <div className="flex items-baseline gap-x-3 gap-y-1 flex-wrap">
-              <b className="text-[14px] text-[var(--color-text)]">1. The score: plan against actual</b>
-              <span className="text-[12.5px] text-[var(--color-text-muted)]">{bk.score.line}</span>
+              <h4 className="font-display text-[17px] font-semibold text-[var(--color-text)]">The score: plan against actual</h4>
+              <span className="text-[13px] text-[var(--color-text-muted)]">{bk.score.line}</span>
             </div>
-            <ul className="mt-1.5 border-y border-[var(--color-border)] divide-y divide-[var(--color-border)]">
-              {bk.score.rows.map((row) => <ScoreLine key={row.key} row={row} entry={saved?.score[row.key]} busy={busy === `score:${row.key}`} canManage={canManage} onSave={(en) => setScore(row.key, en)} />)}
-            </ul>
+            <ScoreTable rows={bk.score.rows} entries={saved?.score} busyKey={busy} canManage={canManage} onSave={setScore} />
           </div>
 
           <div className="mt-4" data-review-areas>
@@ -454,29 +453,29 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
             </div>
             <p className="text-[11.5px] text-[var(--color-text-muted)]">{RATING_MEANS}</p>
 
-            {adding && <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5"><FindingForm title="Add a finding" draftKey={`review-add:${projectId}:${scope}`} pickCategory busy={busy === "add"} onCancel={() => setAdding(false)} onSave={(e, c) => addFinding(e, c ?? "materials")} /></div>}
+            {adding && <div className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] p-4 sm:p-5"><FindingForm title="Add a finding" draftKey={`review-add:${projectId}:${scope}`} pickCategory busy={busy === "add"} onCancel={() => setAdding(false)} onSave={(e, c) => addFinding(e, c ?? "materials")} /></div>}
 
-            {shown.length === 0 && <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] px-4 sm:px-5 py-5 text-[14px] text-[var(--color-text-muted)]">Nothing here.</div>}
+            {shown.length === 0 && <div className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] px-4 sm:px-5 py-5 text-[14px] text-[var(--color-text-muted)]">Nothing here.</div>}
             {shown.map((f) => {
               const c = areaOf(f.category);
               const closes = f.rating === "gap" || f.rating === "opportunity";
               const asks = review.questions.filter((q) => q.findingKey === f.key).length;
               return (
-                <article key={f.key} data-finding={f.key} className={`rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 ${f.status === "discarded" ? "opacity-70" : ""}`}>
+                <article key={f.key} data-finding={f.key} className={`rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] p-4 sm:p-5 ${f.status === "discarded" ? "opacity-70" : ""}`}>
                   {editing === f.key ? (
                     <FindingForm title={`Change: ${c.name}`} init={f} pickCategory={f.source === "person"} busy={busy === `edit:${f.key}`} onCancel={() => setEditing(null)} onSave={(e, cat) => saveEdit(f, e, cat)} />
                   ) : <>
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className={label}>{c.name}</span>
-                      <span className={`text-[11px] font-black px-1.5 py-0.5 rounded ${RATE_CLS[f.rating]}`}>{f.rating === "none" && f.moved === 0 ? "No effect on the finish" : RATING_WORD[f.rating]}</span>
+                      <span className={`text-[11px] font-semibold px-1.5 py-0.5 rounded ${RATE_CLS[f.rating]}`}>{f.rating === "none" && f.moved === 0 ? "No effect on the finish" : RATING_WORD[f.rating]}</span>
                       {f.source === "person" && <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">Added by {f.by ?? "a person"}</span>}
                       {f.source === "job" && <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)]" data-job-finding>Written on the job{f.by ? ` by ${f.by}` : ""}{f.at ? `, ${day(f.at)}` : ""}</span>}
                       {(f.areas?.length ?? 0) > 1 && <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">{f.areas!.map((a) => AREAS.find((x) => x.id === a)?.name).join(" · ")}</span>}
-                      <span className={`ml-auto text-[11px] font-black px-2 py-0.5 rounded-full ${f.status === "kept" ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
+                      <span className={`ml-auto text-[11px] font-semibold px-2 py-0.5 rounded-full ${f.status === "kept" ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
                         {f.status === "kept" ? `Kept${f.at ? ` ${day(f.at)}` : ""}${f.edited ? " · changed" : ""}` : f.status === "discarded" ? "Discarded" : `Draft${f.edited ? " · changed" : ""}${asks ? ` · ${asks} question${asks === 1 ? "" : "s"} open` : ""}`}
                       </span>
                     </div>
-                    <h3 className="mt-1 text-[15.5px] font-black text-[var(--color-text)]">{f.title}</h3>
+                    <h3 className="mt-1 text-[15.5px] font-semibold text-[var(--color-text)]">{f.title}</h3>
                     {f.effect && <p className={`mt-0.5 text-[13px] font-bold ${f.moved === 3 ? "text-rose-700 dark:text-rose-400" : "text-[var(--color-text)]"}`} data-finding-effect>{f.effect}</p>}
                     {closes && f.why && f.why !== f.effect && <p className="mt-0.5 text-[13px] text-[var(--color-text)]">{f.why}</p>}
                     <dl className="mt-2 grid gap-x-3 gap-y-1.5 sm:grid-cols-[136px_minmax(0,1fr)] text-[13px] text-[var(--color-text)]">
@@ -496,8 +495,8 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
                       {closes && <>
                         {f.practice && <><dt className={`${label} pt-0.5`}>Done well</dt><dd className="text-[var(--color-text-muted)]">{f.practice}</dd></>}
                         <dt className={`${label} pt-0.5`}>Root cause</dt>
-                        <dd data-root-cause>{f.gap || <span className="text-[var(--color-text-muted)]">Not written.{canManage && <> <button type="button" onClick={() => { setEditing(f.key); setAdding(false); }} className="font-bold text-[var(--color-accent-text)] hover:underline">Write it</button></>}</span>}</dd>
-                        <dt className={`${label} pt-0.5`}>{f.status === "kept" || f.source === "person" ? "Do differently" : "Suggested change"}</dt><dd>{f.next || <span className="text-[var(--color-text-muted)]">None suggested. Write one with Edit.</span>}{f.owner && <span className="ml-1.5 text-[11px] font-extrabold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)] whitespace-nowrap">Owner: {f.owner}</span>}</dd>
+                        <dd data-root-cause>{f.gap || <span className="text-[var(--color-text-muted)]">Not written.{canManage && <> <button type="button" onClick={() => { setEditing(f.key); setAdding(false); }} className="text-[var(--color-accent-text)] hover:underline">Write it</button></>}</span>}</dd>
+                        <dt className={`${label} pt-0.5`}>{f.status === "kept" || f.source === "person" ? "Do differently" : "Suggested change"}</dt><dd>{f.next || <span className="text-[var(--color-text-muted)]">None suggested. Write one with Edit.</span>}{f.owner && <span className="ml-1.5 text-[11px] font-semibold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)] whitespace-nowrap">Owner: {f.owner}</span>}</dd>
                         {f.year && <><dt className={`${label} pt-0.5`}>Longer term</dt><dd>{f.year}</dd></>}
                       </>}
                       {!closes && f.next && <><dt className={`${label} pt-0.5`}>Do differently</dt><dd>{f.next}</dd></>}
@@ -516,8 +515,8 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
                         <button type="button" onClick={() => { setInfoFor(null); setInfoText(""); }} className={btn}>Cancel</button>
                       </div>
                     )}
-                    {f.key === "materials" && f.status !== "discarded" && <button type="button" onClick={() => onTab("materials")} className="mt-2 text-[12.5px] font-bold text-[var(--color-accent-text)] hover:underline">Open the materials register</button>}
-                    {f.key === "organization" && f.status !== "discarded" && <button type="button" onClick={() => onTab("members")} className="mt-2 text-[12.5px] font-bold text-[var(--color-accent-text)] hover:underline">{organization?.recorded ? "Open the event organization (Members)" : "Record the roles and who fills each (Members)"}</button>}
+                    {f.key === "materials" && f.status !== "discarded" && <button type="button" onClick={() => onTab("materials")} className="mt-2 text-[13px] text-[var(--color-accent-text)] hover:underline">Open the materials register</button>}
+                    {f.key === "organization" && f.status !== "discarded" && <button type="button" onClick={() => onTab("members")} className="mt-2 text-[13px] text-[var(--color-accent-text)] hover:underline">{organization?.recorded ? "Open the event organization (Members)" : "Record the roles and who fills each (Members)"}</button>}
                     {canManage && infoFor !== f.key && (
                       <div className="mt-3 flex gap-1.5 flex-wrap">
                         {f.status === "discarded" ? <button type="button" disabled={!!busy} onClick={() => restore(f)} className={btn}><RotateCcw className="w-4 h-4" /> Restore</button> : <>
@@ -539,8 +538,8 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
 
           <aside className="space-y-3">
             {review.questions.length > 0 ? (
-              <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5" data-review-questions>
-                <h3 className="text-[14px] font-black text-[var(--color-text)]">Fill in what the records don&rsquo;t say ({review.questions.length})</h3>
+              <div className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] p-4 sm:p-5" data-review-questions>
+                <h3 className="text-[14px] font-semibold text-[var(--color-text)]">Fill in what the records don&rsquo;t say ({review.questions.length})</h3>
                 <div className="mt-2 space-y-2">
                   {review.questions.map((q) => {
                     const a = answers[q.key] ?? {};
@@ -557,7 +556,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
                           )}
                           {q.answer === "known" && (
                             <div className="flex gap-1.5 flex-wrap">
-                              {(Object.keys(KNOWN_WORD) as Known[]).map((k) => <button key={k} type="button" aria-pressed={a.known === k} onClick={() => set({ known: a.known === k ? undefined : k })} className={`h-8 px-2.5 rounded-full border text-[12px] font-bold ${a.known === k ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border-strong)]"}`}>{KNOWN_WORD[k]}</button>)}
+                              {(Object.keys(KNOWN_WORD) as Known[]).map((k) => <button key={k} type="button" aria-pressed={a.known === k} onClick={() => set({ known: a.known === k ? undefined : k })} className={`h-8 px-2.5 rounded-full border text-[12px] font-bold ${a.known === k ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border-strong)]"}`}>{KNOWN_WORD[k]}</button>)}
                             </div>
                           )}
                           <input aria-label="Answer" value={a.note ?? ""} onChange={(e) => set({ note: e.target.value })} placeholder={q.answer === "known" ? "What we do next time (this is the slide line)" : q.answer === "cause" ? "More, if it helps (optional)" : "One line is enough"} className={field} />
@@ -571,7 +570,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
             ) : (
               <div className="border-l-2 border-emerald-500 pl-3 py-1 text-[12.5px] text-emerald-900 dark:text-emerald-200"><b>No open questions.</b> Every stuck shift has a reason{review.answeredCount ? ` (${review.answeredCount} answered here)` : ""}.</div>
             )}
-            <details className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] px-4 sm:px-5 py-3.5 text-[13px] text-[var(--color-text-muted)]">
+            <details className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] px-4 sm:px-5 py-3.5 text-[13px] text-[var(--color-text-muted)]">
               <summary className="cursor-pointer text-[13px] font-bold text-[var(--color-text)]">How a finding is drafted</summary>
               <p className="mt-1">Every number is counted from what was entered. Each finding lists the records behind it. What you kept or changed is never overwritten, and kept findings go to the lessons register.</p>
               <div className="mt-2 flex gap-1.5 flex-wrap"><button type="button" onClick={() => onTab("reports:asbuilt")} className={btn}><FileText className="w-4 h-4" /> As-built schedule</button></div>
@@ -579,8 +578,8 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
           </aside>
         </div>
 
-        <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5" data-review-measures>
-          <h3 className="text-[14px] font-black text-[var(--color-text)]">Targets for the next event</h3>
+        <section className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] p-4 sm:p-5" data-review-measures>
+          <h3 className="text-[14px] font-semibold text-[var(--color-text)]">Targets for the next event</h3>
           <p className="text-[12.5px] text-[var(--color-text-muted)]">Nothing is judged against a target until you set it.</p>
           <div className="mt-2 space-y-2">
             {review.measures.map((x) => {
@@ -593,7 +592,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
                   {canManage ? (
                     <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
                       <span className={label}>Target</span>
-                      {x.picks.map((pk) => <button key={pk} type="button" onClick={() => put(pk)} aria-pressed={cur === pk} className={`h-8 px-2.5 rounded-full border text-[12px] font-bold ${cur === pk ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border-strong)]"}`}>{pk}</button>)}
+                      {x.picks.map((pk) => <button key={pk} type="button" onClick={() => put(pk)} aria-pressed={cur === pk} className={`h-8 px-2.5 rounded-full border text-[12px] font-bold ${cur === pk ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border-strong)]"}`}>{pk}</button>)}
                       <input aria-label={`Target: ${x.measure}`} value={cur} onChange={(e) => put(e.target.value)} placeholder="or type your own" className={`${field} !w-44 h-8 !py-0`} />
                     </div>
                   ) : <div className="mt-1 text-[12.5px]">{x.set ? <>Target: <b>{x.target}</b></> : <span className="text-[var(--color-text-muted)]">Target: not set</span>}</div>}
@@ -604,12 +603,12 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
           {canManage && targets && <div className="mt-2.5 flex gap-1.5"><button type="button" disabled={!!busy} onClick={saveTargets} className={pri}>{busy === "targets" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save targets</button><button type="button" onClick={() => setTargets(null)} className={btn}>Cancel</button></div>}
         </section>
 
-        <details className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)]">
-          <summary className="cursor-pointer px-4 py-3 text-[14px] font-black text-[var(--color-text)]">The records behind it: every job that waited, by name</summary>
+        <details className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)]">
+          <summary className="cursor-pointer px-4 py-3 text-[14px] font-semibold text-[var(--color-text)]">The records behind it: every job that waited, by name</summary>
           <div className="px-4 pb-4 space-y-4">
             {review.flows.filter(overloaded).map((f) => (
               <div key={f.crew} data-crew-waits={f.crew}>
-                <h4 className="text-[13px] font-black text-[var(--color-text)]">What waited for {f.crew}: {f.jobs.length} job{f.jobs.length === 1 ? "" : "s"}, {f.peak.open} open at once{f.plannedPeak ? ` (plan ${f.plannedPeak})` : ""}</h4>
+                <h4 className="text-[13px] font-semibold text-[var(--color-text)]">What waited for {f.crew}: {f.jobs.length} job{f.jobs.length === 1 ? "" : "s"}, {f.peak.open} open at once{f.plannedPeak ? ` (plan ${f.plannedPeak})` : ""}</h4>
                 <p className="mb-1.5 text-[12px] text-[var(--color-text-muted)]">Each wait runs from when the job was ready to when {f.crew} started it. Check the &ldquo;ready when&rdquo; step on each: where the schedule has no link the app takes the step planned before it, and you can correct it.</p>
                 <ul className="space-y-2">
                   {f.jobs.map((j) => (
@@ -657,7 +656,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
 function Table({ title, head, rows, empty }: { title: string; head: string[]; rows: string[][]; empty: string }) {
   return (
     <div>
-      <h4 className="text-[13px] font-black text-[var(--color-text)] mb-1.5">{title}</h4>
+      <h4 className="text-[13px] font-semibold text-[var(--color-text)] mb-1.5">{title}</h4>
       {rows.length === 0 ? <div className="text-[12.5px] text-[var(--color-text-muted)]">{empty}</div> : <>
         <div className="hidden sm:block rounded-xl border border-[var(--color-border)] overflow-x-auto">
           <table className="w-full text-[12.5px] border-collapse">
@@ -680,54 +679,146 @@ function Table({ title, head, rows, empty }: { title: string; head: string[]; ro
 
 /** The category a new finding is filed under, for each of the seven areas. */
 const AREA_CATEGORY: Record<AreaId, CategoryId> = { safety: "safety", organization: "organization", planning: "planning", contractors: "contractors", costs: "costs", logistics: "materials", execution: "execution" };
-const QUIET = "bg-[var(--color-border)]/60 text-[var(--color-text-muted)]";
+const QUIET = "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] ring-1 ring-inset ring-[var(--color-border)]";
 const VERDICT_CLS: Record<Verdict, string> = {
-  met: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300", missed: "bg-rose-100 text-rose-800 dark:bg-rose-950/50 dark:text-rose-300",
-  untargeted: "bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200", unmeasured: QUIET, open: QUIET,
+  met: "bg-[color-mix(in_srgb,var(--state-released)_14%,transparent)] text-[var(--state-released)]", missed: "bg-[color-mix(in_srgb,var(--state-overdue)_14%,transparent)] text-[var(--state-overdue)]",
+  untargeted: "bg-[color-mix(in_srgb,var(--state-held)_14%,transparent)] text-[var(--state-held)]", unmeasured: QUIET, open: QUIET,
 };
 const AREA_WORD = { finish: "set the finish", time: "cost time", improve: "to improve", pending: "", well: "went well", none: "nothing recorded" } as const;
 const AREA_CLS = { finish: VERDICT_CLS.missed, time: VERDICT_CLS.untargeted, improve: VERDICT_CLS.untargeted, pending: QUIET, well: VERDICT_CLS.met, none: QUIET } as const;
 
-/** One line of the score: the target, plan against actual, the verdict. A line
- *  the records can't fill carries how to set it up, and takes what a person enters. */
-function ScoreLine({ row, entry, busy, canManage, onSave }: { row: ScoreRow; entry?: ScoreEntry; busy: boolean; canManage: boolean; onSave: (e: ScoreEntry) => void }) {
+/** How it ended, as labeled cells: plan against actual, and where the late
+ *  hours went, each piece with its hours. */
+function HowItEnded({ m, delay, tz }: { m: { baselineFinish: number | null; actualFinish: number | null; varianceH: number | null; steps: number; stepsDone: number }; delay: DelayPart[]; tz: string }) {
+  const at = (t: number | null) => (t == null ? "-" : `${fmtInTz(t, tz, { weekday: "short", month: "short", day: "numeric" })}, ${fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true })}`);
+  const v = m.varianceH;
+  const cells: Array<{ k: string; v: React.ReactNode; tone?: "bad" | "good"; note?: string }> = [
+    { k: "Against the baseline", v: v == null ? "Still open" : Math.abs(v) < 1 ? "On time" : `${Math.abs(v)} h ${v > 0 ? "late" : "early"}`, tone: v == null ? undefined : v >= 1 ? "bad" : "good" },
+    { k: "Baseline finish", v: at(m.baselineFinish) },
+    { k: "Actual finish", v: at(m.actualFinish) },
+    { k: "Activities done", v: `${m.stepsDone} of ${m.steps}` },
+  ];
+  const cell = "min-w-0 pr-3 sm:px-4 sm:first:pl-0 sm:border-l sm:first:border-l-0 border-[var(--color-border)]";
+  return (
+    <div className="space-y-4" data-review-delay>
+      <dl className="grid grid-cols-2 sm:grid-cols-4 gap-y-3">
+        {cells.map((c) => (
+          <div key={c.k} className={cell}>
+            <dt className="text-[13px] text-[var(--color-text-muted)]">{c.k}</dt>
+            <dd className={`font-display font-semibold tabular-nums leading-tight ${c.k === "Against the baseline" ? "text-[28px]" : "text-[17px] mt-1"} ${c.tone === "bad" ? "text-[var(--state-overdue)]" : c.tone === "good" ? "text-[var(--state-released)]" : "text-[var(--color-text)]"}`}>{c.v}</dd>
+          </div>
+        ))}
+      </dl>
+      {delay.length > 0 && (
+        <div>
+          <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Where the {v} h went</div>
+          <dl className="mt-1.5 grid grid-cols-2 sm:grid-cols-4 gap-y-3 border-t border-[var(--color-border)] pt-2.5">
+            {delay.map((d, i) => (
+              <div key={i} className={cell} title={d.line}>
+                <dt className="text-[13px] text-[var(--color-text-muted)] truncate">{d.kind === "longer" ? "Start-up ran long" : d.kind === "gap" ? "Start-up began late" : orderWord(d.order)}</dt>
+                <dd className="font-display text-[24px] font-semibold tabular-nums leading-tight text-[var(--state-overdue)]">{d.hours} h</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The score as a table: measure, target, actual and the result as a pill.
+ *  What a measure means is in its help; Edit opens the target choices (and
+ *  the result, where the records don't have it), with how to record it. */
+function ScoreTable({ rows, entries, busyKey, canManage, onSave }: { rows: ScoreRow[]; entries?: Record<string, ScoreEntry>; busyKey: string | null; canManage: boolean; onSave: (key: string, e: ScoreEntry) => void }) {
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  return (
+    <div className="mt-2 rounded-lg border border-[var(--color-border)] overflow-hidden">
+      <table className="w-full text-[14px]">
+        <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+          <tr>
+            <th scope="col" className="font-semibold pl-4 pr-2 sm:px-4 h-10">Measure</th>
+            <th scope="col" className="font-semibold px-4 hidden sm:table-cell">Target</th>
+            <th scope="col" className="font-semibold px-4 hidden sm:table-cell">Actual</th>
+            <th scope="col" className="font-semibold px-2 sm:px-4">Result</th>
+            <th scope="col" className="w-0"><span className="sr-only">Edit</span></th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-[var(--color-border)]">
+          {rows.map((row) => {
+            const entry = entries?.[row.key];
+            const g = row.guide ? GUIDES[row.guide] : null;
+            const editable = canManage && row.entered;
+            const isOpen = openKey === row.key;
+            return (
+              <React.Fragment key={row.key}>
+                <tr className="align-top" data-score={row.key}>
+                  <td className="pl-4 pr-2 sm:px-4 py-2.5">
+                    <span className="inline-flex items-center gap-1 font-semibold text-[var(--color-text)]">{row.measure}<HelpTooltip><span data-score-means>{row.means}</span></HelpTooltip></span>
+                    <div className="sm:hidden mt-0.5 text-[13px] text-[var(--color-text-muted)]">Target: {row.plan}</div>
+                    <div className="sm:hidden text-[13px] text-[var(--color-text)]">Actual: {row.actual}</div>
+                  </td>
+                  <td className="px-4 py-2.5 hidden sm:table-cell text-[var(--color-text)]">{row.plan}</td>
+                  <td className="px-4 py-2.5 hidden sm:table-cell text-[var(--color-text)]">{row.actual}</td>
+                  <td className="px-2 sm:px-4 py-2.5">
+                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[13px] font-semibold whitespace-nowrap ${VERDICT_CLS[row.verdict]}`}>{VERDICT_WORD[row.verdict]}</span>
+                    {row.result !== VERDICT_WORD[row.verdict] && <div className={`mt-0.5 text-[13px] ${row.verdict === "missed" ? "text-[var(--state-overdue)] font-semibold" : "text-[var(--color-text-muted)]"}`}>{row.result}</div>}
+                  </td>
+                  <td className="pr-2 sm:pr-3 py-2 text-right whitespace-nowrap">
+                    {(editable || g) && (
+                      <button type="button" onClick={() => setOpenKey(isOpen ? null : row.key)} aria-expanded={isOpen} aria-label={editable ? `Edit ${row.measure}` : `How to record ${row.measure}`}
+                        className="inline-flex items-center gap-1.5 h-8 px-2 sm:px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+                        {editable ? <><Pencil className="w-3.5 h-3.5" /><span className="max-sm:sr-only">Edit</span></> : <><HelpCircle className="w-3.5 h-3.5" /><span className="max-sm:sr-only">How to</span></>}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+                {isOpen && (
+                  <tr className="bg-[var(--color-surface-2)]/60">
+                    <td colSpan={5} className="px-4 py-3">
+                      <ScoreEdit row={row} entry={entry} busy={busyKey === `score:${row.key}`} editable={editable} onSave={(e) => onSave(row.key, e)} onDone={() => setOpenKey(null)} />
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** A score line opened: set the target (a tap, or typed), enter the result
+ *  where the records don't have it, and how to record it next time. */
+function ScoreEdit({ row, entry, busy, editable, onSave, onDone }: { row: ScoreRow; entry?: ScoreEntry; busy: boolean; editable: boolean; onSave: (e: ScoreEntry) => void; onDone: () => void }) {
   const [open, setOpen] = useState<"target" | "result" | null>(null);
   const [e, setE] = useState<ScoreEntry>(entry ?? {});
   const g = row.guide ? GUIDES[row.guide] : null;
   const setTarget = (plan: string) => onSave({ ...(entry ?? {}), plan });
   const hasTarget = !!entry?.plan || !/not set|no allowance|no baseline/i.test(row.plan);
   return (
-    <li className="py-2.5" data-score={row.key}>
-      <div className="grid gap-x-3 gap-y-0.5 sm:grid-cols-[8.5rem_1fr_1.2fr_auto] items-baseline text-[13px] text-[var(--color-text)]">
-        <b className="text-[13.5px]">{row.measure}</b>
-        <span><span className={`${label} sm:hidden`}>Target </span>{row.plan}</span>
-        <span><span className={`${label} sm:hidden`}>Actual </span>{row.actual}</span>
-        <span className="flex items-center gap-2 flex-wrap sm:justify-end">
-          {row.result !== VERDICT_WORD[row.verdict] && <span className="text-[12.5px] text-[var(--color-text-muted)]">{row.result}</span>}
-          <span className={`rounded-full px-2 py-0.5 text-[11.5px] font-black whitespace-nowrap ${VERDICT_CLS[row.verdict]}`}>{VERDICT_WORD[row.verdict]}</span>
-        </span>
-      </div>
-      <p className="mt-0.5 text-[12px] text-[var(--color-text-muted)]" data-score-means>{row.means}</p>
-      {canManage && row.entered && (
-        <div className="mt-1.5 flex items-center gap-1.5 flex-wrap" data-score-target>
-          <span className={label}>{hasTarget ? "Change the target" : "Set the target"}</span>
+    <div className="space-y-2.5 text-[14px]">
+      {editable && (
+        <div className="flex items-center gap-1.5 flex-wrap" data-score-target>
+          <span className="text-[13px] font-semibold text-[var(--color-text-muted)] mr-1">{hasTarget ? "Target" : "Set the target"}</span>
           {row.picks.map((t) => (
             <button key={t} type="button" disabled={busy} onClick={() => setTarget(t)} aria-pressed={row.plan === t}
-              className={`h-8 px-2.5 rounded-full border text-[12.5px] font-bold ${row.plan === t ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-border)]/40"}`}>{t}</button>
+              className={`h-8 px-3 rounded-md text-[13px] font-semibold transition-colors ${row.plan === t ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-inset ring-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]"}`}>{t}</button>
           ))}
-          <button type="button" onClick={() => { setE(entry ?? {}); setOpen(open === "target" ? null : "target"); }} className="h-8 px-2.5 rounded-full border border-dashed border-[var(--color-border)] text-[12.5px] font-bold text-[var(--color-accent-text)]">{row.picks.length ? "Other" : "Type it"}</button>
-          {!row.fromRecords && <button type="button" onClick={() => { setE(entry ?? {}); setOpen(open === "result" ? null : "result"); }} className="h-8 px-2.5 rounded-full text-[12.5px] font-bold text-[var(--color-accent-text)]">{entry?.actual ? "Change the result" : "Enter the result"}</button>}
+          <button type="button" onClick={() => { setE(entry ?? {}); setOpen(open === "target" ? null : "target"); }} className="h-8 px-3 rounded-md text-[13px] font-semibold bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-inset ring-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]">{row.picks.length ? "Other" : "Type it"}</button>
+          {!row.fromRecords && <button type="button" onClick={() => { setE(entry ?? {}); setOpen(open === "result" ? null : "result"); }} className="ml-2 text-[13px] text-[var(--color-accent-text)] hover:underline">{entry?.actual ? "Change the result" : "Enter the result"}</button>}
+          <button type="button" onClick={onDone} className="ml-auto text-[13px] text-[var(--color-accent-text)] hover:underline">Close</button>
         </div>
       )}
       {open === "target" && (
-        <div className="mt-2 flex gap-2 items-end flex-wrap">
+        <div className="flex gap-2 items-end flex-wrap">
           <label className="block min-w-0 flex-1"><span className={label}>Target</span><input autoFocus value={e.plan ?? ""} onChange={(ev) => setE((x) => ({ ...x, plan: ev.target.value }))} placeholder={row.picks[0] ?? "The target"} className={`${field} mt-0.5`} /></label>
           <button type="button" disabled={busy} onClick={() => { onSave({ ...(entry ?? {}), plan: e.plan ?? "" }); setOpen(null); }} className={pri}>Save</button>
           <button type="button" onClick={() => setOpen(null)} className={btn}>Cancel</button>
         </div>
       )}
       {open === "result" && (
-        <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_auto_auto_auto] items-end">
+        <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto_auto] items-end">
           <label className="block"><span className={label}>What happened</span><input autoFocus value={e.actual ?? ""} onChange={(ev) => setE((x) => ({ ...x, actual: ev.target.value }))} placeholder={row.key === "safety" ? "0 recordables, 1 first aid" : row.key === "cost" ? "$612,000 spent" : "The result"} className={`${field} mt-0.5`} /></label>
           <label className="block"><span className={label}>Against the target</span><select value={e.verdict ?? ""} onChange={(ev) => setE((x) => ({ ...x, verdict: (ev.target.value || undefined) as ScoreEntry["verdict"] }))} className={`${field} mt-0.5`}><option value="">Not judged</option><option value="met">Met</option><option value="missed">Missed</option></select></label>
           <button type="button" disabled={busy} onClick={() => { onSave({ ...(entry ?? {}), actual: e.actual ?? "", verdict: e.verdict }); setOpen(null); }} className={pri}>Save</button>
@@ -735,14 +826,14 @@ function ScoreLine({ row, entry, busy, canManage, onSave }: { row: ScoreRow; ent
         </div>
       )}
       {g && (
-        <details className="mt-1.5 text-[12.5px]" data-guide={g.id}>
-          <summary className="cursor-pointer font-bold text-[var(--color-accent-text)]">How to record it next time: {g.title.toLowerCase()}</summary>
-          <p className="mt-1 text-[var(--color-text)]">{g.what}</p>
+        <div className="text-[13px]" data-guide={g.id}>
+          <div className="font-semibold text-[var(--color-text)]">How to record it next time: {g.title.toLowerCase()}</div>
+          <p className="mt-0.5 text-[var(--color-text)]">{g.what}</p>
           <ol className="mt-1 list-decimal pl-5 space-y-0.5 text-[var(--color-text)]">{g.steps.map((t, i) => <li key={i}>{t}</li>)}</ol>
           <p className="mt-1 text-[var(--color-text-muted)]">In the app: {g.inApp}</p>
-        </details>
+        </div>
       )}
-    </li>
+    </div>
   );
 }
 
@@ -757,11 +848,11 @@ function ActionLine({ a, kind, busy, canManage, onPlan, onDone }: { a: Action; k
   );
   return (
     <li className={`flex gap-3 text-[var(--color-text)] ${a.done ? "opacity-60" : ""}`} data-conclusion={a.key}>
-      <span className="shrink-0 w-7 h-7 rounded-full bg-[var(--color-text)] text-[var(--color-surface)] text-[13px] font-black flex items-center justify-center">{a.n}</span>
+      <span className="shrink-0 w-7 h-7 rounded-full bg-[var(--color-text)] text-[var(--color-surface)] text-[13px] font-semibold flex items-center justify-center">{a.n}</span>
       <div className="min-w-0 flex-1">
         <b className="block text-[15px] leading-snug">{a.what}</b>
         <div className="mt-1 flex items-center gap-1.5 flex-wrap text-[12px]">
-          <span className={`rounded-full px-2 py-0.5 font-black ${a.applies === "all" ? "bg-[var(--color-surface-2)] text-[var(--color-text)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)]" : "bg-[var(--color-border)]/60 text-[var(--color-text-muted)]"}`} data-applies={a.applies}>{appliesWord(a.applies, kind)}</span>
+          <span className={`rounded-full px-2 py-0.5 font-semibold ${a.applies === "all" ? "bg-[var(--color-surface-2)] text-[var(--color-text)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)]" : "bg-[var(--color-border)]/60 text-[var(--color-text-muted)]"}`} data-applies={a.applies}>{appliesWord(a.applies, kind)}</span>
           <span className="text-[var(--color-text-muted)]">{a.areaName}{a.keys.length > 1 ? `, from ${a.keys.length} findings` : ""}</span>
 
         </div>

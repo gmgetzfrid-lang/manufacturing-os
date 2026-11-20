@@ -80,7 +80,7 @@ function StartCard({ main, icon, title, body, cta, onClick }: {
       <div className="mt-3 text-[14px] font-bold text-[var(--color-text)]">{title}</div>
       <div className="mt-1 text-[13px] text-[var(--color-text-muted)] leading-snug flex-1">{body}</div>
       <div className={`mt-4 self-start inline-flex items-center gap-1.5 rounded-xl ${main
-        ? "h-11 px-5 text-[14px] font-extrabold bg-[var(--color-accent)] text-[var(--color-accent-fg)] group-hover:bg-[var(--color-accent-hover)] shadow-[0_12px_24px_-12px_var(--color-accent)]"
+        ? "h-11 px-5 text-[14px] font-semibold bg-[var(--color-accent)] text-[var(--color-accent-fg)] group-hover:bg-[var(--color-accent-hover)] shadow-[0_12px_24px_-12px_var(--color-accent)]"
         : "h-9 px-3 text-[13px] font-semibold border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] group-hover:bg-[var(--color-surface-2)]"}`}>
         {cta} <ArrowRight className="w-3.5 h-3.5" />
       </div>

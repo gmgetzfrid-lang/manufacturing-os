@@ -57,7 +57,7 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
         <div className="flex items-center gap-2 px-3 sm:px-4 py-2.5 border-b border-[var(--color-border)]">
           <FileText className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" />
           <div className="min-w-0 flex-1">
-            <div className="text-[13px] font-black text-[var(--color-text)] truncate">{file.name ?? "File"}</div>
+            <div className="text-[13px] font-semibold text-[var(--color-text)] truncate">{file.name ?? "File"}</div>
             {file.sub && <div className="text-[11.5px] text-[var(--color-text-muted)] truncate">{file.sub}</div>}
           </div>
           {url && <a href={url} target="_blank" rel="noopener noreferrer" className={`${btn} max-sm:hidden`}><ExternalLink className="w-3.5 h-3.5" /> Open</a>}

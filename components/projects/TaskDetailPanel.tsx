@@ -315,7 +315,7 @@ export default function TaskDetailPanel({
                 <ChevronRight className="w-2.5 h-2.5 text-slate-300" />
               </nav>
             )}
-            <h2 className="text-[24px] sm:text-[28px] font-black tracking-[-0.02em] text-[var(--color-text)] leading-[1.1] break-words">{m.name}</h2>
+            <h2 className="text-[24px] sm:text-[28px] font-semibold tracking-[-0.02em] text-[var(--color-text)] leading-[1.1] break-words">{m.name}</h2>
             <div className="mt-2.5 flex items-center gap-2 flex-wrap">
               <StatusPill status={effStatus} />
               <span className="text-[13px] font-bold tabular-nums text-[var(--color-text)]">{effPct}% done</span>
@@ -381,7 +381,7 @@ export default function TaskDetailPanel({
                     <div className="space-y-1">
                       <div className="flex items-center justify-between">
                         <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">% done</span>
-                        <span className="text-sm font-black text-[var(--color-text)] tabular-nums">{effPct}%</span>
+                        <span className="text-sm font-semibold text-[var(--color-text)] tabular-nums">{effPct}%</span>
                       </div>
                       <ProgressNoteForm key={`${m.id}:${effPct}`} percent={effPct} autoFocus={false} busy={busyStatus}
                         onSave={async (v, n, w) => { const ok = await onSetProgressNote(m.id!, v, n, w); loadNotes(); onChanged(); return ok; }} />
@@ -395,7 +395,7 @@ export default function TaskDetailPanel({
                   <div className="flex items-center gap-2">
                     <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Phase status</span>
                     <StatusControl status={effStatus} variant="pill" readOnly title="Rolls up from sub-tasks" onPick={() => {}} />
-                    <span className="text-sm font-black tabular-nums text-[var(--color-text)]">{effPct}%</span>
+                    <span className="text-sm font-semibold tabular-nums text-[var(--color-text)]">{effPct}%</span>
                   </div>
                   {/* Rolled-up progress bar. */}
                   <div className="mt-2 h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
@@ -440,7 +440,7 @@ export default function TaskDetailPanel({
                         )}
                         <span className="flex justify-end gap-2">
                           <button onClick={() => setActualEdit(null)} className="text-[11px] text-[var(--color-text-muted)]">Cancel</button>
-                          <button onClick={() => void saveActuals()} className="text-[11px] font-bold text-[var(--color-accent-text)]">Save ({tzAbbrev(tz)})</button>
+                          <button onClick={() => void saveActuals()} className="text-[13px] text-[var(--color-accent-text)] hover:underline">Save ({tzAbbrev(tz)})</button>
                         </span>
                       </span>
                     ) : (
@@ -450,7 +450,7 @@ export default function TaskDetailPanel({
                         {m.status === "completed" ? (m.actualAt ? ` · finished ${fmtInTz(m.actualAt as string, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}` : " · finish time not recorded") : ""}
                         {canEdit && (m.actualStartAt || m.status !== "planned") && (
                           <button onClick={() => setActualEdit({ start: toDateTimeInput(m.actualStartAt as string | null, tz), finish: toDateTimeInput(m.actualAt as string | null, tz) })}
-                            className="ml-1.5 text-[11px] font-bold text-[var(--color-accent-text)] hover:underline" title="Correct when the work really started or finished - the shift that did it gets the credit">correct</button>
+                            className="ml-1.5 text-[13px] text-[var(--color-accent-text)] hover:underline" title="Correct when the work really started or finished - the shift that did it gets the credit">correct</button>
                         )}
                       </span>
                     )}
@@ -710,7 +710,7 @@ export default function TaskDetailPanel({
                             <input value={editNote.body} autoFocus onChange={(e) => setEditNote({ id: editNote.id, body: e.target.value })}
                               onKeyDown={(e) => { if (e.key === "Enter") void saveNoteEdit(); if (e.key === "Escape") setEditNote(null); }}
                               className="flex-1 text-xs px-2 py-1 border border-[var(--color-border-strong)] rounded-md bg-[var(--color-surface)]" />
-                            <button onClick={() => void saveNoteEdit()} className="text-[11px] font-bold text-[var(--color-accent-text)]">Save</button>
+                            <button onClick={() => void saveNoteEdit()} className="text-[13px] text-[var(--color-accent-text)] hover:underline">Save</button>
                             <button onClick={() => setEditNote(null)} className="text-[11px] text-[var(--color-text-muted)]">Cancel</button>
                           </div>
                         ) : n.body && (
@@ -907,7 +907,7 @@ function EditForm({
           {fromDates > 0 && (Number(durationHours) !== fromDates ? (
             <span className="block mt-1 text-[11px] text-amber-700 dark:text-amber-400">
               Its dates hold {fromDates} h{crewWord ? ` (${crewWord})` : ""}.{" "}
-              <button type="button" onClick={() => { setDurationHours(String(fromDates)); setHoursTyped(false); }} className="font-bold underline">Use {fromDates} h</button>
+              <button type="button" onClick={() => { setDurationHours(String(fromDates)); setHoursTyped(false); }} className="underline">Use {fromDates} h</button>
             </span>
           ) : (
             <span className="block mt-1 text-[11px] text-[var(--color-text-muted)]">From its dates{crewWord ? `, ${crewWord}` : ""}.</span>

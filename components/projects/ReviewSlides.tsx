@@ -102,7 +102,7 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
       {ready && !full && (
         <div role="status" className="flex items-center gap-2 flex-wrap px-3 sm:px-5 py-2 border-b border-white/10 text-[13px] font-bold text-white">
           <span className="min-w-0 flex-1">The file is ready.</span>
-          <button type="button" onClick={ready.onSave} className="h-9 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] font-black hover:bg-[var(--color-accent-hover)]">Save file</button>
+          <button type="button" onClick={ready.onSave} className="h-9 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] font-semibold hover:bg-[var(--color-accent-hover)]">Save file</button>
         </div>
       )}
       <div ref={stage} className="relative flex-1 min-h-0 overflow-hidden"
@@ -128,7 +128,7 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
         <div className="absolute inset-0 z-10 flex items-end sm:items-center justify-center bg-slate-950/70" onClick={(e) => { if (e.target === e.currentTarget) setMore(null); }} data-slide-more>
           <div className="w-full sm:max-w-2xl max-h-[86%] overflow-y-auto rounded-t-2xl sm:rounded-2xl px-5 py-5" style={{ background: C.bg, color: C.ink }}>
             <div className="flex items-start gap-3">
-              <h3 className="min-w-0 flex-1 text-[18px] font-black leading-tight">{T(more.title)}</h3>
+              <h3 className="min-w-0 flex-1 text-[18px] font-semibold leading-tight">{T(more.title)}</h3>
               <button type="button" onClick={() => setMore(null)} aria-label="Close" className="shrink-0 w-9 h-9 rounded-lg inline-flex items-center justify-center" style={{ background: C.band }}><X className="w-5 h-5" /></button>
             </div>
             {more.sections.map((sec, i) => (
@@ -155,10 +155,10 @@ function Canvas({ spec, open }: { spec: SlideSpec; open?: Open }) {
   if (b.k === "cover" && b.table) {
     return (
       <div style={{ position: "absolute", inset: 0, padding: "34px 58px 0", display: "flex", flexDirection: "column" }}>
-        <div style={{ fontSize: pt(12), fontWeight: 700, color: C.acc, letterSpacing: 3, textTransform: "uppercase" }}>{T(spec.kicker)}</div>
+        <div style={{ fontSize: pt(12), fontWeight: 700, color: C.acc }}>{T(spec.kicker)}</div>
         <div style={{ fontSize: pt(28), fontWeight: 700, lineHeight: 1.1, marginTop: 6 }}>{T(spec.title)}</div>
         <div style={{ fontSize: pt(14), color: C.soft, marginTop: 6 }}>{T(b.sub)}</div>
-        <div style={{ fontSize: pt(11), fontWeight: 700, color: C.acc, letterSpacing: 2, textTransform: "uppercase", marginTop: 22, marginBottom: 6 }}>What this review measures</div>
+        <div style={{ fontSize: pt(11), fontWeight: 700, color: C.acc, marginTop: 22, marginBottom: 6 }}>What this review measures</div>
         <div style={{ flex: 1, minHeight: 0 }}><FitTable key={spec.title} body={{ k: "table", head: b.table.head, rows: b.table.rows, widths: b.table.widths }} /></div>
         <div style={{ height: 44, paddingTop: 10, fontSize: pt(11), color: C.soft }}>{T(b.meta)}</div>
       </div>
@@ -167,7 +167,7 @@ function Canvas({ spec, open }: { spec: SlideSpec; open?: Open }) {
   if (b.k === "cover") {
     return (
       <div style={{ position: "absolute", inset: 0, padding: "144px 86px 0" }}>
-        <div style={{ fontSize: pt(14), fontWeight: 700, color: C.acc, letterSpacing: 3, textTransform: "uppercase" }}>{T(spec.kicker)}</div>
+        <div style={{ fontSize: pt(14), fontWeight: 700, color: C.acc }}>{T(spec.kicker)}</div>
         <div style={{ fontSize: pt(38), fontWeight: 700, lineHeight: 1.1, marginTop: 10 }}>{T(spec.title)}</div>
         <div style={{ fontSize: pt(18), color: C.soft, marginTop: 14 }}>{T(b.sub)}</div>
         <div style={{ fontSize: pt(15), marginTop: 44, lineHeight: 1.5 }}>{b.agenda.map((t, i) => <div key={i}>{i + 1}.&nbsp;&nbsp;{T(t)}</div>)}</div>
@@ -177,7 +177,7 @@ function Canvas({ spec, open }: { spec: SlideSpec; open?: Open }) {
   }
   return (
     <div style={{ position: "absolute", inset: 0, padding: "32px 58px 0", display: "flex", flexDirection: "column" }}>
-      <div style={{ fontSize: pt(11), fontWeight: 700, color: C.acc, letterSpacing: 2, textTransform: "uppercase" }}>{T(spec.kicker)}</div>
+      <div style={{ fontSize: pt(11), fontWeight: 700, color: C.acc }}>{T(spec.kicker)}</div>
       <div style={{ fontSize: pt(spec.title.length > 70 ? 21 : 25), fontWeight: 700, lineHeight: 1.12, marginTop: 6, minHeight: b.k === "table" && spec.title.length <= 60 ? 40 : 74 }}>{T(spec.title)}</div>
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden", marginTop: 10 }}>
         {b.k === "asks" ? (
@@ -205,7 +205,7 @@ function Canvas({ spec, open }: { spec: SlideSpec; open?: Open }) {
   );
 }
 function PaneTitle({ text }: { text: string }) {
-  return <div style={{ fontSize: pt(11), fontWeight: 700, color: C.acc, letterSpacing: 1, textTransform: "uppercase" }}>{T(text)}</div>;
+  return <div style={{ fontSize: pt(11), fontWeight: 700, color: C.acc }}>{T(text)}</div>;
 }
 function PaneView({ pane }: { pane: SlidePane }) {
   const items = (pane.items ?? []).map(itemOf);
@@ -294,7 +294,7 @@ function Page({ spec, open }: { spec: SlideSpec; open?: Open }) {
   return (
     <div className="px-4 py-5">
       <div className="text-[13px] font-semibold " style={{ color: C.acc }}>{T(spec.kicker)}</div>
-      <h2 className="mt-1 text-[21px] font-black leading-tight">{T(spec.title)}</h2>
+      <h2 className="mt-1 text-[21px] font-semibold leading-tight">{T(spec.title)}</h2>
       {b.k === "cover" && <>
         {b.sub && <p className="mt-2 text-[14px]" style={{ color: C.soft }}>{T(b.sub)}</p>}
         {b.table && <><div className="mt-5 text-[13px] font-semibold " style={{ color: C.acc }}>What this review measures</div><div className="mt-2"><Rows head={b.table.head} rows={b.table.rows} /></div></>}
@@ -306,13 +306,13 @@ function Page({ spec, open }: { spec: SlideSpec; open?: Open }) {
           {!b.items.length && <li className="text-[15px]">{T(spec.notes)}</li>}
           {b.items.map((it) => (
             <li key={it.n} className="flex gap-3">
-              <span className="text-[22px] font-black leading-none" style={{ color: C.acc }}>{it.n}</span>
+              <span className="text-[22px] font-semibold leading-none" style={{ color: C.acc }}>{it.n}</span>
               <span className="min-w-0"><b className="block text-[17px] leading-snug">{T(it.ask)}</b><span className="block mt-0.5 text-[14px] leading-snug" style={{ color: C.soft }}>{T(it.because)}</span></span>
             </li>
           ))}
         </ol>
       )}
-      {b.k === "table" && b.lead && <p className="mt-3 text-[15px] font-black leading-snug" style={{ color: C.acc }} data-slide-lead>{T(b.lead)}</p>}
+      {b.k === "table" && b.lead && <p className="mt-3 text-[15px] font-semibold leading-snug" style={{ color: C.acc }} data-slide-lead>{T(b.lead)}</p>}
       {b.k === "table" && b.tally && b.tally.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1" data-slide-tally>{b.tally.map((t) => <span key={t.label} className="whitespace-nowrap"><b className="text-[20px]" style={{ color: `#${TONE_HEX[t.tone].fg}` }}>{t.n}</b> <span className="text-[13px]" style={{ color: C.soft }}>{T(t.label)}</span></span>)}</div>
       )}
@@ -330,7 +330,7 @@ function PanePage({ pane }: { pane: SlidePane }) {
       {pane.title && <div className={label} style={{ color: C.acc }}>{T(pane.title)}</div>}
       {items.length > 0 && (
         <div className="mt-1.5 text-[14.5px] leading-snug">
-          {items.map((it, i) => <div key={i} className={`flex gap-2 mb-1.5 ${it.bold ? "font-black mt-3" : ""} ${it.sub ? "pl-4" : ""}`}>{!it.bold && <span aria-hidden>•</span>}<span>{T(it.text)}</span></div>)}
+          {items.map((it, i) => <div key={i} className={`flex gap-2 mb-1.5 ${it.bold ? "font-semibold mt-3" : ""} ${it.sub ? "pl-4" : ""}`}>{!it.bold && <span aria-hidden>•</span>}<span>{T(it.text)}</span></div>)}
         </div>
       )}
       {pane.table && <div className="mt-3">{pane.table.title && <div className={`${label} mb-1.5`} style={{ color: C.acc }}>{T(pane.table.title)}</div>}<Rows head={pane.table.head} rows={pane.table.rows} /></div>}

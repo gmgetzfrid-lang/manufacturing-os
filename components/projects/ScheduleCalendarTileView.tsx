@@ -382,9 +382,9 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
   }, [clock, tz, shiftTimes]);
   const tagOf = (key: string, band: Band) => {
     const k = `${band}:${key}`;
-    if (k === shiftTags.now) return <span className="shrink-0 rounded px-1 text-[11px] leading-[14px] font-black bg-rose-600 text-white">Now</span>;
-    if (k === shiftTags.last) return <span title="The shift that just ended: the one to write up" className="shrink-0 rounded px-1 text-[11px] leading-[14px] font-black border border-amber-500 text-amber-800 dark:text-amber-300">Last shift</span>;
-    if (k === shiftTags.next) return <span title="The next shift" className="shrink-0 rounded px-1 text-[11px] leading-[14px] font-black border border-[var(--color-border-strong)] text-[var(--color-text)]">Next</span>;
+    if (k === shiftTags.now) return <span className="shrink-0 rounded px-1 text-[11px] leading-[14px] font-semibold bg-rose-600 text-white">Now</span>;
+    if (k === shiftTags.last) return <span title="The shift that just ended: the one to write up" className="shrink-0 rounded px-1 text-[11px] leading-[14px] font-semibold border border-amber-500 text-amber-800 dark:text-amber-300">Last shift</span>;
+    if (k === shiftTags.next) return <span title="The next shift" className="shrink-0 rounded px-1 text-[11px] leading-[14px] font-semibold border border-[var(--color-border-strong)] text-[var(--color-text)]">Next</span>;
     return null;
   };
   // Which shift the day list opens on (from a shift's heading).
@@ -604,7 +604,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
         </button>
         <button onClick={() => setAgendaDay(ymd(new Date(), tz))}
           title="Every step for today in one list: enter % done, status, what's blocking it and notes, one after another"
-          className={quietMain ? QUIET : "inline-flex items-center gap-1.5 h-9 px-3.5 rounded-[10px] text-[13px] font-extrabold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] shadow-[0_10px_20px_-10px_var(--color-accent)] transition-colors"}>
+          className={quietMain ? QUIET : "inline-flex items-center gap-1.5 h-9 px-3.5 rounded-[10px] text-[13px] font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] shadow-[0_10px_20px_-10px_var(--color-accent)] transition-colors"}>
           <ListChecks className="w-3.5 h-3.5" /> Update progress
         </button>
         {canEdit && onPlanNext && (
@@ -729,7 +729,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
               <section key={key} data-daykey={key} className="px-2 py-2">
                 <div className="flex items-center gap-2 mb-1.5">
                 <button type="button" onClick={() => setAgendaDay(key)} className="flex-1 min-w-0 flex items-center justify-between gap-2 text-left">
-                  <span className={`text-[12px] font-black ${isToday ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text)]"}`}>
+                  <span className={`text-[12px] font-semibold ${isToday ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text)]"}`}>
                     {fmtInTz(day, tz, { weekday: "long", month: "short", day: "numeric" })}
                   </span>
                   <span className="text-[11px] font-semibold text-[var(--color-text-faint)]">
@@ -873,7 +873,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                     className={`min-w-0 border-r border-[var(--color-border)] last:border-r-0 p-1 flex flex-col items-start gap-0.5 text-left ${inMonth ? "bg-[var(--color-surface)]" : "bg-[var(--color-canvas)]/50 dark:bg-transparent"} ${isToday ? "ring-1 ring-inset ring-rose-300" : ""}`}>
                     <span className={`text-[11px] font-bold ${isToday ? "text-rose-600 dark:text-rose-400" : inMonth ? "text-[var(--color-text)]" : "text-slate-300 dark:text-slate-600"}`}>{wallClock(day.getTime(), tz).day}</span>
                     {items.length > 0 && <>
-                      <span className="text-[11px] font-black tabular-nums px-1.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)]">{badgeText(items.length)}</span>
+                      <span className="text-[11px] font-semibold tabular-nums px-1.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)]">{badgeText(items.length)}</span>
                       <span className="mt-auto w-full h-1 rounded-full bg-black/10 dark:bg-white/10 overflow-hidden"><span className={`block h-full ${avg >= 100 ? "bg-emerald-500" : "bg-[var(--color-text)]"}`} style={{ width: `${avg}%` }} /></span>
                     </>}
                   </button>
@@ -1254,22 +1254,22 @@ function Chip({
                   mixes are marked; day work — most of it — is left quiet. */}
               {foundHere.map((k) => (
                 <span key={k} title={`${ADDED[k].word} on this shift: ${ADDED[k].tip}`}
-                  className={`shrink-0 rounded border px-1 text-[11px] font-black leading-[13px] ${ADDED_TONE[k]}`}>{ADDED[k].word}</span>
+                  className={`shrink-0 rounded border px-1 text-[11px] font-semibold leading-[13px] ${ADDED_TONE[k]}`}>{ADDED[k].word}</span>
               ))}
               {night && bandStart == null && (
-                <span title="Night-shift work" className="shrink-0 inline-flex items-center gap-0.5 rounded px-1 text-[11px] font-black leading-[14px] bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-200">
+                <span title="Night-shift work" className="shrink-0 inline-flex items-center gap-0.5 rounded px-1 text-[11px] font-semibold leading-[14px] bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-200">
                   <Moon className="w-2.5 h-2.5" />NIGHT
                 </span>
               )}
               {critical && (
-                <span title="Critical-path work on this shift: it sets the finish date" className="shrink-0 rounded px-1 text-[11px] font-black leading-[14px] bg-rose-700 text-white">Crit</span>
+                <span title="Critical-path work on this shift: it sets the finish date" className="shrink-0 rounded px-1 text-[11px] font-semibold leading-[14px] bg-[color-mix(in_srgb,var(--state-overdue)_14%,transparent)] text-[var(--state-overdue)]">Crit</span>
               )}
               {aheadOf && (
-                <span title={`Worked ahead of plan: planned to start ${aheadOf}`} className="shrink-0 rounded px-1 text-[11px] font-black leading-[14px] bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-200">Ahead</span>
+                <span title={`Worked ahead of plan: planned to start ${aheadOf}`} className="shrink-0 rounded px-1 text-[11px] font-semibold leading-[14px] bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-200">Ahead</span>
               )}
               {crew === "both" && <ShiftMark work="both" />}
               {crew === "mixed" && (
-                <span title="Day and night work today" className="shrink-0 inline-flex items-center gap-0.5 rounded px-1 text-[11px] font-black leading-[14px] bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-200">
+                <span title="Day and night work today" className="shrink-0 inline-flex items-center gap-0.5 rounded px-1 text-[11px] font-semibold leading-[14px] bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-200">
                   <Sun className="w-2.5 h-2.5" />+<Moon className="w-2.5 h-2.5" />
                 </span>
               )}
@@ -1288,7 +1288,7 @@ function Chip({
                   type="button"
                   onClick={(e) => { e.stopPropagation(); onToggleExpand?.(e); }}
                   title={isExpanded ? "Hide its steps" : "Show its steps for this day"}
-                  className={`inline-flex items-center justify-center w-4 h-4 pointer-coarse:w-6 pointer-coarse:h-6 rounded transition-colors ${isExpanded ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:bg-black/10 hover:text-[var(--color-text)]"}`}
+                  className={`inline-flex items-center justify-center w-4 h-4 pointer-coarse:w-6 pointer-coarse:h-6 rounded transition-colors ${isExpanded ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "text-[var(--color-text-muted)] hover:bg-black/10 hover:text-[var(--color-text)]"}`}
                 >
                   <ChevronRight className={`w-3 h-3 transition-transform ${isExpanded ? "rotate-90" : ""}`} strokeWidth={2.5} />
                 </button>

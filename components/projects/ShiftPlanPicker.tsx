@@ -121,7 +121,7 @@ export function ShiftPlanPicker({ next, groups, pool, byId, plan, locked, fmt, b
         <div className="sticky top-0 z-10 flex items-center gap-2 px-4 py-1.5 bg-slate-100 dark:bg-slate-800">
           <span className="flex-1 min-w-0 text-[12px] font-semibold text-slate-600 dark:text-slate-300">{title} · {rows.length}</span>
           {!locked && (
-            <button type="button" onClick={() => setMany(ids, !all)} className="shrink-0 text-[11.5px] font-bold text-[var(--color-accent-text)] hover:underline">
+            <button type="button" onClick={() => setMany(ids, !all)} className="shrink-0 text-[13px] text-[var(--color-accent-text)] hover:underline">
               {all ? "Untick all" : "Tick all"}
             </button>
           )}

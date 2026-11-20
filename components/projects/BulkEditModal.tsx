@@ -85,10 +85,10 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
         subtitle="Swap a contractor, crew, company or location everywhere it appears, or set it (or day or night) on the tasks you selected." onClose={busy ? undefined : onClose} />
       <ModalBody className="space-y-3">
         <div className="inline-flex flex-wrap rounded-[10px] bg-[var(--color-surface-2)] p-0.5 gap-0.5 text-[12.5px] font-bold" role="group" aria-label="What to change">
-          <button onClick={() => setMode("replace")} aria-pressed={mode === "replace"} className={`h-8 px-3 rounded-lg ${mode === "replace" ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>Replace a name everywhere</button>
+          <button onClick={() => setMode("replace")} aria-pressed={mode === "replace"} className={`h-8 px-3 rounded-lg ${mode === "replace" ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>Replace a name everywhere</button>
           <button onClick={() => selectedIds.size > 0 && setMode("set")} disabled={selectedIds.size === 0} aria-pressed={mode === "set"}
             title={selectedIds.size === 0 ? "Select tasks on the timeline first" : undefined}
-            className={`h-8 px-3 rounded-lg disabled:opacity-40 ${mode === "set" ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+            className={`h-8 px-3 rounded-lg disabled:opacity-40 ${mode === "set" ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
             Set on {selectedIds.size} selected task{selectedIds.size === 1 ? "" : "s"}
           </button>
         </div>
@@ -177,7 +177,7 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
         {error && <div className="text-[12px] font-bold text-rose-700 dark:text-rose-400">{error}</div>}
       </ModalBody>
       <ModalFooter>
-        <button onClick={onClose} disabled={busy} className="h-9 px-3 rounded-lg text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
+        <button onClick={onClose} disabled={busy} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
         <button onClick={() => void apply()} disabled={busy || plan.length === 0}
           className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-40">
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Replace className="w-4 h-4" />}

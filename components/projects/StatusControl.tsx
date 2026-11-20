@@ -210,7 +210,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
                 <div className="flex items-center justify-between gap-2 mb-2">
                   <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">How far along?</span>
                   <span className="inline-flex items-center gap-1">
-                    <button onClick={() => setPctStep(false)} className="h-8 px-1.5 text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Back</button>
+                    <button onClick={() => setPctStep(false)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Back</button>
                     <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="-mr-1.5 w-8 h-8 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
                   </span>
                 </div>
@@ -249,7 +249,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
                 {choices.length > 0 && clockCtx && <WhenFields choices={choices} idx={whenIdx} setIdx={(i) => { setWhenIdx(i); setWhyMsg(null); }} clock={when} setClock={(v) => { setWhen(v); setWhyMsg(null); }} tz={clockCtx.tz} times={clockCtx.times} other={otherDay} setOther={(d) => { setOtherDay(d); setWhyMsg(null); }} />}
                 {whyMsg && <div className="font-semibold text-rose-700 dark:text-rose-400">{whyMsg}</div>}
                 <div className="flex items-center justify-end gap-1.5">
-                  <button onClick={() => setReasonFor(null)} className="h-9 px-2 text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors">Back</button>
+                  <button onClick={() => setReasonFor(null)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Back</button>
                   <button
                     onClick={commit}
                     className="h-9 px-3.5 text-[13px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] rounded-lg transition-colors"

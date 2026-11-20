@@ -143,8 +143,8 @@ export function PathSteps({ rows }: { rows: PathRow[] }) {
           <li key={i} className="flex gap-3.5" aria-current={r.state === "next" ? "step" : undefined}>
             <div className="flex flex-col items-center">
               <span className={`w-[22px] h-[22px] shrink-0 rounded-full box-border flex items-center justify-center text-[11px] ${
-                r.state === "done" ? "bg-[var(--color-text)] text-[var(--color-surface)]"
-                  : r.state === "next" ? "border-2 border-[var(--color-text)] font-extrabold text-[var(--color-text)]"
+                r.state === "done" ? "bg-[var(--state-released)] text-white"
+                  : r.state === "next" ? "border-2 border-[var(--color-text)] font-semibold text-[var(--color-text)]"
                     : "border border-[var(--color-border-strong)] font-bold text-[var(--color-text-faint)]"}`}>
                 {r.state === "done" ? <Check className="w-3 h-3" strokeWidth={3} /> : i + 1}
               </span>
@@ -546,10 +546,10 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
                       : <Fact k={stats.finishedAt != null ? "Finished" : "Planned finish"} v={stats.finishedAt != null ? short(stats.finishedAt) : stats.plannedFinish != null ? short(stats.plannedFinish) : "-"}
                         tone={stats.finishedAt != null && stats.plannedFinish != null && stats.finishedAt - stats.plannedFinish >= 1_800_000 ? "bad" : undefined}
                         s={stats.finishedAt != null && stats.plannedFinish != null ? `${upper(vsPlanWords(lateBy(stats.finishedAt, stats.plannedFinish)))} (${short(stats.plannedFinish)})` : !pickedPhase && phases.length > 0 ? `${stats.phasesDone} of ${phases.length} phases done` : `${stats.actualPct}% done, plan ${stats.plannedPct}%`} />}
-                    <Fact k="Steps" v={`${stats.done} of ${stats.steps}`} s={`${Math.round(stats.hours).toLocaleString("en-US")} h of work`} />
+                    <Fact k="Steps" v={`${stats.done} of ${stats.steps}`} s={`${Math.round(stats.hours).toLocaleString("en-US")} h of work`} bar={stats.steps ? { pct: (stats.done / stats.steps) * 100 } : undefined} />
                     <Fact k="Added work" v={`${stats.added.count} added`} s={stats.added.count ? `${stats.added.steps} step${stats.added.steps === 1 ? "" : "s"}, +${stats.added.hours} h of work` : "Nothing added to the plan"} />
                     <Fact k={pickedPhase ? "Phase budget" : money0?.afe != null ? "AFE" : "Budget"} v={money(stats.budget)} s={`Budget lines ${money(stats.lines.reduce((a, l) => a + l.budget, 0))}`} />
-                    <Fact k="Spent" v={money(stats.spent)} s={stats.budget ? `${Math.round((stats.spent / stats.budget) * 100)}% of the ${afeWord}` : "No budget"} />
+                    <Fact k="Spent" v={money(stats.spent)} s={stats.budget ? `${Math.round((stats.spent / stats.budget) * 100)}% of the ${afeWord}` : "No budget"} bar={stats.budget ? { pct: (stats.spent / stats.budget) * 100, over: stats.spent > stats.budget } : undefined} />
                     <Fact k={stats.budget - stats.spent >= 0 ? "Left" : "Over"} v={money(Math.abs(stats.budget - stats.spent))} tone={stats.budget - stats.spent >= 0 ? "good" : "bad"} s={stats.budget - stats.spent >= 0 ? "Invoices may still come in" : "Over the budget"} />
                   </tbody>
                 </table>
@@ -667,9 +667,9 @@ function Progress({ name, stats, tz, look, lookById, ids, loading, records, mp }
                   {r.current && <span className="block text-[11px] text-[var(--color-text-muted)]">now</span>}</span>
                 <div className="space-y-0.5">
                   {r.plan != null
-                    ? <div className="h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden"><div className="h-full rounded-full bg-slate-400" style={{ width: `${Math.min(100, r.plan)}%` }} /></div>
+                    ? <div className="h-1.5 rounded-full bg-[var(--color-accent-soft)] overflow-hidden"><div className="h-full rounded-full bg-[var(--color-main)]/45" style={{ width: `${Math.min(100, r.plan)}%` }} /></div>
                     : <div className="h-1.5" />}
-                  <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">{r.done != null && <div className={`h-full rounded-full ${red ? "bg-rose-500" : "bg-emerald-600"}`} style={{ width: `${Math.min(100, r.done)}%` }} />}</div>
+                  <div className="h-2 rounded-full bg-[var(--color-accent-soft)] overflow-hidden">{r.done != null && <div className={`h-full rounded-full ${red ? "bg-[var(--state-overdue)]" : "bg-[var(--color-main)]"}`} style={{ width: `${Math.min(100, r.done)}%` }} />}</div>
                 </div>
                 <span className="text-right tabular-nums text-[var(--color-text-muted)] leading-tight pr-1">
                   {r.plan != null ? `${r.plan}%` : "past plan"}{r.done != null ? <> / <b className={red ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}>{r.done}%</b>{r.plan == null && red && <b className="text-rose-700 dark:text-rose-400"> late</b>}</> : " / to come"}
@@ -797,7 +797,7 @@ function SlipStory({ stats, tz, look, lookById, setbacks, steps, loading, counts
           <div className="space-y-1">{byCause.map((x) => (
             <div key={x.c} className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto] gap-2 items-center text-[11.5px]">
               <span className="text-[var(--color-text)] leading-tight">{CAUSE_LABEL[x.c]}</span>
-              <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden"><div className="h-full rounded-full bg-amber-500" style={{ width: `${(x.h / maxH) * 100}%` }} /></div>
+              <div className="h-2 rounded-full bg-[var(--color-accent-soft)] overflow-hidden"><div className="h-full rounded-full bg-[var(--state-overdue)]" style={{ width: `${(x.h / maxH) * 100}%` }} /></div>
               <span className="tabular-nums text-[var(--color-text-muted)]">{x.h} h · {x.n} step{x.n === 1 ? "" : "s"}</span>
             </div>
           ))}</div>
@@ -842,16 +842,26 @@ function WholeManpower({ shifts, records, mp }: { shifts: ReturnType<typeof phas
 }
 
 /** One line of how the job did: the name, the figure, what backs it. */
-function Fact({ k, v, s, tone }: { k: string; v: string; s: string; tone?: "good" | "bad" | "warn" }) {
+function Fact({ k, v, s, tone, bar }: { k: string; v: string; s: string; tone?: "good" | "bad" | "warn";
+  /** A share of a whole, drawn as a bar in the brand color (over: red). */
+  bar?: { pct: number; over?: boolean } }) {
   const color = tone === "good" ? "text-[var(--state-released)]" : tone === "bad" ? "text-[var(--state-overdue)]" : tone === "warn" ? "text-[var(--state-held)]" : "text-[var(--color-text)]";
+  const meter = bar && (
+    <span className="relative block h-2 w-full max-w-[220px] rounded-full bg-[var(--color-accent-soft)] overflow-hidden" role="progressbar" aria-valuenow={Math.round(bar.pct)} aria-valuemin={0} aria-valuemax={100} aria-label={k}>
+      <span className={`absolute inset-y-0 left-0 rounded-full ${bar.over ? "bg-[var(--state-overdue)]" : "bg-[var(--color-main)]"}`} style={{ width: `${Math.max(0, Math.min(100, bar.pct))}%` }} />
+    </span>
+  );
   return (
     <tr className="align-top">
       <th scope="row" className="w-32 sm:w-40 py-2.5 pr-4 text-left text-[14px] font-normal text-[var(--color-text-muted)]">{k}</th>
       <td className="py-2.5 pr-4">
         <span className={`font-display text-[17px] font-semibold tabular-nums whitespace-nowrap ${color}`}>{v}</span>
+        {meter && <span className="sm:hidden block mt-1">{meter}</span>}
         <span className="sm:hidden block text-[13px] text-[var(--color-text-muted)]">{s}</span>
       </td>
-      <td className="py-2.5 hidden sm:table-cell text-[14px] text-[var(--color-text-muted)] w-[55%]">{s}</td>
+      <td className="py-2.5 hidden sm:table-cell text-[14px] text-[var(--color-text-muted)] w-[55%]">
+        {meter ? <span className="flex items-center gap-3">{meter}<span className="min-w-0">{s}</span></span> : s}
+      </td>
     </tr>
   );
 }

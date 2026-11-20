@@ -34,10 +34,10 @@ import { tryUpload } from "@/lib/uploadRetry";
 import { fileSize } from "@/components/projects/cost/FilePreview";
 
 const btn = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
-const pri = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-black whitespace-nowrap disabled:opacity-50";
+const pri = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-semibold whitespace-nowrap disabled:opacity-50";
 const field = "rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 h-9 text-[13px] text-[var(--color-text)]";
 const label = "text-[12px] font-semibold text-[var(--color-text-muted)]";
-const card = "rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5";
+const card = "rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] p-4 sm:p-5";
 const errLine = "border-l-2 border-rose-500 pl-3 py-1 text-[12.5px] font-semibold text-rose-800 dark:text-rose-300";
 
 /** A sheet to read (Excel or CSV): drop it on the button or pick it. */
@@ -162,7 +162,7 @@ export default function ContractorsPanel(p: ContractorsProps) {
   const phasePills = p.mode === "staffing" && p.phases.length > 1 ? (
     <div className="flex flex-wrap gap-1.5" role="group" aria-label="Phase">
       {[{ id: null as string | null, name: "Whole project" }, ...p.phases.map((x) => ({ id: x.id as string | null, name: x.name }))].map((x) => (
-        <button key={x.id ?? "all"} type="button" aria-pressed={phaseId === x.id} onClick={() => setOwnPhase(x.id)} className={`h-8 px-3 rounded-full border text-[12.5px] font-bold ${phaseId === x.id ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>{x.name}</button>
+        <button key={x.id ?? "all"} type="button" aria-pressed={phaseId === x.id} onClick={() => setOwnPhase(x.id)} className={`h-8 px-3 rounded-full border text-[12.5px] font-bold ${phaseId === x.id ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>{x.name}</button>
       ))}
     </div>
   ) : null;
@@ -210,7 +210,7 @@ export default function ContractorsPanel(p: ContractorsProps) {
     <div className="space-y-4" data-contractors>
       {err && <div role="alert" className={errLine}>{err}</div>}
       <section className={card}>
-        <h3 className="text-[15px] font-black text-[var(--color-text)]">What each contractor should send, and what it sent</h3>
+        <h3 className="text-[15px] font-semibold text-[var(--color-text)]">What each contractor should send, and what it sent</h3>
         <p className="mt-0.5 text-[13px] text-[var(--color-text-muted)]">{(() => { const n = list.filter((x) => stepsOf(x).some((st) => !st.done)).length; return list.length ? (n ? `${plural(n, "contractor")} with something still to put in.` : "Everything is in for every contractor.") : ""; })()}{scope ? ` Showing ${scope.name}.` : ""}</p>
       </section>
       {list.length === 0 ? (
@@ -251,7 +251,7 @@ function ContractorCard({ x, onOpen }: { x: Crew; onOpen: () => void }) {
       <span className="flex items-center gap-2">
         <HardHat className="w-4 h-4 text-[var(--color-text-muted)]" />
         <b className="min-w-0 flex-1 text-[15px] text-[var(--color-text)] truncate">{x.c.company}</b>
-        <span className={`rounded-full px-2 py-0.5 text-[11.5px] font-black ${left ? "bg-amber-500/15 text-amber-900 dark:text-amber-200" : "bg-emerald-500/15 text-emerald-800 dark:text-emerald-300"}`}>{left ? `${left} to put in` : "All in"}</span>
+        <span className={`rounded-full px-2 py-0.5 text-[11.5px] font-semibold ${left ? "bg-amber-500/15 text-amber-900 dark:text-amber-200" : "bg-emerald-500/15 text-emerald-800 dark:text-emerald-300"}`}>{left ? `${left} to put in` : "All in"}</span>
       </span>
       <span className="text-[12.5px] text-[var(--color-text-muted)]">{x.c.crews.length ? `Crews: ${x.c.crews.join(", ")}` : "No crews on the schedule"}</span>
       <ol className="space-y-1">
@@ -288,7 +288,7 @@ function ContractorPage(p: ContractorsProps & {
     <div className="space-y-4" data-contractor-page={co}>
       <div className="flex items-center gap-2 flex-wrap">
         <button type="button" onClick={p.onBack} className={btn}><ArrowLeft className="w-4 h-4" /> {p.mode === "staffing" ? "Staffing plans" : "Contractors"}</button>
-        <h3 className="min-w-0 flex-1 text-[15px] font-extrabold text-[var(--color-text)] truncate">{co}</h3>
+        <h3 className="min-w-0 flex-1 text-[15px] font-semibold text-[var(--color-text)] truncate">{co}</h3>
       </div>
       {err && <div role="alert" className={errLine}>{err}</div>}
 
@@ -296,7 +296,7 @@ function ContractorPage(p: ContractorsProps & {
         <>
           <CrewsSection {...p} co={co} busy={busy} act={act} />
           <PlanSection {...p} co={co} busy={busy} act={act} />
-          <p className="text-[12.5px] text-[var(--color-text-muted)]">The same plan shows on {co}&apos;s page in Costs › Contractors, with its rate sheet, quote and every shift&apos;s cost. <button type="button" onClick={() => openContractor(co)} className="font-bold text-[var(--color-accent-text)] hover:underline cursor-pointer">Open it there</button></p>
+          <p className="text-[12.5px] text-[var(--color-text-muted)]">The same plan shows on {co}&apos;s page in Costs › Contractors, with its rate sheet, quote and every shift&apos;s cost. <button type="button" onClick={() => openContractor(co)} className="text-[var(--color-accent-text)] hover:underline cursor-pointer">Open it there</button></p>
         </>
       ) : (<>
       <Answer x={x} scope={p.scope} />
@@ -304,7 +304,7 @@ function ContractorPage(p: ContractorsProps & {
       <nav className="flex flex-wrap gap-1.5" aria-label="Sections">
         {steps.map((s, i) => (
           <button key={s.name} type="button" onClick={() => go(["money", "plan", "rates", "daily"][i])} className={`shrink-0 inline-flex items-center gap-1.5 h-8 px-3 rounded-full border text-[12.5px] font-bold ${s.done ? "border-emerald-300 text-emerald-800 dark:text-emerald-300 dark:border-emerald-800" : "border-amber-300 text-amber-900 dark:text-amber-200 dark:border-amber-800"}`}>
-            {s.done ? <Check className="w-3.5 h-3.5" /> : <span className="w-3.5 h-3.5 rounded-full bg-amber-500/20 text-amber-900 dark:text-amber-200 text-[11px] font-black flex items-center justify-center">!</span>}{s.name}
+            {s.done ? <Check className="w-3.5 h-3.5" /> : <span className="w-3.5 h-3.5 rounded-full bg-amber-500/20 text-amber-900 dark:text-amber-200 text-[11px] font-semibold flex items-center justify-center">!</span>}{s.name}
           </button>
         ))}
       </nav>
@@ -327,7 +327,7 @@ function Answer({ x, scope }: { x: Crew; scope: ProjectPhase | null }) {
   if (!x.plan && !x.sheet && !s.counted) return null;
   const lastCounted = [...x.rows].reverse().find((r) => r.counted != null);
   return (
-    <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5" data-crew-answer>
+    <section className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] p-4 sm:p-5" data-crew-answer>
       {s.paidToDate != null && s.counted ? (
         <b className="block text-[15px] leading-snug text-[var(--color-text)]">Through {shiftLabel(lastCounted!.key)}: paid about {money(s.paidToDate)} for {plural(s.countedHeads, "head")}; the plan was {money(s.planOnCounted)}{s.plannedOnCounted ? ` for ${s.plannedOnCounted}` : ""}.</b>
       ) : s.planTotal != null ? (
@@ -355,8 +355,8 @@ function Section({ id, title, done, sub, children }: { id: string; title: string
   return (
     <section className={`${card} space-y-3 scroll-mt-4`} data-section={id}>
       <div className="flex items-start gap-2">
-        <span className={`mt-0.5 w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${done ? "bg-emerald-600 text-white" : "bg-amber-500/20 text-amber-900 dark:text-amber-200"}`}>{done ? <Check className="w-3.5 h-3.5" /> : <span className="text-[11px] font-black">!</span>}</span>
-        <div className="min-w-0 flex-1"><h4 className="text-[15px] font-black text-[var(--color-text)]">{title}</h4>{sub && <p className="text-[12.5px] text-[var(--color-text-muted)]">{sub}</p>}</div>
+        <span className={`mt-0.5 w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${done ? "bg-emerald-600 text-white" : "bg-amber-500/20 text-amber-900 dark:text-amber-200"}`}>{done ? <Check className="w-3.5 h-3.5" /> : <span className="text-[11px] font-semibold">!</span>}</span>
+        <div className="min-w-0 flex-1"><h4 className="text-[15px] font-semibold text-[var(--color-text)]">{title}</h4>{sub && <p className="text-[12.5px] text-[var(--color-text-muted)]">{sub}</p>}</div>
       </div>
       {children}
     </section>
@@ -390,7 +390,7 @@ function MoneySection(p: SectionProps) {
       <div className="grid gap-3 sm:grid-cols-3">
         <div className="space-y-1">
           <span className={label}>Company on the Costs tab</span>
-          {x.c.party ? <div className="text-[13.5px] font-bold text-[var(--color-text)]">{x.c.party.name}{link.partyId && p.canManage && <button type="button" onClick={() => void linkParty("")} className="ml-2 text-[12px] font-semibold text-[var(--color-text-muted)] underline">Change</button>}</div>
+          {x.c.party ? <div className="text-[13.5px] font-bold text-[var(--color-text)]">{x.c.party.name}{link.partyId && p.canManage && <button type="button" onClick={() => void linkParty("")} className="ml-2 inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Change</button>}</div>
             : p.canManage ? (
               <div className="flex gap-1.5 flex-wrap">
                 {p.parties.length > 0 && <select aria-label="Company on the Costs tab" value={pick} onChange={(e) => { setPick(e.target.value); if (e.target.value) void linkParty(e.target.value); }} className={`${field} min-w-0 flex-1`}><option value="">Pick one</option>{p.parties.filter((y) => y.status !== "inactive").map((y) => <option key={y.id} value={y.id}>{y.name}</option>)}</select>}
@@ -401,7 +401,7 @@ function MoneySection(p: SectionProps) {
         <div className="space-y-1">
           <span className={label}>Quote</span>
           {x.quote ? <div className="text-[13.5px] text-[var(--color-text)]"><b>{money(x.quote.totalAmount)}</b> awarded{x.quote.fileName ? `, ${x.quote.fileName}` : ""}</div>
-            : <div className="text-[13px] text-[var(--color-text-muted)]">{quotes.length ? `${plural(quotes.length, "quote")} in, none awarded.` : "None awarded."} <button type="button" onClick={p.onQuotes} className="font-bold text-[var(--color-accent-text)] hover:underline">{quotes.length ? "Award one in Quotes" : "Add it in Quotes"}</button></div>}
+            : <div className="text-[13px] text-[var(--color-text-muted)]">{quotes.length ? `${plural(quotes.length, "quote")} in, none awarded.` : "None awarded."} <button type="button" onClick={p.onQuotes} className="text-[var(--color-accent-text)] hover:underline">{quotes.length ? "Award one in Quotes" : "Add it in Quotes"}</button></div>}
         </div>
         <div className="space-y-1">
           <span className={label}>Budget line</span>
@@ -429,7 +429,7 @@ function CrewsSection(p: SectionProps) {
   if (!x.c.crews.length && !others.length) return null;
   return (
     <section className={`${card} space-y-2`} data-section="crews">
-      <h4 className="text-[14px] font-black text-[var(--color-text)]">Its crews on the schedule</h4>
+      <h4 className="text-[14px] font-semibold text-[var(--color-text)]">Its crews on the schedule</h4>
       <p className="text-[12.5px] text-[var(--color-text-muted)]">Their head counts at the meeting are {co}&rsquo;s.</p>
       <div className="flex gap-1.5 flex-wrap items-center">
         {x.c.crews.map((c) => (
@@ -559,7 +559,7 @@ function PlanSection(p: SectionProps) {
             <div className="mt-1 flex gap-1.5 flex-wrap">
               {read.g.crafts.map((c) => (
                 <button key={c.name} type="button" onClick={() => setRead({ ...read, direct: { ...read.direct, [c.name]: !read.direct[c.name] } })} aria-pressed={read.direct[c.name]}
-                  className={`h-8 px-2.5 rounded-full border text-[12.5px] font-semibold ${read.direct[c.name] ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>
+                  className={`h-8 px-2.5 rounded-full border text-[12.5px] font-semibold ${read.direct[c.name] ? "border-transparent bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>
                   {c.name} <span className="opacity-70">{read.direct[c.name] ? "tools" : "supervision"}</span>
                 </button>
               ))}
@@ -788,7 +788,7 @@ function DailySection({ x, scope }: { x: Crew; scope: ProjectPhase | null }) {
         {priced && (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-2" data-crew-kpis>
             {[["Heads counted", x.sum.counted ? `${x.sum.countedHeads} of ${x.sum.plannedOnCounted}` : "None yet", x.sum.counted ? "against the plan, on the counted shifts" : "counted at the shift meeting"], ["Paid to date (estimate)", x.sum.counted ? money(x.sum.paidToDate) : "-", "head counts at the rate sheet"], ["Overtime to date", x.sum.overtime ? money(x.sum.overtime) : "None", "crews held over"], ["Forecast", money(x.sum.forecast), x.sum.counted ? `plan ${money(x.sum.planTotal)}` : "the plan, until heads are counted"]].map(([k, v, s]) => (
-              <div key={k} className="rounded-xl border border-[var(--color-border)] px-3 py-2"><div className={label}>{k}</div><div className="text-[15px] font-extrabold tabular-nums text-[var(--color-text)]">{v}</div><div className="text-[11.5px] text-[var(--color-text-muted)]">{s}</div></div>
+              <div key={k} className="rounded-xl border border-[var(--color-border)] px-3 py-2"><div className={label}>{k}</div><div className="text-[15px] font-semibold tabular-nums text-[var(--color-text)]">{v}</div><div className="text-[11.5px] text-[var(--color-text-muted)]">{s}</div></div>
             ))}
           </div>
         )}
@@ -825,7 +825,7 @@ function DailySection({ x, scope }: { x: Crew; scope: ProjectPhase | null }) {
                   <tr key={r.key} className={`border-t border-[var(--color-border)] ${r.kind === "night" ? "bg-[var(--color-surface-2)]/50" : ""}`} data-crew-shift={r.key}>
                     <td className="px-3 py-1.5 whitespace-nowrap text-[var(--color-text)]">{shiftLabel(r.key)}</td>
                     <td className="px-2 py-1.5 text-right tabular-nums">{ph ?? "-"}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums">{r.counted != null ? <b>{r.counted}</b> : r.started && ph ? <span className="whitespace-nowrap rounded-full px-2 py-0.5 text-[11.5px] font-black bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200">Not counted</span> : <span className="text-[var(--color-text-faint)]">to come</span>}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{r.counted != null ? <b>{r.counted}</b> : r.started && ph ? <span className="whitespace-nowrap rounded-full px-2 py-0.5 text-[11.5px] font-semibold bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200">Not counted</span> : <span className="text-[var(--color-text-faint)]">to come</span>}</td>
                     <td className="px-2 py-1.5 min-w-[170px]">{diff != null && ph != null ? (
                       <span className="flex items-center gap-2">
                         <span className="relative h-2 w-24 rounded-full bg-[var(--color-surface-2)] border border-[var(--color-border)] overflow-hidden shrink-0" aria-hidden>

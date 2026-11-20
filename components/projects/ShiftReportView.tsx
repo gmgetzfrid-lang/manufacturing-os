@@ -33,7 +33,7 @@ import { createPortal } from "react-dom";
 import {
   Printer, ChevronLeft, ChevronRight, ChevronDown, Sun, Moon, Flag, FastForward,
   Zap, Presentation, X, Settings2, Rocket, ArrowLeftRight, Trophy,
-  Mail, FileText, Hourglass, Clock, Pencil, Plus, CalendarClock, Eye, EyeOff, ListChecks,
+  Mail, FileText, Hourglass, Clock, Pencil, Plus, CalendarClock, Eye, EyeOff, ListChecks, Check,
 } from "lucide-react";
 import MoreMenu from "@/components/ui/MoreMenu";
 import { useIsMobile } from "@/hooks/useIsMobile";
@@ -167,6 +167,14 @@ interface Props {
 
 // A quiet button on the white card; the one orange one is Email / Print.
 const QUIET = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
+// Small filters in the sheet: one-of-many is a segmented track (the one
+// you're on is a white raised segment); a toggle is a quiet chip, tinted
+// when it's on.
+const SEG = "inline-flex items-center gap-0.5 p-0.5 rounded-md bg-[var(--color-surface-2)] ring-1 ring-inset ring-[var(--color-border)] max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden";
+const segItem = (on: boolean) => `shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-7 px-2.5 rounded text-[13px] font-semibold transition-colors ${
+  on ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-[0_1px_2px_rgb(31_39_51/0.15)] ring-1 ring-[var(--color-border-strong)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`;
+const chip = (on: boolean) => `shrink-0 inline-flex items-center gap-1 h-7 px-2.5 rounded-md text-[13px] font-semibold transition-colors ${
+  on ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-[var(--color-accent-text)]/30" : "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]"}`;
 
 const NONE_CANCELLED: CancelledJob[] = [];
 /** "Project / turnaround lead"; for a plain project, "Project lead". */
@@ -1000,7 +1008,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   return (
     <ReportCrew.Provider value={crew}>
     {/* On screen, one white card on the paper; on paper, its own copy (below). */}
-    <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)]">
+    <div className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)]">
       <style>{`
         [data-shift-print-root] { display: none; }
         @media print {
@@ -1104,13 +1112,13 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
                 {!timesDraft && timesSaved === false && (
                   <div className="flex justify-end pt-0.5">
                     <button onClick={() => { void saveProjectShiftTimes(projectId, times).then(() => setTimesMsg("Saved for everyone on this project.")).catch((e: Error) => setTimesMsg(e.message)); }}
-                      className="h-8 px-3 rounded-lg font-bold text-[var(--color-surface)] bg-[var(--color-text)] hover:opacity-90">These are right: confirm</button>
+                      className="inline-flex items-center h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">These are right: confirm</button>
                   </div>
                 )}
                 {timesDraft && (
                   <div className="flex justify-end gap-1.5 pt-0.5">
                     <button onClick={() => { setTimesDraft(null); setTimesMsg(null); }} className="px-2 py-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
-                    <button onClick={() => void saveTimes()} className="h-8 px-3 rounded-lg font-bold text-[var(--color-surface)] bg-[var(--color-text)] hover:opacity-90">Save for the project</button>
+                    <button onClick={() => void saveTimes()} className="inline-flex items-center h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Save for the project</button>
                   </div>
                 )}
                 {timesMsg && <div className={`leading-snug ${/^Saved for everyone/.test(timesMsg) ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-400"}`}>{timesMsg}</div>}
@@ -1141,7 +1149,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
                   </div>
                   <div className="mt-2 flex items-center justify-between gap-2 border-t border-[var(--color-border)] pt-2">
                     <span className="text-[11px] text-[var(--color-text-muted)] leading-snug">On screen and in print. The email has its own list.</span>
-                    {hiddenSecs.length > 0 && <button type="button" onClick={() => setHidden(null, false)} className="shrink-0 font-bold text-[var(--color-accent-text)] hover:underline">Show all</button>}
+                    {hiddenSecs.length > 0 && <button type="button" onClick={() => setHidden(null, false)} className="shrink-0 text-[var(--color-accent-text)] hover:underline">Show all</button>}
                   </div>
                 </div>
               </>
@@ -1149,7 +1157,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           </div>}
           {presenting != null && (
             <button onClick={() => setPresenting(null)} title="Back to the report (Esc)"
-              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] text-[13px] font-semibold bg-[var(--color-text)] text-[var(--color-surface)]">
+              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
               <X className="w-3.5 h-3.5" /> Leave present
             </button>
           )}
@@ -1225,22 +1233,20 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
 
       {/* ── Agenda bar: stays on screen, jumps to each item ───────────── */}
       <div className="sticky top-0 z-20 border-b border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur">
-      {/* The agenda as one path: the numbers joined by a line, a problem in its colour. */}
-      <nav className="px-3 sm:px-4 py-2 flex items-center overflow-x-auto [scrollbar-width:none]" aria-label="Agenda">
+      {/* The agenda: each item's number and name, a problem marked with a
+          dot in its colour. A tap jumps to it. */}
+      <nav className="px-2 sm:px-3 py-1.5 flex items-center gap-0.5 overflow-x-auto [scrollbar-width:none]" aria-label="Agenda">
         {sections.map((s, i) => {
           const active = presenting === i;
-          const dot = s.flag === "rose" ? "bg-rose-600 text-white" : s.flag === "amber" ? "bg-amber-500 text-white" : "bg-[var(--color-text)] text-[var(--color-surface)]";
-          const word = s.flag === "rose" ? "text-rose-700 dark:text-rose-300" : s.flag === "amber" ? "text-amber-800 dark:text-amber-300" : "text-[var(--color-text)]";
+          const flag = s.flag === "rose" ? "var(--state-overdue)" : s.flag === "amber" ? "var(--state-held)" : null;
           return (
-            <React.Fragment key={s.id}>
-              {i > 0 && <span aria-hidden className="shrink-0 w-3 h-0.5 bg-[var(--color-border-strong)]" />}
-              <button onClick={() => goTo(s.id)}
-                className={`shrink-0 inline-flex items-center gap-1.5 rounded-full pl-0.5 pr-2.5 h-7 text-[12px] font-semibold hover:bg-[var(--color-surface-2)] ${word} ${active ? "ring-2 ring-[var(--color-text)]" : ""}`}>
-                <span className={`w-[22px] h-[22px] rounded-full text-[11px] font-black flex items-center justify-center ${dot}`}>{i + 1}</span>
-                {s.short}
-                {s.count != null && <span className="tabular-nums font-bold opacity-60">{badgeText(s.count)}</span>}
-              </button>
-            </React.Fragment>
+            <button key={s.id} type="button" onClick={() => goTo(s.id)} aria-current={active ? "step" : undefined}
+              className={`shrink-0 inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] ${active ? "bg-[var(--color-surface-2)] ring-1 ring-[var(--color-border-strong)]" : ""}`}>
+              <span className="font-display tabular-nums text-[13px] font-medium text-[var(--color-text-muted)]">{i + 1}</span>
+              {s.short}
+              {s.count != null && <span className="font-display tabular-nums font-medium text-[var(--color-text-muted)]">{badgeText(s.count)}</span>}
+              {flag && <span aria-label={s.flag === "rose" ? "needs attention" : "waiting"} className="w-2 h-2 rounded-full" style={{ background: flag }} />}
+            </button>
           );
         })}
       </nav>
@@ -1248,29 +1254,28 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       {meeting === "turnover" && (
         <div className="px-3 sm:px-4 pb-2 flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-1.5">
           {crews.length > 1 && (
-            <div className="min-w-0 w-full sm:w-auto sm:flex-1 flex items-center gap-1 overflow-x-auto scroll-quiet" role="group" aria-label="Show one crew">
-              <span className="shrink-0 text-[13px] font-semibold text-[var(--color-text-muted)] mr-0.5">Crew</span>
-              {[{ who: null as string | null, steps: 0 }, ...crews].map((x) => {
-                const on = crew === x.who;
-                return (
-                  <button key={x.who ?? "__all"} type="button" aria-pressed={on} onClick={() => setCrewPick(x.who)}
-                    className={`shrink-0 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${on ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
-                    {x.who ?? "All"}
-                    {x.who && <span className="font-display tabular-nums opacity-60">{x.steps}</span>}
-                  </button>
-                );
-              })}
+            <div className="min-w-0 w-full sm:w-auto sm:flex-1 flex items-center gap-2" role="group" aria-label="Show one crew">
+              <span className="shrink-0 text-[13px] font-semibold text-[var(--color-text-muted)]">Crew</span>
+              <div className={`${SEG} min-w-0`}>
+                {[{ who: null as string | null, steps: 0 }, ...crews].map((x) => {
+                  const on = crew === x.who;
+                  return (
+                    <button key={x.who ?? "__all"} type="button" aria-pressed={on} onClick={() => setCrewPick(x.who)} className={segItem(on)}>
+                      {x.who ?? "All"}
+                      {x.who && <span className="font-display tabular-nums font-medium text-[var(--color-text-muted)]">{x.steps}</span>}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
-          <div className="shrink-0 flex items-center gap-1" role="group" aria-label="Show only">
+          <div className="shrink-0 flex items-center gap-1.5" role="group" aria-label="Show only">
             <span className="text-[13px] font-semibold text-[var(--color-text-muted)] mr-0.5">Only</span>
-            <button type="button" aria-pressed={criticalOnly} onClick={() => setOnlyPick((v) => ({ ...v, critical: !v.critical }))}
-              className={`shrink-0 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${criticalOnly ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
-              Critical path
+            <button type="button" aria-pressed={criticalOnly} onClick={() => setOnlyPick((v) => ({ ...v, critical: !v.critical }))} className={chip(criticalOnly)}>
+              {criticalOnly && <Check className="w-3.5 h-3.5" />}Critical path
             </button>
-            <button type="button" aria-pressed={addedOnly} onClick={() => setOnlyPick((v) => ({ ...v, added: !v.added }))}
-              className={`shrink-0 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${addedOnly ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
-              Discovery &amp; added
+            <button type="button" aria-pressed={addedOnly} onClick={() => setOnlyPick((v) => ({ ...v, added: !v.added }))} className={chip(addedOnly)}>
+              {addedOnly && <Check className="w-3.5 h-3.5" />}Discovery &amp; added
             </button>
           </div>
           <WoClassSelects c={wc} units={classPick.units} types={classPick.types} className="max-sm:w-full"
@@ -1293,11 +1298,11 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           <SectionHead n={presenting + 1} s={sections[presenting]} big />
           <div className="mt-3">{sections[presenting].body(false)}</div>
           <div className="mt-6 flex items-center justify-between no-print">
-            <button disabled={presenting === 0} onClick={() => setPresenting(presenting - 1)} className="inline-flex items-center gap-1 rounded-lg border border-[var(--color-border-strong)] px-3 py-2 text-[12px] font-bold disabled:opacity-30">
+            <button disabled={presenting === 0} onClick={() => setPresenting(presenting - 1)} className="inline-flex items-center gap-1 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-30">
               <ChevronLeft className="w-4 h-4" /> {presenting > 0 ? sections[presenting - 1].short : "Back"}
             </button>
             <span className="text-[11px] text-[var(--color-text-muted)]">{presenting + 1} of {sections.length} · ← → to move · Esc to leave</span>
-            <button disabled={presenting === sections.length - 1} onClick={() => setPresenting(presenting + 1)} className="inline-flex items-center gap-1 rounded-lg bg-slate-900 text-white px-3 py-2 text-[12px] font-bold disabled:opacity-30">
+            <button disabled={presenting === sections.length - 1} onClick={() => setPresenting(presenting + 1)} className="inline-flex items-center gap-1 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-30">
               {presenting < sections.length - 1 ? sections[presenting + 1].short : "Done"} <ChevronRight className="w-4 h-4" />
             </button>
           </div>
@@ -1311,11 +1316,11 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           {sections.map((s, i) => {
             const isCollapsed = collapsed.has(s.id);
             const last = i === sections.length - 1;
-            const dot = s.flag === "rose" ? "bg-rose-600 text-white" : s.flag === "amber" ? "bg-amber-500 text-white" : "bg-[var(--color-text)] text-[var(--color-surface)]";
+            const dot = s.flag === "rose" ? "bg-[var(--state-overdue)] text-white" : s.flag === "amber" ? "bg-[var(--state-held)] text-white" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] ring-1 ring-inset ring-[var(--color-border-strong)]";
             return (
               <li key={s.id} className="flex gap-2.5 sm:gap-4">
                 <div aria-hidden className="flex flex-col items-center shrink-0 w-6">
-                  <span className={`w-6 h-6 rounded-full text-[11px] font-black flex items-center justify-center ${dot}`}>{i + 1}</span>
+                  <span className={`w-6 h-6 rounded-full font-display tabular-nums text-[13px] font-semibold flex items-center justify-center ${dot}`}>{i + 1}</span>
                   {!last && <span className="flex-1 w-0.5 mt-1 bg-[var(--color-border-strong)]" />}
                 </div>
                 <section ref={(el) => { if (el) refs.current.set(s.id, el); else refs.current.delete(s.id); }} className={`min-w-0 flex-1 scroll-mt-28 ${last ? "" : "pb-6"}`}>
@@ -1333,11 +1338,11 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
               <EyeOff className="w-3.5 h-3.5" /> Hidden:
               {hiddenSecs.map((x) => (
                 <button key={x.id} type="button" onClick={() => setHidden(x.id, false)} title="Show it again"
-                  className="rounded-full border border-[var(--color-border)] px-2 py-0.5 font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                  className="inline-flex items-center gap-1 h-7 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                   {x.title.split(" - ")[0]} <Eye className="inline w-3 h-3 -mt-px" />
                 </button>
               ))}
-              <button type="button" onClick={() => setHidden(null, false)} className="ml-auto font-bold text-[var(--color-accent-text)] hover:underline">Show all</button>
+              <button type="button" onClick={() => setHidden(null, false)} className="ml-auto text-[13px] text-[var(--color-accent-text)] hover:underline">Show all</button>
             </div>
           )}
           <Footnote meeting={meeting} ctx={ctx} asOf={asOf} now={now} projectName={projectName} />
@@ -1554,7 +1559,7 @@ function CopyUpdate({ doc, meeting, lh, stamps, primary }: { primary?: boolean; 
                 <span className="inline-flex rounded-lg border border-[var(--color-border-strong)] overflow-hidden" role="group" aria-label="Format">
                   {([["form", "Required (shift table)"], ["detail", "Detailed"]] as const).map(([k, l]) => (
                     <button key={k} type="button" aria-pressed={format === k} onClick={() => setFormat(k)}
-                      className={`h-8 px-3 text-[12px] font-bold ${format === k ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>{l}</button>
+                      className={`h-8 px-3 text-[12px] font-bold ${format === k ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>{l}</button>
                   ))}
                 </span>
               </div>
@@ -1625,7 +1630,7 @@ function CopyUpdate({ doc, meeting, lh, stamps, primary }: { primary?: boolean; 
                 <FileText className="w-4 h-4" /> Export Word
               </button>
             )}
-            <button onClick={() => void run("email")} className="inline-flex items-center justify-center whitespace-nowrap flex-1 sm:flex-none min-w-[calc(50%-0.25rem)] sm:min-w-0 gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)]">
+            <button onClick={() => void run("email")} className="inline-flex items-center justify-center whitespace-nowrap flex-1 sm:flex-none min-w-[calc(50%-0.25rem)] sm:min-w-0 gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-semibold hover:bg-[var(--color-accent-hover)]">
               <Mail className="w-4 h-4" /> Copy for email
             </button>
           </ModalFooter>
@@ -1733,7 +1738,7 @@ function BreaksEditor({ breaks, onChange, times }: { breaks: ShiftBreak[]; onCha
         </div>
       ))}
       <button type="button" onClick={() => onChange([...breaks, { shift: "day", start: breaks.length ? "12:00" : "09:00", minutes: breaks.length ? 30 : 15, label: breaks.length ? "Lunch" : "Break" }])}
-        className="font-semibold text-[var(--color-accent-text)] hover:underline">+ Add a break</button>
+        className="text-[var(--color-accent-text)] hover:underline">+ Add a break</button>
     </div>
   );
 }
@@ -2146,7 +2151,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   const sortOf = (print: boolean, table: keyof TableOrder) => ({ onReorder: !print && sh?.edit ? (ids: string[]) => sh.setOrder(table, ids) : undefined, runs: !!sh?.order?.[table]?.length });
   const putBack = (print: boolean, table: keyof TableOrder) => (!print && sh?.edit && sh.order?.[table]?.length ? (
     <div className="flex justify-end -mb-1 print:hidden">
-      <button type="button" onClick={() => sh.setOrder(table, null)} className="text-[11px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline">Put back in the usual order</button>
+      <button type="button" onClick={() => sh.setOrder(table, null)} className="text-[13px] hover:underline text-[var(--color-accent-text)]">Put back in the usual order</button>
     </div>
   ) : null);
   const editRow = o.onEdit;
@@ -2189,7 +2194,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
           {!print && o.pathSource && (
             <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-[var(--color-text-muted)] print:hidden">
               <span>Critical path: <b className="text-[var(--color-text)]">{o.pathSource.label}</b> ({o.pathSource.theirs} step{o.pathSource.theirs === 1 ? "" : "s"}). From the schedule&apos;s links it&apos;s {o.pathSource.calculated}, recalculated as work moves - near-critical and float come with it.</span>
-              {o.pathSource.onUse && <button type="button" onClick={o.pathSource.onUse} className="font-bold text-[var(--color-accent-text)] hover:underline">Use the calculated path</button>}
+              {o.pathSource.onUse && <button type="button" onClick={o.pathSource.onUse} className="text-[var(--color-accent-text)] hover:underline">Use the calculated path</button>}
               {o.pathSource.msg && <span className="font-semibold text-amber-700 dark:text-amber-400">{o.pathSource.msg}</span>}
             </div>
           )}
@@ -2253,7 +2258,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
             <Empty>
               Nothing was {nothingLast ? "planned" : "completed"}{forCrew} on this shift.
               {nothingLast && o.onJump && o.jumpTarget && !print && (
-                <button onClick={o.onJump} className="ml-2 inline-flex items-center gap-1 font-bold text-[var(--color-accent-text)] hover:underline">
+                <button onClick={o.onJump} className="ml-2 inline-flex items-center gap-1 text-[var(--color-accent-text)] hover:underline">
                   <FastForward className="w-3.5 h-3.5" /> Jump to {o.jumpTarget.kind} shift, {c.D(o.jumpTarget.start)}
                 </button>
               )}
@@ -2371,7 +2376,7 @@ function FollowUpsBox({ open, edit, T, onAdd, onDone }: {
             <li key={n.id} className="flex items-start gap-2 text-[12.5px] text-[var(--color-text)]">
               <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" aria-hidden />
               <span className="flex-1 min-w-0 break-words">{n.text}<span className="ml-1.5 text-[11px] text-[var(--color-text-muted)]">{n.from ? `from ${n.from}` : `added ${T(n.at)}`}</span></span>
-              {edit && <button type="button" onClick={() => onDone(n)} className="shrink-0 text-[11.5px] font-bold text-[var(--color-text)] hover:underline">Done</button>}
+              {edit && <button type="button" onClick={() => onDone(n)} className="shrink-0 text-[13px] hover:underline text-[var(--color-accent-text)]">Done</button>}
             </li>
           ))}
         </ul>
@@ -3018,11 +3023,11 @@ function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehea
           </div>
           <div className={print ? "text-[11px] text-slate-700" : "mt-0.5 text-[12px] text-[var(--color-text-muted)]"}>
             {print ? <>{when} · </> : null}as of {c.T(meeting === "turnover" ? asOf : now)} {tzAbbrev(c.tz, now)}
-            {crew && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-black ${print ? "border border-slate-700 text-slate-900" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>{crew} only</span>}
-            {criticalOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-black ${print ? "border border-rose-700 text-rose-900" : "bg-rose-200 text-rose-950"}`}>Critical path only</span>}
-            {addedOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-black ${print ? "border border-slate-700 text-slate-900" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>Discovery &amp; added only</span>}
-            {classOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-black ${print ? "border border-slate-700 text-slate-900" : "bg-slate-200 text-slate-950"}`}>{classOnly} only</span>}
-            {rehearsal && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-black ${print ? "border border-amber-700 text-amber-800" : "bg-amber-400 text-slate-900"}`}>Rehearsal: shift not started</span>}
+            {crew && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-semibold ${print ? "border border-slate-700 text-slate-900" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>{crew} only</span>}
+            {criticalOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-semibold ${print ? "border border-rose-700 text-rose-900" : "bg-rose-200 text-rose-950"}`}>Critical path only</span>}
+            {addedOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-semibold ${print ? "border border-slate-700 text-slate-900" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>Discovery &amp; added only</span>}
+            {classOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-semibold ${print ? "border border-slate-700 text-slate-900" : "bg-slate-200 text-slate-950"}`}>{classOnly} only</span>}
+            {rehearsal && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-semibold ${print ? "border border-amber-700 text-amber-800" : "bg-amber-400 text-slate-900"}`}>Rehearsal: shift not started</span>}
             {historyNote && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-bold ${print ? "border border-slate-500 text-slate-700" : "bg-[var(--color-surface-2)] text-[var(--color-text)]"}`}>Earlier shift: {historyNote}</span>}
           </div>
         </div>
@@ -3051,8 +3056,8 @@ function SectionHead({ n, s, collapsed, big, print, onPath }: { n: number; s: Se
   onPath?: boolean }) {
   if (onPath && !print && !big) return (
     <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5 min-h-6">
-      <span className="min-w-0 text-[14px] font-bold text-[var(--color-text)] leading-6">{s.title}</span>
-      {s.sub && <span className="min-w-0 text-[12px] text-[var(--color-text-muted)]">{s.sub}</span>}
+      <span className="min-w-0 font-display text-[17px] font-semibold text-[var(--color-text)] leading-6">{s.title}</span>
+      {s.sub && <span className="min-w-0 text-[13px] text-[var(--color-text-muted)]">{s.sub}</span>}
       <ChevronDown className={`ml-auto self-center w-4 h-4 shrink-0 text-[var(--color-text-muted)] transition-transform ${collapsed ? "-rotate-90" : ""}`} />
     </div>
   );
@@ -3086,7 +3091,7 @@ function StandTiles({ actual, planned, standing, gap, done, total, pastDue, past
         <dt className="text-[13px] font-semibold text-[var(--color-text-muted)]">Progress</dt>
         <dd className="mt-0.5 text-[14px] font-bold tabular-nums">{actual}% <span className="text-[12px] font-medium text-[var(--color-text-muted)]">of {planned}% planned</span></dd>
         <div className="relative mt-1.5 h-1.5 rounded-full bg-[var(--color-surface-2)]" aria-hidden>
-          <div className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-text)]" style={{ width: `${Math.min(100, actual)}%` }} />
+          <div className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-main)]" style={{ width: `${Math.min(100, actual)}%` }} />
           <div className={`absolute -top-[3px] w-0.5 h-3 ${standing === "behind" ? "bg-rose-700" : "bg-[var(--color-text-muted)]"}`} style={{ left: `calc(${Math.min(100, planned)}% - 1px)` }} />
         </div>
       </div>
@@ -3113,7 +3118,7 @@ function StandTiles({ actual, planned, standing, gap, done, total, pastDue, past
         <div className={label}>Progress</div>
         <div className={value}>{actual}% <span className={small}>of {planned}% planned</span></div>
         <div className="relative mt-1.5 h-1.5 rounded-full bg-slate-200 dark:bg-slate-700" aria-hidden>
-          <div className="absolute inset-y-0 left-0 rounded-full bg-slate-900 dark:bg-slate-200" style={{ width: `${Math.min(100, actual)}%` }} />
+          <div className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-main)]" style={{ width: `${Math.min(100, actual)}%` }} />
           <div className={`absolute -top-[3px] w-0.5 h-3 ${standing === "behind" ? "bg-rose-700" : "bg-slate-500"}`} style={{ left: `calc(${Math.min(100, planned)}% - 1px)` }} />
         </div>
       </div>
@@ -3186,7 +3191,7 @@ function WhyBehind({ why, c, print }: { why: BehindWhy; c: Ctx; print: boolean }
         </button>
       )}
       {all && (
-        <button type="button" onClick={() => setAll(false)} className="mt-1 text-[11.5px] font-bold text-[var(--color-text-muted)] hover:underline print:hidden">Show fewer</button>
+        <button type="button" onClick={() => setAll(false)} className="mt-1 text-[13px] hover:underline print:hidden text-[var(--color-accent-text)]">Show fewer</button>
       )}
     </div>
   );
@@ -3268,7 +3273,7 @@ function TagChip({ t, tone }: TagT) {
 
 /** The one filled colour on the page: work on the chain that drives the finish. */
 function CriticalTag({ print }: { print?: boolean }) {
-  return <span className={`ml-2 inline-block rounded px-1.5 py-px font-bold leading-snug bg-rose-700 text-white align-[1px] ${print ? "text-[7pt]" : "text-[11px]"}`}>Critical</span>;
+  return <span className={`ml-2 inline-block rounded-full px-1.5 py-px font-semibold leading-snug bg-[color-mix(in_srgb,var(--state-overdue)_14%,transparent)] text-[var(--state-overdue)] align-[1px] ${print ? "text-[7pt]" : "text-[11px]"}`}>Critical</span>;
 }
 
 /** What's going on with a step, as one quiet line: how far behind (red only
@@ -3348,7 +3353,7 @@ function Progress({ right, print }: { right: string; print?: boolean }) {
         {pct}%{goal != null && <span className="font-normal text-slate-500 dark:text-slate-400"> → {goal}%</span>}
       </span>
       <span className={`relative block h-1 rounded-full bg-slate-200 dark:bg-slate-700 ${print ? "w-16" : "w-20"}`} aria-hidden>
-        <span className="absolute inset-y-0 left-0 rounded-full bg-slate-900 dark:bg-slate-200" style={{ width: `${pct}%` }} />
+        <span className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-main)]" style={{ width: `${pct}%` }} />
         {goal != null && <span className="absolute -top-[3px] w-0.5 h-2.5 bg-slate-500" style={{ left: `calc(${goal}% - 1px)` }} />}
       </span>
     </span>
@@ -3530,7 +3535,7 @@ function DoneLines({ x, stamps, T, print, onEdit }: { x: DoneTask; stamps: boole
     const lead = [l.wo ? `WO ${l.wo}` : "", stamps && l.time != null ? T(l.time) : ""].filter(Boolean).join(" ");
     return (
       <div className="mt-0.5 first:mt-0">
-        <span className={`mr-1.5 font-black text-slate-500 dark:text-slate-400 ${small}`}>{label}</span>
+        <span className={`mr-1.5 font-semibold text-slate-500 dark:text-slate-400 ${small}`}>{label}</span>
         {lead && <span className={`font-display tabular-nums text-slate-600 dark:text-slate-300 mr-1.5 ${print ? "text-[7.5pt]" : "text-[11.5px]"}`}>{lead}</span>}
         <span>{l.name}</span>
         {l.critical && <span className={`ml-1.5 font-bold text-rose-700 dark:text-rose-400 ${small}`}>critical path</span>}

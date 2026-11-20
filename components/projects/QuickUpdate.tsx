@@ -385,7 +385,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
   if (hidden) {
     return (
       <div className="flex justify-end">
-        <button type="button" onClick={() => { setHidden(false); store.set(HIDE_KEY, null); }} className="text-[11px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-accent-text)]">
+        <button type="button" onClick={() => { setHidden(false); store.set(HIDE_KEY, null); }} className="text-[13px] hover:text-[var(--color-accent-text)] text-[var(--color-accent-text)] hover:underline">
           Show Update by note
         </button>
       </div>
@@ -431,7 +431,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
               className="inline-flex items-center gap-1.5 h-10 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
               {busy ? <><Loader2 className="w-4 h-4 animate-spin" /> {progress ?? "Reading…"}</> : parts?.length ? `Read all ${parts.filter((p) => !skip.has(p.key)).length} shift${parts.filter((p) => !skip.has(p.key)).length === 1 ? "" : "s"}` : "Read it"}
             </button>
-            {note && !busy && <button type="button" onClick={() => setDraft("")} className="text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Clear</button>}
+            {note && !busy && <button type="button" onClick={() => setDraft("")} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Clear</button>}
             {!canSpeak && <span className="text-[11px] text-[var(--color-text-muted)]">To talk, use the mic on your keyboard.</span>}
           </div>
           {listening && (
@@ -441,7 +441,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
             </div>
           )}
           <div className="text-[11.5px] text-[var(--color-text-muted)]">
-            <button type="button" onClick={() => setShowWords((v) => !v)} aria-expanded={showWords} className="font-semibold hover:text-[var(--color-text)]">Your words ({words.length})</button>
+            <button type="button" onClick={() => setShowWords((v) => !v)} aria-expanded={showWords} className="text-[var(--color-accent-text)] hover:underline">Your words ({words.length})</button>
             {showWords && (
               <div className="mt-1 space-y-1.5">
                 <div>What talk-to-text keeps getting wrong, and what you meant. It&apos;s fixed as you talk, and the reader knows it.</div>
@@ -534,7 +534,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
                   const on = id === "now" ? from.id === "now" : from.id === "shift" && from.w.start === w!.start;
                   return (
                     <button key={id} type="button" aria-pressed={on} onClick={() => setFrom(w ? { id: "shift", w } : { id: "now" })}
-                      className={`rounded-full border px-2.5 py-1 font-semibold ${on ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface)]"}`}>{label}</button>
+                      className={`rounded-full border px-2.5 py-1 font-semibold ${on ? "border-transparent bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface)]"}`}>{label}</button>
                   );
                 })}
                 <span className="inline-flex items-center gap-1">
@@ -570,7 +570,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
                     <span className={done.undone[s.id] === "Undone" ? "line-through opacity-70" : ""}><b>{s.name}</b>: {done.says[s.id]}</span>
                     {done.undone[s.id]
                       ? <span className="font-semibold">{done.undone[s.id]}</span>
-                      : <button type="button" disabled={undoing} onClick={() => void undo([s])} className="font-bold underline disabled:opacity-50">Undo</button>}
+                      : <button type="button" disabled={undoing} onClick={() => void undo([s])} className="underline disabled:opacity-50">Undo</button>}
                   </li>
                 ))}
               </ul>
@@ -597,7 +597,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
               <div className="mt-1.5 flex flex-wrap gap-1.5">
                 {choices.map((c) => (
                   <button key={c.id} type="button" onClick={() => setDefault(c.id, c.at)} aria-pressed={defaultPick.id === c.id}
-                    className={`rounded-full border px-2.5 py-1 font-semibold ${defaultPick.id === c.id ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface)]"}`}>
+                    className={`rounded-full border px-2.5 py-1 font-semibold ${defaultPick.id === c.id ? "border-transparent bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface)]"}`}>
                     {c.label}
                   </button>
                 ))}
@@ -628,7 +628,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
               })}
               {review.lines.length === 0 && <li className="px-4 py-6 text-center text-[13px] text-[var(--color-text-muted)]">Nothing in the note matched a step.</li>}
               <li className="px-4 py-2.5">
-                <button type="button" onClick={() => addLine("")} className="inline-flex items-center gap-1.5 text-[12.5px] font-bold text-[var(--color-accent-text)] hover:underline"><Plus className="w-4 h-4" /> Add a line it missed</button>
+                <button type="button" onClick={() => addLine("")} className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-accent-text)] hover:underline"><Plus className="w-4 h-4" /> Add a line it missed</button>
               </li>
             </ul>
             {review.unplaced.length > 0 && (
@@ -638,7 +638,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
                   {review.unplaced.map((u, i) => (
                     <li key={i} className="flex flex-wrap items-baseline gap-x-2">
                       <span>“{u.text}” <span className="text-[var(--color-text-muted)]">· {u.why}</span></span>
-                      <button type="button" onClick={() => addLine(u.text, i)} className="font-bold text-[var(--color-accent-text)] hover:underline">Put it on a step</button>
+                      <button type="button" onClick={() => addLine(u.text, i)} className="text-[var(--color-accent-text)] hover:underline">Put it on a step</button>
                     </li>
                   ))}
                 </ul>
@@ -700,7 +700,7 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
               {l.found === "meaning" && <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">Matched by meaning (no word in common with the step&apos;s name). Check it&apos;s the right step.</div>}
               {l.woNote && <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">{l.woNote}</div>}
               {l.group && <div className="text-[11.5px] text-[var(--color-text-muted)]">Your note says this about {l.group} steps: it goes on each of them.</div>}
-              <button type="button" onClick={() => onEdit({ stepId: null, options: l.options.length ? l.options : [step.id] })} className="text-[11.5px] font-semibold text-[var(--color-accent-text)] hover:underline">Wrong step? Pick another</button>
+              <button type="button" onClick={() => onEdit({ stepId: null, options: l.options.length ? l.options : [step.id] })} className="text-[13px] text-[var(--color-accent-text)] hover:underline">Wrong step? Pick another</button>
             </div>
           ) : (
             <div className="space-y-1">
@@ -750,7 +750,7 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="text-[12px] text-[var(--color-text-muted)]">Set a %? (not needed to save)</span>
               {[...new Set([25, 50, 75, ...(l.suggest != null && l.suggest > step.pct && l.suggest < 100 ? [l.suggest] : [])])].filter((p) => p > step.pct).sort((a, b) => a - b).map((p) => (
-                <button key={p} type="button" onClick={() => onEdit({ percent: p, percentFrom: "said" })} className={`${pill} ${l.percent === p ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>{p}%</button>
+                <button key={p} type="button" onClick={() => onEdit({ percent: p, percentFrom: "said" })} className={`${pill} ${l.percent === p ? "border-transparent bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>{p}%</button>
               ))}
               <input inputMode="numeric" aria-label="Percent" placeholder="%" className="h-8 w-16 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px]"
                 onChange={(e) => { const n = Number(e.target.value.replace(/\D/g, "")); if (e.target.value && Number.isFinite(n)) onEdit({ percent: Math.min(100, n), percentFrom: "said" }); }} />
@@ -766,7 +766,7 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
               <span className="text-[var(--color-text)]">
                 <b>{whenWords(l.at, tz, times)}</b>
                 <span className="text-[var(--color-text-muted)]"> · {l.timeFrom === "said" ? `you said “${l.timeWords}”` : l.timeFrom === "picked" ? "picked" : `no time said: ${defaultLabel.split(",")[0].toLowerCase()}`}</span>
-                {!changing && <button type="button" onClick={() => setChanging(true)} className="ml-2 font-semibold text-[var(--color-accent-text)] hover:underline">Change time</button>}
+                {!changing && <button type="button" onClick={() => setChanging(true)} className="ml-2 text-[var(--color-accent-text)] hover:underline">Change time</button>}
               </span>
             ) : l.ampm ? (
               <span className="flex flex-wrap items-center gap-1.5">

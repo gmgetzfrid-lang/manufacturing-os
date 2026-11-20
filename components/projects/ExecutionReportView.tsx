@@ -52,7 +52,7 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
 
   if (r.totalLeaves === 0) {
     return (
-      <div className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] p-12 text-center">
+      <div className="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-12 text-center">
         <CalendarDays className="w-10 h-10 text-[var(--color-text-faint)] mx-auto mb-3" />
         <div className="text-[14px] font-bold text-[var(--color-text)]">Nothing to report yet.</div>
         <div className="text-xs text-[var(--color-text-muted)] mt-1">Import or add tasks to see progress, pace, and diagnostics.</div>
@@ -76,7 +76,7 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
     <div className="space-y-3">
       {print && (
         <div className="pb-1 mb-1 border-b-2 border-slate-900 flex items-baseline justify-between gap-3">
-          <span className="text-[13pt] font-black">Schedule report</span>
+          <span className="text-[13pt] font-semibold">Schedule report</span>
           <span className="text-[9pt] text-slate-600">Printed {fmtInTz(new Date().toISOString(), tz, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}</span>
         </div>
       )}
@@ -86,7 +86,7 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
         {!byPhase && <Card print={print}>
           <Label>Complete</Label>
           <div className="flex items-baseline gap-1">
-            <span className={`${print ? "text-3xl font-black tracking-tighter" : "text-[15px] font-bold"} ${r.pctComplete === 100 ? "text-emerald-600 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>{r.pctComplete}</span>
+            <span className={`${print ? "text-3xl font-semibold tracking-tighter" : "text-[15px] font-bold"} ${r.pctComplete === 100 ? "text-emerald-600 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>{r.pctComplete}</span>
             <span className={`${print ? "text-base" : "text-[13px]"} text-[var(--color-text-faint)] font-bold`}>%</span>
           </div>
           <Bar pct={r.pctComplete} done={r.pctComplete === 100} />
@@ -96,13 +96,13 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
         {byPhase ? null : st.state === "finished" ? (
         <Card print={print}>
           <Label>Finished</Label>
-          <div className={`${print ? "text-2xl font-black tracking-tight" : "text-[15px] font-bold"} ${(st.lateHours ?? 0) >= 0.5 ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text)]"}`}>{finLate ?? "done"}</div>
+          <div className={`${print ? "text-2xl font-semibold tracking-tight" : "text-[15px] font-bold"} ${(st.lateHours ?? 0) >= 0.5 ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text)]"}`}>{finLate ?? "done"}</div>
           <div className="text-[11px] text-[var(--color-text-muted)] mt-1">{st.finishedAt ? `last step done ${fmtDateTime(st.finishedAt, tz)}` : "every step done"}</div>
         </Card>
         ) : (
         <Card print={print}>
           <Label>Pace</Label>
-          <div className={`flex items-center gap-1.5 ${print ? "text-2xl font-black tracking-tight" : "text-[15px] font-bold"} ${standing === "behind" ? "text-rose-600 dark:text-rose-400" : standing === "ahead" ? "text-emerald-600 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>
+          <div className={`flex items-center gap-1.5 ${print ? "text-2xl font-semibold tracking-tight" : "text-[15px] font-bold"} ${standing === "behind" ? "text-rose-600 dark:text-rose-400" : standing === "ahead" ? "text-emerald-600 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>
             {ahead ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
             {ahead ? "+" : ""}{r.paceDelta}<span className={`${print ? "text-base" : "text-[13px]"} text-[var(--color-text-faint)] font-bold`}>pts</span>
           </div>
@@ -114,7 +114,7 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
         <Card print={print}>
           <Label>Work hours</Label>
           <div className="flex items-baseline gap-1">
-            <span className={`${print ? "text-2xl font-black tracking-tight" : "text-[15px] font-bold"} text-[var(--color-text)]`}>{r.pctHours}</span>
+            <span className={`${print ? "text-2xl font-semibold tracking-tight" : "text-[15px] font-bold"} text-[var(--color-text)]`}>{r.pctHours}</span>
             <span className={`${print ? "text-base" : "text-[13px]"} text-[var(--color-text-faint)] font-bold`}>%</span>
           </div>
           <Bar pct={r.pctHours} />
@@ -123,14 +123,14 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
 
         {!byPhase && st.state !== "finished" && <Card print={print}>
           <Label>Forecast finish</Label>
-          <div className={`${print ? "text-lg font-black tracking-tight" : "text-[15px] font-bold"} ${r.forecastFinish && r.finish && Date.parse(r.forecastFinish) > Date.parse(r.finish) + 30 * 60_000 ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text)]"}`}>{r.forecastFinish ? fmtDate(r.forecastFinish, tz) : "No work yet to forecast from"}</div>
+          <div className={`${print ? "text-lg font-semibold tracking-tight" : "text-[15px] font-bold"} ${r.forecastFinish && r.finish && Date.parse(r.forecastFinish) > Date.parse(r.finish) + 30 * 60_000 ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text)]"}`}>{r.forecastFinish ? fmtDate(r.forecastFinish, tz) : "No work yet to forecast from"}</div>
           <div className="text-[11px] text-[var(--color-text-muted)] mt-1">
             planned {fmtDate(r.finish, tz)} · day {r.elapsedDays} of {r.totalDays}
           </div>
         </Card>}
         {!byPhase && st.state === "finished" && <Card print={print}>
           <Label>Planned finish</Label>
-          <div className={`${print ? "text-lg font-black tracking-tight" : "text-[15px] font-bold"} text-[var(--color-text)]`}>{fmtDateTime(st.plannedFinish, tz)}</div>
+          <div className={`${print ? "text-lg font-semibold tracking-tight" : "text-[15px] font-bold"} text-[var(--color-text)]`}>{fmtDateTime(st.plannedFinish, tz)}</div>
           <div className="text-[11px] text-[var(--color-text-muted)] mt-1">{st.done} of {st.steps} steps done</div>
         </Card>}
       </div>
@@ -159,7 +159,7 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
         <div className={`rounded-2xl bg-[var(--color-surface)] px-4 py-3 ${print ? `border border-[var(--color-border)] shadow-sm ${r.baseline.finishDriftDays > 0 ? "border-l-2 border-l-rose-500" : r.baseline.finishDriftDays < 0 ? "border-l-2 border-l-emerald-500" : ""}` : "shadow-[var(--shadow-card)]"}`}>
           <div className="flex items-center gap-3 flex-wrap">
             <span className={print ? "text-[12px] font-semibold text-[var(--color-text-faint)]" : "text-[13px] font-semibold text-[var(--color-text-muted)]"}>Vs. approved plan</span>
-            <span className={`${print ? "text-lg font-black" : "text-[14px] font-bold"} ${r.baseline.finishDriftDays > 0 ? "text-rose-600 dark:text-rose-400" : r.baseline.finishDriftDays < 0 ? "text-emerald-600 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>
+            <span className={`${print ? "text-lg font-semibold" : "text-[14px] font-bold"} ${r.baseline.finishDriftDays > 0 ? "text-rose-600 dark:text-rose-400" : r.baseline.finishDriftDays < 0 ? "text-emerald-600 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>
               {r.baseline.finishDriftDays === 0 ? "On plan" : r.baseline.finishDriftDays > 0 ? `${r.baseline.finishDriftDays}d behind plan` : `${Math.abs(r.baseline.finishDriftDays)}d ahead of plan`}
             </span>
             <span className="text-[11px] text-[var(--color-text-muted)]">planned finish {fmtDate(r.baseline.baselineFinish, tz)} → now {fmtDate(r.baseline.currentFinish, tz)}</span>
@@ -204,7 +204,7 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
           <ul className="divide-y divide-[var(--color-border)]">
             {r.blockers.map((b) => (
               <li key={b.id} className="px-4 py-2.5 flex items-start gap-3">
-                <span className={`mt-0.5 shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] print:text-[9px] font-black border ${b.status === "blocked" ? "bg-rose-100 dark:bg-rose-900/40 text-rose-800 dark:text-rose-300 border-rose-200 dark:border-rose-800" : "bg-amber-100 dark:bg-amber-900/40 text-amber-900 dark:text-amber-200 border-amber-200 dark:border-amber-800"}`}>
+                <span className={`mt-0.5 shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] print:text-[9px] font-semibold border ${b.status === "blocked" ? "bg-rose-100 dark:bg-rose-900/40 text-rose-800 dark:text-rose-300 border-rose-200 dark:border-rose-800" : "bg-amber-100 dark:bg-amber-900/40 text-amber-900 dark:text-amber-200 border-amber-200 dark:border-amber-800"}`}>
                   {b.status === "blocked" ? "Blocked" : "On hold"}
                 </span>
                 <div className="flex-1 min-w-0">
@@ -232,7 +232,7 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
                 <div className="flex-1">
                   <Bar pct={g.pctComplete} done={g.pctComplete === 100} />
                 </div>
-                <div className="w-12 text-right text-[13px] font-black tabular-nums text-[var(--color-text)]">{g.pctComplete}%</div>
+                <div className="w-12 text-right text-[13px] font-semibold tabular-nums text-[var(--color-text)]">{g.pctComplete}%</div>
                 <div className="w-28 shrink-0 flex items-center justify-end gap-2 text-[11px]">
                   {g.blocked > 0 && <span className="text-rose-600 dark:text-rose-400 font-bold">{g.blocked} blkd</span>}
                   {g.onHold > 0 && <span className="text-amber-600 dark:text-amber-400 font-bold">{g.onHold} hold</span>}
@@ -257,7 +257,7 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
             <div className="flex items-center gap-4 flex-wrap text-sm">
               {Object.entries(r.performers.byActualKind).map(([kind, n]) => (
                 <span key={kind} className="inline-flex items-center gap-1.5">
-                  <span className="font-black text-[var(--color-text)] tabular-nums">{n}</span>
+                  <span className="font-semibold text-[var(--color-text)] tabular-nums">{n}</span>
                   <span className="text-[var(--color-text-muted)] capitalize">{kind === "unspecified" ? "unspecified" : kind} completed</span>
                 </span>
               ))}
@@ -316,12 +316,12 @@ function Card({ children, print, className = "" }: { children: React.ReactNode; 
   return <div className={`bg-[var(--color-surface)] rounded-2xl px-4 py-3 ${print ? "border border-[var(--color-border)] shadow-sm ring-1 ring-slate-900/[0.03]" : "shadow-[var(--shadow-card)]"} ${className}`}>{children}</div>;
 }
 function Label({ children }: { children: React.ReactNode }) {
-  return <div className="text-[13px] print:text-[9px] font-semibold print:font-black print:tracking-widest text-[var(--color-text-muted)] print:text-[var(--color-text-faint)] mb-1">{children}</div>;
+  return <div className="text-[13px] print:text-[9px] font-semibold print:font-semibold text-[var(--color-text-muted)] print:text-[var(--color-text-faint)] mb-1">{children}</div>;
 }
 function Bar({ pct, done }: { pct: number; done?: boolean }) {
   return (
-    <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-      <div className={`h-full transition-all ${done ? "bg-emerald-500" : "bg-[var(--color-text)]"}`} style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
+    <div className="h-2 rounded-full bg-[var(--color-accent-soft)] overflow-hidden">
+      <div className={`h-full transition-all ${done ? "bg-[var(--color-main)]" : "bg-[var(--color-main)]"}`} style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
     </div>
   );
 }
@@ -330,7 +330,7 @@ function Health({ icon, tone, label, value, print }: { icon: React.ReactNode; to
   return (
     <span className="inline-flex items-center gap-1.5">
       <span className={c}>{icon}</span>
-      <span className={`${print ? "text-lg font-black" : "text-[14px] font-bold"} tabular-nums text-[var(--color-text)]`}>{value}</span>
+      <span className={`${print ? "text-lg font-semibold" : "text-[14px] font-bold"} tabular-nums text-[var(--color-text)]`}>{value}</span>
       <span className="text-[11px] text-[var(--color-text-muted)]">{label}</span>
     </span>
   );
