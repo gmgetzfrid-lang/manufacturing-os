@@ -33,7 +33,7 @@ export const MIN_SIZE_BY_TYPE: Partial<Record<WidgetType, { w: number; h: number
 // only carried a `width` (no row-unit height). List-style widgets get taller
 // defaults; banners/summaries stay short.
 const DEFAULT_H_BY_TYPE: Record<WidgetType, number> = {
-  commandDeck: 4,
+  commandDeck: 3,
   askKnowledge: 5,
   documentControl: 5,
   draftingRequests: 4,
@@ -65,15 +65,14 @@ export function defaultDashboard(): DashboardConfig {
   // (x, y) coordinates so the grid renders identically every time and the user
   // can immediately drag things around.
   const ordered: Array<Omit<DashboardWidget, "x" | "y">> = [
-    { id: newWidgetId(), type: "commandDeck", w: 12, h: 4, settings: {} },
+    // What needs you first, then the two places people go most. The rest
+    // (daily brief, quick launch, suggestions) repeat this or the side menu;
+    // they stay in Add widget.
+    { id: newWidgetId(), type: "commandDeck", w: 12, h: 3, settings: {} },
     { id: newWidgetId(), type: "askKnowledge", w: 6, h: 5, settings: {} },
     { id: newWidgetId(), type: "documentControl", w: 6, h: 5, settings: {} },
-    { id: newWidgetId(), type: "dailyBrief", w: 6, h: 3, settings: {} },
-    { id: newWidgetId(), type: "quickLaunch", w: 6, h: 3, settings: {} },
     { id: newWidgetId(), type: "attention", w: 6, h: 6, settings: {} },
-    { id: newWidgetId(), type: "draftingRequests", w: 6, h: 4, settings: {} },
-    { id: newWidgetId(), type: "suggestedActions", w: 6, h: 4, settings: {} },
-    { id: newWidgetId(), type: "outstanding", w: 6, h: 6, settings: {} },
+    { id: newWidgetId(), type: "draftingRequests", w: 6, h: 6, settings: {} },
   ];
   return { version: 3, widgets: packLayout(ordered, GRID_COLS) };
 }

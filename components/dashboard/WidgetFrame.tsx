@@ -22,7 +22,7 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import { GripVertical, X, Settings2, ChevronRight, RotateCw, Maximize2, Minimize2 } from "lucide-react";
 import type { DashboardWidget } from "@/lib/dashboard/types";
-import { WIDGET_CATALOG, toneGradient, toneWash, toneGlow } from "./widgets";
+import { WIDGET_CATALOG } from "./widgets";
 import { WidgetContextProvider, timeAgo, type WidgetCtx } from "./kit";
 
 interface Props {
@@ -104,14 +104,12 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings,
     );
   }
 
-  const [glowA, glowB] = toneGlow(meta.tone);
   const iconBtn = "p-2 sm:p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors";
 
   const header = (isExpanded: boolean) => (
     <div className="flex items-center gap-3 shrink-0">
-      <span className={`relative inline-flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br ${toneGradient(meta.tone)} text-white shadow-lg ring-1 ring-white/20 shrink-0`}>
-        <span aria-hidden className={`pointer-events-none absolute -inset-1 rounded-2xl blur-md opacity-50 bg-gradient-to-br ${toneGradient(meta.tone)}`} />
-        <Icon className="relative w-5 h-5" />
+      <span className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-[var(--color-surface-2)] text-[var(--color-text-muted)] shrink-0">
+        <Icon className="w-[18px] h-[18px]" />
       </span>
       <div className="min-w-0 flex-1">
         <h3 className="text-[15px] font-black text-[var(--color-text)] tracking-tight truncate">{title}</h3>
@@ -149,13 +147,9 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings,
             // View mode: no hard border — the card FLOATS on the canvas. No
             // hover translate: cards jumping as the wheel sweeps across them
             // read as a scroll glitch.
-            : "border-transparent ring-1 ring-slate-900/[0.05] dark:ring-white/[0.07] shadow-[0_1px_2px_rgba(15,23,42,0.04),0_8px_24px_-8px_rgba(15,23,42,0.10)] hover:shadow-[0_2px_4px_rgba(15,23,42,0.05),0_16px_40px_-8px_rgba(15,23,42,0.16)] hover:ring-slate-900/[0.09] dark:hover:ring-white/[0.12]"
+            : "border-[var(--color-border)]"
         }`}
       >
-        <div aria-hidden className={`pointer-events-none absolute -top-16 -right-12 w-40 h-40 rounded-full blur-3xl ${glowA} opacity-20 group-hover/widget:opacity-60 transition-opacity duration-500`} />
-        <div aria-hidden className={`pointer-events-none absolute -bottom-20 -left-12 w-40 h-40 rounded-full blur-3xl ${glowB} opacity-0 group-hover/widget:opacity-45 transition-opacity duration-500`} />
-        <div className={`pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b ${toneWash(meta.tone)} to-transparent`} />
-        <div aria-hidden className={`pointer-events-none absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r ${toneGradient(meta.tone)} opacity-90`} />
 
         {editing && (
           <>
@@ -196,7 +190,6 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings,
             <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={() => setExpanded(false)} />
             <div role="dialog" aria-label={title}
               className="group/widget relative w-full max-w-6xl flex flex-col rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl overflow-hidden">
-              <div aria-hidden className={`pointer-events-none absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r ${toneGradient(meta.tone)}`} />
               <div className="relative flex-1 min-h-0 flex flex-col p-5 sm:p-6">
                 {header(true)}
                 <div className="flex-1 min-h-0 flex flex-col">

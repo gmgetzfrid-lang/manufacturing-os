@@ -38,7 +38,7 @@ describe("defaultDashboard", () => {
     const first = cfg.widgets[0];
     expect(first.type).toBe("commandDeck");
     expect(first.w).toBe(12);
-    expect(first.h).toBe(4);
+    expect(first.h).toBe(3);
     const [ask, docs] = [cfg.widgets[1], cfg.widgets[2]];
     expect(ask.type).toBe("askKnowledge");
     expect(docs.type).toBe("documentControl");

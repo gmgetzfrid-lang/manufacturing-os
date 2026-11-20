@@ -803,7 +803,7 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, p
             placeholder="Add a required item - e.g. Torque records"
             className="h-8 flex-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
           <button onClick={() => { if (addName.trim()) void (async () => { const r = await addTurnoverItem({ orgId, projectId, name: addName, actor }); if (!r.ok) setErr(r.error ?? null); else { setAddName(""); onChanged(); } })(); }}
-            className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)]">
+            className="h-8 inline-flex items-center gap-1 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[11px] font-black hover:bg-[var(--color-surface-2)]">
             <Plus className="w-3 h-3" /> Add
           </button>
         </div>
@@ -1007,7 +1007,7 @@ function PunchSection({ orgId, projectId, canManage, actor, items, parties, peop
             </select>
           )}
           <button onClick={() => void add()} disabled={busy === "add"}
-            className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+            className="h-8 inline-flex items-center gap-1 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[11px] font-black hover:bg-[var(--color-surface-2)] disabled:opacity-50">
             {busy === "add" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Add
           </button>
         </div>

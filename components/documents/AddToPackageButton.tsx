@@ -4,20 +4,36 @@
 // document actually lives (the inspector), instead of only from /packages.
 // Lists open packages on demand; one click pins the doc at its current rev.
 
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Package, Loader2, Check, Plus } from "lucide-react";
 import { listWorkPackages, addDocumentToPackage, createWorkPackage } from "@/lib/workPackages";
 import { appAlert, appPrompt } from "@/components/providers/DialogProvider";
 import type { DocumentRecord } from "@/types/schema";
 
-export default function AddToPackageButton({ doc, orgId, userId, userName }: {
+export default function AddToPackageButton({ doc, orgId, userId, userName, openSignal = 0, hideTrigger = false }: {
   doc: DocumentRecord; orgId: string; userId: string; userName?: string | null;
+  /** Bump to open the list from elsewhere (a More menu); hideTrigger drops the button. */
+  openSignal?: number; hideTrigger?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [packages, setPackages] = useState<Array<{ id: string; name: string }>>([]);
   const [addedTo, setAddedTo] = useState<string | null>(null);
 
+  const seen = useRef(openSignal);
+  const boxRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (openSignal === seen.current) return;
+    seen.current = openSignal; setOpen(true); void loadPackages();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openSignal]);
+  // Tap outside closes it.
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: MouseEvent) => { if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false); };
+    const t = setTimeout(() => document.addEventListener("mousedown", h), 0);
+    return () => { clearTimeout(t); document.removeEventListener("mousedown", h); };
+  }, [open]);
   const loadPackages = async () => {
     setLoading(true);
     try {
@@ -65,14 +81,14 @@ export default function AddToPackageButton({ doc, orgId, userId, userName }: {
   };
 
   return (
-    <div className="relative">
-      <button
+    <div className="relative" ref={boxRef}>
+      {!hideTrigger && <button
         onClick={() => { setOpen((v) => !v); if (!open) void loadPackages(); }}
         className="inline-flex items-center justify-center gap-1.5 h-10 px-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-all"
         title="Pin this drawing (at its current revision) into a job's work package"
       >
         <Package className="w-3.5 h-3.5" /> Work package
-      </button>
+      </button>}
       {open && (
         <div className="absolute z-30 mt-1 w-64 left-0 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl p-1.5 space-y-0.5">
           {addedTo ? (
@@ -95,7 +111,7 @@ export default function AddToPackageButton({ doc, orgId, userId, userName }: {
                 <div className="px-2 py-1.5 text-[11px] text-[var(--color-text-muted)]">No open packages yet.</div>
               )}
               <button onClick={() => void createAndAdd()}
-                className="w-full text-left px-2 py-1.5 rounded-lg text-xs font-bold text-teal-700 hover:bg-teal-50 inline-flex items-center gap-1.5">
+                className="w-full text-left px-2 py-1.5 rounded-lg text-xs font-bold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] inline-flex items-center gap-1.5">
                 <Plus className="w-3 h-3" /> New package with this drawing…
               </button>
             </>

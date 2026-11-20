@@ -1707,18 +1707,16 @@ export default function TicketDetailView() {
         {/* LEFT: DETAILS & FILES */}
         <div className="xl:col-span-2 space-y-8">
           <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-6 shadow-sm relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-1 h-full bg-orange-500" />
-            <div className="flex items-center justify-between mb-6 border-b border-[var(--color-border)] pb-4"><h2 className="text-sm font-bold text-[var(--color-text)] uppercase tracking-wide flex items-center"><FileText className="w-4 h-4 mr-2 text-orange-500" /> Project Specifications</h2><span className="text-xs text-[var(--color-text-faint)] font-mono">ID: {ticket.id}</span></div>
+            <div className="flex items-center justify-between mb-6 border-b border-[var(--color-border)] pb-4"><h2 className="text-sm font-bold text-[var(--color-text)] uppercase tracking-wide flex items-center"><FileText className="w-4 h-4 mr-2 text-[var(--color-text-muted)]" /> Project Specifications</h2></div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
               <div><label className="text-[11px] text-[var(--color-text-faint)] font-medium">Unit</label><div className="font-mono text-sm font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] px-2 py-1 rounded w-fit mt-1 border border-[var(--color-border)]">{ticket.unit}</div></div>
               <div><label className="text-[11px] text-[var(--color-text-faint)] font-medium">Requester</label><div className="min-w-0 text-sm text-[var(--color-text)] mt-1 flex items-center group cursor-help" title={ticket.requesterId}><User className="w-4 h-4 mr-2 text-slate-300 group-hover:text-orange-500 transition-colors shrink-0" /><span className="truncate">{ticket.requesterName}</span></div></div>
-              <div><label className="text-[11px] text-[var(--color-text-faint)] font-medium">Assigned Lead</label><div className="min-w-0 text-sm text-[var(--color-text)] mt-1">{ticket.assignedDrafterName ? (<div className="flex items-center text-orange-700"><div className="w-2 h-2 rounded-full bg-green-500 mr-2 shrink-0" /><span className="truncate">{ticket.assignedDrafterName}</span></div>) : <span className="text-[var(--color-text-faint)] italic">Unassigned</span>}</div></div>
+              <div><label className="text-[11px] text-[var(--color-text-faint)] font-medium">Assigned Lead</label><div className="min-w-0 text-sm text-[var(--color-text)] mt-1">{ticket.assignedDrafterName ? (<div className="flex items-center"><span className="truncate">{ticket.assignedDrafterName}</span></div>) : <span className="text-[var(--color-text-faint)] italic">Unassigned</span>}</div></div>
               <div>
                 <label className="text-[11px] text-[var(--color-text-faint)] font-medium">Engineer Reviewer</label>
                 <div className="min-w-0 text-sm text-[var(--color-text)] mt-1">
                   {ticket.assignedEngineerName ? (
-                    <div className="flex items-center text-blue-700">
-                      <div className={`w-2 h-2 rounded-full mr-2 shrink-0 ${ticket.engineerApprovedAt ? "bg-emerald-500" : "bg-blue-500 animate-pulse"}`} />
+                    <div className="flex items-center">
                       <span className="truncate" title={ticket.assignedEngineerEmail || ticket.assignedEngineerName}>{ticket.assignedEngineerName}</span>
                       {ticket.engineerApprovedAt && <span className="ml-2 text-[10px] text-emerald-600 font-bold uppercase">approved</span>}
                     </div>
@@ -1779,27 +1777,26 @@ export default function TicketDetailView() {
              </div>
 
              <div className={`p-4 border-b border-[var(--color-border)] ${['FINAL_DRAFT', 'PENDING_FINAL_APPROVAL', 'CLOSED'].includes(ticket.status) ? 'order-3 opacity-60 grayscale-[0.5]' : 'order-2'}`}>
-               <h3 className="text-[10px] font-bold text-orange-600 uppercase tracking-widest mb-3 flex items-center"><Loader2 className="w-3 h-3 mr-1 animate-spin-slow" /> Work In Progress (Drafts)</h3>
+               <h3 className="text-[10px] font-bold text-[var(--color-text-faint)] uppercase tracking-widest mb-3">Work in progress (drafts)</h3>
                <div className="space-y-4">
                  {sortedDrafts.length === 0 ? <p className="text-xs text-[var(--color-text-faint)] italic pl-2">No drafts started yet.</p> : (
                     <>
                       {/* LATEST DRAFT */}
                       {latestDraft && (
-                         <div className="bg-orange-50/50 border border-orange-200 rounded-lg p-4 shadow-sm relative overflow-hidden group">
-                           <div className="absolute top-0 right-0 bg-orange-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-bl-lg uppercase tracking-wider">Latest Revision</div>
+                         <div className="bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-lg p-4 relative overflow-hidden group">
                            <div className="flex items-center justify-between relative z-10">
                               <div className="flex items-center space-x-4 min-w-0">
-                                <div className="p-2.5 bg-orange-100 text-orange-600 rounded-lg">
+                                <div className="p-2.5 bg-[var(--color-surface-2)] text-[var(--color-text-muted)] rounded-lg">
                                   <FileText className="w-6 h-6" />
                                 </div>
                                 <div className="min-w-0">
-                                  <p className="text-sm font-bold text-[var(--color-text)] truncate hover:text-orange-700 transition-colors cursor-pointer" onClick={() => setViewerFile(latestDraft)}>{latestDraft.name}</p>
+                                  <p className="text-sm font-bold text-[var(--color-text)] truncate hover:underline cursor-pointer" onClick={() => setViewerFile(latestDraft)}>{latestDraft.name}</p>
                                   <div className="flex items-center text-xs text-[var(--color-text-muted)] mt-0.5 space-x-2">
                                      <span>{latestDraft.size}</span>
                                      <span className="w-1 h-1 rounded-full bg-slate-300"/>
                                      <span>{toDate(latestDraft.uploadedAt).toLocaleString()}</span>
                                      <span className="w-1 h-1 rounded-full bg-slate-300"/>
-                                     <span className="text-orange-600 font-medium">Current Version</span>
+                                     <span className="font-bold text-[var(--color-text)]">Latest</span>
                                   </div>
                                 </div>
                               </div>

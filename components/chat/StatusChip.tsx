@@ -51,7 +51,7 @@ export default function StatusChip({ orgId, bump }: { orgId: string; /** Change 
   const pct = snap.capUsd > 0 ? Math.min(100, Math.round((snap.spentUsd / snap.capUsd) * 100)) : 0;
   const tone = !snap.known ? "bg-[var(--color-border-strong)]"
     : !snap.keyOk ? "bg-amber-500"
-      : pct >= 90 ? "bg-rose-500" : "bg-emerald-500";
+      : pct >= 90 ? "bg-rose-500" : "";
 
   return (
     <Link href="/intelligence/setup"
@@ -59,9 +59,9 @@ export default function StatusChip({ orgId, bump }: { orgId: string; /** Change 
         : !snap.keyOk ? "No API key saved - questions can't run. Open AI setup."
           : `${snap.model ?? "model"} · $${snap.spentUsd.toFixed(2)}${snap.capUsd > 0 ? ` of $${snap.capUsd.toFixed(2)}` : ""} this month`}
       className="inline-flex items-center gap-2 h-7 pl-2 pr-2.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] transition-colors max-w-[220px]">
-      <span className={`w-2 h-2 rounded-full shrink-0 ${tone} ${!snap.known ? "animate-pulse" : ""}`} />
+      {tone && <span className={`w-2 h-2 rounded-full shrink-0 ${tone}`} />}
       <span className="truncate">
-        {!snap.known ? "AI status" : !snap.keyOk ? "No key" : (snap.model ?? "model")}
+        {!snap.known ? "AI status" : !snap.keyOk ? "No AI key" : (snap.model ?? "model")}
       </span>
       {snap.known && snap.keyOk && (
         <span className="tabular-nums text-[var(--color-text-faint)] shrink-0">

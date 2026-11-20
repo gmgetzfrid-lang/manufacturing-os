@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, Send, GitBranch, GitCompare, ShieldCheck, Wrench, StickyNote, Check } from "lucide-react";
+import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, Send, GitBranch, GitCompare, ShieldCheck, Wrench, StickyNote, Check, Package } from "lucide-react";
 import NextLink from "next/link";
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
@@ -32,6 +32,7 @@ import OriginBadge from "@/components/documents/OriginBadge";
 import CollapsibleSection from "@/components/ui/CollapsibleSection";
 import DocClassControl from "@/components/documents/DocClassControl";
 import AddToPackageButton from "@/components/documents/AddToPackageButton";
+import MoreMenu, { type MoreItem } from "@/components/ui/MoreMenu";
 import CheckoutHistoryPanel from "@/components/documents/CheckoutHistoryPanel";
 import CompareRevisionsModal from "@/components/documents/CompareRevisionsModal";
 import { effectiveOwnerForDocument, requestDeletion } from "@/lib/ownership";
@@ -135,6 +136,7 @@ export default function InspectorPanel({
   const [modifyOpen, setModifyOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [sourceBusy, setSourceBusy] = useState(false);
+  const [pkgAsk, setPkgAsk] = useState(0);
   const [openBranches, setOpenBranches] = useState<import("@/lib/branches").RevisionBranch[]>([]);
 
   // Open branch debt for the selected doc — the banner below must appear
@@ -496,24 +498,23 @@ export default function InspectorPanel({
               {checkedOutByMe ? <LogOut className="w-3.5 h-3.5" /> : <LogIn className="w-3.5 h-3.5" />}
               {checkedOutByMe ? "Check in" : isCheckedOut ? "Checked out" : "Check out"}
             </button>
-            {canPub && !publishMain && publish(quiet)}
-            {onToggleStage && (
-              <button onClick={() => onToggleStage(selectedDoc)} className={quiet} aria-pressed={isStaged} title={isStaged ? "Remove from staging" : "Add to staging"}>
-                {isStaged ? <Check className="w-3.5 h-3.5" /> : <Layers className="w-3.5 h-3.5" />} {isStaged ? "Staged" : "Stage"}
-              </button>
-            )}
-            <button onClick={onMetadata} className={quiet}><Pencil className="w-3.5 h-3.5" /> Metadata</button>
-            {/* Source custody: the CAD file from the vault (records an edit intent at this revision). */}
-            {selectedVersion?.sourceFileKey && selectedDoc.id && selectedDoc.orgId && uid && (
-              <button onClick={() => void handleGetSource()} disabled={sourceBusy} className={quiet}
-                title="Download the native CAD source (DWG/zip) stored with the current revision. Marks you as working on this document from this revision.">
-                <FileText className="w-3.5 h-3.5" /> {sourceBusy ? "Fetching source…" : "CAD source"}
-              </button>
-            )}
-            {/* Pin this drawing into a job's work package, from where it lives. */}
-            {selectedDoc.id && selectedDoc.orgId && uid && (
-              <AddToPackageButton doc={selectedDoc} orgId={selectedDoc.orgId} userId={uid} userName={userEmail?.split("@")[0] ?? null} />
-            )}
+            {(() => {
+              const more: MoreItem[] = [];
+              if (canPub && !publishMain && !pubLocked) more.push({ icon: <ArrowUpFromLine className="w-4 h-4" />, label: "Publish new revision", onClick: () => onRevUp?.() });
+              if (onToggleStage) more.push({ icon: isStaged ? <Check className="w-4 h-4" /> : <Layers className="w-4 h-4" />, label: isStaged ? "Remove from staging" : "Add to staging", onClick: () => onToggleStage(selectedDoc) });
+              more.push({ icon: <Pencil className="w-4 h-4" />, label: "Edit metadata", onClick: () => onMetadata() });
+              // Source custody: the CAD file from the vault (records an edit intent at this revision).
+              if (selectedVersion?.sourceFileKey && selectedDoc.id && selectedDoc.orgId && uid) more.push({ icon: <FileText className="w-4 h-4" />, label: sourceBusy ? "Fetching CAD source…" : "Download CAD source", onClick: () => { if (!sourceBusy) void handleGetSource(); } });
+              // Pin this drawing into a job's work package, from where it lives.
+              if (selectedDoc.id && selectedDoc.orgId && uid) more.push({ icon: <Package className="w-4 h-4" />, label: "Add to a work package", onClick: () => setPkgAsk((n) => n + 1) });
+              return <>
+                <MoreMenu items={more} triggerClass={quiet} />
+                {selectedDoc.id && selectedDoc.orgId && uid && (
+                  <AddToPackageButton doc={selectedDoc} orgId={selectedDoc.orgId} userId={uid} userName={userEmail?.split("@")[0] ?? null} openSignal={pkgAsk} hideTrigger />
+                )}
+              </>;
+            })()}
+            {isCheckedOut && !checkedOutByMe && <span className="basis-full text-[11.5px] text-[var(--color-text-muted)] inline-flex items-center gap-1"><Lock className="w-3 h-3" /> Checked out by {selectedDoc.checkedOutByName || "another user"}. Publishing waits until they check it in.</span>}
           </div>
         );
       })()}

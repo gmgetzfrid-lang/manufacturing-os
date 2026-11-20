@@ -71,19 +71,19 @@ export default function SetupChecklist() {
   const dismiss = () => { try { localStorage.setItem(DISMISS_KEY, "1"); } catch { /* ignore */ } setDismissed(true); };
 
   return (
-    <div className="rounded-2xl border border-orange-200 bg-gradient-to-br from-orange-50 to-amber-50 p-5 mb-6">
+    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 mb-6">
       <div className="flex items-start gap-3">
-        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-orange-700 flex items-center justify-center shadow-sm shrink-0">
-          <Rocket className="w-5 h-5 text-white" />
+        <div className="w-9 h-9 rounded-xl bg-[var(--color-surface-2)] flex items-center justify-center shrink-0">
+          <Rocket className="w-[18px] h-[18px] text-[var(--color-text-muted)]" />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-black text-[var(--color-text)]">Get your workspace ready</h2>
-            <span className="text-[11px] font-bold text-orange-700">{doneCount}/{steps.length} done</span>
+            <span className="text-[11px] font-bold text-[var(--color-text-muted)]">{doneCount}/{steps.length} done</span>
           </div>
           <p className="text-xs text-[var(--color-text-muted)] mt-0.5">A few steps to go from empty to operational.</p>
         </div>
-        <button onClick={dismiss} aria-label="Dismiss" className="p-1.5 rounded-md text-[var(--color-text-faint)] hover:bg-white/60"><X className="w-4 h-4" /></button>
+        <button onClick={dismiss} aria-label="Dismiss" className="p-1.5 rounded-md text-[var(--color-text-faint)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
       </div>
 
       <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">

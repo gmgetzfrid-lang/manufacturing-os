@@ -112,7 +112,7 @@ export function DraftingRequestsBody() {
           ]} />
         <div className="flex items-center gap-2 shrink-0">
           <TrendChip current={wk.cur} previous={wk.prev} />
-          <Link href="/requests/new" className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold text-white bg-[var(--color-accent)] hover:opacity-90">
+          <Link href="/requests/new" className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
             <Plus className="w-3 h-3" /> New
           </Link>
         </div>
@@ -228,7 +228,7 @@ export function ProjectsBody() {
         <div className="flex items-center gap-2 shrink-0">
           <TrendChip current={wk.cur} previous={wk.prev} />
           {sum(buckets.counts) > 0 && <div className="w-20 hidden lg:block"><MiniBars values={buckets.counts} labels={buckets.labels} height={22} /></div>}
-          <Link href="/projects" className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold text-white bg-[var(--color-accent)] hover:opacity-90">
+          <Link href="/projects" className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
             <Plus className="w-3 h-3" /> New
           </Link>
         </div>

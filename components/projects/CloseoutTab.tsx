@@ -282,7 +282,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
                         <span className="min-w-0 flex-1 basis-40"><b className="text-[var(--color-text)]">{p.name}</b> <span className="text-[var(--color-text-muted)]">{x.notNeeded ? "· not needed" : x.list ? `· ${x.list.list.title}: ${x.list.satisfied} of ${x.list.applicable} items done${x.list.list.status === "complete" ? ", complete" : ""}` : "· not uploaded"}</span></span>
                         {x.list && <button type="button" onClick={() => onTab("quality")} className={btn}>Open</button>}
                         {!x.list && !x.notNeeded && canManage && <>
-                          <button type="button" onClick={() => { setErr(null); setUploading(p.id); }} className={pri}><UploadCloud className="w-4 h-4" /> Upload</button>
+                          <button type="button" onClick={() => { setErr(null); setUploading(p.id); }} className={btn}><UploadCloud className="w-4 h-4" /> Upload</button>
                           <button type="button" disabled={!!busy} onClick={() => void run("pssr", () => saveCloseoutSettings(projectId, { pssrByPhase: { [p.id]: { notNeeded: true, checklistId: null } } }))} className={btn}>Not needed</button>
                         </>}
                         {x.notNeeded && canManage && <button type="button" disabled={!!busy} onClick={() => void run("pssr", () => saveCloseoutSettings(projectId, { pssrByPhase: { [p.id]: { notNeeded: false, checklistId: null } } }))} className={btn}>Needed after all</button>}

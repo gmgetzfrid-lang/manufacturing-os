@@ -21,9 +21,7 @@ import { useToast } from "@/components/providers/ToastProvider";
 import ViewTabs, { HOME_VIEWS } from "@/components/navigation/ViewTabs";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
-import { DailyBrief } from "@/components/cockpit/DailyBrief";
 import MyDeskPanel from "@/components/cockpit/MyDeskPanel";
-import { QuickLaunch } from "@/components/cockpit/QuickLaunch";
 import { formatAgo, exportInboxCsv } from "@/components/cockpit/CommandDeck";
 import { AttentionFeed, type AttnFilter } from "@/components/cockpit/AttentionFeed";
 
@@ -184,26 +182,24 @@ export default function InboxPage() {
               onMarkAll={handleMarkAll}
               markingAll={markingAll}
             />
-            {/* Daily Brief — narrated synthesis of the day. */}
-            {data && <DailyBrief data={data} />}
 
             {/* Proactive nudges — what to DO, derived from the snapshot. */}
             {data && (() => {
               const nudges = computeNudges(data);
               if (nudges.length === 0) return null;
               return (
-                <div className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50/40 p-4 shadow-sm">
+                <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
                   <div className="flex items-center gap-1.5 mb-2">
-                    <Zap className="w-4 h-4 text-amber-600" />
+                    <Zap className="w-4 h-4 text-[var(--color-text-muted)]" />
                     <span className="text-sm font-black text-[var(--color-text)]">Suggested actions</span>
                   </div>
                   <ul className="space-y-1.5">
                     {nudges.map((n) => (
-                      <li key={n.id} className="text-xs text-[var(--color-text-faint)] flex items-start gap-2">
+                      <li key={n.id} className="text-[12.5px] text-[var(--color-text)] flex items-start gap-2">
                         <span className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${n.severity === "high" ? "bg-rose-500" : "bg-amber-500"}`} />
                         <span className="flex-1">{n.message}</span>
                         {n.actionLabel && n.href && (
-                          <Link href={n.href} className="font-bold text-orange-700 hover:text-orange-900 inline-flex items-center gap-0.5 shrink-0">
+                          <Link href={n.href} className="font-bold text-[var(--color-accent)] hover:underline inline-flex items-center gap-0.5 shrink-0">
                             {n.actionLabel} <ChevronRight className="w-3 h-3" />
                           </Link>
                         )}
@@ -221,7 +217,6 @@ export default function InboxPage() {
             {activeOrgId && uid && (
               <MyDeskPanel orgId={activeOrgId} uid={uid} userEmail={userEmail} />
             )}
-            <QuickLaunch />
           </div>
         </div>
 
@@ -232,7 +227,7 @@ export default function InboxPage() {
                 <ul className="space-y-1.5">
                   {data.markupRequestsToMe.slice(0, 6).map((mr) => (
                     <li key={mr.id} className="text-xs">
-                      <Link href={`/documents`} className="text-violet-700 hover:underline font-bold">
+                      <Link href={`/documents`} className="text-[var(--color-text)] hover:underline font-bold">
                         {mr.documentNumber || mr.documentTitle || mr.documentId.slice(0, 8)}
                       </Link>
                       {mr.requestedByName && <span className="text-[var(--color-text-muted)]"> · from {mr.requestedByName}</span>}
@@ -241,7 +236,7 @@ export default function InboxPage() {
                         <button
                           onClick={() => respondToMarkup(mr, "shared")}
                           disabled={resolvingId === mr.id}
-                          className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-violet-600 hover:bg-violet-500 text-[var(--color-text)] text-[11px] font-bold disabled:opacity-50"
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[11px] font-bold disabled:opacity-50"
                         >
                           <Send className="w-3 h-3" /> Mark shared
                         </button>
@@ -314,7 +309,7 @@ export default function InboxPage() {
                     </li>
                   ))}
                 </ul>
-                <Link href="/admin/holds" className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-rose-700 hover:text-rose-900">
+                <Link href="/admin/holds" className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent)] hover:underline">
                   Hold queue <ChevronRight className="w-3 h-3" />
                 </Link>
               </Card>
@@ -326,7 +321,7 @@ export default function InboxPage() {
                 <ul className="space-y-1.5">
                   {data.transmittalsAwaitingAck.slice(0, 6).map((t) => (
                     <li key={t.id} className="text-xs flex items-center gap-2">
-                      <Link href="/transmittals" className="font-mono font-bold text-blue-700 hover:underline shrink-0">{t.number}</Link>
+                      <Link href="/transmittals" className="font-mono font-bold text-[var(--color-text)] hover:underline shrink-0">{t.number}</Link>
                       <span className="text-[var(--color-text-faint)] truncate flex-1">{t.subject || [t.recipientName, t.recipientCompany].filter(Boolean).join(" · ") || `${t.documentCount} doc${t.documentCount === 1 ? "" : "s"}`}</span>
                       <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
                         (t.__ageDays ?? 0) >= 14 ? "bg-rose-100 text-rose-800"
@@ -336,7 +331,7 @@ export default function InboxPage() {
                     </li>
                   ))}
                 </ul>
-                <Link href="/transmittals" className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-blue-700 hover:text-blue-900">
+                <Link href="/transmittals" className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent)] hover:underline">
                   Transmittal register <ChevronRight className="w-3 h-3" />
                 </Link>
               </Card>
@@ -348,7 +343,7 @@ export default function InboxPage() {
                 <ul className="space-y-1.5">
                   {data.reviewsPendingOnMe.slice(0, 6).map((r) => (
                     <li key={r.signoffId} className="text-xs flex items-center gap-2">
-                      <Link href={`/documents/${r.libraryId}?doc=${r.documentId}`} className="font-mono font-bold text-violet-700 hover:underline shrink-0">{r.label}</Link>
+                      <Link href={`/documents/${r.libraryId}?doc=${r.documentId}`} className="font-mono font-bold text-[var(--color-text)] hover:underline shrink-0">{r.label}</Link>
                       <span className="text-[var(--color-text-faint)] truncate flex-1">{r.revisionLabel ? `Draft ${r.revisionLabel}` : ""}</span>
                       <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
                         (r.__ageDays ?? 0) >= 14 ? "bg-rose-100 text-rose-800"
@@ -367,7 +362,7 @@ export default function InboxPage() {
                 <ul className="space-y-1.5">
                   {data.reviewCyclesDueOnMe.slice(0, 6).map((r) => (
                     <li key={r.documentId} className="text-xs flex items-center gap-2">
-                      <Link href={`/documents/${r.libraryId}?doc=${r.documentId}`} className="font-mono font-bold text-amber-800 hover:underline shrink-0">{r.label}</Link>
+                      <Link href={`/documents/${r.libraryId}?doc=${r.documentId}`} className="font-mono font-bold text-[var(--color-text)] hover:underline shrink-0">{r.label}</Link>
                       <span className={`ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${r.overdue ? "bg-rose-100 text-rose-800" : "bg-amber-100 text-amber-800"}`}>
                         {r.overdue ? "overdue" : "due"}{r.nextReviewDate ? ` ${r.nextReviewDate.slice(0, 10)}` : ""}
                       </span>
@@ -383,7 +378,7 @@ export default function InboxPage() {
                 <ul className="space-y-1.5">
                   {data.distributionAcksPendingOnMe.slice(0, 6).map((a) => (
                     <li key={a.ackId} className="text-xs flex items-center gap-2">
-                      <Link href={a.libraryId ? `/documents/${a.libraryId}?doc=${a.documentId}` : "#"} className="font-mono font-bold text-blue-700 hover:underline shrink-0">{a.label}</Link>
+                      <Link href={a.libraryId ? `/documents/${a.libraryId}?doc=${a.documentId}` : "#"} className="font-mono font-bold text-[var(--color-text)] hover:underline shrink-0">{a.label}</Link>
                       <span className="text-[var(--color-text-faint)] truncate flex-1">{a.revLabel ? `Rev ${a.revLabel}` : ""}{a.requestedByName ? ` · from ${a.requestedByName}` : ""}</span>
                     </li>
                   ))}
@@ -397,7 +392,7 @@ export default function InboxPage() {
                 <ul className="space-y-1.5">
                   {data.accessRecertsDue.slice(0, 6).map((r) => (
                     <li key={r.libraryId} className="text-xs flex items-center gap-2">
-                      <Link href={`/documents/${r.libraryId}`} className="font-bold text-amber-800 hover:underline shrink-0 truncate">{r.name}</Link>
+                      <Link href={`/documents/${r.libraryId}`} className="font-bold text-[var(--color-text)] hover:underline shrink-0 truncate">{r.name}</Link>
                       <span className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 bg-rose-100 text-rose-800">due{r.nextDate ? ` ${r.nextDate.slice(0, 10)}` : ""}</span>
                     </li>
                   ))}
@@ -411,7 +406,7 @@ export default function InboxPage() {
                 <ul className="space-y-1.5">
                   {data.acknowledgmentsPendingOnMe.slice(0, 6).map((a) => (
                     <li key={a.rosterId} className="text-xs flex items-center gap-2">
-                      <Link href={`/documents/${a.libraryId}?doc=${a.documentId}`} className="font-mono font-bold text-violet-700 hover:underline shrink-0">{a.label}</Link>
+                      <Link href={`/documents/${a.libraryId}?doc=${a.documentId}`} className="font-mono font-bold text-[var(--color-text)] hover:underline shrink-0">{a.label}</Link>
                       <span className="text-[var(--color-text-faint)] truncate flex-1">{a.revisionLabel ? `Rev ${a.revisionLabel}` : ""}</span>
                       <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
                         (a.__ageDays ?? 0) >= 14 ? "bg-rose-100 text-rose-800"
@@ -457,35 +452,15 @@ interface CardProps {
   tone: "indigo" | "orange" | "amber" | "rose" | "blue" | "emerald" | "violet" | "slate";
   children: React.ReactNode;
 }
-function Card({ icon: Icon, title, count, tone, children }: CardProps) {
-  const tones: Record<CardProps["tone"], string> = {
-    indigo: "border-indigo-200 bg-indigo-50/40",
-    orange: "border-orange-200 bg-orange-50/40",
-    amber:  "border-amber-200 bg-amber-50/40",
-    rose:   "border-rose-200 bg-rose-50/40",
-    blue:   "border-blue-200 bg-blue-50/40",
-    emerald:"border-emerald-200 bg-emerald-50/40",
-    violet: "border-violet-200 bg-violet-50/40",
-    slate:  "border-[var(--color-border)] bg-[var(--color-canvas)]",
-  };
-  const iconTones: Record<CardProps["tone"], string> = {
-    indigo: "text-indigo-700",
-    orange: "text-orange-700",
-    amber:  "text-amber-700",
-    rose:   "text-rose-700",
-    blue:   "text-blue-700",
-    emerald:"text-emerald-700",
-    violet: "text-violet-700",
-    slate:  "text-[var(--color-text-faint)]",
-  };
+function Card({ icon: Icon, title, count, children }: CardProps) {
   return (
-    <div className={`rounded-2xl border ${tones[tone]} shadow-sm p-4`}>
+    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
       <div className="flex items-center justify-between mb-2">
         <h2 className="text-sm font-black text-[var(--color-text)] inline-flex items-center gap-1.5">
-          <Icon className={`w-4 h-4 ${iconTones[tone]}`} />
+          <Icon className="w-4 h-4 text-[var(--color-text-muted)]" />
           {title}
         </h2>
-        <span className={`inline-flex items-center px-2 py-0.5 rounded-full bg-[var(--color-surface)] border border-[var(--color-border)] text-[11px] font-black ${iconTones[tone]}`}>{count}</span>
+        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[11px] font-black text-[var(--color-text)] tabular-nums">{count > 99 ? "99+" : count}</span>
       </div>
       {children}
     </div>
@@ -505,7 +480,7 @@ function TicketList({ tickets }: { tickets: TicketListItem[] }) {
       {tickets.slice(0, 6).map((t, i) => (
         <li key={t.id ?? `t-${i}`} className="text-xs flex items-center gap-2">
           <span className="font-mono text-[var(--color-text-muted)]">{t.ticketId ?? "-"}</span>
-          <Link href={`/requests/${t.id ?? ""}`} className="text-[var(--color-text)] hover:text-indigo-700 font-bold truncate flex-1">
+          <Link href={`/requests/${t.id ?? ""}`} className="text-[var(--color-text)] hover:underline font-bold truncate flex-1">
             {t.title ?? "(untitled)"}
           </Link>
           <span className="text-[10px] font-bold uppercase text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{t.status ?? "-"}</span>

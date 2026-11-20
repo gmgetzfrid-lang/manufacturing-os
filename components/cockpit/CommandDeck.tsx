@@ -13,7 +13,7 @@
 import React from "react";
 import Link from "next/link";
 import {
-  Briefcase, RefreshCw, Download, Plus, FileStack, FolderKanban, ChevronRight,
+  Briefcase, RefreshCw, Download, FileStack, FolderKanban, ChevronRight,
 } from "lucide-react";
 import type { InboxSnapshot } from "@/lib/inbox";
 import { useGreeting } from "@/components/cockpit/DailyBrief";
@@ -57,177 +57,53 @@ export function CommandDeck({
   const stale = data?.myStaleCheckouts.length ?? 0;
   const { open: openCenter } = useNotificationCenter();
 
+  const n = attentionCount;
+  const row = "flex items-center gap-3 py-2.5 border-t border-[var(--color-border)] text-[13.5px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] -mx-4 px-4";
   return (
-    <div className={`relative overflow-hidden rounded-3xl border border-[var(--color-border)] bg-[var(--color-canvas)] text-[var(--color-text)] shadow-2xl shadow-slate-900/30 ${fill ? "h-full flex flex-col" : "mb-4"}`}>
-      {/* Ambient glows + grid texture for the "console" feel. */}
-      <div aria-hidden className="pointer-events-none absolute -top-24 -left-16 w-72 h-72 rounded-full bg-orange-500/20 blur-3xl" />
-      <div aria-hidden className="pointer-events-none absolute -bottom-24 right-1/4 w-72 h-72 rounded-full bg-blue-500/15 blur-3xl" />
-      <div aria-hidden className="pointer-events-none absolute -top-10 right-0 w-72 h-72 rounded-full bg-emerald-500/10 blur-3xl" />
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 opacity-[0.07]"
-        style={{ backgroundImage: "linear-gradient(rgba(255,255,255,.6) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.6) 1px, transparent 1px)", backgroundSize: "28px 28px" }}
-      />
-
-      {/* No overscroll-contain — it would trap page wheel-scroll whenever the
-          cursor is over the deck. Chaining to the page is the expected feel. */}
-      <div className={`relative p-5 sm:p-6 ${fill ? "flex-1 min-h-0 overflow-y-auto" : ""}`}>
-        {/* Top status row */}
-        <div className="flex flex-wrap items-start justify-between gap-4 mb-5">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 mb-1">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
-              </span>
-              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--color-text-muted)]">Mission control · live</span>
-            </div>
-            <h1 className="text-2xl font-black text-[var(--color-text)]">
-              {hello}{name ? <>, <span className="text-[var(--color-accent)]">{name}</span></> : ""}.
-            </h1>
-            <p className="text-sm text-[var(--color-text-muted)] mt-0.5">
-              {focus || "Everything that needs you, and the work you run - in one place."}
+    <div className={`rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] ${fill ? "h-full flex flex-col" : "mb-4"}`}>
+      <div className={`p-4 ${fill ? "flex-1 min-h-0 overflow-y-auto" : ""}`}>
+        <div className="flex flex-wrap items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-[12.5px] text-[var(--color-text-muted)]">{hello}{name ? `, ${name}` : ""}.</p>
+            <p className="text-[19px] font-black leading-snug">
+              {n > 0 ? `${n} ${n === 1 ? "thing needs" : "things need"} you${actionCount > 0 ? `, ${actionCount} to act on` : ""}.` : "Nothing needs you right now."}
             </p>
+            {focus && <p className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{focus}</p>}
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            {/* These counts OPEN the Notification Center — a number you can't
-                click is a scoreboard; a number that shows you its items is a
-                doorway. */}
-            <div className="hidden sm:flex items-center gap-3 mr-1 px-3 py-1.5 rounded-xl bg-black/5 dark:bg-[var(--color-surface)]/5 border border-black/10 dark:border-white/10">
-              <button type="button" onClick={() => openCenter("all")} title="See everything that needs you" className="rounded-lg px-1 -mx-1 hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer">
-                <DeckStat label="Needs you" value={attentionCount} tone={attentionCount > 0 ? "text-[var(--color-accent)]" : "text-[var(--color-text)]"} />
+            {n > 0 && (
+              <button type="button" onClick={() => openCenter("all")}
+                className="h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-black hover:bg-[var(--color-accent-hover)]">
+                Show me
               </button>
-              <span className="w-px h-6 bg-black/10 dark:bg-[var(--color-surface)]/10" />
-              <button type="button" onClick={() => openCenter("action")} title="See the items that require your action" className="rounded-lg px-1 -mx-1 hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer">
-                <DeckStat label="Action" value={actionCount} tone={actionCount > 0 ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text)]"} />
-              </button>
-            </div>
-            <button
-              onClick={onExport}
-              disabled={!canExport}
-              title="Download today's inbox as a CSV"
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-black/5 dark:bg-[var(--color-surface)]/5 border border-black/10 dark:border-white/10 hover:bg-black/10 dark:bg-[var(--color-surface)]/10 text-xs font-bold text-[var(--color-text)] disabled:opacity-40 transition-colors"
-            >
-              <Download className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Export</span>
+            )}
+            <button type="button" onClick={onRefresh} disabled={refreshing} aria-label="Refresh" title={lastLoadedAt ? `Updated ${formatAgo(new Date(lastLoadedAt).toISOString())}` : "Refresh"}
+              className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] disabled:opacity-60">
+              <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
             </button>
-            <button
-              onClick={onRefresh}
-              disabled={refreshing}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-black/5 dark:bg-[var(--color-surface)]/5 border border-black/10 dark:border-white/10 hover:bg-black/10 dark:bg-[var(--color-surface)]/10 text-xs font-bold text-[var(--color-text)] disabled:opacity-60 transition-colors"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
-              <span className="hidden sm:inline">{lastLoadedAt ? formatAgo(new Date(lastLoadedAt).toISOString()) : "Refresh"}</span>
+            <button type="button" onClick={onExport} disabled={!canExport} aria-label="Export" title="Download what needs you as a spreadsheet (CSV)"
+              className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] disabled:opacity-40">
+              <Download className="w-4 h-4" />
             </button>
           </div>
         </div>
-
-        {/* The three pillars */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <Pillar
-            accent="orange"
-            icon={Briefcase}
-            label="Drafting Requests"
-            value={pillars.loaded ? pillars.openRequests : null}
-            valueHint="open"
-            stats={[
-              { label: `${data?.ticketsAssigned.length ?? 0} assigned to you` },
-              { label: `${data?.ticketsUnread.length ?? 0} new activity`, dim: true },
-            ]}
-            primary={{ label: "New request", href: "/requests/new", icon: Plus }}
-            secondary={{ label: "Open portal", href: "/requests" }}
-          />
-          <Pillar
-            accent="blue"
-            icon={FileStack}
-            label="Document Control"
-            value={pillars.loaded ? pillars.lockedDocs : null}
-            valueHint="checked out"
-            stats={[
-              { label: `${data?.myCheckouts.length ?? 0} held by you` },
-              stale > 0
-                ? { label: `${stale} past due`, tone: "text-rose-700 dark:text-rose-300" }
-                : { label: "all current", dim: true },
-            ]}
-            primary={{ label: "Browse & check out", href: "/documents", icon: FileStack }}
-            secondary={{ label: "Active locks", href: "/checkouts" }}
-          />
-          <Pillar
-            accent="emerald"
-            icon={FolderKanban}
-            label="Projects"
-            value={pillars.loaded ? pillars.activeProjects : null}
-            valueHint="active"
-            stats={[
-              { label: `${data?.milestonesUpcoming.length ?? 0} milestones this week` },
-            ]}
-            primary={{ label: "Open projects", href: "/projects", icon: FolderKanban }}
-            secondary={{ label: "Coordination", href: "/coordination" }}
-          />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function DeckStat({ label, value, tone }: { label: string; value: number; tone: string }) {
-  return (
-    <div className="text-center">
-      <div className={`text-lg font-black leading-none ${tone}`}>{value}</div>
-      <div className="text-[9px] font-bold uppercase tracking-wider text-[var(--color-text-muted)] mt-0.5">{label}</div>
-    </div>
-  );
-}
-
-type PillarAccent = "orange" | "blue" | "emerald";
-interface PillarStat { label: string; tone?: string; dim?: boolean }
-function Pillar({
-  accent, icon: Icon, label, value, valueHint, stats, primary, secondary,
-}: {
-  accent: PillarAccent;
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  value: number | null;
-  valueHint: string;
-  stats: PillarStat[];
-  primary: { label: string; href: string; icon: React.ComponentType<{ className?: string }> };
-  secondary?: { label: string; href: string };
-}) {
-  const A: Record<PillarAccent, { tile: string; glow: string; btn: string; ring: string; hint: string }> = {
-    orange: { tile: "from-orange-500 to-amber-600", glow: "bg-orange-500/20", btn: "bg-orange-500 hover:bg-orange-400 text-[var(--color-text)]", ring: "hover:border-orange-400/40", hint: "text-orange-300/80" },
-    blue:   { tile: "from-blue-500 to-indigo-600", glow: "bg-blue-500/20", btn: "bg-blue-500 hover:bg-blue-400 text-[var(--color-text)]", ring: "hover:border-blue-400/40", hint: "text-blue-700/80 dark:text-blue-300/80" },
-    emerald:{ tile: "from-emerald-500 to-teal-600", glow: "bg-emerald-500/20", btn: "bg-emerald-500 hover:bg-emerald-400 text-[var(--color-text)]", ring: "hover:border-emerald-400/40", hint: "text-emerald-700/80 dark:text-emerald-300/80" },
-  };
-  const a = A[accent];
-  return (
-    <div className={`group relative overflow-hidden rounded-2xl border border-black/10 dark:border-white/10 bg-black/[0.03] dark:bg-[var(--color-surface)]/[0.03] p-4 transition-all hover:bg-black/[0.06] dark:bg-[var(--color-surface)]/[0.06] ${a.ring}`}>
-      <div aria-hidden className={`pointer-events-none absolute -top-12 -right-12 w-32 h-32 rounded-full blur-2xl ${a.glow}`} />
-      <div className="relative">
-        <div className="flex items-center justify-between mb-3">
-          <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${a.tile} flex items-center justify-center shadow-lg`}>
-            <Icon className="w-5 h-5 text-[var(--color-text)]" />
-          </div>
-          <span className="text-[10px] font-black uppercase tracking-[0.15em] text-[var(--color-text-muted)]">{label}</span>
-        </div>
-        <div className="flex items-baseline gap-1.5">
-          <span className="text-4xl font-black text-[var(--color-text)] tabular-nums leading-none">
-            {value === null ? "-" : value}
-          </span>
-          <span className={`text-xs font-bold ${a.hint}`}>{valueHint}</span>
-        </div>
-        <div className="mt-2 space-y-0.5">
-          {stats.map((s, i) => (
-            <div key={i} className={`text-[11px] font-semibold ${s.tone ?? (s.dim ? "text-[var(--color-text-muted)]" : "text-[var(--color-text-muted)]")}`}>{s.label}</div>
-          ))}
-        </div>
-        <div className="mt-3 flex items-center gap-2">
-          <Link href={primary.href} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm transition-colors ${a.btn}`}>
-            <primary.icon className="w-3.5 h-3.5" /> {primary.label}
+        <div className="mt-3">
+          <Link href="/requests" className={row}>
+            <Briefcase className="w-4 h-4 text-[var(--color-text-muted)]" />
+            <span className="flex-1"><b>Drafting requests</b> <span className="text-[var(--color-text-muted)]">{pillars.loaded ? `${pillars.openRequests} open` : ""}{data ? `, ${data.ticketsAssigned.length} assigned to you` : ""}</span></span>
+            <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)]" />
           </Link>
-          {secondary && (
-            <Link href={secondary.href} className="inline-flex items-center gap-1 text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors">
-              {secondary.label} <ChevronRight className="w-3.5 h-3.5" />
-            </Link>
-          )}
+          <Link href="/checkouts" className={row}>
+            <FileStack className="w-4 h-4 text-[var(--color-text-muted)]" />
+            <span className="flex-1"><b>Documents</b> <span className="text-[var(--color-text-muted)]">{pillars.loaded ? `${pillars.lockedDocs} checked out` : ""}{data ? `, ${data.myCheckouts.length} by you` : ""}</span>
+              {stale > 0 && <span className="ml-1 font-bold text-rose-700 dark:text-rose-400">{stale} past due</span>}</span>
+            <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)]" />
+          </Link>
+          <Link href="/projects" className={row}>
+            <FolderKanban className="w-4 h-4 text-[var(--color-text-muted)]" />
+            <span className="flex-1"><b>Projects</b> <span className="text-[var(--color-text-muted)]">{pillars.loaded ? `${pillars.activeProjects} active` : ""}{data && data.milestonesUpcoming.length ? `, ${data.milestonesUpcoming.length} milestones this week` : ""}</span></span>
+            <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)]" />
+          </Link>
         </div>
       </div>
     </div>

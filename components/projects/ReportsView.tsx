@@ -623,9 +623,8 @@ export default function ReportsView(p: Props) {
             {/* Closing the job (PSSR, turnover, punch, complete) is on its own tab. */}
             {sel === "closeout" && (
               <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("project:tab", { detail: "closeout" }))}
-                className="w-full flex items-center gap-2 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 px-3 py-2.5 text-left text-[13px] font-bold text-emerald-900 dark:text-emerald-200 hover:bg-emerald-100 dark:hover:bg-emerald-950/50">
-                <span className="flex-1">PSSR, turnover documents, punch list and Mark complete are on the Close-out tab.</span>
-                <span className="shrink-0 underline">Open Close-out</span>
+                className="w-full flex items-center gap-2 text-left text-[12.5px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+                <span className="flex-1">To close the project (PSSR, turnover, punch list), go to <b className="text-[var(--color-accent)] underline">Close-out</b>.</span>
               </button>
             )}
             {(!meeting || meeting === "turnover" || lhRow) && options}

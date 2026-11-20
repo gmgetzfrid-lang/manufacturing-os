@@ -769,7 +769,7 @@ export const WIDGET_CATALOG: Record<WidgetType, WidgetMeta> = {
   commandDeck: {
     type: "commandDeck", title: "Command Deck", description: "Mission-control hero - greeting, live status & the three pillars.",
     icon: LayoutDashboard, tone: "indigo", href: "/inbox", cta: "Open command deck", category: "You",
-    defaultW: 12, defaultH: 4, minW: 6, minH: 3, maxW: 12, bare: true, Body: CommandDeckBody,
+    defaultW: 12, defaultH: 3, minW: 6, minH: 2, maxW: 12, bare: true, Body: CommandDeckBody,
   },
   askKnowledge: {
     type: "askKnowledge", title: "Ask Knowledge", description: "Ask a library - answer first, proof to the page.",

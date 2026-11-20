@@ -77,9 +77,9 @@ export default function QuickNoteComposer({ orgId, userId, userEmail, userName, 
   };
 
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-accent-soft)] p-3">
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
       <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest flex items-center gap-1 mb-2">
-        <StickyNote className="w-3 h-3 text-amber-600" /> Notes
+        <StickyNote className="w-3 h-3 text-[var(--color-text-muted)]" /> Notes
         {notes.length > 0 && <span className="text-[var(--color-text-faint)] font-mono">{notes.length}</span>}
       </div>
 
@@ -120,7 +120,7 @@ export default function QuickNoteComposer({ orgId, userId, userEmail, userName, 
             orgId={orgId}
             value={body}
             onChange={(next) => setBody(next)}
-            placeholder="Add a note…  @ to mention · markdown supported · ⌘↵ to submit"
+            placeholder="Add a note. Type @ to name someone."
             rows={2}
           />
         </div>

@@ -79,19 +79,19 @@ export default function ThreadRail(p: RailProps) {
         <div className="flex items-center gap-1.5 flex-wrap">
           <button onClick={() => setMine(false)}
             className={`text-[10px] font-black px-2 py-1 rounded-md border transition-colors ${!mine
-              ? "border-[var(--color-accent)] text-[var(--color-accent)] bg-[var(--color-accent-soft)]"
+              ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]"
               : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
             Everyone
           </button>
           <button onClick={() => setMine(true)}
             className={`text-[10px] font-black px-2 py-1 rounded-md border transition-colors ${mine
-              ? "border-[var(--color-accent)] text-[var(--color-accent)] bg-[var(--color-accent-soft)]"
+              ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]"
               : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
             Mine
           </button>
           {p.libraryFilter && (
             <button onClick={p.onClearLibraryFilter} title="Show every conversation"
-              className="ml-auto inline-flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-md border border-orange-300 dark:border-orange-800 text-orange-700 dark:text-orange-300 bg-orange-50 dark:bg-orange-950/30 max-w-[55%]">
+              className="ml-auto inline-flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[var(--color-text)] bg-[var(--color-surface-2)] max-w-[55%]">
               <span className="truncate">{p.libraryFilter.name}</span> <X className="w-3 h-3 shrink-0" />
             </button>
           )}
