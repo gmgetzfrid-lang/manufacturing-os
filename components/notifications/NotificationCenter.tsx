@@ -12,6 +12,7 @@
 // item), so every row is a doorway to the thing that needs you.
 
 import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { appAlert } from "@/components/providers/DialogProvider";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { X, BellRing, Inbox } from "lucide-react";
@@ -68,8 +69,20 @@ function CenterPanel({
 
   const handleMarkAll = useCallback(async () => {
     setMarkingAll(true);
-    try { await markAllRead(); } catch { /* best-effort */ } finally { setMarkingAll(false); }
+    try { await markAllRead(); }
+    catch (e) { void appAlert({ title: "Couldn't mark them read", message: (e as Error).message, tone: "danger" }); }
+    finally { setMarkingAll(false); }
   }, [markAllRead]);
+
+  // News clears once you've seen it: when you close this after opening it.
+  // Decisions stay until you act on them (markAllRead skips those).
+  const seen = React.useRef(false);
+  useEffect(() => {
+    if (isOpen) { seen.current = true; return; }
+    if (!seen.current) return;
+    seen.current = false;
+    void markAllRead().catch(() => { /* the bell keeps them; nothing is lost */ });
+  }, [isOpen, markAllRead]);
 
   if (typeof document === "undefined") return null;
 

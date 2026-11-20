@@ -24,6 +24,7 @@
 // can be edited, reopened, or voided (with a confirm and an Undo).
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useFileDrag } from "@/hooks/useFileDrag";
 import Link from "next/link";
 import {
   ClipboardCheck, FileText, Loader2, Sparkles, Search, X, Plus, Check,
@@ -192,23 +193,31 @@ export function NewChecklistFlow({ orgId, projectId, projectName, actor, onDone,
   // guessed: nothing uploads until a library and folder are picked.
   const { home, setHome } = useProjectFileHome(orgId, projectId);
   const [uploading, setUploading] = useState(false);
+  // A file that didn't go through is kept, so Try again needs no re-picking.
+  const [failed, setFailed] = useState<File | null>(null);
   const fileRef = React.useRef<HTMLInputElement | null>(null);
   const upload = async (file: File | null | undefined) => {
     if (!file) return;
+    setFailed(null);
     if (!home?.place) { setErr("Pick where this project's files go first."); return; }
     if (!/\.pdf$/i.test(file.name) && file.type !== "application/pdf") { setErr("Upload the checklist as a PDF (in Word or Excel: File › Save As › PDF)."); return; }
     setUploading(true); setErr(null);
+    // Once it's filed, Try again would file it twice: only before that.
+    let filed = false;
     try {
       const d = await uploadProjectFile({ orgId, projectId, projectName: projectName ?? home?.name ?? "Project", file, prefix: kind === "pssr" ? "PSSR" : kind === "mi" ? "MI" : kind === "qaqc" ? "QAQC" : "CHECKLIST",
         title: file.name.replace(/\.pdf$/i, ""), part, actorUserId: actor.uid, actorEmail: actor.email });
       const picked = { id: d.documentId, label: d.label };
       setDoc(picked);
+      filed = true;
       await read(picked);
-    } catch (e) { setErr((e as Error).message); }
+    } catch (e) { setErr((e as Error).message); if (!filed) setFailed(file); }
     finally { setUploading(false); if (fileRef.current) fileRef.current.value = ""; }
   };
   const [reading, setReading] = useState(false);
   const [proposed, setProposed] = useState<SegmentedItem[] | null>(null);
+  // The drop box lights up and says what letting go will do.
+  const drag = useFileDrag((fs) => { void upload(fs[0]); }, !!proposed || !!doc || uploading || reading);
   const [title, setTitle] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -264,19 +273,22 @@ export function NewChecklistFlow({ orgId, projectId, projectName, actor, onDone,
   };
 
   return (
-    <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-accent-soft)]/30 space-y-2"
-      onDragOver={(e) => { if (!proposed && !doc) e.preventDefault(); }}
-      onDrop={(e) => { if (proposed || doc) return; e.preventDefault(); void upload(e.dataTransfer.files?.[0]); }}>
+    <div className="px-4 py-3 border-b border-[var(--color-border)] space-y-2" {...drag.bind}>
       {!proposed ? (
         <>
           {!doc && (
-            <div className="rounded-xl border-2 border-dashed border-[var(--color-accent)]/50 bg-[var(--color-surface)] p-3 flex items-center gap-3 flex-wrap">
+            <div className={`rounded-xl border-2 border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-3 flex items-center gap-3 flex-wrap ${drag.ring}`}>
               <input ref={fileRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={(e) => void upload(e.target.files?.[0])} />
               <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading || reading || !home?.place}
                 className="h-9 inline-flex items-center gap-1.5 px-3.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-black disabled:opacity-50">
                 {uploading || reading ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />} {uploading ? "Uploading…" : reading ? "Reading it…" : `Upload the ${kind === "pssr" ? "PSSR" : "checklist"} (PDF)`}
               </button>
-              <span className="text-[12px] text-[var(--color-text-muted)] flex-1 min-w-48">Or drop it here. It&apos;s filed where you pick below, then read into items for you to check.</span>
+              {failed && !uploading && (
+                <button type="button" onClick={() => void upload(failed)} className="h-9 inline-flex items-center gap-1.5 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                  Try again: {failed.name}
+                </button>
+              )}
+              <span className={`text-[12px] flex-1 min-w-48 ${drag.over ? "font-bold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{drag.over ? drag.say : <>Or drop it here. It&apos;s filed where you pick below, then read into items for you to check.</>}</span>
               <div className="basis-full">
                 <ProjectFilePlace orgId={orgId} projectId={projectId} uid={actor.uid} canManage home={home} onChange={setHome} what={kind === "pssr" ? "the PSSR" : "the checklist"} />
               </div>

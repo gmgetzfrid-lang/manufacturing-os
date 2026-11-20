@@ -24,6 +24,10 @@ export interface UploadActivity {
   percent: number;
   status: UploadActivityStatus;
   error?: string;
+  /** File size in bytes (time left is shown only for big files). */
+  size?: number;
+  /** Set while a dropped connection is being retried on its own. */
+  retrying?: boolean;
 }
 type UploadListener = (e: UploadActivity) => void;
 const uploadListeners = new Set<UploadListener>();
@@ -389,11 +393,12 @@ export async function uploadToPath(
   const contentType = opts?.contentType || (file instanceof File ? file.type : undefined) || "application/octet-stream";
   const name = file instanceof File && file.name ? file.name : (path.split("/").pop() || "file");
   const id = `up-${Date.now()}-${++uploadSeq}`;
-  emitUpload({ id, name, percent: 0, status: "uploading" });
+  const size = file.size;
+  emitUpload({ id, name, percent: 0, status: "uploading", size });
 
   const report = (bytesTransferred: number) => {
     const percent = (bytesTransferred / Math.max(file.size, 1)) * 100;
-    emitUpload({ id, name, percent, status: "uploading" });
+    emitUpload({ id, name, percent, status: "uploading", size });
     opts?.onProgress?.({ bytesTransferred, totalBytes: file.size, percent });
   };
 
@@ -409,17 +414,22 @@ export async function uploadToPath(
     }
   }
 
-  let uploadUrl: string;
+  // A dropped connection is tried again on its own (a fresh link each time),
+  // so nobody has to pick the file and start over. Stopping is never retried.
+  const TRIES = 3;
   try {
-    uploadUrl = await getPresignedUploadUrl(path, contentType, opts?.signal);
-  } catch (err) {
-    emitUpload({ id, name, percent: 0, status: "error", error: (err as Error).message });
-    throw err;
-  }
-
-  try {
-    await putWithXhr(uploadUrl, file, contentType, report, opts?.signal);
-    emitUpload({ id, name, percent: 100, status: "done" });
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const uploadUrl = await getPresignedUploadUrl(path, contentType, opts?.signal);
+        await putWithXhr(uploadUrl, file, contentType, report, opts?.signal);
+        break;
+      } catch (err) {
+        if (err instanceof UploadCancelledError || opts?.signal?.aborted || attempt >= TRIES) throw err;
+        emitUpload({ id, name, percent: 0, status: "uploading", size, retrying: true });
+        await new Promise((r) => setTimeout(r, attempt * 1500));
+      }
+    }
+    emitUpload({ id, name, percent: 100, status: "done", size });
     return { path, url: path, size: file.size, contentType };
   } catch (err) {
     emitUpload({ id, name, percent: 0, status: "error", error: (err as Error).message });

@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { backfillVersion, listVersions } from "@/lib/revisions";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
+import { useFileDrag } from "@/hooks/useFileDrag";
 
 interface BackfillVersionModalProps {
   isOpen: boolean;
@@ -105,6 +106,7 @@ export default function BackfillVersionModal({
     setFile(f);
     if (f && !sourceFileName) setSourceFileName(f.name);
   };
+  const fileDrag = useFileDrag((fs) => onPickFile(fs[0] ?? null), busy);
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -175,10 +177,9 @@ export default function BackfillVersionModal({
           <div>
             <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">File (PDF) *</label>
             <div
-              className="mt-1 border-2 border-dashed border-[var(--color-border-strong)] rounded-xl p-4 hover:border-blue-400 hover:bg-blue-50/30 transition-colors cursor-pointer text-center"
+              className={`mt-1 border-2 border-dashed border-[var(--color-border-strong)] rounded-xl p-4 hover:bg-[var(--color-surface-2)] transition-colors cursor-pointer text-center ${fileDrag.ring}`}
               onClick={() => inputRef.current?.click()}
-              onDragOver={(e) => { e.preventDefault(); }}
-              onDrop={(e) => { e.preventDefault(); onPickFile(e.dataTransfer.files?.[0] ?? null); }}
+              {...fileDrag.bind}
             >
               <input
                 ref={inputRef}

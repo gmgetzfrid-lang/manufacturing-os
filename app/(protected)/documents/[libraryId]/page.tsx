@@ -2948,7 +2948,7 @@ export default function LibraryExplorerPage() {
         if (failures.length > 0) {
           const sample = failures.slice(0, 3).map((f) => `${f.name} (${f.reason})`).join("; ");
           const more = failures.length > 3 ? `, +${failures.length - 3} more` : "";
-          notes.push(`${failures.length} file${failures.length === 1 ? "" : "s"} still failed after 3 tries: ${sample}${more}.`);
+          notes.push(`${failures.length} file${failures.length === 1 ? "" : "s"} still did not upload after several tries: ${sample}${more}.`);
         }
         // The window stays open holding ONLY what didn't land, and says so
         // in the window itself.

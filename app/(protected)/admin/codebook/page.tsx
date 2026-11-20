@@ -32,6 +32,7 @@ import {
   type Codebook, type CodebookEntry, type CodebookKind, type DrawingSegment, type ProposedEntry, type ImportDiff,
 } from "@/lib/codebook";
 import CodebookLearn from "@/components/admin/CodebookLearn";
+import { useFileDrag } from "@/hooks/useFileDrag";
 
 const WRITER_ROLES = new Set(["Admin", "DocCtrl"]);
 
@@ -564,6 +565,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
     setPickedFile({ name: file.name, base64: btoa(binary) });
     setPickedDoc(null);
   };
+  const codeDrag = useFileDrag((fs) => { void handleFile(fs[0]); });
 
   useEffect(() => {
     const q = docQuery.trim();
@@ -744,11 +746,10 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
                 ) : (
                   <button
                     onClick={() => fileInputRef.current?.click()}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) void handleFile(f); }}
-                    className="w-full border-2 border-dashed border-[var(--color-border-strong)] rounded-xl px-4 py-5 text-center hover:border-violet-300 hover:bg-violet-50/40 transition-colors"
+                    {...codeDrag.bind}
+                    className={`w-full border-2 border-dashed border-[var(--color-border-strong)] rounded-xl px-4 py-5 text-center hover:bg-[var(--color-surface-2)] transition-colors ${codeDrag.ring}`}
                   >
-                    <div className="text-xs font-bold text-[var(--color-text)]">Drop your standards document here, or click to pick</div>
+                    <div className="text-xs font-bold text-[var(--color-text)]">{codeDrag.over ? codeDrag.say : "Drop your standards document here, or click to pick"}</div>
                     <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">PDF, Word (.docx), TXT, CSV, MD · up to 3 MB · CAD-exported and scanned PDFs are read visually, page by page</div>
                   </button>
                 )}

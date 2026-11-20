@@ -13,16 +13,34 @@ import { subscribeUploads, type UploadActivity } from "@/lib/storage";
 import { Loader2, CheckCircle2, AlertCircle, X } from "lucide-react";
 import { CornerPortal } from "@/components/ui/CornerDock";
 
-type Tracked = UploadActivity & { _t: number };
+type Tracked = UploadActivity & { _t: number; _p0?: { t: number; pct: number } };
+
+// Time left is worth showing only when a file takes a while.
+const BIG = 25 * 1024 * 1024;
+function timeLeft(u: Tracked, now: number): string | null {
+  if (!u.size || u.size < BIG || !u._p0 || u.percent < 3) return null;
+  const dt = (now - u._p0.t) / 1000, dp = u.percent - u._p0.pct;
+  if (dt < 2 || dp <= 0) return null;
+  const secs = ((100 - u.percent) / dp) * dt;
+  if (secs < 60) return "under a minute left";
+  const m = Math.round(secs / 60);
+  return `about ${m} min left`;
+}
 
 export default function UploadIndicator() {
   const [items, setItems] = useState<Record<string, Tracked>>({});
 
   useEffect(() => {
     return subscribeUploads((e) => {
-      setItems((prev) => ({ ...prev, [e.id]: { ...e, _t: prev[e.id]?._t ?? Date.now() } }));
-      if (e.status === "done" || e.status === "error") {
-        const after = e.status === "done" ? 2500 : 7000;
+      setItems((prev) => {
+        const old = prev[e.id];
+        // Speed is measured from the first progress after a (re)start.
+        const p0 = e.retrying || !old?._p0 ? (e.percent > 0 ? { t: Date.now(), pct: e.percent } : undefined) : old._p0;
+        return { ...prev, [e.id]: { ...e, _t: old?._t ?? Date.now(), _p0: p0 } };
+      });
+      // Done fades out; a failure stays until you close it.
+      if (e.status === "done") {
+        const after = 2500;
         window.setTimeout(() => {
           setItems((prev) => {
             // Only drop it if it hasn't been superseded by a newer event.
@@ -57,7 +75,7 @@ export default function UploadIndicator() {
             {u.status === "error" && <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />}
             <span className="text-xs font-bold text-[var(--color-text)] truncate flex-1" title={u.name}>{u.name}</span>
             <span className={`text-[10px] font-black shrink-0 ${u.status === "error" ? "text-rose-500" : u.status === "done" ? "text-emerald-600" : "text-[var(--color-text-faint)]"}`}>
-              {u.status === "uploading" ? `${Math.round(u.percent)}%` : u.status === "done" ? "Done" : "Failed"}
+              {u.status === "uploading" ? (u.retrying && u.percent === 0 ? "Trying again" : `${Math.round(u.percent)}%`) : u.status === "done" ? "Done" : "Didn't upload"}
             </span>
             {u.status !== "uploading" && (
               <button onClick={() => dismiss(u.id)} className="p-0.5 rounded text-slate-300 hover:text-[var(--color-text-muted)] shrink-0" aria-label="Dismiss">
@@ -67,11 +85,12 @@ export default function UploadIndicator() {
           </div>
           {u.status === "uploading" && (
             <div className="mt-1.5 h-1 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-              <div className="h-full bg-orange-500 transition-all duration-200" style={{ width: `${Math.max(4, Math.round(u.percent))}%` }} />
+              <div className="h-full bg-[var(--color-text)] transition-all duration-200" style={{ width: `${Math.max(4, Math.round(u.percent))}%` }} />
             </div>
           )}
+          {u.status === "uploading" && (() => { const left = timeLeft(u, Date.now()); return left || u.retrying ? <div className="text-[10px] text-[var(--color-text-muted)] mt-1">{u.retrying ? "The connection dropped. Picking up again on its own." : left}</div> : null; })()}
           {u.status === "error" && u.error && (
-            <div className="text-[10px] text-rose-600 mt-1 line-clamp-2">{u.error}</div>
+            <div className="text-[10px] text-rose-600 mt-1 line-clamp-3">{u.error}</div>
           )}
         </div>
       ))}

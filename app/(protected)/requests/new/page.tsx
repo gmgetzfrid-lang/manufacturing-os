@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useDraft } from "@/hooks/useDraft";
+import FileThumb from "@/components/ui/FileThumb";
 import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { uploadTicketAttachment } from '@/lib/storage';
@@ -625,11 +626,9 @@ export default function NewTicketPage() {
               <div className="mt-4 space-y-2">
                 {files.map((file, idx) => (
                   <div key={idx} className="flex items-center justify-between p-3 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg shadow-sm">
-                    <div className="flex items-center">
-                      <div className="p-2 bg-[var(--color-surface-2)] rounded mr-3">
-                        <FileText className="w-4 h-4 text-[var(--color-text-muted)]" />
-                      </div>
-                      <div>
+                    <div className="flex items-center gap-3 min-w-0">
+                      <FileThumb file={file} />
+                      <div className="min-w-0">
                         <p className="text-sm font-bold text-[var(--color-text)] truncate max-w-[200px]">{file.name}</p>
                         <p className="text-xs text-[var(--color-text-muted)]">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
                       </div>
@@ -653,8 +652,8 @@ export default function NewTicketPage() {
               type="submit" 
               disabled={isSubmitting}
               className={`
-                flex items-center px-8 py-3 rounded-xl font-bold text-white shadow-lg shadow-orange-900/20 transition-all
-                ${isSubmitting ? 'bg-slate-400 cursor-not-allowed' : 'bg-orange-600 hover:bg-orange-700 hover:scale-105'}
+                flex items-center px-8 py-3 rounded-xl font-bold transition-colors
+                ${isSubmitting ? 'bg-[var(--color-surface-2)] text-[var(--color-text-muted)] cursor-not-allowed' : 'bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]'}
               `}
             >
               {isSubmitting ? (
