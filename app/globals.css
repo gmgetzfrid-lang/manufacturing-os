@@ -277,6 +277,9 @@ body {
 .page-head .text-amber-200, .page-head .text-amber-300, .page-head .text-\[var\(--state-held\)\] { color: #ffe3a6; }
 .page-head .text-emerald-200, .page-head .text-emerald-300, .page-head .text-\[var\(--state-released\)\] { color: #c4f5d6; }
 .page-head .border-white, .page-head .border-b-white { border-color: #ffffff; }
+/* A dark chip on a sheet (graphite fill, white text) becomes a white chip
+   with band-colored text on the band. */
+.page-head .text-\[var\(--color-surface\)\] { color: var(--color-band); }
 
 /* Section headings carry the brand's deep shade. */
 h2.font-display, h3.font-display { color: var(--color-heading); }

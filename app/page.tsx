@@ -255,7 +255,7 @@ export default function LoginPage() {
   // ─── Authenticated, but not attached to any workspace ───────────
   if (view === "no-workspace") {
     return (
-      <div className="min-h-dvh bg-[var(--color-canvas)] px-4 py-6 sm:py-10">
+      <div className="min-h-dvh bg-[var(--color-canvas)] px-4 pt-6 pb-10">
         <div className="w-full max-w-md mx-auto">
           <PageHero kicker={kicker} title="No workspace yet." sub={authedEmail ?? undefined} size="md" />
           <PageBody>
@@ -281,7 +281,7 @@ export default function LoginPage() {
 
   // ─── Login ──────────────────────────────────────────────────────
   return (
-    <div className="min-h-dvh bg-[var(--color-canvas)] px-4 py-6 sm:py-10">
+    <div className="min-h-dvh bg-[var(--color-canvas)] px-4 pt-6 pb-10">
       <div className="w-full max-w-[440px] mx-auto">
         <PageHero kicker={kicker} title="Sign in." sub="Your site's drawings, equipment and work." size="md" />
         <PageBody>

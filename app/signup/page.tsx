@@ -119,7 +119,7 @@ export default function SignupPage() {
     : "Your organization's admin creates your account.";
 
   return (
-    <div className="min-h-dvh bg-[var(--color-canvas)] px-4 py-6 sm:py-10">
+    <div className="min-h-dvh bg-[var(--color-canvas)] px-4 pt-6 pb-10">
       <div className="w-full max-w-[640px] mx-auto">
         {/* The band: who we are, what this page is for, and the two ways in. */}
         <PageHero

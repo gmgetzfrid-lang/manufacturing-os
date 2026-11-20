@@ -85,7 +85,7 @@ export async function globalSearch({ orgId, query, perKindLimit = 5 }: GlobalSea
         id: String(a.id),
         kind: "asset",
         title: a.code && !a.tag.includes(a.code) ? `${a.tag} · ${a.code}` : a.tag,
-        subtitle: [unit, a.description].filter(Boolean).join(" · "),
+        subtitle: [unit, a.description].filter(Boolean).join(", "),
         href: `/search?q=${encodeURIComponent(a.tag)}&pick=${encodeURIComponent(String(a.id))}`,
       });
     }

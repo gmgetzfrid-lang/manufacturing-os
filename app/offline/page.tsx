@@ -7,7 +7,7 @@ import Link from "next/link";
 // the sheet are drawn here with the same tokens as the shared page frame.
 export default function OfflinePage() {
   return (
-    <div className="min-h-dvh bg-[var(--color-canvas)] px-4 py-8 sm:py-12">
+    <div className="min-h-dvh bg-[var(--color-canvas)] px-4 pt-6 pb-12">
       <div className="mx-auto w-full max-w-[560px]">
         <header className="pb-5 border-b border-[var(--color-border-strong)]">
           <div className="flex items-center gap-2 text-[14px] font-medium text-[var(--color-text-muted)]">

@@ -85,9 +85,10 @@ function Hero() {
     { title: "Everything on the record", body: "Sign-ins, downloads and approvals in a log nothing can edit.", href: "#security" },
   ];
   return (
-    <section className={`${wrap} pt-8 sm:pt-12`}>
-      <div className="flex flex-wrap items-end gap-x-10 gap-y-6 pb-6 border-b border-[var(--color-border-strong)]"
-        style={{ animation: "rise 0.5s var(--ease-fluid) both" }}>
+    <section className={`${wrap}`}>
+      {/* The hero sits on the brand band, edge to edge; the one accent
+          button is where the eye lands. */}
+      <div className="page-head bg-[var(--color-band)] [box-shadow:0_0_0_100vmax_var(--color-band)] [clip-path:inset(0_-100vmax)] py-10 sm:py-14 flex flex-wrap items-end gap-x-10 gap-y-6">
         <div className="min-w-0 flex-1 basis-[520px]">
           <div className="text-[14px] font-medium text-[var(--color-text-muted)]">For refineries and plants that run on drawings</div>
           <h1 className="mt-2 font-display text-[40px] sm:text-[56px] leading-[1.02] font-semibold tracking-[-0.015em] text-[var(--color-text)]">
