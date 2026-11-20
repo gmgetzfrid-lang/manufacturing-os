@@ -38,10 +38,10 @@ import {
 } from "@/lib/codebook";
 import CodebookLearn from "@/components/admin/CodebookLearn";
 import { useFileDrag } from "@/hooks/useFileDrag";
+import { formatBytes } from "@/lib/formatBytes";
 
 const WRITER_ROLES = new Set(["Admin", "DocCtrl"]);
 
-const formatBytes = (n: number) => n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
 
 type Tab = "units" | "equipment" | "drawings" | "numbering" | "legend";
 

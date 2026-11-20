@@ -26,6 +26,7 @@ import { useDraft } from "@/hooks/useDraft";
 import StepPath from "@/components/ui/StepPath";
 import FileThumb from "@/components/ui/FileThumb";
 import PdfDrop, { formatSize } from "@/components/documents/lifecycle/PdfDrop";
+import { tryUpload } from "@/lib/uploadRetry";
 
 interface SplitWizardProps {
   doc: DocumentRecord;
@@ -117,13 +118,15 @@ export default function SplitWizard(props: SplitWizardProps) {
         file: t.file!,
       }));
 
-      await splitDocument({
+      // A failed split rolls itself back, so Try again (on the corner
+      // card, same files) is safe.
+      await tryUpload(`Split of ${doc.documentNumber ?? "the document"}`, () => splitDocument({
         source: doc, libraryId, folderPath,
         targets: targetSpecs,
         reason, mocReference: mocReference || undefined,
         copyHolds, copyProjectMembership: copyProjects, copyScope,
         orgId, actorUserId, actorUserName, actorEmail, actorRole,
-      });
+      }), { onRetried: () => onSuccess() });
       setReason("");
       onSuccess();
     } catch (e) {

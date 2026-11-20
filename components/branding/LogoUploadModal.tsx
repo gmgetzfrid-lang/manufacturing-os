@@ -14,8 +14,8 @@ import { uploadToPath } from "@/lib/storage";
 import { tryUpload } from "@/lib/uploadRetry";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import FileThumb from "@/components/ui/FileThumb";
+import { formatBytes } from "@/lib/formatBytes";
 
-const formatBytes = (n: number) => n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
 
 export default function LogoUploadModal({ onClose }: { onClose: () => void }) {
   const { activeOrgId } = useRole();

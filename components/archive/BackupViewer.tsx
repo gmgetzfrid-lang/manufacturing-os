@@ -19,6 +19,7 @@ import { archivedNotice, findInBackup } from "@/lib/archive";
 import { supabase } from "@/lib/supabase";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import FileThumb from "@/components/ui/FileThumb";
+import { formatBytes } from "@/lib/formatBytes";
 
 type ZipLike = {
   files: Record<string, { dir: boolean }>;
@@ -53,7 +54,6 @@ export interface ArchiveTarget {
 
 interface Entry { path: string; name: string }
 
-const formatBytes = (n: number) => n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
 
 function kindOf(name: string): "pdf" | "image" | "other" {
   const ext = name.split(".").pop()?.toLowerCase() || "";

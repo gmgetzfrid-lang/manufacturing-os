@@ -26,8 +26,8 @@ import { appConfirm } from "@/components/providers/DialogProvider";
 import ViewTabs, { EQUIPMENT_VIEWS } from "@/components/navigation/ViewTabs";
 import { useToast } from "@/components/providers/ToastProvider";
 import type { PlotPlan } from "@/types/schema";
+import { formatBytes } from "@/lib/formatBytes";
 
-const formatBytes = (n: number) => n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
 
 export default function PlotPlansPage() {
   const { activeOrgId, uid, userEmail, activeRole } = useRole();

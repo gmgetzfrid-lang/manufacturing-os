@@ -30,6 +30,7 @@ import {
   planRestore, orderTablesForRestore, remapOrgPath,
   type RestorePlan, type RestoreEnvelopeLike,
 } from "@/lib/dataRestore";
+import { formatBytes } from "@/lib/formatBytes";
 
 type ZipLike = {
   files: Record<string, { dir: boolean }>;
@@ -63,7 +64,6 @@ const contentTypeFor = (key: string) =>
   CONTENT_TYPES[(key.toLowerCase().split(".").pop() || "")] || "application/octet-stream";
 
 function fmtNum(n: number) { return n >= 1000 ? n.toLocaleString() : String(n); }
-const formatBytes = (n: number) => n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
 
 export default function RestorePage() {
   const { activeOrgId, activeRole } = useRole();

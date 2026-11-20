@@ -21,6 +21,7 @@ import { useDraft } from "@/hooks/useDraft";
 import StepPath from "@/components/ui/StepPath";
 import FileThumb from "@/components/ui/FileThumb";
 import PdfDrop, { formatSize } from "@/components/documents/lifecycle/PdfDrop";
+import { tryUpload } from "@/lib/uploadRetry";
 
 interface MergeWizardProps {
   sourceDoc: DocumentRecord;
@@ -126,12 +127,14 @@ export default function MergeWizard(props: MergeWizardProps) {
             } : undefined,
           };
 
-      await mergeDocuments({
+      // A failed merge rolls itself back, so Try again (on the corner card,
+      // same files) is safe.
+      await tryUpload("Merge", () => mergeDocuments({
         sources: allSources, target,
         reason, mocReference: mocReference || undefined,
         copyHolds, copyProjectMembership: copyProjects,
         orgId, actorUserId, actorUserName, actorEmail, actorRole,
-      });
+      }), { onRetried: () => onSuccess() });
       setReason("");
       onSuccess();
     } catch (e) {

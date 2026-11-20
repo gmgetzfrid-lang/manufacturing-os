@@ -25,6 +25,7 @@ import UpdatePill from "@/components/system/UpdatePill";
 import { Spinner } from "@/components/ui/Spinner";
 import { SlowNotice, useElapsed, startOver } from "@/components/system/SlowNotice";
 import { useKeepScroll } from "@/hooks/useKeepScroll";
+import { flushHistory } from "@/lib/historyQueue";
 
 const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
   const { loading, uid, userEmail, membershipState } = useRole();
@@ -36,6 +37,15 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
   const waited = useElapsed(loading);
   const [mainEl, setMainEl] = React.useState<HTMLElement | null>(null);
   useKeepScroll(mainEl);
+  // History lines that didn't save earlier are sent again: now, when the
+  // connection comes back, and every few minutes.
+  React.useEffect(() => {
+    void flushHistory();
+    const t = window.setInterval(() => { void flushHistory(); }, 3 * 60_000);
+    const on = () => { void flushHistory(); };
+    window.addEventListener("online", on);
+    return () => { window.clearInterval(t); window.removeEventListener("online", on); };
+  }, []);
 
   if (loading) {
     return (

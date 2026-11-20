@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase";
+import { queueHistory } from "@/lib/historyQueue";
 
 export interface AuditEntry {
   action: string;
@@ -14,20 +15,26 @@ export interface AuditEntry {
 }
 
 export async function logAuditAction(entry: AuditEntry) {
+  const row = {
+    action: entry.action,
+    resource_id: entry.resourceId,
+    resource_type: entry.resourceType,
+    org_id: entry.orgId || null,
+    user_id: entry.userId,
+    user_email: entry.userEmail || null,
+    user_role: entry.userRole || null,
+    details: entry.details || null,
+    metadata: entry.metadata || null,
+    // Keep the moment it happened, even if it's sent again later.
+    ...(typeof window !== "undefined" ? { timestamp: new Date().toISOString() } : {}),
+  };
   try {
-    await supabase.from("audit_logs").insert({
-      action: entry.action,
-      resource_id: entry.resourceId,
-      resource_type: entry.resourceType,
-      org_id: entry.orgId || null,
-      user_id: entry.userId,
-      user_email: entry.userEmail || null,
-      user_role: entry.userRole || null,
-      details: entry.details || null,
-      metadata: entry.metadata || null,
-    });
+    const res = await supabase.from("audit_logs").insert(row);
+    // A history line that didn't save is kept and sent again, never dropped.
+    if (res?.error) { console.error("Failed to write audit log:", res.error.message); queueHistory("audit_logs", row); }
   } catch (error) {
     console.error("Failed to write audit log:", error);
+    queueHistory("audit_logs", row);
   }
 }
 

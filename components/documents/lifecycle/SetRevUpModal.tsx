@@ -65,7 +65,7 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
   const [changeType, setChangeType] = useState<DocumentVersion["changeType"]>("Major");
 
   // Per-run result
-  const [result, setResult] = useState<{ succeeded: number; sentForReview: number; failed: Array<{ documentNumber: string | null; error: string }> } | null>(null);
+  const [result, setResult] = useState<{ succeeded: number; sentForReview: number; failed: Array<{ documentId: string; documentNumber: string | null; error: string }> } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -99,14 +99,18 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
     sheets.length > 0 &&
     sheets.every((s) => s.file && s.newRevLabel.trim());
 
-  const submit = async () => {
+  // `only`: send just these sheets again (the ones that didn't go through),
+  // with the files already picked.
+  const submit = async (only?: string[]) => {
     setBusy(true);
     setError(null);
     setResult(null);
     try {
       const r = await setLevelRevUp({
         setId,
-        sheets: sheets.map((s) => ({ doc: s.doc, file: s.file!, revisionLabel: s.newRevLabel.trim() })),
+        sheets: sheets
+          .filter((s) => !only || only.includes(String(s.doc.id)))
+          .map((s) => ({ doc: s.doc, file: s.file!, revisionLabel: s.newRevLabel.trim() })),
         libraryId, folderPath,
         sharedChangeLog,
         sharedMocReference: sharedMoc || undefined,
@@ -218,6 +222,10 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
                   <ul className="list-disc ml-5">
                     {result.failed.map((f, i) => <li key={i}>{f.documentNumber}: {f.error}</li>)}
                   </ul>
+                  <button type="button" disabled={busy} onClick={() => void submit(result.failed.map((f) => f.documentId))}
+                    className="mt-2 h-9 px-3.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+                    Try {result.failed.length === 1 ? "that one" : `those ${result.failed.length}`} again
+                  </button>
                 </div>
               )}
             </div>
@@ -232,7 +240,7 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
 
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
           <button onClick={onCancel} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
-          <button onClick={submit} disabled={!valid || busy || loading} className="inline-flex items-center gap-1.5 text-sm font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40">
+          <button onClick={() => void submit()} disabled={!valid || busy || loading} className="inline-flex items-center gap-1.5 text-sm font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
             Bump All
           </button>

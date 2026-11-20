@@ -189,6 +189,10 @@ export async function createNewDocWithFirstVersion(input: {
   if (docErr || !docData) throw new Error(docErr?.message || "Failed to create new document");
   const newDocId = (docData as { id: string }).id;
 
+  // Steps 2 to 4 can fail after the document row exists: park that row
+  // (archive it) before giving up, so a retry starts clean and no empty
+  // document is left behind.
+  try {
   // 2. Hash + upload the file.
   const fileHash = await sha256Hex(file);
   const safeRev = input.initialRevLabel.replace(/[^\w.\-]+/g, "_");
@@ -246,6 +250,10 @@ export async function createNewDocWithFirstVersion(input: {
   });
 
   return { documentId: newDocId, versionId, fileUrl: uploadResult.url };
+  } catch (err) {
+    await archiveRolledBackDoc(newDocId, actor).catch(() => { /* reported with the original error by the caller's rollback */ });
+    throw err;
+  }
 }
 
 /** Mark a document as superseded and link its replacements via the

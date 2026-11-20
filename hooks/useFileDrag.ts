@@ -4,7 +4,13 @@
 // up and says what will happen. Only file drags count (not text or rows).
 import { useRef, useState } from "react";
 
-export function useFileDrag(onFiles: (files: File[]) => void, disabled = false) {
+export function useFileDrag(
+  onFiles: (files: File[]) => void,
+  disabled = false,
+  /** Take the whole drop instead (e.g. to read dragged folders with their
+   *  structure); onFiles is then not called. */
+  onDropEvent?: (e: React.DragEvent) => void,
+) {
   const [count, setCount] = useState(0);
   const depth = useRef(0);
   const isFiles = (e: React.DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
@@ -30,6 +36,7 @@ export function useFileDrag(onFiles: (files: File[]) => void, disabled = false) 
       e.preventDefault();
       depth.current = 0;
       setCount(0);
+      if (onDropEvent) { onDropEvent(e); return; }
       const files = Array.from(e.dataTransfer.files ?? []);
       if (files.length) onFiles(files);
     },

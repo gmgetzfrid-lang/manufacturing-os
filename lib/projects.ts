@@ -7,6 +7,7 @@
 
 import { phasesOfRow } from "@/lib/projectPhases";
 import { supabase } from "@/lib/supabase";
+import { queueHistory } from "@/lib/historyQueue";
 import { logAuditAction } from "@/lib/audit";
 import { DEFAULT_SCHEDULE_TZ, isValidTimeZone, normalizeTimeZone } from "@/lib/scheduleTz";
 import { shiftScheduleTimeZone } from "@/lib/milestones";
@@ -192,7 +193,7 @@ type WriteActivityInput = {
 
 export async function writeActivity(input: WriteActivityInput): Promise<void> {
   const now = new Date().toISOString();
-  await supabase.from("project_activity").insert({
+  const row = {
     project_id: input.projectId,
     org_id: input.orgId,
     user_id: input.userId || null,
@@ -201,7 +202,12 @@ export async function writeActivity(input: WriteActivityInput): Promise<void> {
     body: input.body || null,
     metadata: input.metadata || null,
     created_at: now,
-  });
+  };
+  try {
+    const res = await supabase.from("project_activity").insert(row);
+    // Kept and sent again if it didn't save: the history is never dropped.
+    if (res?.error) queueHistory("project_activity", row);
+  } catch { queueHistory("project_activity", row); }
   // Touch last_activity_at so the list view sorts correctly.
   await supabase
     .from("projects")

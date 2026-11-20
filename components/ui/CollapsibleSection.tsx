@@ -46,11 +46,12 @@ export default function CollapsibleSection({
   };
 
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+    // A plain section on its card, split by a hairline: no box in a box.
+    <div className="border-t border-[var(--color-border)] first:border-t-0">
       <button
         type="button"
         onClick={toggle}
-        className="w-full flex items-center gap-2 px-3 py-2.5 text-left hover:bg-[var(--color-surface-2)] transition-colors"
+        className="w-full min-h-11 flex items-center gap-2 px-1 py-2.5 text-left hover:bg-[var(--color-surface-2)] rounded-lg transition-colors"
         aria-expanded={open}
       >
         <ChevronRight className={`w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
@@ -59,7 +60,7 @@ export default function CollapsibleSection({
         {summary && <span className="ml-auto flex items-center gap-1 flex-wrap justify-end min-w-0">{summary}</span>}
       </button>
       {open && (
-        <div className="px-3 pb-3 pt-1 space-y-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)]/30">
+        <div className="px-1 pb-4 pt-1 space-y-3">
           {children}
         </div>
       )}
