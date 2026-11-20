@@ -1,13 +1,13 @@
 "use client";
 
+import { AuthCard } from "@/components/marketing/AuthCard";
 import React, { useCallback, useEffect, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { supabase, setRememberSession, setPreferMicrosoft, prefersMicrosoft } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { PageHero, PageBody, Card } from '@/components/ui/PageHero';
 import { btnPrimary, btnQuiet, link } from '@/components/admin/kit';
-import { Layout, Lock, Mail, Loader2, AlertCircle, Building2, LogOut } from 'lucide-react';
+import { Lock, Mail, Loader2, AlertCircle, Building2, LogOut } from 'lucide-react';
 import { SlowNotice, useElapsed, startOver } from '@/components/system/SlowNotice';
 
 /** Microsoft's four-square logo (lucide has no brand marks). */
@@ -239,7 +239,6 @@ export default function LoginPage() {
   const fieldLabel = "block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5";
   const primaryBtn = `${btnPrimary} w-full h-11`;
   const quietBtn = `${btnQuiet} w-full h-11 text-[15px] gap-2.5`;
-  const kicker = <span className="inline-flex items-center gap-2"><span className="w-6 h-6 rounded grid place-items-center bg-[var(--color-text)] text-[var(--color-surface)]"><Layout className="w-3.5 h-3.5" /></span> <span className="font-display text-[16px] font-semibold text-[var(--color-text)]">Manufacturing OS</span></span>;
 
   // ─── Checking / OAuth redirect in progress ──────────────────────
   if (view === "checking") {
@@ -255,37 +254,39 @@ export default function LoginPage() {
   // ─── Authenticated, but not attached to any workspace ───────────
   if (view === "no-workspace") {
     return (
-      <div className="min-h-dvh bg-[var(--color-canvas)] px-4 pt-6 pb-10">
-        <div className="w-full max-w-md mx-auto">
-          <PageHero kicker={kicker} title="No workspace yet." sub={authedEmail ?? undefined} size="md" />
-          <PageBody>
-            <Card className="sm:p-6">
-              <div className="flex items-start gap-3">
-                <Building2 className="w-5 h-5 shrink-0 mt-0.5 text-[var(--color-text-muted)]" />
-                <p className="text-[15px] text-[var(--color-text)] leading-snug">
-                  Ask your admin to add you with this email, then sign in again.
-                </p>
-              </div>
-              <div className="mt-5 space-y-2.5">
-                <a href="/signup" className={primaryBtn}>Ask for access or create a workspace</a>
-                <button type="button" onClick={handleSignOut} className={quietBtn}>
-                  <LogOut className="w-4 h-4" /> Sign out
-                </button>
-              </div>
-            </Card>
-          </PageBody>
+      <AuthCard title="No workspace yet." sub={authedEmail ?? undefined}>
+        <div className="flex items-start gap-3">
+          <span className="ui-icon-tile is-sm"><Building2 className="w-4 h-4" /></span>
+          <p className="text-[15px] text-[var(--color-text)] leading-snug">
+            Ask your admin to add you with this email, then sign in again.
+          </p>
         </div>
-      </div>
+        <div className="mt-5 space-y-2.5">
+          <a href="/signup" className={primaryBtn}>Ask for access or create a workspace</a>
+          <button type="button" onClick={handleSignOut} className={quietBtn}>
+            <LogOut className="w-4 h-4" /> Sign out
+          </button>
+        </div>
+      </AuthCard>
     );
   }
 
   // ─── Login ──────────────────────────────────────────────────────
   return (
-    <div className="min-h-dvh bg-[var(--color-canvas)] px-4 pt-6 pb-10">
-      <div className="w-full max-w-[440px] mx-auto">
-        <PageHero kicker={kicker} title="Sign in." sub="Your site's drawings, equipment and work." size="md" />
-        <PageBody>
-          <Card className="sm:p-6">
+    <AuthCard
+      title="Sign in."
+      sub="Your site's drawings, equipment and work."
+      footer={<>
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-[14px]">
+          <p className="text-[var(--color-text-muted)]">
+            No workspace yet?{" "}
+            <Link href="/signup" className={link}>Create one</Link>
+          </p>
+          <Link href="/about" className={link}>About Manufacturing OS</Link>
+        </div>
+        <p className="text-[13px] text-[var(--color-text-muted)]">Version 2.1.0. Authorized use only.</p>
+      </>}
+    >
             {/* A problem sits where it happened: right above the form it's about. */}
             {error && (
               <div role="alert" className="mb-4 flex items-start gap-2 text-[var(--state-overdue)]">
@@ -359,18 +360,6 @@ export default function LoginPage() {
                 <><MicrosoftLogo className="w-5 h-5" /> Sign in with Microsoft</>
               )}
             </button>
-          </Card>
-
-          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-[14px]">
-            <p className="text-[var(--color-text-muted)]">
-              No workspace yet?{" "}
-              <Link href="/signup" className={link}>Create one</Link>
-            </p>
-            <Link href="/about" className={link}>About Manufacturing OS</Link>
-          </div>
-          <p className="pb-6 text-[13px] text-[var(--color-text-muted)]">Version 2.1.0. Authorized use only.</p>
-        </PageBody>
-      </div>
-    </div>
+    </AuthCard>
   );
 }

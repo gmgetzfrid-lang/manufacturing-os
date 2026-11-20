@@ -4,8 +4,8 @@ import React, { useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Layout, ArrowRight, Loader2, Building2, User, Mail, Lock, AlertCircle, Users } from 'lucide-react';
-import { PageHero, PageBody, Card } from '@/components/ui/PageHero';
+import { ArrowRight, Loader2, Building2, User, Mail, Lock, AlertCircle, Users } from 'lucide-react';
+import { AuthCard } from '@/components/marketing/AuthCard';
 import { bandSeg, bandSegItem } from '@/components/admin/band';
 import { btnPrimary, link, label } from '@/components/admin/kit';
 
@@ -119,16 +119,9 @@ export default function SignupPage() {
     : "Your organization's admin creates your account.";
 
   return (
-    <div className="min-h-dvh bg-[var(--color-canvas)] px-4 pt-6 pb-10">
-      <div className="w-full max-w-[640px] mx-auto">
-        {/* The band: who we are, what this page is for, and the two ways in. */}
-        <PageHero
-          kicker={<span className="inline-flex items-center gap-2"><span className="w-6 h-6 rounded grid place-items-center bg-[var(--color-text)] text-[var(--color-surface)]"><Layout className="w-3.5 h-3.5" /></span> <span className="font-display text-[16px] font-semibold text-[var(--color-text)]">Manufacturing OS</span></span>}
-          title={title}
-          sub={sub}
-          size="md"
-        >
-          <div className={`${bandSeg} w-full`} role="group" aria-label="How to join">
+    <AuthCard wide title={title} sub={sub}
+      footer={<p className="text-[14px] text-[var(--color-text-muted)]">Already have an account?{' '}<Link href="/" className={link}>Sign in</Link></p>}>
+          <div className={`${bandSeg} w-full mb-5`} role="group" aria-label="How to join">
             <button
               type="button"
               onClick={() => { setMode("new-org"); setError(null); }}
@@ -152,10 +145,7 @@ export default function SignupPage() {
               Join existing
             </button>
           </div>
-        </PageHero>
 
-        <PageBody>
-        <Card className="sm:p-6">
 
           {/* NEW ORG MODE */}
           {mode === "new-org" && (
@@ -289,14 +279,6 @@ export default function SignupPage() {
                 )}
             </>
           )}
-        </Card>
-
-        <p className="text-[14px] text-[var(--color-text-muted)]">
-          Already have an account?{' '}
-          <Link href="/" className={link}>Sign in</Link>
-        </p>
-        </PageBody>
-      </div>
-    </div>
+    </AuthCard>
   );
 }
