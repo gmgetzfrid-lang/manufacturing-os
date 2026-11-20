@@ -79,12 +79,13 @@ export default function DateTimePicker({ label, value, onChange, tz, times, plan
   const t = iso ? Date.parse(iso) : NaN;
   const sh = Number.isFinite(t) ? shiftAt(t, tz, times) : null;
   const chip = (on: boolean, empty: boolean) => `inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border text-[13px] font-semibold disabled:opacity-50 ${on ? "border-[var(--color-text)] ring-1 ring-[var(--color-text)] bg-[var(--color-surface)]" : empty ? "border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"}`;
-  const small = "h-7 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-semibold hover:bg-[var(--color-surface-2)] disabled:opacity-50";
+  // Quick picks: a quiet fill, not another box.
+  const small = "h-7 px-2.5 rounded-lg bg-[var(--color-surface-2)] text-[12px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)] disabled:opacity-50";
 
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between gap-2">
-        <span className="font-semibold">{label}{hint && <span className="ml-1 font-normal text-[var(--color-text-muted)]">{hint}</span>}</span>
+        <span><span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{label}</span>{hint && <span className="ml-1 text-[11.5px] text-[var(--color-text-muted)]">{hint}</span>}</span>
         <span className="flex gap-1">
           {shortcuts.filter((x) => Number.isFinite(x.at)).map((x) => <button key={x.label} type="button" disabled={disabled} onClick={() => take(x.at)} className={small}>{x.label}</button>)}
           {showNow && <button type="button" disabled={disabled} onClick={now} className={small}>Now</button>}
@@ -161,16 +162,16 @@ function TimeSheet({ title, hm, start, onSet, onClose }: { title: string; hm: st
   }, []);
   const [fine] = useState(() => typeof window !== "undefined" && !!window.matchMedia?.("(pointer: fine)").matches);
   return createPortal(
-    <div className="fixed inset-0 z-[400] bg-black/50 flex items-end sm:items-center justify-center" onClick={onClose}>
+    <div className="fixed inset-0 z-[400] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in flex items-end sm:items-center justify-center" onClick={onClose}>
       <div role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}
-        className="w-full sm:w-[340px] rounded-t-2xl sm:rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-xl px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] space-y-2.5">
+        className="w-full sm:w-[340px] rounded-t-2xl sm:rounded-2xl bg-[var(--color-surface)] text-[var(--color-text)] shadow-2xl px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] space-y-2.5">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-[14px] font-bold flex-1 min-w-0 truncate">{title}</span>
+          <span className="text-[15px] font-bold flex-1 min-w-0 truncate">{title}</span>
           <input value={typed ?? shown} onChange={(e) => type(e.target.value)} onFocus={(e) => e.currentTarget.select()} autoFocus={fine}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); set(); } }}
             aria-label="Type the time" inputMode="text" autoComplete="off" spellCheck={false} enterKeyHint="done"
-            className={`w-[118px] h-9 rounded-lg border px-2 text-right text-[17px] font-bold tabular-nums bg-[var(--color-surface)] focus:outline-none ${bad ? "border-rose-500" : "border-[var(--color-border-strong)] focus:border-[var(--color-accent-ring)]"}`} />
-          <button type="button" onClick={onClose} aria-label="Close" className="shrink-0 w-8 h-8 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+            className={`w-[118px] h-9 rounded-lg border px-2 text-right text-[15px] font-bold tabular-nums bg-[var(--color-surface-2)] focus:outline-none ${bad ? "border-rose-500" : "border-transparent focus:border-[var(--color-border-strong)]"}`} />
+          <button type="button" onClick={onClose} aria-label="Close" className="shrink-0 -mr-1.5 w-8 h-8 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
         <div className="relative flex justify-center gap-2">
           <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 h-10 rounded-lg bg-[var(--color-surface-2)]" />
@@ -182,7 +183,7 @@ function TimeSheet({ title, hm, start, onSet, onClose }: { title: string; hm: st
           {bad ? "Type it with its a or p: 1130p" : "Spin to the time, then Set. Or type it: 1130p"}
         </div>
         <div className="flex gap-2">
-          <button type="button" onClick={onClose} className="flex-1 h-11 rounded-xl border border-[var(--color-border-strong)] text-[14px] font-semibold">Cancel</button>
+          <button type="button" onClick={onClose} className="flex-1 h-11 rounded-xl bg-[var(--color-surface-2)] text-[14px] font-semibold hover:bg-[var(--color-border)]">Cancel</button>
           <button type="button" onClick={set} disabled={bad} className="flex-[2] h-11 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">Set {shown}</button>
         </div>
       </div>
@@ -289,10 +290,10 @@ function Month({ value, today, planned, onPick, future, earliest }: { value: str
   const key = (d: number) => `${y}-${p2(mo + 1)}-${p2(d)}`;
   const nav = "w-8 h-8 inline-flex items-center justify-center rounded-md hover:bg-[var(--color-surface-2)] disabled:opacity-30";
   return (
-    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-2 w-[280px] max-w-full">
+    <div className="pt-0.5 w-[280px] max-w-full">
       <div className="flex items-center justify-between mb-1">
         <button type="button" aria-label="Previous month" disabled={first} onClick={() => setYm(ym - 1)} className={nav}><ChevronLeft className="w-4 h-4" /></button>
-        <span className="text-[13px] font-bold">{new Date(Date.UTC(y, mo, 1)).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" })}</span>
+        <span className="text-[13.5px] font-bold">{new Date(Date.UTC(y, mo, 1)).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" })}</span>
         <button type="button" aria-label="Next month" disabled={latest} onClick={() => setYm(ym + 1)} className={nav}><ChevronRight className="w-4 h-4" /></button>
       </div>
       <div className="grid grid-cols-7 text-center text-[11px] font-semibold text-[var(--color-text-muted)]">

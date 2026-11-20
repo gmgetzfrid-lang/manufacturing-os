@@ -18,7 +18,7 @@
 
 import React, { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Circle, Loader2, CircleCheck, PauseCircle, AlertTriangle, XCircle } from "lucide-react";
+import { Circle, Loader2, CircleCheck, PauseCircle, AlertTriangle, XCircle, X } from "lucide-react";
 import type { MilestoneStatus } from "@/types/schema";
 import type { ShiftCredit } from "@/lib/shiftReport";
 import { ProgressSlider, ProgressNoteForm, ShiftClockContext, WhenFields, resolveWhen, shiftChoices, pickOf } from "@/components/projects/ProgressControl";
@@ -197,18 +197,22 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
 
       {open && typeof document !== "undefined" && createPortal(
         <>
-          <div className="fixed inset-0 z-[300]" onClick={() => setOpen(false)} />
+          {/* A form (a reason, how far along) dims the page behind it; the bare list doesn't. */}
+          <div className={`fixed inset-0 z-[300] ${(pctStep && onStartWithNote) || reasonFor ? "bg-[color-mix(in_srgb,var(--color-ink)_30%,transparent)] animate-in fade-in" : ""}`} onClick={() => setOpen(false)} />
           <div
             ref={menuRef}
-            className={`fixed z-[310] ${(pctStep && onStartWithNote) || reasonFor ? "w-[300px] max-w-[calc(100vw-16px)]" : "w-[180px]"} bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg py-1 animate-in fade-in zoom-in-95 duration-150`}
+            className={`fixed z-[310] ${(pctStep && onStartWithNote) || reasonFor ? "w-[300px] max-w-[calc(100vw-16px)] rounded-2xl shadow-2xl" : "w-[180px] rounded-xl border border-[var(--color-border)] shadow-xl"} bg-[var(--color-surface)] text-[var(--color-text)] py-1 animate-in fade-in zoom-in-95 duration-150`}
             style={{ top: pos.top, left: pos.left }}
             onClick={(e) => e.stopPropagation()}
           >
             {pctStep ? (
               <div className="p-3">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">How far along?</span>
-                  <button onClick={() => setPctStep(false)} className="text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Back</button>
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">How far along?</span>
+                  <span className="inline-flex items-center gap-1">
+                    <button onClick={() => setPctStep(false)} className="h-8 px-1.5 text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Back</button>
+                    <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="-mr-1.5 w-8 h-8 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+                  </span>
                 </div>
                 {onStartWithNote ? (
                   <ProgressNoteForm percent={percent ?? 0} start busy={busy} onCancel={() => setOpen(false)}
@@ -226,28 +230,29 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
                 />}
               </div>
             ) : reasonFor ? (
-              <div className="p-2.5 space-y-2 text-[11px]">
-                <div className="text-[12px] font-semibold text-[var(--color-text-faint)]">
-                  {STATUS_META[reasonFor].label}
+              <div className="p-3 space-y-2.5 text-[12px]">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[15px] font-bold text-[var(--color-text)]">{STATUS_META[reasonFor].label}</span>
+                  <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="-mr-1.5 w-8 h-8 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
                 </div>
                 <div>
-                  <div className="font-bold text-[var(--color-text)] mb-1">{askFor(reasonFor)} <span className="font-normal text-[var(--color-text-muted)]">(required)</span></div>
+                  <div className="mb-1"><span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{askFor(reasonFor)}</span> <span className="text-[11.5px] text-[var(--color-text-muted)]">(required)</span></div>
                   <input
                     autoFocus
                     value={reason}
                     onChange={(e) => { setReason(e.target.value); setWhyMsg(null); }}
                     onKeyDown={(e) => { if (e.key === "Enter") commit(); }}
                     placeholder={reasonFor === "on_hold" ? "waiting on parts…" : reasonFor === "blocked" ? "what's blocking it…" : reasonFor === "completed" ? "what got done…" : "why…"}
-                    className="w-full text-xs px-2 py-1.5 border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30"
+                    className="w-full h-9 text-[13px] px-2.5 border border-[var(--color-border-strong)] rounded-lg bg-[var(--color-surface)] outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30"
                   />
                 </div>
                 {choices.length > 0 && clockCtx && <WhenFields choices={choices} idx={whenIdx} setIdx={(i) => { setWhenIdx(i); setWhyMsg(null); }} clock={when} setClock={(v) => { setWhen(v); setWhyMsg(null); }} tz={clockCtx.tz} times={clockCtx.times} other={otherDay} setOther={(d) => { setOtherDay(d); setWhyMsg(null); }} />}
                 {whyMsg && <div className="font-semibold text-rose-700 dark:text-rose-400">{whyMsg}</div>}
                 <div className="flex items-center justify-end gap-1.5">
-                  <button onClick={() => setReasonFor(null)} className="text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 transition-colors">Back</button>
+                  <button onClick={() => setReasonFor(null)} className="h-9 px-2 text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors">Back</button>
                   <button
                     onClick={commit}
-                    className="text-[11px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-2.5 py-1 rounded-md transition-colors"
+                    className="h-9 px-3.5 text-[13px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] rounded-lg transition-colors"
                   >
                     {reasonFor === "completed" ? "Mark done" : `Set ${STATUS_META[reasonFor].label}`}{when ? ` at ${when}` : ""}
                   </button>

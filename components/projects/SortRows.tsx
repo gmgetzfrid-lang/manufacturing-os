@@ -84,7 +84,7 @@ export function Grip({ props, className = "" }: { props: ReturnType<ReturnType<t
   if (!props) return null;
   return (
     <span {...props} style={{ touchAction: "none" }}
-      className={`inline-flex items-center justify-center w-4 h-5 -ml-1 mr-0.5 align-middle rounded cursor-grab active:cursor-grabbing text-slate-400 opacity-40 group-hover/sort:opacity-100 pointer-coarse:opacity-100 hover:bg-slate-200/70 dark:hover:bg-slate-700/60 focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)] print:hidden ${className}`}>
+      className={`inline-flex items-center justify-center w-4 h-5 -ml-1 mr-0.5 align-middle rounded cursor-grab active:cursor-grabbing text-[var(--color-text-faint)] opacity-40 group-hover/sort:opacity-100 pointer-coarse:opacity-100 hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)] focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)] print:hidden ${className}`}>
       <GripVertical className="w-3 h-3.5" />
     </span>
   );

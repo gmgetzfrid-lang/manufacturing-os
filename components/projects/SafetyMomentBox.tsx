@@ -14,11 +14,12 @@ import { rankHazards, type HazardJobInput, type HazardKind } from "@/lib/safetyM
 import { safetyBrief, splitLead, talkSources, projectFacts, RISKS_RANKED, type ProjectBase, type SafetyTopic } from "@/lib/safetyTalk";
 import type { ShiftWindow } from "@/lib/shiftReport";
 
-// Each card's color: the top risk in red, the others plain.
+// Each topic's marks: the top risk in red, the others ink. `numDark` is
+// the number on the charcoal of Present.
 const TONE = [
-  { bar: "border-t-[var(--color-border-strong)]", num: "bg-slate-600 dark:bg-slate-500", kick: "text-[var(--color-text)]", dot: "bg-[var(--color-text-muted)]" },
-  { bar: "border-t-rose-500", num: "bg-rose-600", kick: "text-rose-800 dark:text-rose-300", dot: "bg-rose-500" },
-  { bar: "border-t-[var(--color-border-strong)]", num: "bg-slate-600 dark:bg-slate-500", kick: "text-[var(--color-text)]", dot: "bg-[var(--color-text-muted)]" },
+  { bar: "border-t-[var(--color-border-strong)]", num: "bg-[var(--color-text)] text-[var(--color-surface)]", numDark: "bg-white text-[var(--color-ink)]", kick: "text-[var(--color-text-muted)]", dot: "bg-[var(--color-text-muted)]" },
+  { bar: "border-t-rose-500", num: "bg-rose-600 text-white", numDark: "bg-rose-600 text-white", kick: "text-rose-700 dark:text-rose-300", dot: "bg-rose-500" },
+  { bar: "border-t-[var(--color-border-strong)]", num: "bg-[var(--color-text)] text-[var(--color-surface)]", numDark: "bg-white text-[var(--color-ink)]", kick: "text-[var(--color-text-muted)]", dot: "bg-[var(--color-text-muted)]" },
 ];
 
 export function SafetyMomentBox({ jobs, shift, T, print, project, recent, label, onUse, chosen }: {
@@ -48,15 +49,17 @@ export function SafetyMomentBox({ jobs, shift, T, print, project, recent, label,
 
   return (
     // Printed: a page of its own — the cards may break between, never inside.
-    <div className={print ? "space-y-[6pt]" : "keep space-y-1.5"}>
+    <div className={print ? "space-y-[6pt]" : "keep space-y-2"}>
       <div className="flex flex-wrap items-baseline gap-x-2">
-        <span className={`inline-flex items-center gap-1 font-semibold text-[var(--color-text)] dark:text-[var(--color-text)] ${print ? "text-[10pt]" : "text-[12px]"}`}>
+        <span className={print ? "inline-flex items-center gap-1 font-semibold text-[var(--color-text)] text-[10pt]" : "inline-flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]"}>
           <ShieldAlert className="w-3.5 h-3.5 self-center" aria-hidden="true" /> Safety topics{label ? `: ${label}` : ""}
         </span>
-        {!print && <span className="text-[11px] text-[var(--color-text-muted)]">Tap one to present it full screen</span>}
+        {!print && <span className="text-[12px] text-[var(--color-text-muted)]">Tap one to present it full screen</span>}
       </div>
-      {/* No risky work at all: two topics, side by side at full width. */}
-      <div className={print ? "grid grid-cols-1 gap-[7pt]" : `-mx-1 px-1 flex gap-2 overflow-x-auto snap-x snap-mandatory sm:grid ${topics.length === 2 ? "sm:grid-cols-2" : "sm:grid-cols-3"} sm:overflow-visible scroll-quiet`}>
+      {/* No risky work at all: two topics, side by side at full width. On
+          screen they're columns split by a hairline, not boxes; on a phone
+          they swipe, the next one cut off at the edge. */}
+      <div className={print ? "grid grid-cols-1 gap-[7pt]" : `flex divide-x divide-[var(--color-border)] overflow-x-auto snap-x snap-mandatory sm:grid ${topics.length === 2 ? "sm:grid-cols-2" : "sm:grid-cols-3"} sm:overflow-visible scroll-quiet`}>
         {topics.map((t, i) => (
           <TopicCard key={t.key + i} t={t} n={i + 1} tone={TONE[i % TONE.length]} print={print} onPresent={() => setPresenting(i)}
             onUse={onUse ? () => onUse(t.title) : undefined} chosen={!!chosen && chosen.trim().toLowerCase() === t.title.trim().toLowerCase()} />
@@ -76,10 +79,12 @@ function TopicCard({ t, n, tone, print, onPresent, onUse, chosen }: { t: SafetyT
   return (
     <article
       onClick={print ? undefined : onPresent}
-      className={`snap-start shrink-0 min-w-0 flex flex-col rounded-lg border border-[var(--color-border)] border-t-4 ${tone.bar} bg-[var(--color-surface)] ${print ? "w-full p-[7pt] break-inside-avoid" : "w-[86%] sm:w-auto p-2.5 cursor-pointer hover:shadow-md transition-shadow"}`}>
+      className={print
+        ? `min-w-0 flex flex-col rounded-lg border border-[var(--color-border)] border-t-4 ${tone.bar} bg-[var(--color-surface)] w-full p-[7pt] break-inside-avoid`
+        : "group snap-start shrink-0 min-w-0 flex flex-col w-[86%] sm:w-auto px-3 sm:px-4 first:pl-0 py-1 cursor-pointer"}>
       <div className="flex items-center gap-1.5">
-        <span className={`shrink-0 rounded-full ${tone.num} text-white font-bold flex items-center justify-center ${print ? "w-[13pt] h-[13pt] text-[8pt]" : "w-4 h-4 text-[11px]"}`}>{n}</span>
-        <span className={`min-w-0 truncate font-semibold ${tone.kick} ${print ? "text-[9pt]" : "text-[11px]"}`}>{t.kicker}</span>
+        <span className={`shrink-0 rounded-full ${tone.num} font-bold flex items-center justify-center ${print ? "w-[13pt] h-[13pt] text-[8pt]" : "w-5 h-5 text-[11px]"}`}>{n}</span>
+        <span className={`min-w-0 truncate ${tone.kick} ${print ? "font-semibold text-[9pt]" : "text-[11px] font-extrabold uppercase tracking-[0.14em]"}`}>{t.kicker}</span>
         {!print && (
           <button type="button" onClick={(e) => { e.stopPropagation(); onPresent(); }} title="Present this topic full screen" aria-label={`Present ${t.title}`}
             className="ml-auto shrink-0 p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
@@ -87,7 +92,7 @@ function TopicCard({ t, n, tone, print, onPresent, onUse, chosen }: { t: SafetyT
           </button>
         )}
       </div>
-      <h4 className={`mt-0.5 font-bold leading-tight text-[var(--color-text)] ${print ? "text-[13pt]" : "text-[15px]"}`}>{t.title}</h4>
+      <h4 className={`mt-1 font-bold leading-tight text-[var(--color-text)] ${print ? "text-[13pt]" : "text-[14px] group-hover:underline underline-offset-2"}`}>{t.title}</h4>
       <p className={`mt-0.5 leading-snug text-[var(--color-text-muted)] ${print ? "text-[9pt]" : "text-[12px]"}`}>{t.why}</p>
       <ul className={`mt-1.5 leading-snug text-[var(--color-text)] ${print ? "text-[10.5pt] space-y-[4pt]" : "text-[12.5px] space-y-1.5"}`}>
         {t.points.map((p, i) => {
@@ -103,10 +108,10 @@ function TopicCard({ t, n, tone, print, onPresent, onUse, chosen }: { t: SafetyT
       {!print && (onUse || chosen) && (
         <div className="mt-2">
           {chosen ? (
-            <span className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-[var(--color-text)] text-[var(--color-surface)] text-[11.5px] font-bold"><Check className="w-3.5 h-3.5" /> The meeting&apos;s topic</span>
+            <span className="inline-flex items-center gap-1 h-8 px-3 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[12px] font-bold"><Check className="w-3.5 h-3.5" /> The meeting&apos;s topic</span>
           ) : (
             <button type="button" onClick={(e) => { e.stopPropagation(); onUse?.(); }}
-              className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md border border-[var(--color-border-strong)] text-[11.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+              className="inline-flex items-center gap-1 h-8 px-3 rounded-lg bg-[var(--color-surface-2)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-border)]">
               Use for the meeting
             </button>
           )}
@@ -139,16 +144,16 @@ function Presenter({ topics, at, label, onMove, onClose }: { topics: SafetyTopic
     return () => window.removeEventListener("keydown", on, true);
   }, [at, topics.length, onMove, onClose]);
   return (
-    <div className="fixed inset-0 z-[400] bg-slate-950 text-white flex flex-col" role="dialog" aria-modal="true" aria-label={`Safety topic ${at + 1} of ${topics.length}`}>
+    <div className="fixed inset-0 z-[400] bg-[var(--color-ink)] text-white flex flex-col" role="dialog" aria-modal="true" aria-label={`Safety topic ${at + 1} of ${topics.length}`}>
       <div className="flex items-center gap-3 px-5 py-3 border-b border-white/10">
-        <ShieldAlert className="w-5 h-5 text-[var(--color-text-muted)]" aria-hidden />
+        <ShieldAlert className="w-5 h-5 text-white/60" aria-hidden />
         <span className="text-[13px] font-black uppercase tracking-widest text-white/70">Safety{label ? `: ${label}` : ""}</span>
         <span className="ml-auto text-[13px] font-bold text-white/60 tabular-nums">{at + 1} / {topics.length}</span>
         <button type="button" onClick={onClose} aria-label="Close" className="p-1.5 rounded-md hover:bg-white/10"><X className="w-5 h-5" /></button>
       </div>
       <div className="flex-1 overflow-y-auto px-6 sm:px-14 py-8 max-w-5xl w-full mx-auto">
         <div className="flex items-center gap-3">
-          <span className={`w-9 h-9 rounded-full ${tone.num} text-white text-[18px] font-black flex items-center justify-center`}>{at + 1}</span>
+          <span className={`w-9 h-9 rounded-full ${tone.numDark} text-[18px] font-black flex items-center justify-center`}>{at + 1}</span>
           <span className="text-[15px] font-black uppercase tracking-widest text-white/70">{t.kicker}</span>
         </div>
         <h2 className="mt-3 text-[34px] sm:text-[48px] font-black leading-[1.05]">{t.title}</h2>
@@ -178,7 +183,7 @@ function Presenter({ topics, at, label, onMove, onClose }: { topics: SafetyTopic
             {topics[at + 1].title} <ChevronRight className="w-5 h-5" />
           </button>
         ) : (
-          <button type="button" onClick={onClose} className="px-4 py-2 rounded-lg bg-white text-slate-900 text-[14px] font-black">Done</button>
+          <button type="button" onClick={onClose} className="px-4 py-2 rounded-lg bg-white text-[var(--color-ink)] text-[14px] font-black">Done</button>
         )}
       </div>
     </div>

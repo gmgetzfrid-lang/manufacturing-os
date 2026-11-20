@@ -15,7 +15,6 @@ import { fmtInTz, toDateTimeInput, fromDateTimeInput, dayKey } from "@/lib/sched
 import { whenDated } from "@/lib/timeWords";
 import DateTimePicker from "@/components/projects/DateTimePicker";
 import { discoveryOf, kindOf, ADDED, type AddedKind } from "@/lib/discovery";
-import { ADDED_TONE } from "@/components/projects/DiscoveryTag";
 import PctSlider from "@/components/projects/PctSlider";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 import { ampmSlip } from "@/lib/ampm";
@@ -644,27 +643,28 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
   return (
     <div ref={rootRef} className="px-3 pb-3 pl-7 space-y-2 bg-[var(--color-surface)] text-[12.5px]">
       {found && (
-        <div className={`rounded-md border px-2 py-1 ${ADDED_TONE[foundEdit?.kind ?? kindOf(found)]}`}>
+        // Added after the plan: said on a line of its own, marked by a rule, not a box.
+        <div className="border-l-2 border-[var(--color-border-strong)] pl-2.5 py-0.5 text-[var(--color-text)]">
           {foundEdit ? (
             <div className="space-y-2 py-1">
               <div className="flex flex-wrap gap-1" role="group" aria-label="What kind of work">
                 {(["discovery", "added"] as const).map((x) => (
                   <button key={x} type="button" aria-pressed={foundEdit.kind === x} onClick={() => { setFoundEdit({ ...foundEdit, kind: x }); setFoundMsg(null); }}
-                    className={`h-8 px-3 rounded-md border text-[12px] font-bold text-[var(--color-text)] ${foundEdit.kind === x ? "border-[var(--color-text)] bg-[var(--color-text)] !text-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] opacity-70"}`}>{ADDED[x].word}</button>
+                    className={`h-8 px-3 rounded-lg text-[12px] font-bold ${foundEdit.kind === x ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{ADDED[x].word}</button>
                 ))}
               </div>
               <label className="block">
-                <span className="block font-semibold mb-1">{ADDED[foundEdit.kind].what}</span>
+                <span className="block mb-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{ADDED[foundEdit.kind].what}</span>
                 <input value={foundEdit.what} onChange={(e) => { setFoundEdit({ ...foundEdit, what: e.target.value }); setFoundMsg(null); }} aria-label={ADDED[foundEdit.kind].what}
                   className="h-9 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)]" />
               </label>
               <div>
-                <span className="block font-semibold mb-1">Work order #</span>
+                <span className="block mb-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Work order #</span>
                 <div className="flex flex-wrap items-center gap-1.5">
                   <input value={foundEdit.wo} onChange={(e) => { setFoundEdit({ ...foundEdit, wo: e.target.value }); setFoundMsg(null); }} aria-label="Work order number" placeholder="e.g. 310990"
                     className="h-9 w-36 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 font-mono text-[12.5px] text-[var(--color-text)]" />
                   {!m.workOrderRef?.trim() && wo && foundEdit.wo.trim() !== wo && (
-                    <button type="button" onClick={() => setFoundEdit({ ...foundEdit, wo })} className="h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-bold text-[var(--color-text)]">Same as the task: {wo}</button>
+                    <button type="button" onClick={() => setFoundEdit({ ...foundEdit, wo })} className="h-8 px-3 rounded-lg bg-[var(--color-surface-2)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-border)]">Same as the task: {wo}</button>
                   )}
                 </div>
               </div>
@@ -680,7 +680,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
             <>
               <b>{ADDED[kindOf(found)].word}</b>{Number.isFinite(found.foundAt) ? ` · ${ADDED[kindOf(found)].found} ${when(found.foundAt)}` : ""} - “{found.what}”. Not in the original schedule.
               {!m.workOrderRef?.trim() && <span className="ml-1 font-semibold text-amber-700 dark:text-amber-400">No WO # of its own yet.</span>}
-              {canEdit && m.projectId && <button type="button" onClick={() => { setFoundEdit({ kind: kindOf(found), what: found.what, at: toDateTimeInput(found.foundAt, tz), wo: m.workOrderRef ?? "" }); setFoundMsg(null); }} className="ml-1.5 text-[11px] font-semibold text-[var(--color-accent)] hover:underline">Edit</button>}
+              {canEdit && m.projectId && <button type="button" onClick={() => { setFoundEdit({ kind: kindOf(found), what: found.what, at: toDateTimeInput(found.foundAt, tz), wo: m.workOrderRef ?? "" }); setFoundMsg(null); }} className="ml-1.5 text-[11.5px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline">Edit</button>}
               {canEdit && m.projectId && <button type="button" onClick={() => void removeFound()} disabled={foundBusy} title="Put in by mistake: every step it added, gone for good" className="ml-2 text-[11px] font-semibold text-rose-700 dark:text-rose-400 hover:underline disabled:opacity-50">{foundBusy ? "Deleting…" : "Delete"}</button>}
               {foundMsg && <div role="alert" className="font-semibold text-rose-700 dark:text-rose-400">{foundMsg}</div>}
             </>
@@ -692,7 +692,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
         {m.actualParty?.trim() && m.actualParty.trim() !== planned && <> · <span className="font-semibold text-[var(--color-text)]">done by {m.actualParty.trim()}</span></>}
       </div>
       <table className="text-[12.5px]">
-        <thead><tr className="text-[11px] text-[var(--color-text-muted)]"><th /><th className={`${cell} text-left font-medium`}>Start</th><th className={`${cell} text-left font-medium`}>Finish</th></tr></thead>
+        <thead><tr className="text-[11px] uppercase tracking-[0.14em] text-[var(--color-text-muted)]"><th /><th className={`${cell} text-left font-extrabold`}>Start</th><th className={`${cell} text-left font-extrabold`}>Finish</th></tr></thead>
         <tbody>
           <tr><td className={`${cell} text-[var(--color-text-muted)]`}>Plan</td><td className={cell}>{Number.isFinite(ps) ? when(ps) : "-"}</td><td className={cell}>{Number.isFinite(pf) ? when(pf) : "-"}</td></tr>
           <tr className="font-semibold"><td className={`${cell} font-normal text-[var(--color-text-muted)]`}>Actual</td><td className={cell}>{Number.isFinite(as) ? when(as) : "-"}</td><td className={cell}>{Number.isFinite(af) ? when(af) : held ? (m.status === "blocked" ? "blocked" : "on hold") : started ? `${pct}%` : "-"}</td></tr>
@@ -704,12 +704,13 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
 
       {(main || more.length > 0 || (canEdit && m.id)) && !action && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          {/* The one orange: quiet while something else is open with its own Save (a history entry, what was found). */}
           {main && (
-            <button type="button" onClick={() => open(main.a)} className="inline-flex items-center gap-1 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-bold hover:bg-[var(--color-accent-hover)]">
+            <button type="button" onClick={() => open(main.a)} className={`inline-flex items-center gap-1 h-9 px-4 rounded-lg text-[13px] font-bold ${fixing || foundEdit ? "bg-[var(--color-surface-2)] text-[var(--color-text)] hover:bg-[var(--color-border)]" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"}`}>
               {main.icon}{main.label}
             </button>
           )}
-          {more.map((x) => <button key={x.a} type="button" onClick={() => open(x.a)} className="font-semibold text-[var(--color-accent)] hover:underline">{x.label}</button>)}
+          {more.map((x) => <button key={x.a} type="button" onClick={() => open(x.a)} className="font-semibold text-[var(--color-text)] hover:underline">{x.label}</button>)}
           {/* The plan itself — dates, hours, crew, name — in the step's panel. */}
           {canEdit && m.id && <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("step:edit-plan", { detail: { id: m.id } }))} className="font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline">Edit plan</button>}
           {/* A problem, a lesson, a shortfall: kept for the next job. */}
@@ -724,13 +725,13 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
       {!action && m.id && <JobFindings orgId={m.orgId} projectId={m.projectId} milestoneIds={[m.id, m.parentId]} tag={tagsIn([m.name, wo].filter(Boolean).join(" "))[0] ?? null} tz={tz} />}
 
       {action && (
-        <div className="rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-2.5 space-y-2">
+        <div className="border-t border-[var(--color-border)] pt-2.5 space-y-2.5">
           {action === "progress" && <PctSlider value={p ?? Math.round(pct)} was={Math.round(pct)} onChange={(v) => { setP(v); setMsg(null); }} />}
           {action === "hold" && (
             <div className="flex gap-1">
               {([["on_hold", "On hold"], ["blocked", "Blocked"]] as const).map(([k, l]) => (
                 <button key={k} type="button" aria-pressed={holdKind === k} onClick={() => setHoldKind(k)}
-                  className={`h-8 px-3 rounded-md border text-[12px] font-bold ${holdKind === k ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>{l}</button>
+                  className={`h-8 px-3 rounded-lg text-[12px] font-bold ${holdKind === k ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{l}</button>
               ))}
             </div>
           )}
@@ -755,7 +756,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
           )}
           {(action === "start" || action === "resume" || action === "progress" || action === "finish") && (
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[11.5px] font-semibold text-[var(--color-text-muted)]">Resource</span>
+              <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Resource</span>
               {byOther ? (
                 <input value={by} onChange={(e) => { setBy(e.target.value); setMsg(null); }} autoFocus placeholder="Crew or company" aria-label="Resource"
                   className="h-8 flex-1 min-w-[10rem] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px]" />
@@ -779,7 +780,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
             showWhy
               ? <input value={why} onChange={(e) => setWhy(e.target.value)} placeholder="Why it's behind (optional)" aria-label="Why it's behind"
                 className="h-9 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px]" />
-              : <button type="button" onClick={() => setShowWhy(true)} className="text-[11.5px] font-semibold text-[var(--color-accent)] hover:underline">+ Why it&apos;s behind</button>
+              : <button type="button" onClick={() => setShowWhy(true)} className="text-[12px] font-semibold text-[var(--color-text)] hover:underline">+ Why it&apos;s behind</button>
           )}
           {msg && <div role="alert" className="font-semibold text-rose-700 dark:text-rose-400">{msg}</div>}
           {ampmAsk && (
@@ -808,9 +809,9 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
         </div>
       )}
 
-      <div className="border-t border-[var(--color-border)] pt-1.5">
+      <div className="border-t border-[var(--color-border)] pt-2">
         <div className="flex items-baseline justify-between gap-2 mb-0.5">
-          <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">History</span>
+          <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">History</span>
           {toSet > 0 && <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-400">{toSet === 1 ? "1 time" : `${toSet} times`} to set</span>}
           {canEdit && onUpdate && (started || history.length > 0) && (
             <button type="button" onClick={() => void startOver()} disabled={busy} className="ml-auto text-[11px] font-semibold text-rose-700 dark:text-rose-400 hover:underline disabled:opacity-50">Start over</button>
@@ -819,7 +820,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
         {resetMsg && <div role="alert" className="mb-1 font-semibold text-rose-700 dark:text-rose-400">{resetMsg}</div>}
         {history.length === 0 ? <div className="text-[var(--color-text-muted)]">Nothing yet.</div> : (
           <>
-            {hidden > 0 && <button type="button" onClick={() => setAllHistory(true)} className="mb-0.5 text-[11.5px] font-semibold text-[var(--color-accent)] hover:underline">Show {hidden} earlier</button>}
+            {hidden > 0 && <button type="button" onClick={() => setAllHistory(true)} className="mb-0.5 text-[12px] font-semibold text-[var(--color-text)] hover:underline">Show {hidden} earlier</button>}
             <ol>
               {shown.map((x, i) => {
                 const sh = shiftOf(x.sort), head = i === 0 || shiftOf(shown[i - 1].sort).key !== sh.key;
@@ -830,14 +831,14 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
                 const tip = x.unsure === "unset" ? "When it happened wasn't saved - tap to set it" : x.unsure === "order" ? "This time is after what came next - check it" : undefined;
                 return (
                   <li key={x.key} className="text-[12px] break-words">
-                    {head && <div className={`mt-1.5 text-[12px] font-semibold ${sh.night ? "text-[var(--color-text)] dark:text-[var(--color-text)]" : "text-[var(--color-text)] dark:text-[var(--color-text)]"}`}>{sh.label}</div>}
+                    {head && <div className="mt-1.5 text-[12px] font-semibold text-[var(--color-text)]">{sh.label}</div>}
                     <div className="py-0.5 pl-2 border-l-2 border-[var(--color-border)]">
                       {x.unsure && editable
                         ? <button type="button" onClick={() => openFix(x)} title={tip} className={`mr-1.5 whitespace-nowrap ${timeCls}`}>{time}</button>
                         : <span title={tip} className={`mr-1.5 whitespace-nowrap ${timeCls}`}>{time}</span>}
                       {x.text && <b className="text-[var(--color-text)]">{x.text}</b>}
                       {x.said.map((c, k) => <span key={k} className="text-[var(--color-text)]">{x.text || k > 0 ? " - " : ""}{c.text}</span>)}
-                      {editable && fixing !== x.key && <button type="button" onClick={() => openFix(x)} className="ml-1.5 text-[11px] font-semibold text-[var(--color-accent)] hover:underline">Edit</button>}
+                      {editable && fixing !== x.key && <button type="button" onClick={() => openFix(x)} className="ml-1.5 text-[11.5px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline">Edit</button>}
                       {editable && fixing !== x.key && removable(x) && (
                         <button type="button" onClick={() => void removeEntry(x)} disabled={fixBusy} aria-label={`Remove ${x.text || "this comment"}`} title={removable(x) === "change" ? "Take it back" : "Remove"}
                           className="ml-1 align-middle inline-flex items-center justify-center w-5 h-5 rounded text-[var(--color-text-muted)] hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 disabled:opacity-50">
@@ -846,7 +847,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
                       )}
                     </div>
                     {fixing === x.key && (
-                      <div className="mt-1 mb-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-2.5 space-y-2 text-[12.5px]">
+                      <div className="mt-1 mb-2 ml-2 border-l-2 border-[var(--color-text)] pl-2.5 py-1 space-y-2 text-[12.5px]">
                         {x.pct != null && fixPct != null && <PctSlider value={fixPct} was={x.pct} onChange={(v) => { setFixPct(v); setFixMsg(null); }} disabled={fixBusy} />}
                         {canFix(x) && <DateTimePicker label="When it happened" value={fixV} onChange={(v) => { setFixV(v); setFixMsg(null); }} tz={tz} times={times} showNow={false} disabled={fixBusy} />}
                         {(x.comment || onUpdate) && (
@@ -856,8 +857,9 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
                         )}
                         {fixMsg && <div role="alert" className="font-semibold text-rose-700 dark:text-rose-400">{fixMsg}</div>}
                         <div className="flex items-center gap-2">
+                          {/* One orange: while an update above is open, its Save has it. */}
                           <button type="button" onClick={() => void saveFix(x)} disabled={fixBusy}
-                            className="h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-60">{fixBusy ? "Saving…" : "Save"}</button>
+                            className={`h-9 px-4 rounded-lg text-[13px] font-bold disabled:opacity-60 ${action ? "bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"}`}>{fixBusy ? "Saving…" : "Save"}</button>
                           <button type="button" onClick={() => setFixing(null)} className="h-9 px-3 rounded-lg text-[var(--color-text-muted)] font-semibold hover:text-[var(--color-text)]">Cancel</button>
                           {removable(x) ? (
                             <button type="button" onClick={() => void removeEntry(x)} disabled={fixBusy} className="ml-auto h-9 px-3 rounded-lg font-semibold text-rose-700 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 disabled:opacity-50">
@@ -873,7 +875,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
                 );
               })}
             </ol>
-            {allHistory && history.length > LATEST && <button type="button" onClick={() => setAllHistory(false)} className="mt-0.5 text-[11.5px] font-semibold text-[var(--color-accent)] hover:underline">Less</button>}
+            {allHistory && history.length > LATEST && <button type="button" onClick={() => setAllHistory(false)} className="mt-0.5 text-[12px] font-semibold text-[var(--color-text)] hover:underline">Less</button>}
           </>
         )}
       </div>

@@ -6,7 +6,7 @@
 // now filled in, so confirming a right answer is one click.
 
 import React, { useEffect, useMemo, useState } from "react";
-import { Check, ChevronLeft, ChevronRight, Clock, Factory, Flag, Globe2, HardHat, Loader2, Moon, Printer, Settings2, Sun, Tag, Users, Zap } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Loader2, Moon, Settings2, Sun } from "lucide-react";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { setupChecklist, missingRequired, toDo, OPEN_SETUP_EVENT, takePendingSetup, type SetupItem, type SetupItemId } from "@/lib/scheduleSetup";
 import { loadOrg, orgStanding, ORG_CHANGED } from "@/lib/eventOrganization";
@@ -31,7 +31,6 @@ import type { Milestone } from "@/types/schema";
 import { EquipmentStep, useProjectEquipment } from "@/components/projects/EquipmentSetup";
 import { ManpowerStep, useStaffingSet } from "@/components/projects/ManpowerSetup";
 
-const ICON: Record<SetupItemId, typeof Clock> = { type: Tag, equipment: Factory, timezone: Globe2, shifts: Clock, night: Moon, critical: Zap, baseline: Flag, manpower: HardHat, roles: Users, print: Printer };
 // Opened by itself once per project on this device — after that the banner
 // (while anything's really missing) and the Setup button are the way in.
 const SHOWN_KEY = (projectId: string) => `scheduleSetup.autoOpened:${projectId}`;
@@ -201,6 +200,73 @@ export function ScheduleSetupButton(p: Props) {
   );
 }
 
+/** Where each step stands, in words, under its name (nothing once it's set). */
+function stepNote(i: SetupItem): { text: string; tone: string } | null {
+  if (i.checking) return { text: "checking…", tone: "text-[var(--color-text-faint)]" };
+  if (i.done) return null;
+  return i.required ? { text: "needed", tone: "text-rose-700 dark:text-rose-400 font-semibold" }
+    : i.extra ? { text: "optional", tone: "text-[var(--color-text-faint)]" }
+      : { text: "advised", tone: "text-amber-700 dark:text-amber-400 font-semibold" };
+}
+
+/** The setup steps joined by one line, so they read as one path. They can be
+ *  done in any order: a done step is filled, the one open is ringed, and a
+ *  tap on any step goes to it. On a phone the path runs across the top with
+ *  "Step 3 of 10: Plant time zone" over it; on a wide screen, down the side. */
+function SetupPath({ items, at, onPick }: { items: SetupItem[]; at: SetupItemId; onPick: (id: SetupItemId) => void }) {
+  const idx = Math.max(0, items.findIndex((i) => i.id === at));
+  const dot = (i: SetupItem, n: number, small = false) => {
+    const on = i.id === at;
+    return (
+      <span aria-hidden className={`relative z-10 ${small ? "w-5 h-5 text-[10px]" : "w-6 h-6 text-[11px]"} rounded-full flex items-center justify-center font-black shrink-0 ${
+        i.done ? `bg-[var(--color-text)] text-[var(--color-surface)] ${on ? "ring-2 ring-offset-2 ring-offset-[var(--color-surface)] ring-[var(--color-text)]" : ""}`
+          : on ? "border-2 border-[var(--color-text)] bg-[var(--color-surface)] text-[var(--color-text)]"
+            : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-faint)]"}`}>
+        {i.done ? <Check className={small ? "w-3 h-3" : "w-3.5 h-3.5"} /> : n + 1}
+      </span>
+    );
+  };
+  // A stretch of the line is drawn in ink when the steps at both its ends are done.
+  const joined = (n: number) => items[n]?.done && items[n + 1]?.done;
+  const name = (i: SetupItem) => `${i.label}${i.done ? ", set" : stepNote(i) ? `, ${stepNote(i)!.text}` : ""}`;
+  return (
+    <>
+      <nav aria-label="Setup steps" className="sm:hidden px-4 pt-3 pb-3.5 border-b border-[var(--color-border)]">
+        <p className="text-[12.5px] font-bold text-[var(--color-text)]">Step {idx + 1} of {items.length}: {items[idx]?.label}</p>
+        <ol className="mt-2.5 flex items-center">
+          {items.map((i, n) => (
+            <li key={i.id} className="relative flex-1 flex justify-center" aria-current={i.id === at ? "step" : undefined}>
+              {n > 0 && <span aria-hidden className={`absolute top-1/2 right-1/2 w-full h-0.5 -translate-y-1/2 ${joined(n - 1) ? "bg-[var(--color-text)]" : "bg-[var(--color-border)]"}`} />}
+              <button type="button" onClick={() => onPick(i.id)} aria-label={name(i)} className="relative z-10 rounded-full p-0.5">{dot(i, n, true)}</button>
+            </li>
+          ))}
+        </ol>
+      </nav>
+      <nav aria-label="Setup steps" className="max-sm:hidden w-60 shrink-0 border-r border-[var(--color-border)] py-3 px-2">
+        <ol>
+          {items.map((i, n) => {
+            const on = i.id === at;
+            const note = stepNote(i);
+            return (
+              <li key={i.id} className="relative" aria-current={on ? "step" : undefined}>
+                {n < items.length - 1 && <span aria-hidden className={`absolute z-[1] left-[19px] top-[20px] h-full w-0.5 ${joined(n) ? "bg-[var(--color-text)]" : "bg-[var(--color-border)]"}`} />}
+                <button type="button" onClick={() => onPick(i.id)} aria-label={name(i)}
+                  className="relative w-full flex items-start gap-2.5 rounded-lg px-2 py-2 text-left hover:bg-[var(--color-surface-2)]">
+                  {dot(i, n)}
+                  <span className="min-w-0 pt-0.5">
+                    <span className={`block text-[13px] leading-tight ${on ? "font-bold text-[var(--color-text)]" : i.done ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{i.label}</span>
+                    {note && <span className={`block text-[11.5px] leading-tight mt-0.5 ${note.tone}`}>{note.text}</span>}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+      </nav>
+    </>
+  );
+}
+
 function SetupWizard({ items: given, start, critical, onClose: close, ...rest }: Props & { items: SetupItem[]; start: SetupItemId; critical: CriticalMode | null; onClose: () => void }) {
   // The project re-reads only when the wizard closes: re-reading mid-way
   // would reload the page under it and close it after step 1.
@@ -220,29 +286,13 @@ function SetupWizard({ items: given, start, critical, onClose: close, ...rest }:
       <ModalHeader icon={Settings2} title="Project setup" subtitle="What the reports and the post-event review hang on. Set once for everyone on the project." onClose={onClose} />
       <ModalBody className="p-0">
         <div className="flex flex-col sm:flex-row">
-          {/* Steps */}
-          <nav className="sm:w-56 shrink-0 border-b sm:border-b-0 sm:border-r border-[var(--color-border)] p-2 flex sm:flex-col gap-1 overflow-x-auto" aria-label="Setup steps">
-            {items.map((i, n) => {
-              const Icon = ICON[i.id];
-              const on = i.id === at;
-              return (
-                <button key={i.id} onClick={() => setAt(i.id)} aria-current={on ? "step" : undefined}
-                  className={`shrink-0 flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] ${on ? "bg-[var(--color-surface-2)] font-bold text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
-                  <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-black shrink-0 ${i.done
-                    ? "bg-emerald-600 text-white" : i.required ? "bg-rose-600 text-white" : i.extra ? "bg-slate-400 text-white dark:bg-slate-600" : "bg-amber-500 text-white"}`}>
-                    {i.done ? <Check className="w-3 h-3" /> : n + 1}
-                  </span>
-                  <Icon className="w-3.5 h-3.5 shrink-0 hidden sm:block" />
-                  <span className="whitespace-nowrap">{i.label}</span>
-                </button>
-              );
-            })}
-          </nav>
+          {/* The steps, as one path: any can be visited, in any order; the done ones are filled. */}
+          <SetupPath items={items} at={at} onPick={setAt} />
           {/* The step */}
-          <div className="flex-1 min-w-0 p-4 space-y-3">
+          <div className="flex-1 min-w-0 p-4 sm:p-5 space-y-3">
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-[15px] font-black text-[var(--color-text)]">{item.label}</h3>
+                <h3 className="text-[14px] font-bold text-[var(--color-text)]">{item.label}</h3>
                 {item.checking ? <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">checking…</span> : item.done
                   ? <span className="text-[12px] font-semibold text-emerald-700 dark:text-emerald-400">✓ set</span>
                   : <span className={`text-[12px] font-semibold ${item.required ? "text-rose-600 dark:text-rose-400" : item.extra ? "text-[var(--color-text-faint)]" : "text-amber-600 dark:text-amber-400"}`}>{item.required ? "needed" : item.extra ? "optional" : "advised"}</span>}
@@ -265,16 +315,16 @@ function SetupWizard({ items: given, start, critical, onClose: close, ...rest }:
       </ModalBody>
       <ModalFooter>
         <div className="flex items-center w-full gap-2">
-          <button onClick={() => go(-1)} disabled={idx === 0} className="inline-flex items-center gap-1 text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1.5 disabled:opacity-30">
+          <button onClick={() => go(-1)} disabled={idx === 0} className="inline-flex items-center gap-1 h-9 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 disabled:opacity-30">
             <ChevronLeft className="w-4 h-4" /> Back
           </button>
-          <span className="flex-1 text-center text-[11px] text-[var(--color-text-faint)]">{counted.filter((i) => i.done).length} of {counted.length} set</span>
+          <span className="flex-1 text-center text-[12px] text-[var(--color-text-muted)]">{counted.filter((i) => i.done).length} of {counted.length} set</span>
           {idx < items.length - 1 ? (
-            <button onClick={() => go(1)} className="inline-flex items-center gap-1 text-[12px] font-semibold text-[var(--color-text)] px-2 py-1.5">
+            <button onClick={() => go(1)} className="inline-flex items-center gap-1 h-9 text-[13px] font-semibold text-[var(--color-text)] px-2">
               {item.done ? "Next" : "Skip for now"} <ChevronRight className="w-4 h-4" />
             </button>
           ) : (
-            <button onClick={onClose} className="text-[12px] font-bold px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+            <button onClick={onClose} className="h-9 text-[13px] font-semibold px-3 rounded-[10px] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-border)]">
               {allDone ? "All set: close" : "Close"}
             </button>
           )}
@@ -325,13 +375,13 @@ function TypeStep({ projectId, projectName, canManage, onSaved }: Props & { onSa
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
         {other && (
-          <label className="space-y-1"><span className="block text-[12px] font-semibold text-[var(--color-text-muted)]">Its word</span>
+          <label className="space-y-1"><span className="block text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Its word</span>
             <input value={t.word} onChange={(e) => setT({ word: e.target.value, short: t.short })} placeholder="e.g. Tie-in" maxLength={40} className={`${field} w-full`} /></label>
         )}
-        <label className="space-y-1"><span className="block text-[12px] font-semibold text-[var(--color-text-muted)]">Short form</span>
+        <label className="space-y-1"><span className="block text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Short form</span>
           <input value={t.short} onChange={(e) => setT({ word: t.word, short: e.target.value })} placeholder={t.word || "e.g. TA"} maxLength={16} className={`${field} w-full`} /></label>
       </div>
-      <div className="rounded-lg border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface-2)] px-3 py-2 text-[12px] text-[var(--color-text-muted)]">
+      <div className="border-l-2 border-[var(--color-border-strong)] pl-3 py-0.5 text-[12px] text-[var(--color-text-muted)]">
         Shows as: &ldquo;2 h of work · task finish unchanged · <b className="text-[var(--color-text)]">{w}</b> finish unchanged&rdquo; · safety topic &ldquo;<b className="text-[var(--color-text)]">{t.word.trim() || "Project"}</b> · Transmix-1&rdquo; · &ldquo;e.g. <b className="text-[var(--color-text)]">{t.short.trim() || t.word.trim() || "Project"}</b> manager&rdquo;
       </div>
       {!set && <p className="text-[12px] text-[var(--color-text-muted)]">Read from the project&apos;s name for now. If it&apos;s right, just confirm.</p>}
@@ -363,7 +413,7 @@ function TimeZoneStep({ projectId, timezone, canManage, userId, done, onSaved }:
   return (
     <div className="space-y-2.5">
       <label className="block space-y-1">
-        <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">The plant&apos;s time zone</span>
+        <span className="block text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">The plant&apos;s time zone</span>
         <select value={tz} onChange={(e) => setTz(e.target.value)} className={`${field} w-full`}>
           <optgroup label="US">{US_ZONES.map((z) => <option key={z} value={z}>{tzLabel(z)}</option>)}</optgroup>
           <optgroup label="All">{all.filter((z) => !US_ZONES.includes(z)).map((z) => <option key={z} value={z}>{z}</option>)}</optgroup>
@@ -396,11 +446,11 @@ function ShiftsStep({ projectId, canManage, done, checking, onSaved }: Props & {
   return (
     <div className="space-y-2.5">
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-        <label className="space-y-1"><span className="block text-[12px] font-semibold text-[var(--color-text-muted)]">Day shift starts</span>
+        <label className="space-y-1"><span className="block text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Day shift starts</span>
           <input type="time" disabled={!canManage} value={t.dayStart} onChange={(e) => setDraft({ ...t, dayStart: e.target.value })} className={`${field} w-full`} /></label>
-        <label className="space-y-1"><span className="block text-[12px] font-semibold text-[var(--color-text-muted)]">Night shift starts</span>
+        <label className="space-y-1"><span className="block text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Night shift starts</span>
           <input type="time" disabled={!canManage} value={t.nightStart} onChange={(e) => setDraft({ ...t, nightStart: e.target.value })} className={`${field} w-full`} /></label>
-        <label className="space-y-1"><span className="block text-[12px] font-semibold text-[var(--color-text-muted)]">Turnover meeting</span>
+        <label className="space-y-1"><span className="block text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Turnover meeting</span>
           <span className="flex items-center gap-1.5"><input type="number" min={0} max={180} step={5} disabled={!canManage} value={meetingLeadMin(t)} onChange={(e) => setDraft({ ...t, meetingBefore: Number(e.target.value) })} className={`${field} w-20`} />
             <span className="text-[12px] text-[var(--color-text-muted)]">min before</span></span></label>
       </div>
@@ -531,13 +581,13 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
     }
     return [...out];
   }, [saved, crews, jobs]);
-  const seg = (on: boolean, night: boolean) => `px-2.5 py-1.5 border-l first:border-l-0 border-[var(--color-border-strong)] ${on ? (night ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-surface-2)] text-[var(--color-text)]") : "bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`;
+  const seg = (on: boolean) => `h-8 px-3 rounded-lg ${on ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`;
 
   return (
     <div className="space-y-3">
-      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-4 py-3 text-[13px] leading-relaxed text-[var(--color-text)]">
+      <p className="text-[13px] leading-relaxed text-[var(--color-text)]">
         <b>Every job works days.</b> These jobs also have work the schedule puts in night hours. For each: keep it on <b>days only</b> (its night hours wait for the day crew), or run it <b>days and nights</b>. The shifts shown here change as you choose.
-      </div>
+      </p>
 
       {stale.length > 0 && (
         <div role="alert" className="border-l-2 border-amber-500 pl-3 py-0.5 text-[12.5px] text-amber-800 dark:text-amber-300">
@@ -548,14 +598,14 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3">
         {/* Jobs */}
         <div className="space-y-2 min-w-0">
-          <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">Jobs with night hours</div>
-          <div className={`rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] ${fileMode ? "opacity-50 pointer-events-none" : ""}`}>
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Jobs with night hours</div>
+          <div className={`border-y border-[var(--color-border)] divide-y divide-[var(--color-border)] ${fileMode ? "opacity-50 pointer-events-none" : ""}`}>
             {jobs.length === 0 && <div className="px-3 py-3 text-[13px] text-[var(--color-text-muted)]">{milestones.length ? "Nothing on the schedule is in night hours: it's all day work." : "No steps yet. Import the schedule first."}</div>}
             {jobs.map((j) => {
               const mode = modeOf(j);
               const p = picks.get(j.id);
               return (
-                <div key={j.id} className={`px-3 py-2.5 space-y-2 ${mode !== "day" ? "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]" : ""}`}>
+                <div key={j.id} className="py-2.5 space-y-2">
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                     <div className="min-w-[160px] flex-1">
                       <div className="text-[14px] font-bold text-[var(--color-text)]" title={j.crumbs}>{j.name}</div>
@@ -563,9 +613,9 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
                         {j.crews.map(crewName).join(", ")} · <span className="text-[var(--color-text)] dark:text-[var(--color-text)]">{j.nightSteps} of {j.steps} step{j.steps === 1 ? "" : "s"} in night hours</span>
                       </div>
                     </div>
-                    <div className="inline-flex rounded-lg border border-[var(--color-border-strong)] overflow-hidden text-[12px] font-bold" role="radiogroup" aria-label={`${j.name}: shifts`}>
-                      <button type="button" role="radio" aria-checked={mode === "day"} disabled={!canManage} onClick={() => setJob(j.id, null)} className={seg(mode === "day", false)}>Days only</button>
-                      <button type="button" role="radio" aria-checked={mode !== "day"} disabled={!canManage} onClick={() => { if (mode !== "all") setJob(j.id, new Set(["*"])); }} title="All its crews on nights (tap a crew below to leave one on days)" className={seg(mode !== "day", true)}>Days and nights</button>
+                    <div className="inline-flex rounded-[10px] bg-[var(--color-surface-2)] p-0.5 gap-0.5 text-[12px] font-bold" role="radiogroup" aria-label={`${j.name}: shifts`}>
+                      <button type="button" role="radio" aria-checked={mode === "day"} disabled={!canManage} onClick={() => setJob(j.id, null)} className={seg(mode === "day")}>Days only</button>
+                      <button type="button" role="radio" aria-checked={mode !== "day"} disabled={!canManage} onClick={() => { if (mode !== "all") setJob(j.id, new Set(["*"])); }} title="All its crews on nights (tap a crew below to leave one on days)" className={seg(mode !== "day")}>Days and nights</button>
                     </div>
                   </div>
                   {mode !== "day" && j.crews.length > 1 && (
@@ -595,7 +645,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
             })}
           </div>
           <label className="flex items-start gap-2 text-[12px] text-[var(--color-text-muted)] cursor-pointer">
-            <input type="checkbox" className="mt-0.5" disabled={!canManage} checked={fileMode} onChange={(e) => { setFileMode(e.target.checked); setSavedNow(false); setTouched(true); }} />
+            <input type="checkbox" className="mt-0.5 accent-[var(--color-text)]" disabled={!canManage} checked={fileMode} onChange={(e) => { setFileMode(e.target.checked); setSavedNow(false); setTouched(true); }} />
             <span>Skip this: anything the schedule file puts in night hours is night work.</span>
           </label>
         </div>
@@ -603,11 +653,11 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
         {/* The shifts as they'll come out — kept in view while the jobs scroll. */}
         <div className="order-first xl:order-none space-y-2 min-w-0 xl:sticky xl:top-0 xl:self-start xl:max-h-[calc(100vh-220px)] xl:overflow-y-auto">
           <div className="flex items-center gap-2">
-            <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">The shifts</span>
+            <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">The shifts</span>
             <span className="ml-auto inline-flex items-center gap-1">
-              <button type="button" onClick={() => setOffset((o) => o - 3)} className="w-7 h-7 inline-flex items-center justify-center rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]" aria-label="Earlier days"><ChevronLeft className="w-4 h-4" /></button>
-              {offset !== 0 && <button type="button" onClick={() => setOffset(0)} className="px-2 h-7 rounded-md border border-[var(--color-border)] text-[11px] font-bold hover:bg-[var(--color-surface-2)]">Back</button>}
-              <button type="button" onClick={() => setOffset((o) => o + 3)} className="w-7 h-7 inline-flex items-center justify-center rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]" aria-label="Later days"><ChevronRight className="w-4 h-4" /></button>
+              <button type="button" onClick={() => setOffset((o) => o - 3)} className="w-8 h-8 inline-flex items-center justify-center rounded-lg bg-[var(--color-surface-2)] hover:bg-[var(--color-border)]" aria-label="Earlier days"><ChevronLeft className="w-4 h-4" /></button>
+              {offset !== 0 && <button type="button" onClick={() => setOffset(0)} className="px-2.5 h-8 rounded-lg bg-[var(--color-surface-2)] text-[12px] font-bold hover:bg-[var(--color-border)]">Back</button>}
+              <button type="button" onClick={() => setOffset((o) => o + 3)} className="w-8 h-8 inline-flex items-center justify-center rounded-lg bg-[var(--color-surface-2)] hover:bg-[var(--color-border)]" aria-label="Later days"><ChevronRight className="w-4 h-4" /></button>
             </span>
           </div>
           {dayKeys.map((k) => {
@@ -616,14 +666,14 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
               const list = shiftJobs(k, b);
               const night = b === "night";
               return (
-                <div className={`min-w-0 rounded-md border ${night ? "border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]" : "border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]"}`}>
-                  <div className={`px-2.5 py-1 flex items-center gap-1.5 text-[11.5px] font-black ${night ? "text-[var(--color-text)] dark:text-[var(--color-text)]" : "text-[var(--color-text)] dark:text-[var(--color-text)]"}`}>
+                <div className="min-w-0 sm:first:pr-4 sm:last:pl-4">
+                  <div className="py-1 flex items-center gap-1.5 text-[11.5px] font-bold text-[var(--color-text)]">
                     {night ? <Moon className="w-3.5 h-3.5" aria-hidden /> : <Sun className="w-3.5 h-3.5" aria-hidden />}{night ? "Night" : "Day"}
                     <span className="font-semibold opacity-80">{clockF.format(w.start)}</span>
                     <span className="ml-auto font-semibold opacity-80">{list.reduce((n, x) => n + x.steps, 0)} step{list.reduce((n, x) => n + x.steps, 0) === 1 ? "" : "s"}</span>
                   </div>
-                  {list.length === 0 ? <div className="px-2.5 pb-1.5 text-[11.5px] text-[var(--color-text-muted)]">No work.</div> : (
-                    <ul className="px-2.5 pb-1.5 space-y-0.5">
+                  {list.length === 0 ? <div className="pb-1.5 text-[11.5px] text-[var(--color-text-muted)]">No work.</div> : (
+                    <ul className="pb-1.5 space-y-0.5">
                       {list.map((x) => (
                         <li key={x.name} className="grid grid-cols-[1fr_auto] gap-2 text-[12px]">
                           <span className="min-w-0 truncate"><b>{x.name}</b> <span className="text-[var(--color-text-muted)]">{[...x.crews].join(", ")}</span></span>
@@ -636,9 +686,9 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
               );
             };
             return (
-              <div key={k} className="rounded-lg border border-[var(--color-border)] overflow-hidden">
-                <div className="px-3 py-1.5 text-[12.5px] font-black bg-[var(--color-surface-2)]">{dayF.format(dw.start)}</div>
-                <div className="p-2 grid grid-cols-1 sm:grid-cols-2 gap-2">{band("day", dw)}{band("night", nw)}</div>
+              <div key={k} className="border-t border-[var(--color-border)] pt-2">
+                <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{dayF.format(dw.start)}</div>
+                <div className="mt-1 grid grid-cols-1 sm:grid-cols-2 sm:divide-x divide-[var(--color-border)]">{band("day", dw)}{band("night", nw)}</div>
               </div>
             );
           })}
@@ -661,20 +711,20 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
       </div>
 
       {/* The whole choice, in a line */}
-      <div className="rounded-lg border-2 border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] px-4 py-2.5 text-[13px] text-[var(--color-text)]">
+      <div className="border-t border-[var(--color-border)] pt-3 text-[13px] text-[var(--color-text)]">
         <b>Days and nights:</b> {fileMode ? "whatever the schedule file puts in night hours." : onJobs.length === 0 ? "none: every job works days only." : onJobs.map((j) => {
           const p = picks.get(j.id)!;
           return `${short(j.name)}${p.has("*") ? "" : ` (${[...p].map(crewName).join(", ")} on nights)`}`;
         }).join("; ")}
       </div>
 
-      <div className="rounded-lg border border-[var(--color-border)]">
-        <button type="button" onClick={() => setShowHelpers((v) => !v)} className="w-full flex items-center gap-1.5 px-3 py-2 text-left text-[12.5px] font-bold text-[var(--color-text)]">
+      <div className="border-t border-[var(--color-border)]">
+        <button type="button" onClick={() => setShowHelpers((v) => !v)} aria-expanded={showHelpers} className="w-full flex items-center gap-1.5 py-2.5 text-left text-[12.5px] font-bold text-[var(--color-text)]">
           <ChevronRight className={`w-3.5 h-3.5 transition-transform ${showHelpers ? "rotate-90" : ""}`} />
           Extra hands for work pulled forward <span className="font-normal text-[12px] text-[var(--color-text-muted)]">- optional{chosen ? `: ${chosen.crew ?? "crew not set"}, ${chosen.hands} × ${chosen.hours} h` : ""}</span>
         </button>
         {showHelpers && (
-          <div className="px-3 pb-2.5 space-y-1.5">
+          <div className="pl-5 pb-2.5 space-y-1.5">
             <div className="text-[12px] text-[var(--color-text-muted)]">The crew you keep for extra work the turnover pulls forward (&ldquo;Add work for the night shift&rdquo;), and its usual size. Changeable on each turnover.</div>
             <div className="flex flex-wrap items-center gap-2 text-[12.5px]">
               <select disabled={!canManage} value={helpers.crew ?? ""} onChange={(e) => setHelpers({ ...helpers, crew: e.target.value || null })} aria-label="Crew for extra work" className={`${field} max-w-[240px]`}>
@@ -725,9 +775,10 @@ function CriticalStep({ projectId, milestones, canManage, critical, onSaved }: P
   };
   return (
     <div className="space-y-2">
+      <div className="border-y border-[var(--color-border)] divide-y divide-[var(--color-border)]" role="radiogroup" aria-label="Critical path source">
       {CRITICAL_MODES.map((o) => (
-        <label key={o.value} className={`flex items-start gap-2.5 rounded-lg border px-3 py-2 cursor-pointer ${pick === o.value ? "border-[var(--color-text)] bg-[var(--color-surface-2)] dark:border-[var(--color-border)] dark:bg-[var(--color-surface-2)]" : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
-          <input type="radio" name="crit" disabled={!canManage} checked={pick === o.value} onChange={() => setPick(o.value)} className="mt-1" />
+        <label key={o.value} className="flex items-start gap-2.5 px-1 py-2.5 cursor-pointer hover:bg-[var(--color-surface-2)]">
+          <input type="radio" name="crit" disabled={!canManage} checked={pick === o.value} onChange={() => setPick(o.value)} className="mt-1 accent-[var(--color-text)]" />
           <span className="flex-1 min-w-0">
             <span className="block text-[13px] font-bold text-[var(--color-text)]">{o.label}</span>
             <span className="block text-[12px] text-[var(--color-text-muted)]">{o.hint}</span>
@@ -735,6 +786,7 @@ function CriticalStep({ projectId, milestones, canManage, critical, onSaved }: P
           <span className="shrink-0 text-[12px] font-mono text-[var(--color-text-muted)]">{counts.of[o.value]} of {counts.steps} open steps</span>
         </label>
       ))}
+      </div>
       <p className="text-[12px] text-[var(--color-text-muted)]">Mark any task Critical or Not critical on its card afterwards: that wins over this.</p>
       <Msg err={err} />
       {canManage ? (

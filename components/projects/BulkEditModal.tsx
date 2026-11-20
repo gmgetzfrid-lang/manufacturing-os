@@ -84,17 +84,17 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
       <ModalHeader icon={Replace} title="Change on many tasks"
         subtitle="Swap a contractor, crew, company or location everywhere it appears, or set it (or day or night) on the tasks you selected." onClose={busy ? undefined : onClose} />
       <ModalBody className="space-y-3">
-        <div className="inline-flex rounded-lg bg-[var(--color-surface-2)] p-0.5 text-[12px] font-bold">
-          <button onClick={() => setMode("replace")} className={`px-3 py-1.5 rounded-md ${mode === "replace" ? "bg-[var(--color-surface)] shadow-sm text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>Replace a name everywhere</button>
-          <button onClick={() => selectedIds.size > 0 && setMode("set")} disabled={selectedIds.size === 0}
+        <div className="inline-flex flex-wrap rounded-[10px] bg-[var(--color-surface-2)] p-0.5 gap-0.5 text-[12.5px] font-bold" role="group" aria-label="What to change">
+          <button onClick={() => setMode("replace")} aria-pressed={mode === "replace"} className={`h-8 px-3 rounded-lg ${mode === "replace" ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>Replace a name everywhere</button>
+          <button onClick={() => selectedIds.size > 0 && setMode("set")} disabled={selectedIds.size === 0} aria-pressed={mode === "set"}
             title={selectedIds.size === 0 ? "Select tasks on the timeline first" : undefined}
-            className={`px-3 py-1.5 rounded-md disabled:opacity-40 ${mode === "set" ? "bg-[var(--color-surface)] shadow-sm text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+            className={`h-8 px-3 rounded-lg disabled:opacity-40 ${mode === "set" ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
             Set on {selectedIds.size} selected task{selectedIds.size === 1 ? "" : "s"}
           </button>
         </div>
 
         <label className="block">
-          <span className="block text-[12px] font-semibold text-[var(--color-text-muted)] mb-1">Field</span>
+          <span className="block mb-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Field</span>
           <select value={field.key} onChange={(e) => pickField(e.target.value)} className={inp}>
             {BULK_FIELDS.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
           </select>
@@ -105,7 +105,7 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
         )}
         {mode === "replace" && !field.options && (
           <div>
-            <span className="block text-[12px] font-semibold text-[var(--color-text-muted)] mb-1">1. Pick the name to replace</span>
+            <span className="block mb-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">1. Pick the name to replace</span>
             {values.length === 0 ? (
               <p className="text-[12px] text-[var(--color-text-muted)]">No task has this field filled in.</p>
             ) : (
@@ -116,13 +116,13 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
                     <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Narrow this list…" aria-label="Narrow the list of names" className={`${inp} h-8 pl-8 text-xs`} />
                   </div>
                 )}
-                <ul className="max-h-44 overflow-y-auto rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+                <ul className="max-h-44 overflow-y-auto border-y border-[var(--color-border)] divide-y divide-[var(--color-border)]">
                   {shownValues.map((v) => (
                     <li key={v.value}>
-                      <button onClick={() => { setFrom(v.value); setClear(false); }}
-                        className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-[13px] ${from === v.value ? "bg-[var(--color-surface-2)] font-bold text-[var(--color-text)]" : "text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+                      <button onClick={() => { setFrom(v.value); setClear(false); }} aria-pressed={from === v.value}
+                        className={`w-full flex items-center gap-2 px-3 py-2 text-left text-[13px] ${from === v.value ? "bg-[var(--color-text)] font-bold text-[var(--color-surface)]" : "text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
                         <span className="flex-1 truncate">{v.value}</span>
-                        <span className="shrink-0 text-[11px] text-[var(--color-text-muted)]">{v.count} task{v.count === 1 ? "" : "s"}</span>
+                        <span className={`shrink-0 text-[11.5px] ${from === v.value ? "opacity-80" : "text-[var(--color-text-muted)]"}`}>{v.count} task{v.count === 1 ? "" : "s"}</span>
                       </button>
                     </li>
                   ))}
@@ -134,7 +134,7 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
 
         {mode === "set" && field.options && (
           <label className="block">
-            <span className="block text-[12px] font-semibold text-[var(--color-text-muted)] mb-1">Set to</span>
+            <span className="block mb-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Set to</span>
             <select value={to} onChange={(e) => setTo(e.target.value)} className={inp}>
               {field.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
@@ -143,8 +143,8 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
         {(mode === "set" || from) && !field.options && (
           <div className="space-y-1.5">
             <label className="block">
-              <span className="block text-[12px] font-semibold text-[var(--color-text-muted)] mb-1">
-                {mode === "replace" ? <>2. Replace &ldquo;<span className="normal-case">{from}</span>&rdquo; with</> : "Set to"}
+              <span className="block mb-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+                {mode === "replace" ? <>2. Replace &ldquo;<span className="normal-case tracking-normal">{from}</span>&rdquo; with</> : "Set to"}
               </span>
               <input value={to} onChange={(e) => { setTo(e.target.value); if (e.target.value.trim()) setClear(false); }} autoFocus list="bulk-values" disabled={clear}
                 placeholder={mode === "replace" ? "The new name (pick one or type it)" : "The value"} className={`${inp} disabled:opacity-50`} />
@@ -160,11 +160,11 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
 
         {plan.length > 0 && (
           <div>
-            <span className="block text-[12px] font-semibold text-[var(--color-text-muted)] mb-1">Will change {plan.length} task{plan.length === 1 ? "" : "s"}</span>
-            <ul className="max-h-48 overflow-y-auto rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] text-[12px]">
+            <span className="block mb-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Will change {plan.length} task{plan.length === 1 ? "" : "s"}</span>
+            <ul className="max-h-48 overflow-y-auto border-y border-[var(--color-border)] divide-y divide-[var(--color-border)] text-[12.5px]">
               {plan.slice(0, 200).map((c) => (
-                <li key={c.id} className="px-3 py-1.5 flex items-center gap-2">
-                  <span className="w-44 shrink-0 truncate font-semibold text-[var(--color-text)]" title={c.name}>{c.name}</span>
+                <li key={c.id} className="px-1 py-1.5 flex items-center gap-2">
+                  <span className="w-32 sm:w-44 shrink-0 truncate font-semibold text-[var(--color-text)]" title={c.name}>{c.name}</span>
                   <span className="truncate text-[var(--color-text-muted)] line-through" title={c.before ?? ""}>{valueLabel(field, c.before) || "-"}</span>
                   <ArrowRight className="w-3 h-3 shrink-0 text-[var(--color-text-faint)]" />
                   <span className="truncate font-semibold text-[var(--color-text)]" title={c.after ?? ""}>{valueLabel(field, c.after) || "(empty)"}</span>
@@ -177,9 +177,9 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
         {error && <div className="text-[12px] font-bold text-rose-700 dark:text-rose-400">{error}</div>}
       </ModalBody>
       <ModalFooter>
-        <button onClick={onClose} disabled={busy} className="h-9 px-3 rounded-lg text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
+        <button onClick={onClose} disabled={busy} className="h-9 px-3 rounded-lg text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
         <button onClick={() => void apply()} disabled={busy || plan.length === 0}
-          className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-40">
+          className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-40">
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Replace className="w-4 h-4" />}
           {plan.length ? (clears === plan.length && !field.options ? `Take it off ${plan.length} task${plan.length === 1 ? "" : "s"}` : `Change ${plan.length} task${plan.length === 1 ? "" : "s"}`) : "Change"}
         </button>

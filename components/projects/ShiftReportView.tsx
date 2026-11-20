@@ -34,6 +34,7 @@ import {
   Mail, FileText, Hourglass, Clock, Pencil, Plus, CalendarClock, Eye, EyeOff, ListChecks,
 } from "lucide-react";
 import MoreMenu from "@/components/ui/MoreMenu";
+import { useIsMobile } from "@/hooks/useIsMobile";
 import { OPEN_SETUP_EVENT } from "@/lib/scheduleSetup";
 import type { Milestone, MilestoneNote } from "@/types/schema";
 import { buildProgressIndex, leafPercent, type ProgressInfo } from "@/lib/scheduleProgress";
@@ -774,6 +775,8 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   const agendaList = useMemo(() => (meeting === "turnover" ? [...allSections.filter((x) => x.agenda === "only"), ...allSections.filter((x) => x.agenda === "also")] : []), [allSections, meeting]);
   const [screen, setScreenState] = useState<"report" | "meeting">("report");
   const inMeetingView = screen === "meeting" && agendaList.length > 0;
+  // A phone folds the toolbar to two rows: the Report / Meeting switch goes in More.
+  const phone = useIsMobile();
   const sections = inMeetingView ? agendaList : reportSections;
   const [showSecs, setShowSecs] = useState(false);
 
@@ -1013,11 +1016,14 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       `}</style>
 
       {/* ── Toolbar ─────────────────────────────────────────────────── */}
+      {/* One row on a wide screen. On a phone, two: what goes out (Update
+          by note, Email / Print, More) over which shift it is; Report or
+          Meeting, and the rest, fold into More. */}
       <div className="px-3 sm:px-4 pt-3 pb-2.5 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap rounded-t-2xl bg-[var(--color-surface)]">
-        {!meetingFixed && <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-lg p-0.5 gap-0.5" role="tablist" aria-label="Meeting">
+        {!meetingFixed && <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-[10px] p-0.5 gap-0.5" role="tablist" aria-label="Meeting">
           {MEETINGS.map(({ id, label, Icon }) => (
             <button key={id} role="tab" aria-selected={meeting === id} onClick={() => { setMeetingPick(id); setPresenting(null); }}
-              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold transition-colors ${meeting === id ? "bg-[var(--color-text)] text-[var(--color-surface)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+              className={`inline-flex items-center gap-1 h-8 px-2.5 rounded-lg text-[12px] font-semibold transition-colors ${meeting === id ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
               <Icon className="w-3 h-3" /> {label}
             </button>
           ))}
@@ -1025,11 +1031,11 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
 
         {/* The report, or the meeting's agenda (attendance, the safety topic, what the next shift picks up). */}
         {meeting === "turnover" && agendaList.length > 0 && (
-          <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-[10px] p-0.5 gap-0.5" role="tablist" aria-label="Report or meeting">
+          <div className="max-md:hidden inline-flex items-center bg-[var(--color-surface-2)] rounded-[10px] p-0.5 gap-0.5" role="tablist" aria-label="Report or meeting">
             {([["report", "Report"], ["meeting", "Meeting"]] as const).map(([id, label]) => (
               <button key={id} type="button" role="tab" aria-selected={(id === "meeting") === inMeetingView}
                 onClick={() => { setScreenState(id); setPresenting(null); }}
-                className={`h-8 px-3 rounded-lg text-[13px] font-semibold transition-colors ${(id === "meeting") === inMeetingView ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                className={`h-8 px-3 rounded-lg text-[13px] font-semibold transition-colors ${(id === "meeting") === inMeetingView ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
                 {label}
               </button>
             ))}
@@ -1037,43 +1043,52 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         )}
 
         {meeting === "turnover" && (
-          <>
-            {(!meetingFixed || agendaList.length > 0) && <span className="mx-0.5 w-px h-4 bg-[var(--color-border)]" />}
-            <button onClick={() => pick(previousShift(shift, tz, times))} className="w-9 h-9 inline-flex items-center justify-center rounded-[10px] hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Previous shift" aria-label="Previous shift"><ChevronLeft className="w-4 h-4" /></button>
-            <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-[10px] p-0.5 gap-0.5">
+          // Which shift: its own row on a phone, under the actions.
+          <div className="flex flex-wrap items-center gap-1.5 max-md:order-2 max-md:w-full">
+            {(!meetingFixed || agendaList.length > 0) && <span className="max-md:hidden mx-0.5 w-px h-4 bg-[var(--color-border)]" />}
+            <button onClick={() => pick(previousShift(shift, tz, times))} className="w-9 h-9 shrink-0 inline-flex items-center justify-center rounded-[10px] hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Previous shift" aria-label="Previous shift"><ChevronLeft className="w-4 h-4" /></button>
+            <div className="inline-flex shrink-0 items-center bg-[var(--color-surface-2)] rounded-[10px] p-0.5 gap-0.5">
               {(["day", "night"] as const).map((k) => (
                 // The shift handing over, and the one it hands to: Day → Night
-                // is the day's report and the plan for that night.
+                // is the day's report and the plan for that night. A phone
+                // says just the shift; the rest is in its name.
                 <button key={k} onClick={() => setSel({ dayKey: shift.dayKey, kind: k })} aria-pressed={shift.kind === k}
+                  aria-label={k === "day" ? "Day \u2192 Night" : "Night \u2192 Day"}
                   title={k === "day" ? "The day shift's report, and the plan for the night shift after it" : "The night shift's report, and the plan for the day shift after it"}
-                  className={`inline-flex items-center gap-1 h-8 px-2.5 rounded-lg text-[12px] font-semibold ${shift.kind === k ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
-                  {k === "day" ? <Sun className="w-3 h-3" /> : <Moon className="w-3 h-3" />} {k === "day" ? "Day \u2192 Night" : "Night \u2192 Day"}
+                  className={`inline-flex items-center gap-1 h-8 px-2.5 rounded-lg text-[12.5px] font-semibold ${shift.kind === k ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                  {k === "day" ? <Sun className="w-3 h-3" /> : <Moon className="w-3 h-3" />} {k === "day" ? "Day" : "Night"}<span className="max-sm:hidden">{k === "day" ? " \u2192 Night" : " \u2192 Day"}</span>
                 </button>
               ))}
             </div>
             <input type="date" value={shift.dayKey} onChange={(e) => { if (e.target.value) setSel({ dayKey: e.target.value, kind: shift.kind }); }}
               aria-label="Which day's shift"
-              className="h-9 w-[138px] text-[13px] rounded-[10px] px-2.5 bg-[var(--color-surface-2)] text-[var(--color-text)] border border-transparent focus:border-[var(--color-border-strong)]" title="Which day's shift to close" />
-            <button onClick={() => pick(nextShift(shift, tz, times))} className="w-9 h-9 inline-flex items-center justify-center rounded-[10px] hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Next shift" aria-label="Next shift"><ChevronRight className="w-4 h-4" /></button>
+              className="h-9 min-w-0 w-[138px] max-md:flex-1 max-md:w-auto text-[13px] rounded-[10px] px-2.5 bg-[var(--color-surface-2)] text-[var(--color-text)] border border-transparent focus:border-[var(--color-border-strong)]" title="Which day's shift to close" />
+            <button onClick={() => pick(nextShift(shift, tz, times))} className="w-9 h-9 shrink-0 inline-flex items-center justify-center rounded-[10px] hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Next shift" aria-label="Next shift"><ChevronRight className="w-4 h-4" /></button>
             {/* Back to the shift on now: only once another one is picked. */}
-            {ownSel != null && <button onClick={() => setSel(null)} className="h-9 text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2.5 rounded-[10px] hover:bg-[var(--color-surface-2)]">Current shift</button>}
-          </>
+            {/* (On a phone it's in More, so the row stays one row.) */}
+            {ownSel != null && <button onClick={() => setSel(null)} className="max-md:hidden h-9 text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2.5 rounded-[10px] hover:bg-[var(--color-surface-2)]">Current shift</button>}
+          </div>
         )}
 
-        {/* One button in sight (the update), the rest in More: a phone shows one row, not six. */}
-        <span className="ml-auto" />
+        {/* One button in sight (the update), the rest in More: a phone shows two rows, not six.
+            Update by note sits with the shift; what goes out (Email / Print) at the right end,
+            and stays there when the row wraps. */}
         {tools}
-        <div className="relative flex flex-wrap items-center justify-end gap-2">
+        <div className="relative ml-auto flex flex-wrap items-center justify-end gap-2">
           <div className="contents">
             {timesSaved === false && (
               <button onClick={() => setShowTimes((v) => !v)} aria-expanded={showTimes} title="The day / night split is a guess until the shift times are saved"
-                className={`${QUIET} text-rose-700 dark:text-rose-300`}>
+                className={`${QUIET} max-md:hidden text-rose-700 dark:text-rose-300`}>
                 <Settings2 className="w-3.5 h-3.5" /> Set shift times
               </button>
             )}
+            {showTimes && <div className="fixed inset-0 z-20" onClick={() => setShowTimes(false)} aria-hidden />}
             {showTimes && (
-              <div className="absolute right-0 top-full mt-1 z-30 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg p-2.5 space-y-1.5 text-[11px] w-[23rem] max-w-[calc(100vw-1.5rem)]">
-                <div className="font-bold text-[var(--color-text)]">Shift change times (plant time)</div>
+              <div className="absolute right-0 top-full mt-1 z-30 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl p-3 space-y-1.5 text-[12px] w-[23rem] max-w-[calc(100vw-1.5rem)]">
+                <div className="flex items-center gap-2">
+                  <span className="flex-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Shift change times, plant time</span>
+                  <button type="button" onClick={() => setShowTimes(false)} aria-label="Close" className="w-7 h-7 -mr-1 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+                </div>
                 <label className="flex items-center justify-between gap-2 text-[var(--color-text-muted)]"><span className="inline-flex items-center gap-1"><Sun className="w-3 h-3" /> Day starts</span>
                   <input type="time" value={draft.dayStart} onChange={(e) => { setTimesMsg(null); setTimesDraft({ ...draft, dayStart: e.target.value || DEFAULT_SHIFT_TIMES.dayStart }); }} className="h-7 border border-[var(--color-border-strong)] rounded px-1 bg-[var(--color-surface)]" />
                 </label>
@@ -1087,13 +1102,13 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
                 {!timesDraft && timesSaved === false && (
                   <div className="flex justify-end pt-0.5">
                     <button onClick={() => { void saveProjectShiftTimes(projectId, times).then(() => setTimesMsg("Saved for everyone on this project.")).catch((e: Error) => setTimesMsg(e.message)); }}
-                      className="px-2.5 py-1 rounded-md font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]">These are right: confirm</button>
+                      className="h-8 px-3 rounded-lg font-bold text-[var(--color-surface)] bg-[var(--color-text)] hover:opacity-90">These are right: confirm</button>
                   </div>
                 )}
                 {timesDraft && (
                   <div className="flex justify-end gap-1.5 pt-0.5">
                     <button onClick={() => { setTimesDraft(null); setTimesMsg(null); }} className="px-2 py-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
-                    <button onClick={() => void saveTimes()} className="px-2.5 py-1 rounded-md font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]">Save for the project</button>
+                    <button onClick={() => void saveTimes()} className="h-8 px-3 rounded-lg font-bold text-[var(--color-surface)] bg-[var(--color-text)] hover:opacity-90">Save for the project</button>
                   </div>
                 )}
                 {timesMsg && <div className={`leading-snug ${/^Saved for everyone/.test(timesMsg) ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-400"}`}>{timesMsg}</div>}
@@ -1104,7 +1119,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
             {/* Sections left off are always said, never silently gone. */}
             {hiddenSecs.length > 0 && (
               <button type="button" onClick={() => setShowSecs((v) => !v)} aria-expanded={showSecs}
-                className={QUIET}
+                className={`${QUIET} max-md:hidden`}
                 title="Sections left off the report, on screen and in print">
                 <EyeOff className="w-3.5 h-3.5" /> {hiddenSecs.length} hidden
               </button>
@@ -1112,12 +1127,12 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
             {showSecs && (
               <>
                 <div className="fixed inset-0 z-20" onClick={() => setShowSecs(false)} aria-hidden />
-                <div className="absolute right-0 top-full mt-1 z-30 w-64 max-w-[calc(100vw-1.5rem)] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg p-2.5 text-[12px]">
-                  <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">Show on the report</div>
+                <div className="absolute right-0 top-full mt-1 z-30 w-64 max-w-[calc(100vw-1.5rem)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl p-3 text-[12px]">
+                  <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Show on the report</div>
                   <div className="mt-1.5 space-y-1">
                     {reportAll.map((x) => (
                       <label key={x.id} className="flex items-center gap-2 cursor-pointer select-none py-0.5">
-                        <input type="checkbox" className="accent-[var(--color-accent)] w-4 h-4" checked={!hiddenSecs.includes(x)} onChange={(e) => setHidden(x.id, !e.target.checked)} />
+                        <input type="checkbox" className="accent-[var(--color-text)] w-4 h-4" checked={!hiddenSecs.includes(x)} onChange={(e) => setHidden(x.id, !e.target.checked)} />
                         <span className="font-semibold text-[var(--color-text)]">{x.title.split(" - ")[0]}</span>
                       </label>
                     ))}
@@ -1143,8 +1158,14 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
             </>
           )}
           <CopyUpdate primary={!quietMain} doc={exportDoc} meeting={meeting} lh={lh} stamps={meeting === "turnover" ? { on: stamps, set: setStamps } : undefined} />
-          <MoreMenu triggerClass={QUIET} items={[
-            ...(presenting == null ? [{ icon: <Presentation className="w-4 h-4" />, label: "Present the meeting", onClick: () => setPresenting(0) }] : []),
+          <MoreMenu triggerClass={`${QUIET} w-9 px-0`} iconOnly items={[
+            // On a phone the way back to the shift on now, and the Report / Meeting switch, live here.
+            ...(phone && meeting === "turnover" && ownSel != null ? [{ icon: <Clock className="w-4 h-4" />, label: "Current shift", onClick: () => setSel(null) }] : []),
+            ...(phone && meeting === "turnover" && agendaList.length > 0 ? [
+              { icon: <FileText className="w-4 h-4" />, label: "The report", current: !inMeetingView, onClick: () => { setScreenState("report"); setPresenting(null); }, line: ownSel != null },
+              { icon: <ListChecks className="w-4 h-4" />, label: "The meeting", current: inMeetingView, onClick: () => { setScreenState("meeting"); setPresenting(null); } },
+            ] : []),
+            ...(presenting == null ? [{ icon: <Presentation className="w-4 h-4" />, label: "Present the meeting", onClick: () => setPresenting(0), line: phone && meeting === "turnover" && agendaList.length > 0 }] : []),
             ...(meeting === "turnover" && onOpenReport ? [
               // The shift sheet: entered for the shift ending, printed for the one starting.
               { icon: <FileText className="w-4 h-4" />, label: "Enter shift sheet", onClick: () => onOpenReport({ id: "sheet", shift: { dayKey: shift.dayKey, kind: shift.kind }, enter: true }) },
@@ -1156,7 +1177,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
             ...(!inMeetingView ? [{ icon: <EyeOff className="w-4 h-4" />, label: hiddenSecs.length ? `Sections shown (${hiddenSecs.length} hidden)` : "Sections shown", onClick: () => setShowSecs(true) }] : []),
             // The time each step was done, in Done (always in the time log).
             ...(meeting === "turnover" ? [{ icon: <Clock className="w-4 h-4" />, label: stamps ? "Done times: on" : "Done times: off", onClick: () => setStamps(!stamps) }] : []),
-            { icon: <Settings2 className="w-4 h-4" />, label: "Shift times", onClick: () => setShowTimes(true), line: true },
+            { icon: <Settings2 className="w-4 h-4" />, label: timesSaved === false ? "Set shift times" : "Shift times", onClick: () => setShowTimes(true), line: true, ...(timesSaved === false ? { tone: "bad" as const } : {}) },
             // Which jobs run days and nights: what the next shift's list follows.
             ...(meeting === "turnover" && onOpenReport ? [{ icon: <Moon className="w-4 h-4" />, label: "Night shifts", onClick: () => { window.dispatchEvent(new CustomEvent(OPEN_SETUP_EVENT, { detail: "night" })); } }] : []),
           ]} />

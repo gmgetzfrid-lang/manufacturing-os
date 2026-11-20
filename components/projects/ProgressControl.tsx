@@ -13,6 +13,7 @@
 
 import React, { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { X } from "lucide-react";
 import { previousShift, shiftAt, shiftWindow, DEFAULT_SHIFT_TIMES, type ShiftCredit, type ShiftTimes, type ShiftWindow } from "@/lib/shiftReport";
 import { clockForWork } from "@/components/projects/ShiftRecordParts";
 import { dayKey, toDateTimeInput } from "@/lib/scheduleTz";
@@ -126,7 +127,7 @@ export function ProgressSlider({ percent, onPick, disabled, busy, commitSame, co
   return (
     <div className="w-full">
       <div className="flex items-center justify-between mb-1.5">
-        <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Progress</span>
+        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Progress</span>
         <span className="text-sm font-black text-[var(--color-text)] tabular-nums">{val}%</span>
       </div>
       <input
@@ -142,7 +143,7 @@ export function ProgressSlider({ percent, onPick, disabled, busy, commitSame, co
         // Arrow keys move the thumb; Enter (or leaving the slider) saves.
         onKeyUp={(e) => { if (e.key === "Enter") commit(Number((e.target as HTMLInputElement).value)); }}
         onBlur={(e) => { if (clamp(Number(e.target.value)) !== clamp(percent)) commit(Number(e.target.value)); }}
-        className="w-full accent-[var(--color-accent)] cursor-pointer disabled:opacity-50"
+        className="w-full accent-[var(--color-text)] cursor-pointer disabled:opacity-50"
         aria-label="Percent complete"
       />
       <div className="mt-2 flex items-center gap-1">
@@ -152,10 +153,10 @@ export function ProgressSlider({ percent, onPick, disabled, busy, commitSame, co
             type="button"
             disabled={disabled || busy}
             onClick={() => commit(q)}
-            className={`flex-1 text-[11px] font-bold py-1 rounded-md border transition-colors disabled:opacity-50 ${
+            className={`flex-1 h-8 text-[12px] font-bold rounded-lg transition-colors disabled:opacity-50 ${
               val === q
-                ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]"
-                : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+                ? "bg-[var(--color-text)] text-[var(--color-surface)]"
+                : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
             }`}
           >
             {q === 100 ? "Done" : `${q}%`}
@@ -164,7 +165,7 @@ export function ProgressSlider({ percent, onPick, disabled, busy, commitSame, co
       </div>
       {confirmLabel && (
         <button type="button" disabled={disabled || busy} onClick={() => commit(val)}
-          className="mt-2 w-full text-[12px] font-black py-1.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+          className="mt-2 w-full h-9 text-[13px] font-bold rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
           {confirmLabel(val)}
         </button>
       )}
@@ -233,31 +234,31 @@ export function ProgressNoteForm({ percent, start, onSave, onCancel, busy }: {
     finally { setSaving(false); }
   };
   return (
-    <div className="w-full space-y-2 text-[11px]">
+    <div className="w-full space-y-2.5 text-[12px]">
       <PctSlider value={value ?? cur} was={cur} disabled={busy || saving} onChange={(v) => { setPick(v); setMsg(null); }} />
       {/* Work in progress needs a comment — said up front, not found out
           by a Save that does nothing. */}
       <div className="space-y-0.5">
         <div className="flex items-baseline gap-1.5">
-          <span className="font-bold text-[var(--color-text)]">What got done</span>
+          <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">What got done</span>
           {wantsNote
-            ? <span className="text-[var(--color-text-muted)]">(required)</span>
-            : <span className="text-[var(--color-text-faint)]">(optional)</span>}
+            ? <span className="text-[11.5px] text-[var(--color-text-muted)]">(required)</span>
+            : <span className="text-[11.5px] text-[var(--color-text-faint)]">(optional)</span>}
         </div>
         <input ref={noteRef} value={note} onChange={(e) => { setNote(e.target.value); setMsg(null); }}
           onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void save(); } if (e.key === "Escape" && onCancel) { e.stopPropagation(); onCancel(); } }}
           placeholder={wantsNote ? "e.g. bundle half out · or why it's corrected" : "Comment"}
           aria-required={wantsNote}
-          className={`w-full h-8 px-2 rounded-md border bg-[var(--color-surface)] pointer-coarse:h-10 focus:outline-none focus:border-[var(--color-accent-ring)] ${missing ? (msg ? "border-2 border-rose-500" : "border-2 border-amber-400 bg-amber-50/60 dark:bg-amber-950/30") : "border-[var(--color-border-strong)]"}`} />
+          className={`w-full h-9 px-2.5 rounded-lg border bg-[var(--color-surface)] text-[13px] pointer-coarse:h-10 focus:outline-none focus:border-[var(--color-accent-ring)] ${missing ? (msg ? "border-2 border-rose-500" : "border-2 border-amber-400 bg-amber-50/60 dark:bg-amber-950/30") : "border-[var(--color-border-strong)]"}`} />
       </div>
       {/* When it happened: the shift and the time — it goes on that
           shift's report at that time. */}
       {choices.length > 0 && <WhenFields choices={choices} idx={whenIdx} setIdx={(i) => { setWhenIdx(i); setMsg(null); }} clock={when} setClock={(v) => { setWhen(v); setMsg(null); }} tz={clockCtx!.tz} times={clockCtx!.times} other={otherDay} setOther={(d) => { setOtherDay(d); setMsg(null); }} disabled={busy || saving} />}
       {msg && <div className="text-rose-700 dark:text-rose-400 font-semibold">{msg}</div>}
       <div className="flex items-center gap-2">
-        {onCancel && <button type="button" onClick={onCancel} className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>}
+        {onCancel && <button type="button" onClick={onCancel} className="h-9 px-1 font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>}
         <button type="button" disabled={!ready} onClick={() => void save()}
-          className={`ml-auto h-8 px-3 rounded-md font-black bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40 pointer-coarse:h-10 ${missing ? "opacity-70" : ""}`}>
+          className={`ml-auto h-9 px-3.5 rounded-lg text-[13px] font-bold bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40 pointer-coarse:h-10 ${missing ? "opacity-70" : ""}`}>
           {saving ? "Saving…" : missing ? "Add a comment to save" : `${pick === 100 ? "Mark done" : pick != null ? `Save ${pick}%` : "Save"}${when && pick != null ? ` at ${when}` : ""}`}
         </button>
       </div>
@@ -324,13 +325,21 @@ export default function ProgressControl({ percent, onPick, disabled, onDisabledC
 
       {open && typeof document !== "undefined" && createPortal(
         <>
-          <div className="fixed inset-0 z-[300]" onClick={() => setOpen(false)} />
+          {/* A form (the % with its comment) dims the page behind it; the bare slider doesn't. */}
+          <div className={`fixed inset-0 z-[300] ${onSaveWithNote ? "bg-[color-mix(in_srgb,var(--color-ink)_30%,transparent)] animate-in fade-in" : ""}`} onClick={() => setOpen(false)} />
           <div
             ref={menuRef}
-            className={`fixed z-[310] ${onSaveWithNote ? "w-[300px] max-w-[calc(100vw-16px)]" : "w-[224px]"} bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg p-3 animate-in fade-in zoom-in-95 duration-150`}
+            role="dialog" aria-label="Progress"
+            className={`fixed z-[310] ${onSaveWithNote ? "w-[300px] max-w-[calc(100vw-16px)]" : "w-[224px]"} bg-[var(--color-surface)] text-[var(--color-text)] rounded-2xl shadow-2xl p-3.5 animate-in fade-in zoom-in-95 duration-150`}
             style={{ top: pos.top, left: pos.left }}
             onClick={(e) => e.stopPropagation()}
           >
+            {onSaveWithNote && (
+              <div className="-mt-1 mb-1 flex items-center justify-between gap-2">
+                <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Progress</span>
+                <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="-mr-1.5 w-8 h-8 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+              </div>
+            )}
             {onSaveWithNote ? (
               <ProgressNoteForm percent={pct} busy={busy} onCancel={() => setOpen(false)}
                 onSave={async (v, n, w) => { const ok = await onSaveWithNote(v, n, w); if (ok !== false) setOpen(false); return ok; }} />

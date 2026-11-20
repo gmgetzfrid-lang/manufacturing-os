@@ -10,10 +10,11 @@ import type { Milestone } from "@/types/schema";
 import { discoveryOf, kindOf, ADDED, type AddedKind } from "@/lib/discovery";
 import { fmtInTz } from "@/lib/scheduleTz";
 
-/** The tag's colours: discovery violet, added scope teal. */
+/** The tag's look: ink on the warm fill for both kinds (the word says
+ *  which). Colour stays for problem, warning and done. */
 export const ADDED_TONE: Record<AddedKind, string> = {
-  discovery: "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] dark:border-[var(--color-border)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)]",
-  added: "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] dark:border-[var(--color-border)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)]",
+  discovery: "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]",
+  added: "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]",
 };
 
 /** "Added scope, raised Wed 5:00 PM: clean the downcomers. Known work that wasn't on the schedule — not in the original plan." */

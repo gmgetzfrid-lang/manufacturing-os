@@ -23,15 +23,15 @@ export default function CrewPicker({ value, onChange, crews, className = "", lab
     return (
       <span className={`inline-flex items-center gap-1 ${className}`}>
         <input autoFocus value={value} onChange={(e) => onChange(e.target.value)} placeholder="New crew name" aria-label={label} disabled={disabled}
-          className="h-8 min-w-0 flex-1 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)]" />
-        <button type="button" onClick={() => setTyping(false)} className="text-[11px] font-semibold text-[var(--color-accent)] hover:underline">List</button>
+          className="h-8 min-w-0 flex-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)]" />
+        <button type="button" onClick={() => setTyping(false)} className="h-8 px-1 text-[12px] font-semibold text-[var(--color-text)] hover:underline">List</button>
       </span>
     );
   }
   return (
     <select value={value.trim()} aria-label={label} disabled={disabled}
       onChange={(e) => { if (e.target.value === OTHER) { setTyping(true); onChange(""); } else onChange(e.target.value); }}
-      className={`h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[12.5px] text-[var(--color-text)] ${className}`}>
+      className={`h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[12.5px] text-[var(--color-text)] ${className}`}>
       <option value="">- Crew -</option>
       {list.map((c) => <option key={c} value={c}>{c}</option>)}
       <option value={OTHER}>Other…</option>

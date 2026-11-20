@@ -41,7 +41,7 @@ export default function TimeZoneSelect({ value, onChange, className, disabled }:
           disabled={disabled}
           onClick={() => onChange(device)}
           title={`Use this device's zone: ${device}`}
-          className="shrink-0 inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:underline disabled:opacity-50"
+          className="shrink-0 inline-flex items-center gap-1 h-8 px-2.5 rounded-lg bg-[var(--color-surface-2)] text-[12px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)] disabled:opacity-50"
         >
           <MapPin className="w-3 h-3" /> Use mine
         </button>

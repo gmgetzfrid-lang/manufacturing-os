@@ -47,7 +47,8 @@ export default function AddWorkPicker({ day: when, tz, milestones, onPick, onNew
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       // Only the dialog on top closes.
-      const open = document.querySelectorAll('[aria-modal="true"]');
+      // (On screen only: a closed drawer can stay in the page, moved off it.)
+      const open = [...document.querySelectorAll<HTMLElement>('[aria-modal="true"]')].filter((el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.left < window.innerWidth && r.right > 0; });
       if (open.length && open[open.length - 1] !== boxRef.current) return;
       onClose();
     };
@@ -70,10 +71,10 @@ export default function AddWorkPicker({ day: when, tz, milestones, onPick, onNew
     if (!shown.length) return null;
     return (
       <div>
-        <div className="px-3 pt-2 pb-1 text-[12px] font-semibold text-[var(--color-text-faint)]">{title}</div>
+        <div className="px-4 pt-3 pb-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{title}</div>
         {shown.map((m) => (
           <button key={m.id} type="button" onClick={() => onPick(m)}
-            className="w-full text-left px-3 py-2 hover:bg-[var(--color-surface-2)] border-t border-[var(--color-border)] first:border-t-0">
+            className="w-full text-left px-4 py-2.5 hover:bg-[var(--color-surface-2)] border-t border-[var(--color-border)] first:border-t-0">
             {m.parentId && <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-faint)] truncate">{parentName.get(m.parentId)}</div>}
             <div className="text-[13px] font-semibold text-[var(--color-text)] break-words">{m.name}{wo(m) && <span className="ml-1.5 font-normal text-[var(--color-text-muted)]">WO {wo(m)}</span>}</div>
           </button>
@@ -82,28 +83,28 @@ export default function AddWorkPicker({ day: when, tz, milestones, onPick, onNew
     );
   };
   return (
-    <div ref={boxRef} aria-modal="true" className="fixed inset-0 z-[180] flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4" onClick={onClose}>
+    <div ref={boxRef} aria-modal="true" className="fixed inset-0 z-[180] flex items-end sm:items-center justify-center bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in p-0 sm:p-4" onClick={onClose}>
       <div role="dialog" aria-label={`Add discovery or added scope: ${label}`} onClick={(e) => e.stopPropagation()}
-        className="w-full sm:max-w-md max-h-[85vh] flex flex-col rounded-t-2xl sm:rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-xl">
-        <div className="px-4 pt-3 pb-2 border-b border-[var(--color-border)]">
+        className="w-full sm:max-w-md max-h-[85vh] flex flex-col rounded-t-2xl sm:rounded-2xl bg-[var(--color-surface)] shadow-2xl pb-[env(safe-area-inset-bottom)] sm:pb-0">
+        <div className="px-4 pt-3 pb-3 border-b border-[var(--color-border)]">
           <div className="flex items-start justify-between gap-2">
-            <div>
-              <div className="text-[15px] font-bold text-[var(--color-text)] inline-flex items-center gap-1.5"><Plus className="w-4 h-4" /> Add discovery or added scope</div>
-              <div className="text-[12px] text-[var(--color-text-muted)]">{label}: {onNew ? "a new work order, or under one on the schedule?" : "which work order is it under?"}</div>
+            <div className="min-w-0">
+              <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Add discovery or added scope · {label}</div>
+              <div className="mt-0.5 text-[15px] font-bold text-[var(--color-text)]">{onNew ? "A new work order, or under one on the schedule?" : "Which work order is it under?"}</div>
             </div>
-            <button type="button" onClick={onClose} aria-label="Close" className="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><XIcon className="w-4 h-4" /></button>
+            <button type="button" onClick={onClose} aria-label="Close" className="-mr-1.5 w-8 h-8 shrink-0 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><XIcon className="w-4 h-4" /></button>
           </div>
-          <div className="mt-2 relative">
-            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find equipment or WO #"
+          <div className="mt-2.5 relative">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find equipment or WO #" aria-label="Find a work order"
               autoFocus={typeof window !== "undefined" && window.matchMedia?.("(pointer: fine)").matches}
-              className="w-full h-8 pl-8 pr-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-accent-ring)]" />
+              className="w-full h-10 pl-9 pr-3 rounded-[10px] bg-[var(--color-surface-2)] text-[13.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] border border-transparent focus:outline-none focus:border-[var(--color-border-strong)]" />
           </div>
         </div>
         <div className="overflow-y-auto">
           {onNew && !q.trim() && (
             <button type="button" onClick={onNew}
-              className="w-full text-left px-3 py-2.5 border-b border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
+              className="w-full text-left px-4 py-3 border-b border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
               <div className="text-[13px] font-bold text-[var(--color-text)] inline-flex items-center gap-1.5"><Plus className="w-4 h-4" /> New work order</div>
               <div className="text-[11.5px] text-[var(--color-text-muted)]">Its own WO #, name, steps and crew, not under one already on the schedule</div>
             </button>

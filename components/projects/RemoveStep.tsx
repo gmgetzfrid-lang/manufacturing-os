@@ -34,7 +34,8 @@ export function RemoveStepDialog({ m, under, userId, userName, userEmail, onDele
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       // Only the dialog on top closes.
-      const open = document.querySelectorAll('[aria-modal="true"]');
+      // (On screen only: a closed drawer can stay in the page, moved off it.)
+      const open = [...document.querySelectorAll<HTMLElement>('[aria-modal="true"]')].filter((el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.left < window.innerWidth && r.right > 0; });
       if (open.length && open[open.length - 1] !== boxRef.current) return;
       onClose();
     };
@@ -42,30 +43,30 @@ export function RemoveStepDialog({ m, under, userId, userName, userEmail, onDele
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
   const what = under > 0 ? `${m.name} and the ${under} step${under === 1 ? "" : "s"} under it` : m.name;
-  const choice = "w-full flex items-start gap-3 rounded-xl border px-3.5 py-3 text-left";
+  const choice = "w-full flex items-start gap-3 px-1 py-3 text-left";
   return (
-    <div ref={boxRef} className="fixed inset-0 z-[320] bg-slate-900/50 flex items-end sm:items-center justify-center sm:p-4" role="dialog" aria-modal="true" aria-label="Remove a step" onClick={onClose}>
-      <div className="w-full sm:max-w-md bg-[var(--color-surface)] rounded-t-2xl sm:rounded-2xl shadow-2xl p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
+    <div ref={boxRef} className="fixed inset-0 z-[320] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in flex items-end sm:items-center justify-center sm:p-4" role="dialog" aria-modal="true" aria-label="Remove a step" onClick={onClose}>
+      <div className="w-full sm:max-w-md bg-[var(--color-surface)] rounded-t-2xl sm:rounded-2xl shadow-2xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-4 space-y-3" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start gap-2">
           <div className="min-w-0 flex-1">
-            <div className="text-[15px] font-black text-[var(--color-text)]">Take it off the schedule</div>
-            <div className="text-[12.5px] text-[var(--color-text-muted)] break-words">{what}</div>
+            <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Take it off the schedule</div>
+            <div className="mt-0.5 text-[15px] font-bold text-[var(--color-text)] break-words">{what}</div>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close" className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+          <button type="button" onClick={onClose} aria-label="Close" className="-mr-1.5 w-8 h-8 shrink-0 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
         {cancelling && m.id ? (
           <CancelJobForm id={m.id} name={m.name} steps={Math.max(1, under)} userId={userId} userName={userName} userEmail={userEmail}
             onClose={() => setCancelling(false)} onDone={onCancelled} />
         ) : (
-          <div className="space-y-2">
-            <button type="button" onClick={onDelete} className={`${choice} border-rose-200 dark:border-rose-900 hover:bg-rose-50 dark:hover:bg-rose-950/30`}>
+          <div className="border-y border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+            <button type="button" onClick={onDelete} className={`${choice} hover:bg-rose-50 dark:hover:bg-rose-950/30`}>
               <Trash2 className="w-5 h-5 mt-0.5 text-rose-600 dark:text-rose-400 shrink-0" />
               <span>
                 <b className="block text-[13.5px] text-[var(--color-text)]">Delete it</b>
                 <span className="block text-[12px] text-[var(--color-text-muted)]">Put in by mistake. Gone, with its comments and progress. Undo right after brings it back.</span>
               </span>
             </button>
-            <button type="button" onClick={() => setCancelling(true)} className={`${choice} border-amber-200 dark:border-amber-900 hover:bg-amber-50 dark:hover:bg-amber-950/30`}>
+            <button type="button" onClick={() => setCancelling(true)} className={`${choice} hover:bg-amber-50 dark:hover:bg-amber-950/30`}>
               <Ban className="w-5 h-5 mt-0.5 text-amber-600 dark:text-amber-400 shrink-0" />
               <span>
                 <b className="block text-[13.5px] text-[var(--color-text)]">Cancel it</b>

@@ -29,7 +29,10 @@ import { nameKey, plainName, scheduleId, sameEquipmentId, linkedLabel, checkNew,
 import { splitTag } from "@/lib/codebook";
 
 const btn = "inline-flex items-center justify-center gap-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[13px] font-bold px-3.5 h-10 shadow-sm disabled:opacity-50";
-const quiet = "inline-flex items-center justify-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)] px-3 h-10 disabled:opacity-50";
+const quiet = "inline-flex items-center justify-center gap-1.5 rounded-[10px] bg-[var(--color-surface-2)] hover:bg-[var(--color-border)] text-[13px] font-semibold text-[var(--color-text)] px-3 h-10 disabled:opacity-50";
+const LBL = "block text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]";
+// A suggestion read off the work order: ringed in ink, a tap links it.
+const hit = "w-full flex items-center gap-2 rounded-xl border-2 border-[var(--color-text)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] px-3 min-h-12 text-left";
 const field = "h-10 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[14px] text-[var(--color-text)]";
 
 /** "E-26 (5530.19)" on top, what it is underneath. */
@@ -226,7 +229,7 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
                 <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
                 <input autoFocus value={unitQuery} onChange={(e) => setUnitQuery(e.target.value)} placeholder="Which unit? (Transmix, 55…)" aria-label="Find the unit" className={`${field} pl-9`} />
               </div>
-              <ul className="max-h-[50vh] overflow-y-auto rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+              <ul className="max-h-[50vh] overflow-y-auto border-y border-[var(--color-border)] divide-y divide-[var(--color-border)]">
                 {shown.map((u) => (
                   <li key={u.code}>
                     <button type="button" disabled={!!busy} onClick={() => void pickUnit(u)} className="w-full flex items-center gap-2 px-3 min-h-11 text-left text-[13.5px] hover:bg-[var(--color-surface-2)]">
@@ -264,25 +267,25 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
       <Modal onClose={onClose} size="md">
         {header}
         <ModalBody className="space-y-3">
-          <p className="text-[13px] font-bold text-[var(--color-text)]">Add equipment to the unit</p>
-          <label className="block text-[12px] font-bold text-[var(--color-text-muted)]">Name
+          <p className="text-[14px] font-bold text-[var(--color-text)]">Add equipment to the unit</p>
+          <label className="block"><span className={LBL}>Name</span>
             <input autoFocus value={adding.tag} onChange={(e) => { const tag = e.target.value; setAdding({ ...adding, tag, code: adding.touched ? adding.code : idFor(tag) }); }} className={`${field} mt-1 font-mono uppercase`} placeholder="V-7" />
           </label>
           {units.length > 1 && (
-            <label className="block text-[12px] font-bold text-[var(--color-text-muted)]">Unit
+            <label className="block"><span className={LBL}>Unit</span>
               <select value={adding.unit} onChange={(e) => setAdding({ ...adding, unit: e.target.value })} className={`${field} mt-1`}>
                 {units.map((u) => <option key={u.code} value={u.code}>{unitName(u)}</option>)}
               </select>
             </label>
           )}
-          <label className="block text-[12px] font-bold text-[var(--color-text-muted)]">ID
+          <label className="block"><span className={LBL}>ID</span>
             <input value={adding.code} onChange={(e) => setAdding({ ...adding, code: e.target.value.toUpperCase(), touched: true })} className={`${field} mt-1 font-mono`} placeholder={`${adding.unit}10.19`} />
-            <span className="block mt-1 font-normal text-[11.5px]">
+            <span className="block mt-1 text-[11.5px] text-[var(--color-text-muted)]">
               {suggested ? (adding.code.trim() === suggested ? `From the schedule's Equipment column for ${owner.workOrderRef ? `WO ${owner.workOrderRef}` : "this work order"}.` : `The schedule's Equipment column says ${suggested}.`)
                 : "Type its ID as the plant numbers it. It isn't worked out from the name: the number after the point isn't the tag's number."}
             </span>
           </label>
-          <label className="block text-[12px] font-bold text-[var(--color-text-muted)]">Description
+          <label className="block"><span className={LBL}>Description</span>
             <input value={adding.what} onChange={(e) => setAdding({ ...adding, what: e.target.value })} className={`${field} mt-1`} placeholder="Debutanizer Trim Cooler" />
           </label>
           {adding.tag.trim() && (
@@ -336,9 +339,8 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
         </div>
         {!query && idHit && (!guessHit || guessHit.id !== idHit.id) && (
           <div className="space-y-2" data-id-hit>
-            <button type="button" disabled={!!busy} onClick={() => void link(idHit)}
-              className="w-full flex items-center gap-2 rounded-lg border-2 border-[var(--color-accent)] bg-[var(--color-surface-2)] px-3 min-h-12 text-left">
-              <span className="text-[12px] font-semibold text-[var(--color-text)] shrink-0">From its ID</span>
+            <button type="button" disabled={!!busy} onClick={() => void link(idHit)} className={hit}>
+              <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] shrink-0">From its ID</span>
               <AssetText a={idHit} />
               {busy === idHit.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4 text-[var(--color-text-muted)]" />}
             </button>
@@ -365,14 +367,13 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
           </div>
         )}
         {!query && guessHit && (
-          <button type="button" disabled={!!busy} onClick={() => void link(guessHit)}
-            className="w-full flex items-center gap-2 rounded-lg border-2 border-[var(--color-accent)] bg-[var(--color-surface-2)] px-3 min-h-12 text-left">
-            <span className="text-[12px] font-semibold text-[var(--color-text)] shrink-0">From its name</span>
+          <button type="button" disabled={!!busy} onClick={() => void link(guessHit)} className={hit}>
+            <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] shrink-0">From its name</span>
             <AssetText a={guessHit} />
             {busy === guessHit.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4 text-[var(--color-text-muted)]" />}
           </button>
         )}
-        <ul className="max-h-[42vh] overflow-y-auto rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+        <ul className="max-h-[42vh] overflow-y-auto border-y border-[var(--color-border)] divide-y divide-[var(--color-border)]">
           {list.slice(0, 80).map((a) => {
             const on = current?.assetId === a.id;
             return (
@@ -395,7 +396,7 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
           <p className="text-[12px] text-[var(--color-text-muted)]">Not listed? Type its name, like V-7, to {isAdmin ? "add it to the unit" : "ask an admin to add it"}.</p>
         )}
         {want && !wantHere && (
-          <div className="rounded-lg border border-[var(--color-border)] px-3 py-2.5 space-y-2">
+          <div className="border-t border-[var(--color-border)] pt-3 space-y-2">
             <p className="text-[12.5px] text-[var(--color-text)]"><b className="font-mono">{want}</b> isn&apos;t in {units.length === 1 ? `${units[0].label}'s` : "the units'"} list.</p>
             {elsewhere.length > 0 && <p className="text-[12px] text-[var(--color-text-muted)]">{elsewhere.map((a) => `${equipmentLabel(a)} on ${unitLabel(a.unitCode)}`).join(", ")} {elsewhere.length === 1 ? "is a different piece" : "are different pieces"}: not this unit&apos;s.</p>}
             {isAdmin

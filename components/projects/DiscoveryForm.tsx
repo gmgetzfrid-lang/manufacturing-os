@@ -117,7 +117,8 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       // Only the dialog on top closes.
-      const open = document.querySelectorAll('[aria-modal="true"]');
+      // (On screen only: a closed drawer can stay in the page, moved off it.)
+      const open = [...document.querySelectorAll<HTMLElement>('[aria-modal="true"]')].filter((el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.left < window.innerWidth && r.right > 0; });
       if (open.length && open[open.length - 1] !== boxRef.current) return;
       onClose();
     };
@@ -189,24 +190,27 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
   };
 
   const inp = "h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent-ring)]";
-  const lbl = "block font-bold text-[var(--color-text)] mb-1";
+  const lbl = "block mb-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]";
+  // A choice: picked is dark, the rest a quiet fill.
+  const chip = (on: boolean) => `h-8 px-3 rounded-lg text-[12px] font-bold ${on ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`;
   return (
-    <div ref={boxRef} aria-modal="true" className="fixed inset-0 z-[185] bg-black/50" onClick={onClose}>
+    <div ref={boxRef} aria-modal="true" className="fixed inset-0 z-[185] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in" onClick={onClose}>
       <div role="dialog" aria-label="Add work to the schedule" onClick={(e) => e.stopPropagation()}
-        className="absolute left-1/2 top-10 -translate-x-1/2 w-[560px] max-w-[96vw] max-h-[88dvh] overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-xl text-[12px] max-sm:left-0 max-sm:right-0 max-sm:top-auto max-sm:bottom-0 max-sm:translate-x-0 max-sm:w-full max-sm:max-w-none max-sm:rounded-b-none max-sm:max-h-[92dvh]">
-        <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2">
-          <div>
-            <div className="text-[14px] font-black">{isNew ? `New work order: ${k.lower}` : k.word === "Discovery" ? "Discovery work" : "Added scope"}</div>
-            <div className="text-[11px] text-[var(--color-text-muted)]">Work that wasn&apos;t in the plan, into the schedule, and what it does to it.</div>
+        className="absolute left-1/2 top-10 -translate-x-1/2 w-[560px] max-w-[96vw] max-h-[88dvh] overflow-y-auto rounded-2xl bg-[var(--color-surface)] text-[var(--color-text)] shadow-2xl text-[12.5px] max-sm:left-0 max-sm:right-0 max-sm:top-auto max-sm:bottom-0 max-sm:translate-x-0 max-sm:w-full max-sm:max-w-none max-sm:rounded-b-none max-sm:max-h-[92dvh]">
+        <div className="sticky top-0 z-10 flex items-start justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 pt-3 pb-2.5">
+          <div className="min-w-0">
+            <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Into the schedule</div>
+            <div className="mt-0.5 text-[15px] font-bold">{isNew ? `New work order: ${k.lower}` : k.word === "Discovery" ? "Discovery work" : "Added scope"}</div>
+            <div className="text-[12px] text-[var(--color-text-muted)]">Work that wasn&apos;t in the plan, and what it does to it.</div>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close" className="w-7 h-7 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+          <button type="button" onClick={onClose} aria-label="Close" className="-mr-1.5 w-8 h-8 shrink-0 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
         <div className="px-4 py-3 space-y-3">
           <div className="space-y-1">
             <div className="flex flex-wrap gap-1" role="group" aria-label="What kind of work">
               {(["discovery", "added"] as const).map((x) => (
                 <button key={x} type="button" aria-pressed={kind === x} onClick={() => { setKind(x); setMsg(null); }}
-                  className={`h-8 px-3 rounded-md border text-[12px] font-bold ${kind === x ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>{ADDED[x].word}</button>
+                  className={chip(kind === x)}>{ADDED[x].word}</button>
               ))}
             </div>
             <div className="text-[11px] text-[var(--color-text-muted)]">{kind === "added" ? "Known work that wasn't on the schedule." : "Found when the equipment was opened."} You can change this later.</div>
@@ -214,17 +218,17 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
           <div className="flex flex-wrap gap-1" role="group" aria-label="Where it goes">
             {([[false, "Under a work order"], [true, "A new work order"]] as const).map(([v, l]) => (
               <button key={l} type="button" aria-pressed={isNew === v} onClick={() => goNew(v)}
-                className={`h-8 px-3 rounded-md border text-[12px] font-bold ${isNew === v ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>{l}</button>
+                className={chip(isNew === v)}>{l}</button>
             ))}
           </div>
           {isNew ? (
             <>
               <label className="block">
-                <span className={lbl}>Work order name <span className="font-normal text-[var(--color-text-muted)]">(required)</span></span>
+                <span className={lbl}>Work order name <span className="normal-case tracking-normal font-normal text-[11.5px] text-[var(--color-text-muted)]">(required)</span></span>
                 <input value={woName} onChange={(e) => { setWoName(e.target.value); setMsg(null); }} placeholder="e.g. P-7C: Replace pump seal" className={`${inp} w-full`} />
               </label>
               <label className="block">
-                <span className={lbl}>Goes under <span className="font-normal text-[var(--color-text-muted)]">(required)</span></span>
+                <span className={lbl}>Goes under <span className="normal-case tracking-normal font-normal text-[11.5px] text-[var(--color-text-muted)]">(required)</span></span>
                 <select value={underId} onChange={(e) => { setUnderId(e.target.value); setMsg(null); }} aria-label="Goes under" className={`${inp} w-full`}>
                   <option value="">Pick where it goes</option>
                   {groups.map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
@@ -240,21 +244,21 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
             </label>
           )}
           <label className="block">
-            <span className={lbl}>{k.what} <span className="font-normal text-[var(--color-text-muted)]">(required)</span></span>
+            <span className={lbl}>{k.what} <span className="normal-case tracking-normal font-normal text-[11.5px] text-[var(--color-text-muted)]">(required)</span></span>
             <textarea value={what} onChange={(e) => { setWhat(e.target.value); setMsg(null); }} rows={2} placeholder={kind === "added" ? "e.g. Clean the downcomers while the tower is open" : "e.g. Tray 14 cracked at the weld - needs repair before close-up"}
               className={`${inp} w-full h-auto py-1.5`} />
           </label>
           <div className="space-y-1">
-            <span className={lbl}>Work order # <span className="font-normal text-[var(--color-text-muted)]">(required)</span></span>
+            <span className={lbl}>Work order # <span className="normal-case tracking-normal font-normal text-[11.5px] text-[var(--color-text-muted)]">(required)</span></span>
             <div className="flex flex-wrap items-center gap-1.5">
               <input value={wo} onChange={(e) => { setWo(e.target.value); setNoWo(false); setMsg(null); }} placeholder="e.g. 310990" aria-label="Work order number"
                 className={`${inp} w-36 font-mono`} />
               {taskWo && (
                 <button type="button" aria-pressed={!noWo && wo.trim() === taskWo} onClick={() => { setWo(taskWo); setNoWo(false); setMsg(null); }}
-                  className={`h-8 px-3 rounded-md border text-[12px] font-bold ${!noWo && wo.trim() === taskWo ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>Same as the task: {taskWo}</button>
+                  className={chip(!noWo && wo.trim() === taskWo)}>Same as the task: {taskWo}</button>
               )}
               <button type="button" aria-pressed={noWo} onClick={() => { setNoWo(true); setWo(""); setMsg(null); }}
-                className={`h-8 px-3 rounded-md border text-[12px] font-bold ${noWo ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>No WO # yet</button>
+                className={chip(noWo)}>No WO # yet</button>
             </div>
             {noWo && <div className="text-[11px] text-[var(--color-text-muted)]">{taskWo ? `It shows under the task's WO ${taskWo} until you add its own (the step's Edit).` : "Add it later on the step (Edit)."}</div>}
           </div>
@@ -275,7 +279,7 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
                   {rows.length > 1 && <button type="button" onClick={() => setRows(rows.filter((_, j) => j !== i))} aria-label="Remove this step" className="w-7 h-7 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><Trash2 className="w-3.5 h-3.5" /></button>}
                 </div>
               ))}
-              <button type="button" onClick={() => setRows([...rows, { name: "", crew: rows[rows.length - 1]?.crew ?? "", hours: "" }])} className="inline-flex items-center gap-1 font-bold text-[var(--color-accent)] hover:underline"><Plus className="w-3.5 h-3.5" /> Another step (done after the one above)</button>
+              <button type="button" onClick={() => setRows([...rows, { name: "", crew: rows[rows.length - 1]?.crew ?? "", hours: "" }])} className="inline-flex items-center gap-1 font-semibold text-[var(--color-text)] hover:underline"><Plus className="w-3.5 h-3.5" /> Another step (done after the one above)</button>
             </div>
           </div>
           {isNew ? (
@@ -297,11 +301,11 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
               )}
             </label>
             <div>
-              <span className={lbl}>Holds up <span className="font-normal text-[var(--color-text-muted)]">(can&apos;t start until it&apos;s done)</span></span>
-              <div className="max-h-28 overflow-y-auto rounded-md border border-[var(--color-border)] px-2 py-1 space-y-0.5">
+              <span className={lbl}>Holds up <span className="normal-case tracking-normal font-normal text-[11.5px] text-[var(--color-text-muted)]">(can&apos;t start until it&apos;s done)</span></span>
+              <div className="max-h-28 overflow-y-auto border-y border-[var(--color-border)] py-1 space-y-0.5">
                 {steps.filter((s) => s.id !== afterId && s.status !== "completed").map((s) => (
                   <label key={s.id} className="flex items-start gap-1.5">
-                    <input type="checkbox" className="mt-0.5" checked={holds.includes(s.id!)} onChange={(e) => setHolds(e.target.checked ? [...holds, s.id!] : holds.filter((x) => x !== s.id))} />
+                    <input type="checkbox" className="mt-0.5 accent-[var(--color-text)]" checked={holds.includes(s.id!)} onChange={(e) => setHolds(e.target.checked ? [...holds, s.id!] : holds.filter((x) => x !== s.id))} />
                     <span className="break-words">{s.name}</span>
                   </label>
                 ))}
@@ -315,7 +319,7 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
             <div className="flex flex-wrap gap-1" role="group" aria-label="When the work starts">
               {([["asap", `As soon as it can: ${fmt(asap)}`], ["set", "At a set time"]] as const).map(([k, l]) => (
                 <button key={k} type="button" aria-pressed={startMode === k} onClick={() => { setStartMode(k); setMsg(null); if (k === "set" && !startV) setStartV(toDateTimeInput(asap, tz)); }}
-                  className={`h-8 px-3 rounded-md border text-[12px] font-bold ${startMode === k ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>{l}</button>
+                  className={chip(startMode === k)}>{l}</button>
               ))}
             </div>
             {startMode === "asap"
@@ -328,13 +332,13 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
               : <DateTimePicker label="Planned start" value={startV} onChange={(v) => { setStartV(v); setMsg(null); }} tz={tz} times={times} future showNow={false} />}
           </div>
           <label className="block">
-            <span className={lbl}>Approved by <span className="font-normal text-[var(--color-text-muted)]">(optional)</span></span>
+            <span className={lbl}>Approved by <span className="normal-case tracking-normal font-normal text-[11.5px] text-[var(--color-text-muted)]">(optional)</span></span>
             <input value={approvedBy} onChange={(e) => setApprovedBy(e.target.value)} placeholder={`e.g. ${ptype.short} manager / owner rep`} className={`${inp} w-full`} />
           </label>
 
           {/* What it does to the schedule — before it's saved. */}
-          <div className={`rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 space-y-1 ${plan?.impact.critical ? "border-l-2 border-l-rose-500" : ""}`}>
-            <div className="font-black text-[11px] uppercase tracking-wider text-[var(--color-text-muted)]">What it does to the schedule</div>
+          <div className={`border-t border-[var(--color-border)] pt-3 space-y-1 ${plan?.impact.critical ? "border-l-2 border-l-rose-500 pl-3" : ""}`}>
+            <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">What it does to the schedule</div>
             {!plan ? <div className="text-[var(--color-text-muted)]">{timeProblem && filled.length ? timeProblem : "Add the work it needs (a step and its hours) to see."}</div> : (
               <>
                 <div className="font-bold">{impactLine(plan.impact, hrs, typeWord(ptype))}</div>
@@ -350,7 +354,7 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
           </div>
           {msg && <div role="alert" className="font-semibold text-rose-700 dark:text-rose-400">{msg}</div>}
           <div className="flex items-center justify-end gap-2 pt-1">
-            <button type="button" onClick={onClose} className="h-9 px-3 rounded-lg border border-[var(--color-border-strong)] font-semibold">Cancel</button>
+            <button type="button" onClick={onClose} className="h-9 px-3 rounded-lg bg-[var(--color-surface-2)] font-semibold hover:bg-[var(--color-border)]">Cancel</button>
             <button type="button" onClick={() => void save()} disabled={busy}
               className="h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
               {busy ? "Adding…" : "Add to the schedule"}
