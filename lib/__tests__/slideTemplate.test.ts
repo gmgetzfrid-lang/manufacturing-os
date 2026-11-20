@@ -152,3 +152,33 @@ describe("slide colors", () => {
 });
 
 void roomOf;
+
+describe("the slides on screen are the file's slides", () => {
+  it("draws each slide of the deck: the layout's artwork, the filled titles, the tables", async () => {
+    const { renderDeck } = await import("@/lib/slideRender");
+    const { data, info } = await leanTemplate(await companyTemplate());
+    const l = layoutFor(info, "content")!;
+    const out = await deckOnTemplate(testSlides(info), { info, data, look: lookFromTemplate({ colors: templateColors(l), fonts: templateFonts(l) }), title: "Test deck", forScreen: true, slideOf: [] });
+    const view = await renderDeck(out, (part) => `blob:${part}`);
+    expect(view.slides.length).toBe(6);
+    expect(view.w).toBeCloseTo(1280, 0);
+    expect(view.slides[0]).toContain("Your template, laid out by the app");
+    // The content layout's gold mark is drawn on every content slide.
+    expect(view.slides[3]).toContain("rgba(212,160,23,1.000)");
+    expect(view.slides[3]).toContain("<table");
+    expect(view.slides[3]).toMatch(/<tr data-row="0"/);
+    // Text is escaped, never markup.
+    expect(view.slides.join("")).not.toMatch(/<script/i);
+  });
+
+  it("escapes what the slides say", async () => {
+    const { renderDeck } = await import("@/lib/slideRender");
+    const { data, info } = await leanTemplate(await companyTemplate());
+    const specs = testSlides(info);
+    specs[0] = { ...specs[0], title: "<img src=x onerror=alert(1)> & co" };
+    const out = await deckOnTemplate(specs, { info, data, look: lookFromPalette({ primary: "#0b1f6b", secondary: "#d4a017" }), title: "t", forScreen: true });
+    const view = await renderDeck(out, (part) => `blob:${part}`);
+    expect(view.slides[0]).toContain("&lt;img src=x onerror=alert(1)&gt; &amp; co");
+    expect(view.slides[0]).not.toContain("<img src=x");
+  });
+});

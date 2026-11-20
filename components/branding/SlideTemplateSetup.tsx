@@ -3,7 +3,9 @@
 // Branding → Slide template. The company's PowerPoint template (a branding
 // kit): upload it once, and the slides the app makes go onto its layouts.
 // The app picks a layout for each kind of slide; an admin can change any
-// pick and make a test deck to check.
+// pick, see the slides drawn on the template right here, and download a
+// test deck. Also shown inside each project's printed-reports setup (bare),
+// beside the letterhead, so nobody has to leave the project to set it.
 
 import React, { useEffect, useState } from "react";
 import { Presentation, FileUp, Loader2, Download, Trash2, RefreshCw, Check } from "lucide-react";
@@ -14,31 +16,43 @@ import { useRole } from "@/components/providers/RoleContext";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import { tryUpload } from "@/lib/uploadRetry";
-import { deleteFile, getSignedUrlForPath } from "@/lib/storage";
+import { deleteFile } from "@/lib/storage";
 import { saveFile } from "@/lib/saveFile";
 import { LAYOUT_ROLES, ROLE_WORD, layoutFor, templateColors, templateFonts, type LayoutRole, type SlideTemplateRef } from "@/lib/slideTemplate";
 import { loadSlideTemplate, PPTX_MIME, TEMPLATE_ACCEPT, templateLook, uploadSlideTemplate } from "@/lib/slideTemplateStore";
+import type { ScreenDeck } from "@/lib/slidePreview";
+import SlideFrame from "@/components/slides/SlideFrame";
 
 const mb = (n: number) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 
-export default function SlideTemplateSetup() {
+export default function SlideTemplateSetup({ bare = false }: { bare?: boolean } = {}) {
   const { branding, save, canEdit } = useOrgBranding();
   const { activeOrgId } = useRole();
   const ref = branding?.slides ?? null;
   const [busy, setBusy] = useState<"read" | "test" | "remove" | "pick" | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
-  const [thumb, setThumb] = useState<string | null>(null);
   // A made file the phone wants a fresh tap to hand over.
   const [held, setHeld] = useState<{ data: Uint8Array; name: string } | null>(null);
 
+  // The test deck drawn on the template, so the result shows here.
+  const [preview, setPreview] = useState<{ key: string; deck: ScreenDeck | null; error?: string } | null>(null);
+  const previewKey = ref ? `${ref.path}|${JSON.stringify(ref.pick ?? {})}` : "";
   useEffect(() => {
+    if (!ref) return;
     let live = true;
-    setThumb(null);
-    if (ref?.thumbPath) getSignedUrlForPath(ref.thumbPath, 3600).then((u) => { if (live) setThumb(u); }).catch(() => {});
+    void (async () => {
+      try {
+        const [{ info, data }, { screenTestDeck }] = await Promise.all([loadSlideTemplate(ref), import("@/lib/slidePreview")]);
+        const deck = await screenTestDeck(ref.path, info, data, templateLook(info, ref), ref.pick);
+        if (live) setPreview({ key: previewKey, deck });
+      } catch (e) { if (live) setPreview({ key: previewKey, deck: null, error: (e as Error).message }); }
+    })();
     return () => { live = false; };
-  }, [ref?.thumbPath]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewKey]);
+  const shown = preview?.key === previewKey ? preview : null;
 
   const store = async (next: SlideTemplateRef | undefined) => save({ ...(branding ?? {}), slides: next });
 
@@ -120,9 +134,10 @@ export default function SlideTemplateSetup() {
     </>
   );
 
+  const wrap = (c: React.ReactNode) => (bare ? <div>{c}</div> : <Card label={heading}>{c}</Card>);
   if (!ref) {
-    return (
-      <Card label={heading}>
+    return wrap(
+      <>
         <label {...drag.bind}
           className={`flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-4 py-9 text-center cursor-pointer transition-colors ${drag.over ? `border-[var(--color-main)] ${drag.ring}` : "border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]"} ${!canEdit ? "pointer-events-none opacity-60" : ""}`}>
           <span aria-hidden className="ui-icon-tile">{busy === "read" ? <Loader2 className="w-5 h-5 animate-spin" /> : <FileUp className="w-5 h-5" />}</span>
@@ -132,18 +147,14 @@ export default function SlideTemplateSetup() {
         </label>
         {!canEdit && <p className="mt-2 text-[13px] text-[var(--color-text-muted)]">Only an admin can set the slide template.</p>}
         {notes}
-      </Card>
+      </>
     );
   }
 
   const roleRows: LayoutRole[] = LAYOUT_ROLES;
-  return (
-    <Card label={heading}>
+  return wrap(
+    <>
       <div className="flex flex-col sm:flex-row gap-5">
-        <div className="shrink-0 w-full sm:w-[260px] aspect-video rounded-md overflow-hidden ring-1 ring-[var(--color-border-strong)] bg-[var(--color-surface-2)] grid place-items-center">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          {thumb ? <img src={thumb} alt={`First slide of ${ref.name}`} className="w-full h-full object-cover" /> : <Presentation className="w-8 h-8 text-[var(--color-text-faint)]" />}
-        </div>
         <div className="min-w-0 flex-1">
           <div className="text-[17px] font-semibold text-[var(--color-text)] break-words">{ref.name}</div>
           <div className="mt-0.5 text-[14px] text-[var(--color-text-muted)]">{ref.layouts.length} layouts · {mb(ref.size)} · Saved {day(ref.savedAt)}</div>
@@ -161,6 +172,19 @@ export default function SlideTemplateSetup() {
             {canEdit && <button type="button" onClick={() => void remove()} disabled={!!busy} className={btnDanger}>{busy === "remove" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />} Remove</button>}
           </div>
         </div>
+      </div>
+
+      <div className="mt-5" data-template-preview>
+        <div className="mb-2 text-[13px] font-semibold text-[var(--color-text-muted)]">How slides come out on it</div>
+        {shown?.deck ? (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {shown.deck.slides.map((h, i) => <SlideFrame key={i} html={h} w={shown.deck!.w} h={shown.deck!.h} label={`Test slide ${i + 1}`} className="rounded-sm overflow-hidden ring-1 ring-[var(--color-border-strong)]" />)}
+          </div>
+        ) : shown?.error ? (
+          <p role="alert" className="text-[14px] font-semibold text-[var(--state-overdue)]">The slides couldn&apos;t be drawn: {shown.error}</p>
+        ) : (
+          <p className="inline-flex items-center gap-2 text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Laying test slides on your template…</p>
+        )}
       </div>
 
       <div className="mt-5 rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
@@ -182,6 +206,6 @@ export default function SlideTemplateSetup() {
         })}
       </div>
       {notes}
-    </Card>
+    </>
   );
 }

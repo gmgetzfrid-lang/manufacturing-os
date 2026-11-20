@@ -478,7 +478,7 @@ const NS = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmln
 const REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 
 /** The deck: the template with these slides in it. */
-export async function writeDeck(template: ArrayBuffer | Uint8Array, info: TemplateInfo, slides: SlideDraft[], title: string): Promise<Uint8Array> {
+export async function writeDeck(template: ArrayBuffer | Uint8Array, info: TemplateInfo, slides: SlideDraft[], title: string, opts: { forScreen?: boolean } = {}): Promise<Uint8Array> {
   const zip = await JSZip.loadAsync(template);
   const presRelsPath = "ppt/_rels/presentation.xml.rels";
   let presRels = (await zip.file(presRelsPath)?.async("string")) ?? `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>`;
@@ -524,7 +524,8 @@ export async function writeDeck(template: ArrayBuffer | Uint8Array, info: Templa
   if (zip.file("docProps/app.xml")) zip.file("docProps/app.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Application>Microsoft Office PowerPoint</Application><Slides>${slides.length}</Slides><Notes>${slides.filter((s) => s.notes && info.notesMaster).length}</Notes></Properties>`);
   const core = await zip.file("docProps/core.xml")?.async("string");
   if (core) zip.file("docProps/core.xml", /<dc:title>/.test(core) ? core.replace(/<dc:title>[\s\S]*?<\/dc:title>/, `<dc:title>${xt(title)}</dc:title>`) : core.replace(/<\/cp:coreProperties>/, `<dc:title>${xt(title)}</dc:title></cp:coreProperties>`));
-  return zip.generateAsync({ type: "uint8array", compression: "DEFLATE", mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation" });
+  // For the screen: the same file, not packed (drawn at once, never saved).
+  return zip.generateAsync({ type: "uint8array", compression: opts.forScreen ? "STORE" : "DEFLATE", mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation" });
 }
 
 /** The layout chosen for a kind of slide: the admin's pick, else the app's. */

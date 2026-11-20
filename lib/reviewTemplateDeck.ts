@@ -18,6 +18,10 @@ export interface TemplateDeckOpts {
   look: DeckLook;
   pick?: Partial<Record<LayoutRole, string>>;
   title: string;
+  /** For the screen: written unpacked, and `slideOf` filled with each
+   *  slide's place in `specs` (null: an agenda or a part's opening slide). */
+  forScreen?: boolean;
+  slideOf?: Array<number | null>;
 }
 
 export async function deckOnTemplate(specs: SlideSpec[], o: TemplateDeckOpts): Promise<Uint8Array> {
@@ -125,7 +129,7 @@ export async function deckOnTemplate(specs: SlideSpec[], o: TemplateDeckOpts): P
   };
 
   let partNo = 0;
-  for (const spec of specs) {
+  for (const [si, spec] of specs.entries()) {
     const b = spec.body;
     if (b.k === "cover") {
       // The cover: the title and what it covers on the cover layout.
@@ -147,7 +151,7 @@ export async function deckOnTemplate(specs: SlideSpec[], o: TemplateDeckOpts): P
       }
       if (!tb?.rect) head(d, spec.kicker, spec.title, PT(36));
       d.notes = spec.notes;
-      slides.push(d);
+      slides.push(d); o.slideOf?.push(si);
       // The agenda: the parts, in order.
       if (agenda && b.agenda.length) {
         const a = new SlideDraft(agenda);
@@ -161,14 +165,14 @@ export async function deckOnTemplate(specs: SlideSpec[], o: TemplateDeckOpts): P
           const r = roomOf(agenda);
           a.text(r, b.agenda.map((t, i) => ({ runs: [run(`${i + 1}.  ${t}`, PT(18))], after: 10 * k })), { name: "Agenda" });
         }
-        slides.push(a);
+        slides.push(a); o.slideOf?.push(null);
       }
       // What the review measures, on a slide of its own.
       if (b.table) {
         const m = new SlideDraft(content);
         const room = head(m, spec.kicker, b.tableTitle ?? "What this review measures", PT(25));
         table(m, room, b.table, undefined);
-        slides.push(m);
+        slides.push(m); o.slideOf?.push(null);
       }
       continue;
     }
@@ -184,7 +188,7 @@ export async function deckOnTemplate(specs: SlideSpec[], o: TemplateDeckOpts): P
         const sb = bodyBoxes(section).at(-1);
         const label = `Part ${spec.part.n} of ${spec.part.of}`;
         if (sb?.rect) s.fill(sb, [{ runs: [{ text: label, pt: fitPt(label, sb.rect, Math.min(sb.pt ?? 20, PT(16)), PT(10)) }] }]);
-        slides.push(s);
+        slides.push(s); o.slideOf?.push(null);
       }
     }
     const d = new SlideDraft(content);
@@ -215,9 +219,9 @@ export async function deckOnTemplate(specs: SlideSpec[], o: TemplateDeckOpts): P
       pane(d, b.left, { x: room.x, y: room.y, w: lw, h: room.h });
       if (b.right.title || b.right.items?.length || b.right.table) pane(d, b.right, { x: room.x + lw + IN(0.3), y: room.y, w: room.w - lw - IN(0.3), h: room.h });
     }
-    slides.push(d);
+    slides.push(d); o.slideOf?.push(si);
   }
-  return writeDeck(o.data, info, slides, o.title);
+  return writeDeck(o.data, info, slides, o.title, { forScreen: o.forScreen });
 }
 
 /** A short deck that shows each kind of slide on the layout picked for it,

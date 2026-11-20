@@ -16,6 +16,8 @@ import { ChevronLeft, ChevronRight, Download, Loader2, Maximize2, X } from "luci
 import { noEmDash } from "@/lib/noEmDash";
 import { DEFAULT_LOOK, TONE_HEX, tablePt, type SlideItem, type SlideMore, type SlidePane, type SlideSpan, type SlideSpec, type SlideTag } from "@/lib/reviewFiles";
 import type { DeckLook } from "@/lib/deckLook";
+import type { ScreenDeck } from "@/lib/slidePreview";
+import SlideFrame from "@/components/slides/SlideFrame";
 
 // The slide in its own pixels: 13.33 x 7.5 in at 96 to the inch, so a point
 // size here is the point size in the PowerPoint.
@@ -44,17 +46,23 @@ const cell = (t: string, first: boolean) => {
   return first && more.length ? <><b>{T(lead)}</b><br /><span style={{ fontWeight: 400 }}>{T(more.join(" "))}</span></> : T(t);
 };
 
-export default function ReviewSlides({ slides, name, onClose, onDownload, downloading, ready, look = DEFAULT_LOOK, template = null }: {
+export default function ReviewSlides({ slides, name, onClose, onDownload, downloading, ready, look = DEFAULT_LOOK, template = null, deck = null, deckState = null, choice = null }: {
   slides: SlideSpec[]; name: string; onClose: () => void;
   /** The colors and fonts the download is set in. */
   look?: DeckLook;
   /** The company template's file name, when the download goes onto it. */
   template?: string | null;
+  /** The slides on the company template, drawn from the file (null: plain). */
+  deck?: ScreenDeck | null;
+  /** Still laying the slides on the template, or why it couldn't. */
+  deckState?: "loading" | { error: string } | null;
+  /** The project's switch: the company template or plain slides. */
+  choice?: { on: boolean; set: (on: boolean) => void } | null;
   onDownload: () => void; downloading: boolean;
   /** The file is made and the browser wants a tap to hand it over. */
   ready: { name: string; onSave: () => void } | null;
 }) {
-  const [at, setAt] = useState(0);
+  const [atRaw, setAt] = useState(0);
   const [box, setBox] = useState<{ w: number; h: number } | null>(null);
   const [full, setFull] = useState(false);
   const [more, setMore] = useState<SlideMore | null>(null);
@@ -63,7 +71,12 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
   const shell = useRef<HTMLDivElement>(null);
   const stage = useRef<HTMLDivElement>(null);
   const touch = useRef<{ x: number; y: number } | null>(null);
-  const go = useCallback((d: number) => { setMore(null); setAt((i) => Math.max(0, Math.min(slides.length - 1, i + d))); }, [slides.length]);
+  // On the template, the slides are the file's slides (with its agenda and
+  // part openers); each points back to the slide it was made from.
+  const onTpl = !!(choice?.on && template);
+  const count = onTpl && deck ? deck.slides.length : slides.length;
+  const go = useCallback((d: number) => { setMore(null); setAt((i) => Math.max(0, Math.min(count - 1, i + d))); }, [count]);
+  const at = Math.min(atRaw, Math.max(0, count - 1));
 
   useEffect(() => {
     // Caught first, so nothing under the slides moves with the keys.
@@ -88,8 +101,10 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
 
   const canFull = typeof document !== "undefined" && !!document.fullscreenEnabled;
   const toggleFull = () => { if (document.fullscreenElement) void document.exitFullscreen(); else void shell.current?.requestFullscreen?.().catch(() => {}); };
-  const spec = slides[Math.min(at, slides.length - 1)];
-  if (!spec) return null;
+  const specAt = onTpl && deck ? deck.slideOf[at] : Math.min(at, slides.length - 1);
+  const spec = specAt == null ? null : slides[specAt] ?? null;
+  if (!slides.length) return null;
+  const openRow = (r: number) => { const b = spec?.body; const m = b?.k === "table" ? b.more?.[r] : null; if (m) setMore(m); };
   const wide = !!box && box.w >= 820;
   const pad = full ? 0 : 16;
   const scale = box ? Math.min((box.w - pad * 2) / W, (box.h - pad * 2) / H) : 1;
@@ -97,11 +112,21 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
 
   // On the page's own body, so nothing the review sits in can crop it.
   return createPortal(
-    <div ref={shell} style={deckVars(look)} className="fixed inset-0 z-[400] bg-slate-950 text-white flex flex-col" role="dialog" aria-modal="true" aria-label={`${name}: slide ${at + 1} of ${slides.length}`} data-review-slides>
+    <div ref={shell} style={deckVars(look)} className="fixed inset-0 z-[400] bg-slate-950 text-white flex flex-col" role="dialog" aria-modal="true" aria-label={`${name}: slide ${at + 1} of ${count}`} data-review-slides>
       {!full && (
         <div className="flex items-center gap-2 px-3 sm:px-5 py-2 border-b border-white/10">
-          <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-white/70">{name}{template && <span className="hidden md:inline font-normal text-white/55"> · The download goes onto {template}</span>}</span>
-          <span className="text-[13px] font-bold text-white/60 tabular-nums whitespace-nowrap" data-slide-count>{at + 1} / {slides.length}</span>
+          <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-white/70">{name}</span>
+          {choice && template && (
+            <div role="radiogroup" aria-label="Slide look" className="inline-flex rounded-lg bg-white/10 p-0.5 text-[13px] font-bold" data-slide-choice>
+              {([[true, "Company template"], [false, "Plain"]] as const).map(([v, t]) => (
+                <button key={t} type="button" role="radio" aria-checked={choice.on === v} onClick={() => { setMore(null); setAt(0); choice.set(v); }}
+                  className={`h-8 px-2.5 sm:px-3 rounded-md whitespace-nowrap ${choice.on === v ? "bg-white text-slate-900" : "text-white/80 hover:bg-white/10"}`}>
+                  {v ? <><span className="sm:hidden">Template</span><span className="hidden sm:inline">{t}</span></> : t}
+                </button>
+              ))}
+            </div>
+          )}
+          <span className="text-[13px] font-bold text-white/60 tabular-nums whitespace-nowrap" data-slide-count>{at + 1} / {count}</span>
           <button type="button" onClick={onDownload} disabled={downloading} className={bar}>{downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}<span className="hidden sm:inline">Download </span>PowerPoint</button>
           {canFull && wide && <button type="button" onClick={toggleFull} className={bar}><Maximize2 className="w-4 h-4" /> Full screen</button>}
           <button type="button" onClick={onClose} aria-label="Close" className="p-2 rounded-md hover:bg-white/10"><X className="w-5 h-5" /></button>
@@ -116,10 +141,28 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
       <div ref={stage} className="relative flex-1 min-h-0 overflow-hidden"
         onTouchStart={(e) => { const t = e.touches[0]; touch.current = { x: t.clientX, y: t.clientY }; }}
         onTouchEnd={(e) => { const s = touch.current, t = e.changedTouches[0]; touch.current = null; if (!s) return; const dx = t.clientX - s.x, dy = t.clientY - s.y; if (Math.abs(dx) > 60 && Math.abs(dx) > 2 * Math.abs(dy)) go(dx < 0 ? 1 : -1); }}>
-        {box && (wide ? (
+        {box && onTpl && !deck ? (
+          <div className="absolute inset-0 grid place-items-center px-6 text-center" data-slide-wait>
+            {deckState && typeof deckState === "object" ? (
+              <div className="max-w-md space-y-3">
+                <p className="text-[15px] font-semibold">The slides couldn&apos;t be laid on {template}: {deckState.error}</p>
+                <button type="button" onClick={() => choice?.set(false)} className="h-10 px-4 rounded-lg bg-white text-slate-900 font-bold">Show plain slides</button>
+              </div>
+            ) : <span className="inline-flex items-center gap-2 text-[15px] text-white/80"><Loader2 className="w-5 h-5 animate-spin" /> Laying the slides on {template}…</span>}
+          </div>
+        ) : box && onTpl && deck ? (wide ? (
+          <div className="absolute" style={{ inset: pad }} data-slide={at} data-slide-template onClick={full ? (e) => { if (!(e.target as HTMLElement).closest("tr[data-row]")) go(e.clientX > box.w / 2 ? 1 : -1); } : undefined}>
+            <SlideFrame key={at} fit html={deck.slides[at]} w={deck.w} h={deck.h} onRow={full ? undefined : openRow} />
+          </div>
+        ) : (
+          <div key={at} data-slide={at} data-slide-template className="absolute inset-0 overflow-y-auto" style={{ background: C.bg, color: C.ink }}>
+            <div className="p-3"><SlideFrame html={deck.slides[at]} w={deck.w} h={deck.h} onRow={openRow} label={`Slide ${at + 1}`} /></div>
+            {spec && <Page spec={spec} open={setMore} />}
+          </div>
+        )) : box && spec && (wide ? (
           <div data-slide={at} onClick={full ? (e) => go(e.clientX > box.w / 2 ? 1 : -1) : undefined}
             style={{ position: "absolute", left: (box.w - W * scale) / 2, top: (box.h - H * scale) / 2, width: W, height: H, transform: `scale(${scale})`, transformOrigin: "top left", background: C.bg, color: C.ink, fontFamily: `"${look.font}", Arial, Helvetica, sans-serif`, overflow: "hidden", cursor: full ? "pointer" : undefined }}>
-            <Canvas spec={spec} open={full ? undefined : setMore} mark={!template} />
+            <Canvas spec={spec} open={full ? undefined : setMore} mark />
           </div>
         ) : (
           <div key={at} data-slide={at} className="absolute inset-0 overflow-y-auto" style={{ background: C.bg, color: C.ink }}><Page spec={spec} open={setMore} /></div>
@@ -128,8 +171,8 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
       {!full && (
         <div className="flex items-center justify-between gap-2 px-3 sm:px-5 py-2 border-t border-white/10">
           <button type="button" disabled={at === 0} onClick={() => go(-1)} className={bar}><ChevronLeft className="w-5 h-5" /> Back</button>
-          <div className="flex gap-1.5 flex-wrap justify-center" aria-hidden>{slides.map((_, i) => <span key={i} className={`w-2 h-2 rounded-full ${i === at ? "bg-white" : "bg-white/25"}`} />)}</div>
-          <button type="button" disabled={at >= slides.length - 1} onClick={() => go(1)} className={bar}>Next <ChevronRight className="w-5 h-5" /></button>
+          <div className="flex gap-1.5 flex-wrap justify-center" aria-hidden>{Array.from({ length: count }, (_, i) => <span key={i} className={`w-2 h-2 rounded-full ${i === at ? "bg-white" : "bg-white/25"}`} />)}</div>
+          <button type="button" disabled={at >= count - 1} onClick={() => go(1)} className={bar}>Next <ChevronRight className="w-5 h-5" /></button>
         </div>
       )}
       {more && (

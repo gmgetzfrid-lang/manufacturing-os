@@ -6,8 +6,9 @@
 
 import React, { useState } from "react";
 import { FileUp, Loader2, Presentation, Printer, Trash2 } from "lucide-react";
-import Link from "next/link";
 import { useOrgBranding } from "@/components/providers/OrgBrandingProvider";
+import SlideTemplateSetup from "@/components/branding/SlideTemplateSetup";
+import { saveSlidesChoice, useSlidesChoice } from "@/lib/slidesChoice";
 import { cleanLetterhead, layerHtml, letterheadDocument, type Letterhead } from "@/lib/letterhead";
 import { saveLetterhead, useLetterhead } from "@/lib/letterheadStore";
 import { useFileDrag } from "@/hooks/useFileDrag";
@@ -208,18 +209,43 @@ export function LetterheadStep({ projectId, canManage }: { projectId: string; ca
   );
 }
 
-/** Under the letterhead: where the slides' look comes from. The company
- *  template is set once for the workspace, in Branding. */
-export function SlidesNote() {
-  const { branding, canEdit } = useOrgBranding();
+/** Under the letterhead: the project's slides. A switch for whether they go
+ *  onto the company PowerPoint template, and the template itself (upload,
+ *  replace, which layout each slide goes on, the slides drawn on it), right
+ *  here. The template is the workspace's: every project can use it. */
+export function SlidesStep({ projectId, canManage }: { projectId: string; canManage: boolean }) {
+  const { branding } = useOrgBranding();
   const t = branding?.slides;
+  const { choice, loaded } = useSlidesChoice(projectId);
+  const on = !!t && (choice ?? true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const set = async (v: boolean) => {
+    setBusy(true); setErr(null);
+    try { await saveSlidesChoice(projectId, v); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  };
   return (
-    <div className="mt-4 flex items-center gap-3 rounded-lg border border-[var(--color-border)] px-3 py-2.5">
-      <span aria-hidden className="ui-icon-tile is-sm"><Presentation className="w-4 h-4" /></span>
-      <span className="min-w-0 flex-1 text-[14px] text-[var(--color-text)]">
-        {t ? <>Slides go onto the company template, <b className="font-semibold">{t.name}</b>.</> : "Slides use the workspace colors. A company PowerPoint template can be added in Branding."}
-      </span>
-      {canEdit && <Link href="/admin/branding#slides" className={quiet}>{t ? "Change" : "Add template"}</Link>}
-    </div>
+    <section id="slides" className="mt-6 pt-5 border-t border-[var(--color-border)] scroll-mt-20" data-slides-step>
+      <div className="flex items-center gap-2.5 flex-wrap">
+        <span aria-hidden className="ui-icon-tile is-sm is-solid"><Presentation className="w-4 h-4" /></span>
+        <h3 className="min-w-0 flex-1 text-[16px] font-semibold text-[var(--color-text)]">Slides</h3>
+        {t && (
+          <div role="radiogroup" aria-label="This project's slides" className="inline-flex rounded-md border border-[var(--color-border-strong)] overflow-hidden text-[14px] font-semibold">
+            {([[true, "Company template"], [false, "Plain"]] as const).map(([v, label]) => (
+              <button key={label} type="button" role="radio" aria-checked={on === v} disabled={!canManage || busy || !loaded} onClick={() => void set(v)}
+                className={`h-9 px-3 ${on === v ? "bg-[var(--color-main)] text-white" : "bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"} disabled:cursor-not-allowed`}>
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      <p className="mt-1.5 text-[13px] text-[var(--color-text-muted)]">
+        {!t ? "Upload the company's PowerPoint template. Every project can use it." : on ? "This project's slides go onto the company template." : "This project's slides use the workspace colors, without the template."}
+        {t && !canManage ? " Only the project owner or an admin can change this." : ""}
+      </p>
+      {err && <p role="alert" className="mt-1.5 text-[13px] font-semibold text-[var(--state-overdue)]">{err}</p>}
+      <div className="mt-3"><SlideTemplateSetup bare /></div>
+    </section>
   );
 }

@@ -51,6 +51,9 @@ import { useTheme } from "@/components/providers/ThemeProvider";
 import { useOrgBranding } from "@/components/providers/OrgBrandingProvider";
 import { lookFromPalette, lookFromTemplate } from "@/lib/deckLook";
 import { loadSlideTemplate } from "@/lib/slideTemplateStore";
+import { saveSlidesChoice, useSlidesChoice } from "@/lib/slidesChoice";
+import type { ScreenDeck } from "@/lib/slidePreview";
+import type { SlideSpec } from "@/lib/reviewFiles";
 import { useProjectFindings, useProjectUnit } from "@/components/projects/Findings";
 import { categoriesOf, guessCategories, isLive, leadTag, type Category } from "@/lib/findings";
 import { useProjectType } from "@/lib/shiftTimesStore";
@@ -113,8 +116,14 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
   const { palette } = useTheme();
   const { branding } = useOrgBranding();
   const tpl = branding?.slides ?? null;
+  // The project's switch: on the company template (the default when there
+  // is one) or plain. A person who can't change the project still can for
+  // what they're looking at.
+  const { choice: savedChoice } = useSlidesChoice(projectId);
+  const [ownChoice, setOwnChoice] = useState<boolean | null>(null);
+  const useTpl = !!tpl && (ownChoice ?? savedChoice ?? true);
   const wordLook = useMemo(() => lookFromPalette(palette), [palette]);
-  const slideLook = useMemo(() => (tpl ? lookFromTemplate(tpl) : wordLook), [tpl, wordLook]);
+  const slideLook = useMemo(() => (useTpl && tpl ? lookFromTemplate(tpl) : wordLook), [useTpl, tpl, wordLook]);
   // Until a person picks one: what needs a decision, else everything.
   const [filterPick, setFilter] = useState<Filter | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
@@ -127,6 +136,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
     (v) => !Object.values(v ?? {}).some((a) => a?.cause || a?.known || a?.note?.trim()));
   const [tick, setTick] = useState(0);
   const [viewing, setViewing] = useState(false);
+  const [screen, setScreen] = useState<{ deck: ScreenDeck | null; state: "loading" | { error: string } | null }>({ deck: null, state: null });
   // A file that is made, where the browser wants a tap to hand it over.
   const [held, setHeld] = useState<{ data: Uint8Array | Blob; name: string; mime: string } | null>(null);
 
@@ -309,12 +319,37 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
       const o = fileOpts();
       const made = kind === "word"
         ? { data: await reviewDocx(review, o, wordLook), name: `${fileStem(o)}.docx`, mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }
-        : { data: await reviewPptx(review, o, { look: slideLook, template: tpl ? { ...(await loadSlideTemplate(tpl)), pick: tpl.pick } : null }), name: `${fileStem(o)} slides.pptx`, mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation" };
+        : { data: await reviewPptx(review, o, { look: slideLook, template: useTpl && tpl ? { ...(await loadSlideTemplate(tpl)), pick: tpl.pick } : null }), name: `${fileStem(o)} slides.pptx`, mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation" };
       if (!(await saveFile(made.data, made.name, made.mime))) setHeld(made);
     } catch (e) { setErr(`The file couldn't be made: ${(e as Error).message}`); }
     finally { setBusy(null); }
   };
   const saveHeld = async () => { if (held && (await saveFile(held.data, held.name, held.mime))) setHeld(null); };
+  // The slides on show, made once when the viewer opens (and again when the review changes).
+  const viewSpecs = useMemo<SlideSpec[] | null>(() => (viewing && review ? deckSlides(review, fileOpts()) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [viewing, review]);
+  // On the template: the same file the download writes, drawn for the screen.
+  useEffect(() => {
+    let live = true;
+    const want = viewing && useTpl && tpl && viewSpecs;
+    queueMicrotask(() => { if (live) setScreen({ deck: null, state: want ? "loading" : null }); });
+    if (!want) return () => { live = false; };
+    void (async () => {
+      try {
+        const [{ data, info }, { screenDeck }] = await Promise.all([loadSlideTemplate(tpl), import("@/lib/slidePreview")]);
+        const deck = await screenDeck(tpl.path, viewSpecs, { info, data, look: slideLook, pick: tpl.pick, title: `${phase?.name ?? projectName} post-event review` });
+        if (live) setScreen({ deck, state: null });
+      } catch (e) { if (live) setScreen({ deck: null, state: { error: (e as Error).message } }); }
+    })();
+    return () => { live = false; };
+  }, [viewing, useTpl, tpl, viewSpecs, slideLook, phase?.name, projectName]);
+  /** The switch: saved on the project for everyone when this person may change it. */
+  const chooseSlides = async (on: boolean) => {
+    setOwnChoice(on);
+    if (!canManage) return;
+    try { await saveSlidesChoice(projectId, on); } catch (e) { setErr((e as Error).message); }
+  };
 
   if (!review) return <LoadingBlock what="the review" />;
   const m = review.metrics;
@@ -386,7 +421,8 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
       {msg && <div role="status" className="mt-2 text-[13px] font-semibold text-amber-900 dark:text-amber-200">{msg}</div>}
       {held && !viewing && <div role="status" className="mt-2 flex items-center gap-2 flex-wrap text-[13px] font-semibold text-[var(--color-text)]" data-file-ready><span className="min-w-0 flex-1 basis-40">The file is ready.</span><button type="button" onClick={() => void saveHeld()} className={pri}><Download className="w-4 h-4" /> Save file</button></div>}
       </Card>
-      {viewing && <ReviewSlides slides={deckSlides(review, fileOpts())} name={`${phase?.name ?? projectName} post-event review`} onClose={() => setViewing(false)} onDownload={() => void download("slides")} downloading={busy === "slides"} ready={held ? { name: held.name, onSave: () => void saveHeld() } : null} look={slideLook} template={tpl?.name ?? null} />}
+      {viewing && viewSpecs && <ReviewSlides slides={viewSpecs} name={`${phase?.name ?? projectName} post-event review`} onClose={() => setViewing(false)} onDownload={() => void download("slides")} downloading={busy === "slides"} ready={held ? { name: held.name, onSave: () => void saveHeld() } : null} look={slideLook} template={tpl?.name ?? null}
+        deck={useTpl ? screen.deck : null} deckState={useTpl ? screen.state : null} choice={tpl ? { on: useTpl, set: (on) => void chooseSlides(on) } : null} />}
 
       {carried.map(({ phase: p, actions }) => (
         <section key={p.id} className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] p-4 sm:p-5" data-review-carried={p.id}>
