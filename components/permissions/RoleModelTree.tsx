@@ -125,7 +125,7 @@ function Fold({ label, count, children, tone }: { label: React.ReactNode; count?
       <summary className={`cursor-pointer list-none flex items-center gap-2 px-1 py-1.5 text-sm font-bold select-none ${tone === "warn" ? "text-amber-700 dark:text-amber-300" : "text-[var(--color-text)]"} hover:underline`}>
         <ChevronRight className="w-4 h-4 transition-transform group-open/rm:rotate-90 shrink-0" />
         {label}
-        {typeof count === "number" && <span className="text-xs font-black tabular-nums text-[var(--color-text-faint)]">{count}</span>}
+        {typeof count === "number" && <span className="text-[13px] font-semibold tabular-nums text-[var(--color-text-muted)]">{count}</span>}
       </summary>
       <div className="ml-5 pl-2 border-l border-[var(--color-border)] space-y-1.5 pb-2">{children}</div>
     </details>

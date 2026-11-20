@@ -98,8 +98,8 @@ export default function PermissionsExplorer() {
 
   const cell = (r: Row, i: number) => {
     const v = r.m[i];
-    if (v === "y") return <span className="text-emerald-600 dark:text-emerald-400 font-black">✓</span>;
-    if (v === "c") return <span className="text-amber-600 dark:text-amber-400 font-black cursor-help" title={r.cond ?? "Conditional"}>◐</span>;
+    if (v === "y") return <span className="text-[var(--state-released)] font-semibold">✓</span>;
+    if (v === "c") return <span className="text-[var(--state-held)] font-semibold cursor-help" title={r.cond ?? "Conditional"}>◐</span>;
     return <span className="text-[var(--color-text-faint)]">-</span>;
   };
 
@@ -128,9 +128,9 @@ export default function PermissionsExplorer() {
         <table className="w-full text-xs border-collapse">
           <thead className="sticky top-0 z-10">
             <tr className="bg-[var(--color-surface-2)]">
-              <th className="sticky left-0 bg-[var(--color-surface-2)] text-left font-black px-3 py-2 min-w-[240px]">Capability</th>
+              <th className="sticky left-0 bg-[var(--color-surface-2)] text-left font-semibold px-3 py-2 min-w-[240px]">Capability</th>
               {ROLES.map((r, i) => (
-                <th key={r} className={`px-2 py-2 font-black whitespace-nowrap ${role === i ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{r}</th>
+                <th key={r} className={`px-2 py-2 font-semibold whitespace-nowrap ${role === i ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{r}</th>
               ))}
             </tr>
           </thead>

@@ -332,7 +332,7 @@ export default function PermissionsDrawer(props: {
             <div className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-muted)]">
               <Shield className="h-3.5 w-3.5" /> Permissions · {nodeType === "collection" ? "folder" : nodeType}
             </div>
-            <h2 className="mt-2 text-[30px] sm:text-[34px] leading-none font-black tracking-[-0.03em] break-words">{nodeLabel}</h2>
+            <h2 className="mt-2 font-display text-[28px] sm:text-[32px] leading-none font-semibold break-words">{nodeLabel}</h2>
             <div className="mt-2 text-[12px] text-[var(--color-text-muted)] truncate" title={nodeId}>ID {nodeId}</div>
           </div>
 

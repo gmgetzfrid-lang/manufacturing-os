@@ -127,7 +127,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
               <RotateCcw className="w-3 h-3" /> Restore defaults
             </button>
             <button onClick={() => void save()} disabled={!dirty || saving}
-              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 text-[13px] font-bold disabled:opacity-40">
+              className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] text-[14px] font-semibold disabled:opacity-40">
               {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Save policy
             </button>
           </div>
@@ -142,9 +142,9 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
         <table className="w-full text-xs border-collapse">
           <thead className="sticky top-0 z-10">
             <tr className="bg-[var(--color-surface-2)]">
-              <th className="sticky left-0 bg-[var(--color-surface-2)] text-left font-black px-4 py-2 min-w-[230px]">Action</th>
+              <th className="sticky left-0 bg-[var(--color-surface-2)] text-left font-semibold px-4 py-2 min-w-[230px]">Action</th>
               {TOKENS.map((t) => (
-                <th key={t} className="px-2 py-2 font-black text-[var(--color-text-muted)] whitespace-nowrap">{TOKEN_LABEL[t] ?? t}</th>
+                <th key={t} className="px-2 py-2 font-semibold text-[var(--color-text-muted)] whitespace-nowrap">{TOKEN_LABEL[t] ?? t}</th>
               ))}
             </tr>
           </thead>
@@ -156,7 +156,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
                   <tr key={d.id} className="border-t border-[var(--color-border)] hover:bg-[var(--color-surface-2)]/50">
                     <td className="sticky left-0 bg-[var(--color-surface)] px-4 py-1.5">
                       <span className="font-medium text-[var(--color-text)]">{d.label}</span>
-                      {d.critical && <span className="ml-1.5 text-[11px] font-black text-amber-600 dark:text-amber-400 cursor-help" title="Critical: Admin cannot be removed">CRITICAL</span>}
+                      {d.critical && <span className="ml-1.5 text-[13px] font-semibold text-[var(--state-held)] cursor-help" title="Admin always keeps this one">Locked for Admin</span>}
                       <div className="text-[11px] text-[var(--color-text-faint)]">{d.description}</div>
                     </td>
                     {TOKENS.map((t) => {

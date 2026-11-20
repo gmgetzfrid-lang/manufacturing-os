@@ -1089,7 +1089,7 @@ export default function TicketDetailView() {
 
     // Open the Rejection Modal (mocking the workflow action)
     const rejectAction: WorkflowAction = {
-      label: 'Request Revision with Redlines',
+      label: 'Ask for a revision with markups',
       action: 'request_revision',
       variant: 'destructive',
       requiresComment: true

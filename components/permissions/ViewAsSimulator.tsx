@@ -217,7 +217,7 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
                     </select>
                     <input type="date" value={grantUntil} onChange={(e) => setGrantUntil(e.target.value)} min={new Date().toISOString().slice(0, 10)} className="h-7 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[11px] [color-scheme:light] dark:[color-scheme:dark]" title="Expires (optional)" />
                     <input value={grantNote} onChange={(e) => setGrantNote(e.target.value)} placeholder="why (goes on the audit)…" className="flex-1 min-w-[120px] h-7 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[11px]" />
-                    <button onClick={() => void doGrant()} disabled={grantBusy} className="h-8 inline-flex items-center gap-1 px-2.5 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 text-[12px] font-bold disabled:opacity-50">
+                    <button onClick={() => void doGrant()} disabled={grantBusy} className="h-8 inline-flex items-center gap-1 px-3 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] text-[13px] font-semibold disabled:opacity-50">
                       {grantBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Grant
                     </button>
                   </div>

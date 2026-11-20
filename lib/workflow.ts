@@ -83,7 +83,7 @@ export const WorkflowEngine = {
       case 'PENDING_ENG_INITIAL':
         if (isManagement || allows('ticket.initial_review')) {
            actions.push({
-             label: 'Approve Request (To Assignment)',
+             label: 'Approve and send to drafting',
              action: 'approve_initial',
              variant: 'success',
              description: 'Accepts the request and moves it to the assignment queue.'
@@ -91,7 +91,7 @@ export const WorkflowEngine = {
 
            // Now requires picking a SPECIFIC engineer — was previously broadcast.
            actions.push({
-             label: 'Flag for Engineering Review',
+             label: 'Ask an engineer to review',
              action: 'request_eng_review',
              variant: 'secondary',
              requiresComment: true,
@@ -100,7 +100,7 @@ export const WorkflowEngine = {
            });
 
            actions.push({
-             label: 'Reject / Return to Requester',
+             label: 'Send back to the requester',
              action: 'reject',
              variant: 'destructive',
              requiresComment: true
@@ -118,13 +118,13 @@ export const WorkflowEngine = {
             : allows('ticket.eng_review') || isManagement;
           if (canActHere) {
             actions.push({
-              label: 'Engineering Review Complete',
+              label: 'Engineering review done',
               action: 'approve_team',
               variant: 'success',
               description: 'Engineering has verified the scope. Ready for assignment.'
             });
             actions.push({
-              label: 'Return with Questions',
+              label: 'Send back with questions',
               action: 'reject',
               variant: 'destructive',
               requiresComment: true
@@ -139,13 +139,13 @@ export const WorkflowEngine = {
         // drafter directly, or branch in an engineer for scope review first.
         if (allows('ticket.assign')) {
           actions.push({
-            label: 'Assign Drafter',
+            label: 'Assign a drafter',
             action: 'assign',
             variant: 'default',
             description: 'Select a drafter to begin work.'
           });
           actions.push({
-            label: 'Flag for Engineering Review',
+            label: 'Ask an engineer to review',
             action: 'request_eng_review',
             variant: 'secondary',
             requiresComment: true,
@@ -155,7 +155,7 @@ export const WorkflowEngine = {
         }
         if (allows('ticket.self_assign')) {
           actions.push({
-            label: 'Pick Up Ticket',
+            label: 'Pick it up',
             action: 'self_assign',
             variant: 'outline'
           });
@@ -167,7 +167,7 @@ export const WorkflowEngine = {
       case 'REVISION_REQ':
         if (canActAsDrafter) {
           actions.push({
-            label: 'Save Progress (Stage Files)',
+            label: 'Save progress',
             action: 'save_progress',
             variant: 'outline',
             description: 'Upload files but keep ticket in Drafting.'
@@ -175,7 +175,7 @@ export const WorkflowEngine = {
 
           if (ticket.attachments?.some(a => a.type === 'Draft')) {
             actions.push({
-              label: 'Submit Draft for Review',
+              label: 'Send draft for review',
               action: 'submit_draft',
               variant: 'default',
               requiresFile: true
@@ -184,7 +184,7 @@ export const WorkflowEngine = {
 
           if (ticket.requestType === 'RFI') {
             actions.push({
-              label: 'Answer & Close RFI',
+              label: 'Answer and close the RFI',
               action: 'close_rfi',
               variant: 'success',
               requiresComment: true
@@ -201,7 +201,7 @@ export const WorkflowEngine = {
             // Viewer-tier requesters can't sign off on engineering work.
             // Their "approve" is actually "send for engineer final approval".
             actions.push({
-              label: 'Send for Engineer Final Approval',
+              label: 'Send to the engineer for final approval',
               action: 'request_final_engineer_approval',
               variant: 'success',
               requiresEngineerPick: true,
@@ -210,7 +210,7 @@ export const WorkflowEngine = {
           } else {
             // Engineer requesters approve directly to IFC.
             actions.push({
-              label: 'Approve (Issue for Construction)',
+              label: 'Approve for construction',
               action: 'approve_draft_ifc',
               variant: 'success',
               description: 'Accepts the draft. Drafter will be notified to issue IFC.'
@@ -220,14 +220,14 @@ export const WorkflowEngine = {
           // the small correction noted — no extra full review cycle for a
           // mislabel. Available to every requester tier by design.
           actions.push({
-            label: 'Approve with Minor Correction',
+            label: 'Approve with a small correction',
             action: 'approve_minor_correction',
             variant: 'secondary',
             requiresComment: true,
             description: 'Approve as-is except for a small fix (typo, mislabel). Your note goes to the drafter to fold into the issued file - no new review round.'
           });
           actions.push({
-            label: 'Request Revision',
+            label: 'Ask for a revision',
             action: 'request_revision',
             variant: 'warning',
             requiresComment: true
@@ -235,20 +235,20 @@ export const WorkflowEngine = {
         } else if (allows('ticket.direct_approve') || isManagement) {
           // Direct approvers (engineers by default) and management can co-review.
           actions.push({
-            label: 'Approve (Issue for Construction)',
+            label: 'Approve for construction',
             action: 'approve_draft_ifc',
             variant: 'success',
             description: 'Accepts the draft. Drafter will be notified to issue IFC.'
           });
           actions.push({
-            label: 'Approve with Minor Correction',
+            label: 'Approve with a small correction',
             action: 'approve_minor_correction',
             variant: 'secondary',
             requiresComment: true,
             description: 'Approve as-is except for a small fix (typo, mislabel). Note goes to the drafter - no new review round.'
           });
           actions.push({
-            label: 'Request Revision',
+            label: 'Ask for a revision',
             action: 'request_revision',
             variant: 'warning',
             requiresComment: true
@@ -267,27 +267,27 @@ export const WorkflowEngine = {
             : allows('ticket.final_approve') || isManagement;
           if (canActHere) {
             actions.push({
-              label: 'Approve as Engineer (Issue for Construction)',
+              label: 'Approve for construction',
               action: 'engineer_approve_final',
               variant: 'success',
               description: 'Engineering sign-off complete. Drafter will be notified to issue IFC.'
             });
             actions.push({
-              label: 'Approve with Minor Correction',
+              label: 'Approve with a small correction',
               action: 'approve_minor_correction',
               variant: 'success',
               requiresComment: true,
               description: 'Approve as-is except for a small fix (typo, mislabel). Note goes to the drafter - no new review round.'
             });
             actions.push({
-              label: 'Request Revision (Send Back to Drafter)',
+              label: 'Ask the drafter for a revision',
               action: 'engineer_request_revision',
               variant: 'warning',
               requiresComment: true,
               description: 'Send back to the drafter with revision notes.'
             });
             actions.push({
-              label: 'Return to Requester for Clarification',
+              label: 'Ask the requester to clarify',
               action: 'engineer_return_to_requester',
               variant: 'destructive',
               requiresComment: true,
@@ -301,13 +301,13 @@ export const WorkflowEngine = {
       case 'PENDING_IFC':
         if (canActAsDrafter) {
              actions.push({
-               label: 'Save Progress',
+               label: 'Save progress',
                action: 'save_progress',
                variant: 'outline'
              });
 
              actions.push({
-               label: 'ISSUE FINAL IFC PACKAGE',
+               label: 'Issue the final IFC package',
                action: 'submit_final',
                variant: 'default',
                requiresFile: true
@@ -318,8 +318,8 @@ export const WorkflowEngine = {
       // --- CLOSURE (acknowledgment by requester) ---
       case 'FINAL_DRAFT':
          if (canActAsRequester || allows('ticket.direct_approve') || isManagement) {
-             actions.push({ label: 'Acknowledge & Close', action: 'close_ticket', variant: 'success' });
-             actions.push({ label: 'Reject Final (Re-Open)', action: 'reject_final', variant: 'destructive', requiresComment: true });
+             actions.push({ label: 'Accept and close', action: 'close_ticket', variant: 'success' });
+             actions.push({ label: 'Reject and reopen', action: 'reject_final', variant: 'destructive', requiresComment: true });
          }
          break;
 
@@ -331,7 +331,7 @@ export const WorkflowEngine = {
       case 'CLOSED':
         if (allows('ticket.reopen') || canActAsRequester) {
           actions.push({
-            label: 'Reopen Ticket',
+            label: 'Reopen',
             action: 'reopen_ticket',
             variant: 'outline',
             requiresComment: true,
@@ -345,7 +345,7 @@ export const WorkflowEngine = {
     if (allows('ticket.force_close') && ticket.status !== 'CLOSED') {
        const hasClose = actions.some(a => a.action === 'close_ticket');
        if (!hasClose) {
-         actions.push({ label: 'Force Close (Admin)', action: 'close_ticket', variant: 'ghost' });
+         actions.push({ label: 'Close it (admin)', action: 'close_ticket', variant: 'ghost' });
        }
     }
 
@@ -353,7 +353,7 @@ export const WorkflowEngine = {
     // engineer is OOO and the work is blocked. Default: Admin only.
     if (allows('ticket.reassign_engineer') && ticket.status === 'PENDING_FINAL_APPROVAL' && ticket.assignedEngineerId) {
       actions.push({
-        label: 'Reassign Engineer Reviewer',
+        label: 'Change the engineer reviewer',
         action: 'reassign_engineer',
         variant: 'ghost',
         requiresEngineerPick: true,
