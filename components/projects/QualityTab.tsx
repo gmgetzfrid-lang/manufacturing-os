@@ -863,16 +863,8 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, p
 }
 
 function TurnoverChip({ status }: { status: TurnoverItem["status"] }) {
-  const tone = status === "accepted" ? "border-emerald-500/40 bg-emerald-500/[0.07] text-emerald-700 dark:text-emerald-300"
-    : status === "received" ? "border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text-muted)] dark:text-[var(--color-text)]"
-    : status === "rejected" ? "border-rose-500/40 bg-rose-500/[0.07] text-rose-700 dark:text-rose-300"
-    : status === "waived" ? "border-[var(--color-border)] text-[var(--color-text-faint)]"
-    : "border-amber-500/40 bg-amber-500/[0.07] text-amber-700 dark:text-amber-300";
-  return (
-    <span className={`text-[13px] font-semibold px-1.5 py-0.5 rounded border ${tone}`}>
-      {TURNOVER_STATUS_LABEL[status]}
-    </span>
-  );
+  const tone = status === "accepted" ? "is-good" : status === "received" ? "" : status === "rejected" ? "is-bad" : status === "waived" ? "is-muted" : "is-warn";
+  return <span className={`ui-pill ${tone}`}>{TURNOVER_STATUS_LABEL[status]}</span>;
 }
 
 /** One turnover row, changed in place. */
@@ -1034,9 +1026,10 @@ function PunchSection({ orgId, projectId, canManage, actor, items, parties, peop
   return (
     <section className="min-w-0">
       <div className="flex items-center gap-2.5 mb-2.5 min-h-8">
+        <span aria-hidden className="ui-icon-tile is-sm is-solid"><ListChecks className="w-4 h-4" /></span>
         <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Punch list</h2>
         {open.length > 0 && (
-          <span className="ml-auto inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]"><span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-held)]" />{open.length} open</span>
+          <span className="ml-auto inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]"><span className="ui-count is-warn">{open.length}</span> open</span>
         )}
       </div>
       <div className="bg-[var(--color-surface)] rounded-lg overflow-hidden border border-[var(--color-border)]">
@@ -1083,7 +1076,7 @@ function PunchSection({ orgId, projectId, canManage, actor, items, parties, peop
             const where = [it.location, it.assignee ? `on it: ${it.assignee}` : null, it.partyId ? partyName.get(it.partyId) ?? null : null].filter(Boolean).join(" · ");
             return (
               <li key={it.id} className={`px-4 py-2 flex items-center gap-2 flex-wrap text-xs ${it.status !== "open" ? "opacity-55" : ""}`}>
-                <span className={`w-2 h-2 rounded-full shrink-0 ${it.status === "done" ? "bg-emerald-500" : it.status === "void" ? "bg-[var(--color-border-strong)]" : overdue ? "bg-rose-500" : "bg-amber-500"}`} />
+                <span className={`ui-pill !h-5 !px-2 !text-[12px] ${it.status === "done" ? "is-good" : it.status === "void" ? "is-muted" : overdue ? "is-bad" : "is-warn"}`}>{it.status === "done" ? "Done" : it.status === "void" ? "Void" : overdue ? "Late" : "Open"}</span>
                 <span className={`text-[var(--color-text)] ${it.status !== "open" ? "line-through" : ""}`}>{it.title}</span>
                 {where && <span className="text-[11px] text-[var(--color-text-muted)]">{where}</span>}
                 {it.dueDate && it.status === "open" && (
@@ -1091,7 +1084,6 @@ function PunchSection({ orgId, projectId, canManage, actor, items, parties, peop
                     due {new Date(it.dueDate + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}{overdue ? ", overdue" : ""}
                   </span>
                 )}
-                {it.status === "void" && <span className="text-[11px] font-semibold text-[var(--color-text-faint)]">Void</span>}
                 {it.createdByName && <span className="text-[11px] text-[var(--color-text-faint)]">by {it.createdByName}</span>}
                 {canManage && it.status === "open" && busy !== it.id && (
                   <span className="ml-auto flex items-center gap-1">

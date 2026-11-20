@@ -491,10 +491,10 @@ export default function NewTicketPage() {
           {/* The document it came from, when it was sent here from the viewer. */}
           {sourceFileUrl && (
             <div className="flex items-center gap-3 px-5 sm:px-6 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] rounded-t-lg">
-              <FileText className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
+              <span aria-hidden className="ui-icon-tile is-sm"><FileText className="w-4 h-4" /></span>
               <div className="min-w-0 text-[15px] text-[var(--color-text)]">
                 <span className="text-[var(--color-text-muted)]">Source document </span>
-                <span className="font-display font-semibold tabular-nums">{sourceDocNum || sourceDocTitle || sourceFileName || 'Document'}</span>
+                <span className="ui-id">{sourceDocNum || sourceDocTitle || sourceFileName || 'Document'}</span>
                 {sourceDocRev ? <span className="text-[var(--color-text-muted)]">, Rev {sourceDocRev}</span> : null}
                 <span className="text-[var(--color-text-muted)]">. Attached as the source file.</span>
               </div>
@@ -678,9 +678,9 @@ function QuickPick({ label, value, options, onPick }: {
           const on = o.value === value;
           return (
             <button key={o.value} type="button" role="radio" aria-checked={on} onClick={() => onPick(o.value)}
-              className={`inline-flex items-center gap-2 h-10 pl-3 pr-3.5 rounded-md border text-[14px] transition-colors ${on ? 'border-[var(--color-text)] shadow-[inset_0_0_0_1px_var(--color-text)] bg-[var(--color-surface)] font-semibold text-[var(--color-text)]' : 'border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]'}`}>
-              <span aria-hidden className={`w-4 h-4 rounded-full border-2 grid place-items-center shrink-0 ${on ? 'border-[var(--color-text)]' : 'border-[var(--color-border-strong)]'}`}>
-                {on && <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-text)]" />}
+              className={`inline-flex items-center gap-2 h-10 pl-3 pr-3.5 rounded-md border text-[14px] transition-colors ${on ? 'border-[var(--color-main)] shadow-[inset_0_0_0_1px_var(--color-main)] bg-[var(--color-accent-soft)] font-semibold text-[var(--color-accent-text)]' : 'border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]'}`}>
+              <span aria-hidden className={`w-4 h-4 rounded-full border-2 grid place-items-center shrink-0 ${on ? 'border-[var(--color-main)]' : 'border-[var(--color-border-strong)]'}`}>
+                {on && <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-main)]" />}
               </span>
               {o.label}
             </button>

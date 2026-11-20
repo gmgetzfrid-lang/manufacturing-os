@@ -24,23 +24,20 @@ export const iconBtn =
 /** A link in running text or a cell. */
 export const link = "text-[var(--color-accent-text)] hover:underline underline-offset-2";
 
-export type StatusTone = "overdue" | "held" | "released" | "neutral";
+export type StatusTone = "overdue" | "held" | "released" | "neutral" | "muted";
 
-const DOT: Record<StatusTone, string> = {
-  overdue: "bg-[var(--state-overdue)]",
-  held: "bg-[var(--state-held)]",
-  released: "bg-[var(--state-released)]",
-  neutral: "bg-[var(--color-text-faint)]",
+const PILL: Record<StatusTone, string> = {
+  overdue: "is-bad",
+  held: "is-warn",
+  released: "is-good",
+  neutral: "",
+  muted: "is-muted",
 };
 
-/** A quiet status tag: an 8px dot in the status color and the word. */
+/** A status as a soft colored pill: red late, amber waiting, green done,
+ *  brand for normal work, grey for not set. */
 export function StatusTag({ tone, children, className = "" }: { tone: StatusTone; children: React.ReactNode; className?: string }) {
-  return (
-    <span className={`inline-flex items-center gap-1.5 text-[13px] font-semibold whitespace-nowrap ${tone === "overdue" ? "text-[var(--state-overdue)]" : "text-[var(--color-text)]"} ${className}`}>
-      <span aria-hidden className={`w-2 h-2 rounded-full shrink-0 ${DOT[tone]}`} />
-      {children}
-    </span>
-  );
+  return <span className={`ui-pill ${PILL[tone]} ${className}`}>{children}</span>;
 }
 
 /** The 3px left edge on a late row (put it in a `relative` first cell). */
@@ -74,14 +71,14 @@ export function humanizeDates(text: string): string {
 /** A small ruled row of counts (label over figure), for a section's footer
  *  or a body's head. Each cell can open what it counts. */
 export function FactRow({ cells, className = "" }: {
-  cells: Array<{ label: React.ReactNode; value: React.ReactNode; href?: string; tone?: "bad" | "warn"; note?: React.ReactNode }>;
+  cells: Array<{ label: React.ReactNode; value: React.ReactNode; href?: string; tone?: "bad" | "warn"; note?: React.ReactNode; icon?: React.ReactNode }>;
   className?: string;
 }) {
   const tone = (t?: "bad" | "warn") => t === "bad" ? "text-[var(--state-overdue)]" : t === "warn" ? "text-[var(--state-held)]" : "text-[var(--color-text)]";
   return (
     <div className={`grid grid-cols-1 sm:grid-flow-col sm:auto-cols-fr divide-y sm:divide-y-0 sm:divide-x divide-[var(--color-border)] ${className}`}>
       {cells.map((c, i) => {
-        const body = (
+        const text = (
           <>
             <span className="block min-w-0 text-[13px] text-[var(--color-text-muted)] truncate">{c.label}</span>
             <span className="sm:mt-0.5 flex items-baseline gap-2 min-w-0 shrink-0 sm:shrink">
@@ -90,8 +87,17 @@ export function FactRow({ cells, className = "" }: {
             </span>
           </>
         );
+        // With an icon: the tile at the left, the label and figure beside it.
+        const body = c.icon ? (
+          <>
+            <span aria-hidden className={`ui-icon-tile ${c.tone === "bad" ? "!bg-[var(--state-overdue)] !text-white" : ""}`}>{c.icon}</span>
+            <span className="min-w-0 flex-1 flex items-baseline justify-between gap-3 sm:block">{text}</span>
+          </>
+        ) : text;
         // A phone: one line each, the label left and the figure right.
-        const cell = "min-w-0 px-4 py-2.5 sm:py-3 flex items-baseline justify-between gap-3 sm:block";
+        const cell = c.icon
+          ? "min-w-0 px-4 py-2.5 sm:py-3 flex items-center gap-3"
+          : "min-w-0 px-4 py-2.5 sm:py-3 flex items-baseline justify-between gap-3 sm:block";
         return c.href ? (
           <Link key={i} href={c.href} className={`${cell} hover:bg-[var(--color-surface-2)] transition-colors`}>{body}</Link>
         ) : (
@@ -99,5 +105,20 @@ export function FactRow({ cells, className = "" }: {
         );
       })}
     </div>
+  );
+}
+
+/** How far a project's work is: a brand bar (red when late) and the %. */
+export function WorkBar({ pct, late = false, title, className = "", width = "w-24" }: {
+  pct: number; late?: boolean; title?: string; className?: string; width?: string;
+}) {
+  const v = Math.min(100, Math.max(0, Math.round(pct)));
+  return (
+    <span className={`inline-flex items-center gap-2 ${className}`} title={title}>
+      <span className={`relative h-2 ${width} rounded-full bg-[var(--color-accent-soft)] overflow-hidden`} role="progressbar" aria-valuenow={v} aria-valuemin={0} aria-valuemax={100} aria-label="Work done">
+        <span className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${v}%`, background: late ? "var(--state-overdue)" : "var(--color-main)" }} />
+      </span>
+      <span className="font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)]">{v}%</span>
+    </span>
   );
 }

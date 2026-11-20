@@ -440,7 +440,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
           <div className="min-w-0 space-y-3 scroll-mt-4" data-findings-list>
             <div className="flex gap-1.5 items-center">
               {/* One row that scrolls sideways on a phone, so the list starts high. */}
-              <div className="min-w-0 flex-1 flex gap-1.5 overflow-x-auto sm:flex-wrap pb-0.5 [scrollbar-width:none]" data-finding-pills>
+              <div className="min-w-0 flex-1 flex gap-1.5 overflow-x-auto sm:flex-wrap pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" data-finding-pills>
               {pt.pending.length > 0 && <Pill id="pending">Needs your call {pt.pending.length}</Pill>}
               <Pill id="all">All {liveF.length}</Pill>
               <Pill id="gap">Gaps {count("gap")}</Pill>

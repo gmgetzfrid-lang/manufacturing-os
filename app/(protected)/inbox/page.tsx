@@ -9,7 +9,11 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Send, XCircle, RefreshCw, Download } from "lucide-react";
+import {
+  Send, XCircle, RefreshCw, Download, BellRing, Lightbulb, CircleAlert, ListChecks, PenLine, MailPlus, MessageCircle, Eye,
+  ClipboardCheck, CalendarClock, FileCheck, BadgeCheck, KeyRound, OctagonPause, Flag, CalendarDays,
+} from "lucide-react";
+import { stageLabel, stageTone, StatusTag as StageTag } from "@/components/requests/RequestBits";
 import { useRole } from "@/components/providers/RoleContext";
 import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
 import { useTicketNotifications } from "@/hooks/useTicketNotifications";
@@ -161,12 +165,12 @@ export default function InboxPage() {
     return (d ?? 0) >= 14 ? <StatusTag tone="overdue">{words}</StatusTag> : (d ?? 0) >= 7 ? <StatusTag tone="held">{words}</StatusTag> : <>{words}</>;
   };
   const docLink = (href: string, label: string) => (
-    <Link href={href} className="font-display font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{label}</Link>
+    <Link href={href} className="ui-id">{label}</Link>
   );
   const ticketRows = (list: TicketListItem[]) => list.slice(0, 6).map((t, i) => ({
     key: t.id ?? `t-${i}`,
-    item: <Link href={`/requests/${t.id ?? ""}`} className="text-[var(--color-text)] hover:text-[var(--color-accent-text)]"><span className="font-display font-semibold tabular-nums mr-2">{t.ticketId ?? "–"}</span>{t.title ?? "Untitled"}</Link>,
-    detail: statusWords(t.status),
+    item: <Link href={`/requests/${t.id ?? ""}`} className="group text-[var(--color-text)] hover:text-[var(--color-accent-text)]"><span className="ui-id mr-2 group-hover:underline">{t.ticketId ?? "–"}</span>{t.title ?? "Untitled"}</Link>,
+    detail: t.status ? <StageTag tone={stageTone(t.status)}>{stageLabel(t.status)}</StageTag> : "–",
     when: ago(t.lastModified),
   }));
   const ticketMore = (n: number) => (n > 6 ? { href: "/requests", label: `See all ${n} in Drafting Requests` } : undefined);
@@ -175,7 +179,7 @@ export default function InboxPage() {
   // (What you have checked out is in its own section below, with Release.)
   const groups: Group[] = !data ? [] : [
     {
-      key: "markups", title: "Markup requests for you", count: data.markupRequestsToMe.length,
+      key: "markups", title: "Markup requests for you", icon: <PenLine className="w-4 h-4" />, count: data.markupRequestsToMe.length,
       rows: data.markupRequestsToMe.slice(0, 6).map((mr) => ({
         key: mr.id,
         item: docLink(mr.libraryId ? `/documents/${mr.libraryId}?doc=${mr.documentId}` : "/documents", mr.documentNumber || mr.documentTitle || mr.documentId.slice(0, 8)),
@@ -189,11 +193,11 @@ export default function InboxPage() {
         ),
       })),
     },
-    { key: "assigned", title: "Requests assigned to you", count: data.ticketsAssigned.length, rows: ticketRows(data.ticketsAssigned), more: ticketMore(data.ticketsAssigned.length) },
-    { key: "unread", title: "Requests with new activity", count: data.ticketsUnread.length, rows: ticketRows(data.ticketsUnread), more: ticketMore(data.ticketsUnread.length) },
-    { key: "watching", title: "Requests you watch", count: data.ticketsWatching.length, rows: ticketRows(data.ticketsWatching), more: ticketMore(data.ticketsWatching.length) },
+    { key: "assigned", title: "Requests assigned to you", icon: <MailPlus className="w-4 h-4" />, count: data.ticketsAssigned.length, rows: ticketRows(data.ticketsAssigned), more: ticketMore(data.ticketsAssigned.length) },
+    { key: "unread", title: "Requests with new activity", icon: <MessageCircle className="w-4 h-4" />, count: data.ticketsUnread.length, rows: ticketRows(data.ticketsUnread), more: ticketMore(data.ticketsUnread.length) },
+    { key: "watching", title: "Requests you watch", icon: <Eye className="w-4 h-4" />, count: data.ticketsWatching.length, rows: ticketRows(data.ticketsWatching), more: ticketMore(data.ticketsWatching.length) },
     {
-      key: "reviews", title: "Waiting for your review sign-off", count: data.reviewsPendingOnMe.length,
+      key: "reviews", title: "Waiting for your review sign-off", icon: <ClipboardCheck className="w-4 h-4" />, count: data.reviewsPendingOnMe.length,
       help: "Drafts in review that need your sign-off before they can publish.",
       rows: data.reviewsPendingOnMe.slice(0, 6).map((r) => ({
         key: r.signoffId, late: (r.__ageDays ?? 0) >= 14,
@@ -203,7 +207,8 @@ export default function InboxPage() {
       })),
     },
     {
-      key: "cycles", title: "Periodic reviews you owe", count: data.reviewCyclesDueOnMe.length,
+      key: "cycles", title: "Periodic reviews you owe", icon: <CalendarClock className="w-4 h-4" />, count: data.reviewCyclesDueOnMe.length,
+      tone: data.reviewCyclesDueOnMe.some((r) => r.overdue) ? "bad" : undefined,
       help: "Documents whose scheduled review is due. Open each, check it is still right, and mark it reviewed.",
       rows: [...data.reviewCyclesDueOnMe].sort((a, b) => Number(b.overdue) - Number(a.overdue) || String(a.nextReviewDate ?? "").localeCompare(String(b.nextReviewDate ?? ""))).slice(0, 6).map((r) => ({
         key: r.documentId, late: r.overdue,
@@ -216,7 +221,7 @@ export default function InboxPage() {
       more: data.reviewCyclesDueOnMe.length > 6 ? { href: "/register", label: `See all ${data.reviewCyclesDueOnMe.length.toLocaleString()} in the register` } : undefined,
     },
     {
-      key: "dist", title: "Confirm you have these revisions", count: data.distributionAcksPendingOnMe.length,
+      key: "dist", title: "Confirm you have these revisions", icon: <FileCheck className="w-4 h-4" />, count: data.distributionAcksPendingOnMe.length,
       help: "Someone sent you a revision and needs your confirmation for the record. Open the document and select “I have this revision”.",
       rows: data.distributionAcksPendingOnMe.slice(0, 6).map((a) => ({
         key: a.ackId,
@@ -226,7 +231,7 @@ export default function InboxPage() {
       })),
     },
     {
-      key: "acks", title: "Waiting for your acknowledgment", count: data.acknowledgmentsPendingOnMe.length,
+      key: "acks", title: "Waiting for your acknowledgment", icon: <BadgeCheck className="w-4 h-4" />, count: data.acknowledgmentsPendingOnMe.length,
       help: "Controlled revisions you must confirm you have read and understood. Open each and sign.",
       rows: data.acknowledgmentsPendingOnMe.slice(0, 6).map((a) => ({
         key: a.rosterId, late: (a.__ageDays ?? 0) >= 14,
@@ -236,7 +241,7 @@ export default function InboxPage() {
       })),
     },
     {
-      key: "recerts", title: "Access recertification due", count: data.accessRecertsDue.length,
+      key: "recerts", title: "Access recertification due", icon: <KeyRound className="w-4 h-4" />, count: data.accessRecertsDue.length,
       help: "Check who has access to these libraries and recertify it.",
       rows: data.accessRecertsDue.slice(0, 6).map((r) => ({
         key: r.libraryId, late: r.overdue,
@@ -248,7 +253,7 @@ export default function InboxPage() {
       })),
     },
     {
-      key: "holds", title: "Holds you opened", count: data.myOpenHolds.length,
+      key: "holds", title: "Holds you opened", icon: <OctagonPause className="w-4 h-4" />, count: data.myOpenHolds.length,
       rows: data.myOpenHolds.slice(0, 6).map((h, i) => ({
         key: h.id ?? `h-${i}`,
         item: <StatusTag tone="overdue">{h.reason}</StatusTag>,
@@ -258,7 +263,7 @@ export default function InboxPage() {
       more: { href: "/admin/holds", label: "Hold queue" },
     },
     {
-      key: "transmittals", title: "Transmittals waiting for receipt", count: data.transmittalsAwaitingAck.length,
+      key: "transmittals", title: "Transmittals waiting for receipt", icon: <Send className="w-4 h-4" />, count: data.transmittalsAwaitingAck.length,
       help: "Issued to someone who hasn't confirmed receipt yet. Follow up for a clean paper trail.",
       rows: data.transmittalsAwaitingAck.slice(0, 6).map((t) => ({
         key: t.id, late: (t.__ageDays ?? 0) >= 14,
@@ -269,7 +274,7 @@ export default function InboxPage() {
       more: { href: "/transmittals", label: "Transmittal register" },
     },
     {
-      key: "late-ms", title: "Milestones past their date", count: data.milestonesOverdue.length,
+      key: "late-ms", title: "Milestones past their date", icon: <Flag className="w-4 h-4" />, tone: "bad", count: data.milestonesOverdue.length,
       rows: data.milestonesOverdue.slice(0, 6).map((m, i) => ({
         key: m.id ?? `mo-${i}`, late: true,
         item: m.projectId ? <Link href={`/projects/${m.projectId}?tab=plan`} className="font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{m.name}</Link> : <span className="font-semibold">{m.name}</span>,
@@ -278,7 +283,7 @@ export default function InboxPage() {
       })),
     },
     {
-      key: "ms", title: "Milestones due this week", count: data.milestonesUpcoming.length,
+      key: "ms", title: "Milestones due this week", icon: <CalendarDays className="w-4 h-4" />, count: data.milestonesUpcoming.length,
       rows: data.milestonesUpcoming.slice(0, 8).map((m, i) => {
         const d = m.__dueInDays ?? 0;
         return {
@@ -303,7 +308,7 @@ export default function InboxPage() {
         title={answer}
         sub={error
           ? <span role="alert" className="text-[var(--state-overdue)] font-semibold">Your queue didn&apos;t load: {error}</span>
-          : lead ? <>First up: {lead.ref ? <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{lead.ref} </span> : null}<span className="text-[var(--color-text)]">{lead.name}</span>.</> : null}
+          : lead ? <>First up: {lead.ref ? <span className="font-display font-semibold tabular-nums">{lead.ref} </span> : null}<span className="text-[var(--color-text)]">{lead.name}</span>.</> : null}
         facts={[
           { label: "Overdue", value: facts.overdue, tone: facts.overdue > 0 ? "bad" : undefined },
           { label: "Waiting on you", value: facts.yourTurn },
@@ -328,7 +333,10 @@ export default function InboxPage() {
 
       <PageBody>
         <section aria-label="Needs you">
-          <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)] mb-1">Needs you</h2>
+          <div className="flex items-center gap-2 mb-1">
+            <span aria-hidden className="ui-icon-tile is-sm is-solid"><BellRing className="w-4 h-4" /></span>
+            <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Needs you</h2>
+          </div>
           <AttentionFeed
             items={filteredAttention}
             counts={attnCounts}
@@ -341,11 +349,13 @@ export default function InboxPage() {
         </section>
 
         {nudges.length > 0 && (
-          <Panel label="Suggested next steps" pad={false}>
+          <Panel label={<span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm is-solid"><Lightbulb className="w-4 h-4" /></span>Suggested next steps <span className="ui-count is-solid">{nudges.length}</span></span>} pad={false}>
             <ul className="divide-y divide-[var(--color-border)]">
               {nudges.map((n) => (
-                <li key={n.id} className="px-4 py-3 flex items-baseline gap-3 text-[15px] text-[var(--color-text)]">
-                  <span aria-hidden className={`w-2 h-2 rounded-full shrink-0 translate-y-[-1px] ${n.severity === "high" ? "bg-[var(--state-overdue)]" : "bg-[var(--state-held)]"}`} />
+                <li key={n.id} className="px-4 py-2.5 flex items-center gap-3 text-[15px] text-[var(--color-text)]">
+                  <span aria-hidden className={`ui-icon-tile is-sm ${n.severity === "high" ? "!bg-[color-mix(in_srgb,var(--state-overdue)_14%,transparent)] !text-[var(--state-overdue)]" : "!bg-[color-mix(in_srgb,var(--state-held)_16%,transparent)] !text-[var(--state-held)]"}`}>
+                    {n.severity === "high" ? <CircleAlert className="w-4 h-4" /> : <Lightbulb className="w-4 h-4" />}
+                  </span>
                   <span className="flex-1 min-w-0">{n.message}</span>
                   {n.actionLabel && n.href && <Link href={n.href} className={`shrink-0 text-[14px] ${link}`}>{n.actionLabel}</Link>}
                 </li>
@@ -357,8 +367,9 @@ export default function InboxPage() {
         {deskCount > 0 && (
           <section aria-label="Your queue">
             <div className="flex items-center gap-2 mb-2.5 min-h-9">
+              <span aria-hidden className="ui-icon-tile is-sm is-solid"><ListChecks className="w-4 h-4" /></span>
               <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Your queue</h2>
-              <span className="text-[15px] text-[var(--color-text-muted)] tabular-nums">{deskCount.toLocaleString()}</span>
+              <span className="ui-count is-solid">{deskCount.toLocaleString()}</span>
             </div>
             <GroupedTable groups={groups} label="Your queue" />
           </section>
@@ -378,10 +389,4 @@ interface TicketListItem {
   title?: string;
   status?: string;
   lastModified?: unknown;
-}
-
-/** "PENDING_IFC" → "Pending IFC". */
-function statusWords(status?: string): string {
-  if (!status) return "–";
-  return status.split("_").map((w, i) => (["IFC", "ENG"].includes(w) ? w : i === 0 ? w.charAt(0) + w.slice(1).toLowerCase() : w.toLowerCase())).join(" ");
 }

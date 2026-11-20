@@ -685,6 +685,10 @@ export default function RequestPortal() {
     selected: selectedTicketIds.has(t.id!),
     onToggle: () => toggleTicketSelection(t.id!),
     onOpen: () => router.push(`/requests/${t.id}`),
+    onType: t.requestType ? () => { setFilters((f) => ({ ...f, type: f.type === t.requestType ? 'ALL' : t.requestType })); setCurrentPage(1); } : undefined,
+    typeOn: !!t.requestType && filters.type === t.requestType,
+    onUnit: t.unit ? () => { setFilters((f) => ({ ...f, search: f.search === t.unit ? '' : t.unit })); setCurrentPage(1); } : undefined,
+    unitOn: !!t.unit && filters.search === t.unit,
     menu: [
       { icon: <Eye className="w-4 h-4" />, label: 'Open', onClick: () => router.push(`/requests/${t.id}`) },
       { icon: <AlertCircle className="w-4 h-4" />, label: 'Mark urgent', onClick: () => handleQuickMarkUrgent(t.id!) },
@@ -908,8 +912,17 @@ interface RowProps {
   selected: boolean;
   onToggle: () => void;
   onOpen: () => void;
+  /** Filter the list to this request's type (again: all types). */
+  onType?: () => void;
+  typeOn?: boolean;
+  /** Filter the list to this request's unit (again: every unit). */
+  onUnit?: () => void;
+  unitOn?: boolean;
   menu: MoreItem[];
 }
+
+/** A tag that filters the list; brand-filled while it is the filter. */
+const tagOn = '!bg-[var(--color-main)] !text-white !border-[var(--color-main)]';
 
 const rowMenuTrigger = "w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]";
 
@@ -926,53 +939,68 @@ function DueText({ t }: { t: Ticket }) {
 
 function priorityText(t: Ticket): React.ReactNode {
   if (typeof t.priority === 'number') {
-    return <span className={t.priority === 1 ? 'font-semibold text-[var(--color-text)]' : 'text-[var(--color-text-muted)]'}>P{t.priority}{t.priority === 1 ? ' Urgent' : ''}</span>;
+    return t.priority === 1
+      ? <span className="ui-pill is-bad">P1 Urgent</span>
+      : <span className="font-display font-semibold tabular-nums text-[var(--color-text-muted)]">P{t.priority}</span>;
   }
   const urgent = t.status === 'REVISION_REQ' || t.requestType === 'RFI';
-  return <span className={urgent ? 'font-semibold text-[var(--color-text)]' : 'text-[var(--color-text-muted)]'}>{urgent ? 'Urgent' : 'Normal'}</span>;
+  return urgent ? <span className="ui-pill is-bad">Urgent</span> : <span className="text-[var(--color-text-muted)]">Normal</span>;
 }
 
 /** One request as a table row: the whole row opens it. */
-function RequestRow({ ticket: t, actionNeeded, unread, selected, onToggle, onOpen, menu }: RowProps) {
+function RequestRow({ ticket: t, actionNeeded, unread, selected, onToggle, onOpen, onType, typeOn, onUnit, unitOn, menu }: RowProps) {
   const late = isPastDue(t);
   const who = waitingOn(t);
   const comments = t.comments?.length ?? 0;
   return (
     <tr
       onClick={(e) => { if ((e.target as HTMLElement).closest('a,button,input,label,select,[role=menu]')) return; onOpen(); }}
-      className={`cursor-pointer transition-colors ${selected ? 'bg-[var(--color-surface-2)]' : 'hover:bg-[var(--color-surface-2)]'}`}
+      className={`cursor-pointer transition-colors ${selected ? 'bg-[var(--color-accent-soft)]' : 'hover:bg-[var(--color-surface-2)]'}`}
     >
       <td className="pl-4 py-3 relative align-top">
-        {late && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />}
+        {late ? <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />
+          : selected && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--color-main)]" />}
         <input type="checkbox" aria-label={`Select ${t.ticketId}`} checked={selected} onChange={onToggle} className="mt-1 w-4 h-4 rounded border-[var(--color-border-strong)] cursor-pointer" />
       </td>
       <td className="px-4 py-3 align-top whitespace-nowrap">
         <div className="flex items-center gap-1.5">
-          {unread && <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-text)]" title="New updates" aria-label="New updates" />}
-          <Link href={`/requests/${t.id}`} className="font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{t.ticketId}</Link>
+          {unread && <span className="w-2 h-2 rounded-full bg-[var(--color-main)]" title="New updates" aria-label="New updates" />}
+          <Link href={`/requests/${t.id}`} className="ui-id text-[16px]">{t.ticketId}</Link>
         </div>
-        <div className="text-[13px] text-[var(--color-text-muted)]">{t.requestType}</div>
+        {t.requestType && (
+          <div className="mt-1">
+            {onType
+              ? <button type="button" onClick={onType} aria-pressed={typeOn} title={typeOn ? 'Show every type' : `Show only ${t.requestType} requests`} className={`ui-tag ${typeOn ? tagOn : ''}`}>{t.requestType}</button>
+              : <span className="ui-tag">{t.requestType}</span>}
+          </div>
+        )}
       </td>
       <td className="px-4 py-3 align-top">
         <div className={`line-clamp-2 max-w-[60ch] ${unread ? 'font-semibold' : ''} text-[var(--color-text)]`}>{t.title}</div>
         {t.requesterName && <div className="text-[13px] text-[var(--color-text-muted)]">From {t.requesterName}</div>}
       </td>
       <td className="px-4 py-3 align-top">
-        <StatusTag tone={stageTone(t.status)}>{stageLabel(t.status)}</StatusTag>
-        {t.archivedAt && <div className="text-[13px] text-[var(--color-text-muted)]" title="Its files moved to the archive">Archived</div>}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <StatusTag tone={stageTone(t.status)}>{stageLabel(t.status)}</StatusTag>
+          {t.archivedAt && <span className="ui-pill is-muted" title="Its files moved to the archive">Archived</span>}
+        </div>
       </td>
       <td className="px-4 py-3 align-top hidden md:table-cell whitespace-nowrap">
-        {actionNeeded ? <span className="font-semibold text-[var(--color-text)]">You</span> : who ? <span className="text-[var(--color-text)]">{who}</span> : <span className="text-[var(--color-text-faint)]">Nobody</span>}
+        {actionNeeded ? <span className="ui-pill is-solid">You</span> : who ? <span className="text-[var(--color-text)]">{who}</span> : <span className="text-[var(--color-text-faint)]">Nobody</span>}
       </td>
       <td className="px-4 py-3 align-top"><DueText t={t} /></td>
-      <td className="px-4 py-3 align-top hidden xl:table-cell font-display tabular-nums">{t.unit}</td>
+      <td className="px-4 py-3 align-top hidden xl:table-cell">
+        {t.unit && (onUnit
+          ? <button type="button" onClick={onUnit} aria-pressed={unitOn} title={unitOn ? 'Show every unit' : `Show only unit ${t.unit}`} className={`ui-tag ${unitOn ? tagOn : ''}`}>{t.unit}</button>
+          : <span className="ui-tag">{t.unit}</span>)}
+      </td>
       <td className="px-4 py-3 align-top hidden xl:table-cell whitespace-nowrap">{priorityText(t)}</td>
       <td className="px-4 py-3 align-top hidden lg:table-cell whitespace-nowrap tabular-nums text-[var(--color-text-muted)]">{fmtDay(t.lastModified)}</td>
       <td className="pr-3 py-2 align-top">
         <div className="flex items-center justify-end gap-1">
           {comments > 0 && (
-            <span className={`inline-flex items-center gap-1 text-[13px] tabular-nums ${unread ? 'font-semibold text-[var(--color-text)]' : 'text-[var(--color-text-muted)]'}`} title={`${comments} comment${comments === 1 ? '' : 's'}`}>
-              <MessageCircle className="w-3.5 h-3.5" />{comments}
+            <span className={`inline-flex items-center gap-1 ${unread ? 'text-[var(--color-main)]' : 'text-[var(--color-text-muted)]'}`} title={`${comments} comment${comments === 1 ? '' : 's'}`}>
+              <MessageCircle className="w-3.5 h-3.5" /><span className={`ui-count ${unread ? 'is-solid' : ''}`}>{comments}</span>
             </span>
           )}
           <MoreMenu iconOnly label={`More for ${t.ticketId}`} triggerClass={rowMenuTrigger} items={menu} />
@@ -992,14 +1020,15 @@ function RequestItem({ ticket: t, actionNeeded, unread, menu }: RowProps) {
       <Link href={`/requests/${t.id}`} className="flex-1 min-w-0 pl-4 pr-1 py-3 active:bg-[var(--color-surface-2)]">
         <div className="flex items-start gap-2">
           <div className="min-w-0 flex-1">
-            <span className="font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)]">{t.ticketId}</span>
-            {unread && <span className="ml-1.5 inline-block w-1.5 h-1.5 rounded-full bg-[var(--color-text)] align-middle" aria-label="New updates" />}
+            <span className="ui-id text-[16px]">{t.ticketId}</span>
+            {t.requestType && <span className="ml-2 ui-tag align-middle">{t.requestType}</span>}
+            {unread && <span className="ml-1.5 inline-block w-2 h-2 rounded-full bg-[var(--color-main)] align-middle" aria-label="New updates" />}
             <div className={`text-[15px] text-[var(--color-text)] line-clamp-1 ${unread ? 'font-semibold' : ''}`}>{t.title}</div>
           </div>
           <StatusTag tone={stageTone(t.status)} className="mt-1">{stageLabel(t.status)}</StatusTag>
         </div>
         <div className="mt-0.5 text-[13px] text-[var(--color-text-muted)] flex flex-wrap gap-x-3">
-          {who && <span>Waiting on {actionNeeded ? <span className="font-semibold text-[var(--color-text)]">you</span> : who}</span>}
+          {who && <span>Waiting on {actionNeeded ? <span className="font-semibold text-[var(--color-main)]">you</span> : who}</span>}
           {t.targetCompletionAt && <span>Due <DueText t={t} /></span>}
           <span>Updated {fmtDay(t.lastModified)}</span>
         </div>

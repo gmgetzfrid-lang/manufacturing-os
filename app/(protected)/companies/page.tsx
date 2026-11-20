@@ -16,18 +16,19 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import { useDraft } from "@/hooks/useDraft";
-import { Plus, Search, Loader2 } from "lucide-react";
+import { Plus, Search, Loader2, HardHat } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, Card, heroPrimary, heroQuiet, type HeroFact } from "@/components/ui/PageHero";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
-import { StatusTag, type Tone } from "@/components/requests/RequestBits";
+import { StatusTag } from "@/components/requests/RequestBits";
 import { bandInput, bandInputIcon, bandSeg, bandSegItem, plural } from "@/components/admin/band";
 import {
   listCompanies, saveCompany, gatherCompanyProfile,
   COMPANY_KIND_LABEL, type Company, type CompanyProfileData,
 } from "@/lib/companies";
-import { scoreBand, type DimensionScore } from "@/lib/companyScore";
+import { type DimensionScore } from "@/lib/companyScore";
+import { ScoreBadge, ScoreFigure } from "./score";
 import { fmtMoney } from "@/lib/costs";
 
 const KIND_FILTERS = ["all", "contractor", "vendor", "rental", "internal"] as const;
@@ -134,6 +135,7 @@ export default function CompaniesPage() {
         <Card><LoadingBlock what="companies" className="border-0 p-0" /></Card>
       ) : shown.length === 0 ? (
         <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-12 text-center">
+          <span aria-hidden className="ui-icon-tile mx-auto mb-3"><HardHat className="w-5 h-5" /></span>
           <div className="font-display text-[19px] font-semibold text-[var(--color-text)]">
             {companies.length === 0 ? "Start the registry" : "No companies match"}
           </div>
@@ -162,7 +164,9 @@ export default function CompaniesPage() {
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
               {shown.slice(0, limit).map((c) => (
-                <CompanyRow key={c.id} company={c} profile={profiles.get(c.id) ?? null} failed={profileFailed.has(c.id)} onOpen={() => router.push(`/companies/${c.id}`)} />
+                <CompanyRow key={c.id} company={c} profile={profiles.get(c.id) ?? null} failed={profileFailed.has(c.id)} onOpen={() => router.push(`/companies/${c.id}`)}
+                  onKind={(KIND_FILTERS as readonly string[]).includes(c.kind) ? () => setKindFilter(kindFilter === c.kind ? "all" : (c.kind as (typeof KIND_FILTERS)[number])) : undefined}
+                  onTrade={c.trade ? () => setSearch(search === c.trade ? "" : c.trade!) : undefined} />
               ))}
             </tbody>
           </table>
@@ -198,8 +202,6 @@ const DIMENSIONS: Array<[DimensionScore["key"], string]> = [
   ["safety", "Safety"], ["quality", "Quality"], ["cost", "Cost"], ["schedule", "Schedule"], ["responsiveness", "Response"],
 ];
 
-const BAND_TONE: Record<string, Tone> = { green: "good", lime: "none", amber: "warn", rose: "bad", slate: "none" };
-
 function useCompanyFacts(profile: CompanyProfileData | null) {
   return useMemo(() => {
     const ev = profile?.events ?? [];
@@ -224,16 +226,14 @@ function ScoreCell({ profile, failed }: { profile: CompanyProfileData | null; fa
       : <span className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-text-faint)]"><Loader2 className="w-3 h-3 animate-spin" /> Gathering</span>;
   }
   const sc = profile.scorecard;
-  const band = scoreBand(sc.composite);
   return (
-    <span className="inline-flex items-center gap-2.5 whitespace-nowrap" title={sc.evidenceCount > 0 ? `${sc.evidenceCount} evidence point${sc.evidenceCount === 1 ? "" : "s"} back this score` : "No recorded work yet"}>
-      {sc.composite != null && <span className="font-display text-[19px] font-semibold tabular-nums text-[var(--color-text)]">{Math.round(sc.composite)}</span>}
-      <StatusTag tone={BAND_TONE[band.tone] ?? "none"} className={sc.composite == null ? "!text-[var(--color-text-muted)]" : ""}>{band.label}</StatusTag>
+    <span title={sc.evidenceCount > 0 ? `${sc.evidenceCount} evidence point${sc.evidenceCount === 1 ? "" : "s"} back this score` : "No recorded work yet"}>
+      <ScoreBadge score={sc.composite} />
     </span>
   );
 }
 
-function CompanyRow({ company: c, profile, failed, onOpen }: { company: Company; profile: CompanyProfileData | null; failed?: boolean; onOpen: () => void }) {
+function CompanyRow({ company: c, profile, failed, onOpen, onKind, onTrade }: { company: Company; profile: CompanyProfileData | null; failed?: boolean; onOpen: () => void; onKind?: () => void; onTrade?: () => void }) {
   const f = useCompanyFacts(profile);
   const dims = new Map((profile?.scorecard.dimensions ?? []).map((d) => [d.key, d]));
   const blocked = c.status === "do_not_use";
@@ -242,20 +242,28 @@ function CompanyRow({ company: c, profile, failed, onOpen }: { company: Company;
       <td className="px-4 py-3 relative max-w-0">
         {blocked && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />}
         <Link href={`/companies/${c.id}`} className="block truncate font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{c.name}</Link>
-        <div className="flex flex-wrap items-center gap-x-2.5 text-[13px] text-[var(--color-text-muted)]">
-          {blocked && <StatusTag tone="bad">Do not use</StatusTag>}
-          {c.status === "inactive" && <StatusTag>Inactive</StatusTag>}
-          {c.trade && <span className="truncate">{c.trade}</span>}
-        </div>
+        {(blocked || c.status === "inactive" || c.trade) && (
+          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]">
+            {blocked && <StatusTag tone="bad">Do not use</StatusTag>}
+            {c.status === "inactive" && <StatusTag>Inactive</StatusTag>}
+            {c.trade && (onTrade
+              ? <button type="button" onClick={onTrade} title={`Find every ${c.trade} company`} className="ui-tag max-w-full truncate">{c.trade}</button>
+              : <span className="ui-tag">{c.trade}</span>)}
+          </div>
+        )}
       </td>
-      <td className="px-4 py-3 hidden md:table-cell whitespace-nowrap text-[var(--color-text)]">{COMPANY_KIND_LABEL[c.kind]}</td>
+      <td className="px-4 py-3 hidden md:table-cell whitespace-nowrap">
+        {onKind
+          ? <button type="button" onClick={onKind} title={`Show only ${COMPANY_KIND_LABEL[c.kind]}`} className="ui-tag">{COMPANY_KIND_LABEL[c.kind]}</button>
+          : <span className="ui-tag">{COMPANY_KIND_LABEL[c.kind]}</span>}
+      </td>
       <td className="px-4 py-3"><ScoreCell profile={profile} failed={failed} /></td>
       {DIMENSIONS.map(([key]) => {
         const d = dims.get(key);
         return (
           <td key={key} className="px-3 py-3 hidden lg:table-cell text-right whitespace-nowrap" title={d?.detail}>
             {d?.score != null
-              ? <span className="font-display text-[17px] font-semibold tabular-nums text-[var(--color-text)]">{Math.round(d.score)}</span>
+              ? <ScoreFigure score={d.score} className="text-[17px]" />
               : <span className="text-[var(--color-text-faint)]">{profile ? "None" : ""}</span>}
             {key === "safety" && (f.recordables > 0 || f.stopWorks > 0) && (
               <div className="text-[13px] font-semibold text-[var(--state-overdue)]">
@@ -265,7 +273,7 @@ function CompanyRow({ company: c, profile, failed, onOpen }: { company: Company;
           </td>
         );
       })}
-      <td className="px-4 py-3 hidden xl:table-cell text-right tabular-nums">{profile ? f.jobs : ""}</td>
+      <td className="px-4 py-3 hidden xl:table-cell text-right">{profile ? <span className={`ui-count ${f.jobs > 0 ? "" : "!bg-transparent !text-[var(--color-text-faint)]"}`}>{f.jobs}</span> : ""}</td>
       <td className="px-4 py-3 hidden xl:table-cell text-right tabular-nums whitespace-nowrap">{profile ? (f.bidsTotal > 0 ? `${f.bidsWon} of ${f.bidsTotal}` : <span className="text-[var(--color-text-faint)]">None</span>) : ""}</td>
       <td className="px-4 py-3 hidden 2xl:table-cell text-right tabular-nums whitespace-nowrap">{profile ? (f.coCount > 0 ? <>{f.coCount} <span className="text-[var(--color-text-muted)]">{fmtMoney(f.coAmount)}</span></> : <span className="text-[var(--color-text-faint)]">None</span>) : ""}</td>
       <td className="px-4 py-3 hidden 2xl:table-cell whitespace-nowrap">
@@ -289,10 +297,10 @@ function CompanyItem({ company: c, profile, failed }: { company: Company; profil
           <span className="min-w-0 font-semibold text-[15px] text-[var(--color-text)] truncate">{c.name}</span>
           <ScoreCell profile={profile} failed={failed} />
         </div>
-        <div className="mt-0.5 flex flex-wrap items-center gap-x-3 text-[13px] text-[var(--color-text-muted)]">
+        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]">
           {blocked && <StatusTag tone="bad">Do not use</StatusTag>}
-          <span>{COMPANY_KIND_LABEL[c.kind]}</span>
-          {c.trade && <span>{c.trade}</span>}
+          <span className="ui-tag">{COMPANY_KIND_LABEL[c.kind]}</span>
+          {c.trade && <span className="ui-tag">{c.trade}</span>}
           {profile && f.jobs > 0 && <span>{plural(f.jobs, "job")}</span>}
           {f.recordables > 0 && <span className="font-semibold text-[var(--state-overdue)]">{plural(f.recordables, "recordable")}</span>}
         </div>

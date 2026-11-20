@@ -10,11 +10,11 @@ import type { Milestone } from "@/types/schema";
 import { discoveryOf, kindOf, ADDED, type AddedKind } from "@/lib/discovery";
 import { fmtInTz } from "@/lib/scheduleTz";
 
-/** The tag's look: ink on the warm fill for both kinds (the word says
- *  which). Colour stays for problem, warning and done. */
+/** The tag's look: a brand-tinted tag for both kinds (the word says
+ *  which). Red, amber and green stay for problem, warning and done. */
 export const ADDED_TONE: Record<AddedKind, string> = {
-  discovery: "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]",
-  added: "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]",
+  discovery: "border-[color-mix(in_srgb,var(--color-main)_22%,transparent)] bg-[var(--color-accent-soft)] text-[var(--color-accent-text)]",
+  added: "border-[color-mix(in_srgb,var(--color-main)_22%,transparent)] bg-[var(--color-accent-soft)] text-[var(--color-accent-text)]",
 };
 
 /** "Added scope, raised Wed 5:00 PM: clean the downcomers. Known work that wasn't on the schedule — not in the original plan." */
@@ -31,7 +31,7 @@ export default function DiscoveryTag({ m, tz, className = "" }: { m: Milestone; 
   const tip = discoveryTip(m, tz);
   if (!d || !tip) return null;
   return (
-    <span title={tip} className={`inline-block whitespace-nowrap rounded border px-1.5 py-0.5 text-[12px] font-semibold leading-none align-middle ${ADDED_TONE[kindOf(d)]} ${className}`}>
+    <span title={tip} className={`ui-tag !h-[1.375rem] !px-1.5 !text-[12.5px] align-middle ${className}`}>
       {ADDED[kindOf(d)].word}
     </span>
   );

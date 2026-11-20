@@ -145,8 +145,8 @@ export function Empty({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** Tabs inside a section: the current one is underlined in the signal
- *  color. Counts are optional. */
+/** Tabs inside a section: the current one is underlined in the brand
+ *  color. Counts are optional badges (solid on the current tab). */
 export function Tabs<T extends string>({ value, onChange, options, className = "" }: {
   value: T;
   onChange: (v: T) => void;
@@ -154,19 +154,21 @@ export function Tabs<T extends string>({ value, onChange, options, className = "
   className?: string;
 }) {
   return (
-    <div role="tablist" className={`flex items-end gap-4 overflow-x-auto no-scrollbar border-b border-[var(--color-border)] ${className}`}>
+    // The base line is an inset shadow, not a border the tabs overlap, so
+    // nothing pokes out of the strip and no scrollbar can show.
+    <div role="tablist" className={`flex items-end gap-4 overflow-x-auto overflow-y-hidden no-scrollbar [scrollbar-width:none] [&::-webkit-scrollbar]:hidden shadow-[inset_0_-1px_0_var(--color-border)] ${className}`}>
       {options.map((o) => {
         const on = o.value === value;
         return (
           <button key={o.value} role="tab" aria-selected={on} type="button" onClick={() => onChange(o.value)}
-            className={`shrink-0 -mb-px inline-flex items-center gap-1.5 h-9 border-b-2 text-[14px] transition-colors ${
+            className={`shrink-0 inline-flex items-center gap-1.5 h-9 border-b-2 text-[14px] whitespace-nowrap transition-colors ${
               on
                 ? "border-[var(--color-main)] font-semibold text-[var(--color-text)]"
                 : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
             }`}>
             {o.label}
             {o.count !== undefined && (
-              <span className="font-display tabular-nums text-[14px] text-[var(--color-text-muted)]">{o.count}</span>
+              <span className={`ui-count ${on ? "is-solid" : ""}`}>{o.count}</span>
             )}
           </button>
         );

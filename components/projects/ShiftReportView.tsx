@@ -1235,16 +1235,16 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       <div className="sticky top-0 z-20 border-b border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur">
       {/* The agenda: each item's number and name, a problem marked with a
           dot in its colour. A tap jumps to it. */}
-      <nav className="px-2 sm:px-3 py-1.5 flex items-center gap-0.5 overflow-x-auto [scrollbar-width:none]" aria-label="Agenda">
+      <nav className="px-2 sm:px-3 py-1.5 flex items-center gap-0.5 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Agenda">
         {sections.map((s, i) => {
           const active = presenting === i;
           const flag = s.flag === "rose" ? "var(--state-overdue)" : s.flag === "amber" ? "var(--state-held)" : null;
           return (
             <button key={s.id} type="button" onClick={() => goTo(s.id)} aria-current={active ? "step" : undefined}
-              className={`shrink-0 inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] ${active ? "bg-[var(--color-surface-2)] ring-1 ring-[var(--color-border-strong)]" : ""}`}>
-              <span className="font-display tabular-nums text-[13px] font-medium text-[var(--color-text-muted)]">{i + 1}</span>
+              className={`shrink-0 inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] ${active ? "bg-[var(--color-accent-soft)] ring-1 ring-[var(--color-main)]" : ""}`}>
+              <span className={`font-display tabular-nums text-[13px] font-medium ${active ? "text-[var(--color-main)]" : "text-[var(--color-text-muted)]"}`}>{i + 1}</span>
               {s.short}
-              {s.count != null && <span className="font-display tabular-nums font-medium text-[var(--color-text-muted)]">{badgeText(s.count)}</span>}
+              {s.count != null && <span className={`ui-count ${s.flag === "rose" && s.count > 0 ? "is-bad" : s.flag === "amber" && s.count > 0 ? "is-warn" : active ? "is-solid" : ""}`}>{badgeText(s.count)}</span>}
               {flag && <span aria-label={s.flag === "rose" ? "needs attention" : "waiting"} className="w-2 h-2 rounded-full" style={{ background: flag }} />}
             </button>
           );
@@ -1262,7 +1262,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
                   return (
                     <button key={x.who ?? "__all"} type="button" aria-pressed={on} onClick={() => setCrewPick(x.who)} className={segItem(on)}>
                       {x.who ?? "All"}
-                      {x.who && <span className="font-display tabular-nums font-medium text-[var(--color-text-muted)]">{x.steps}</span>}
+                      {x.who && <span className={`ui-count ${on ? "is-solid" : ""}`}>{x.steps}</span>}
                     </button>
                   );
                 })}
@@ -2470,7 +2470,7 @@ function DiscoveryList({ list, c, print, now = false }: { list: Discovery[]; c: 
           {list.map((d) => (
             <div key={d.record.id} className="px-3 py-2 text-[12.5px] space-y-0.5">
               <div className="flex items-start justify-between gap-2">
-                <b className="break-words">{d.task?.name}{d.task?.workOrderRef && <span className="ml-1.5 font-display tabular-nums text-[11px] text-[var(--color-text-muted)]">WO {d.task.workOrderRef}</span>}</b>
+                <b className="break-words">{d.task?.name}{d.task?.workOrderRef && <span className="ml-1.5 ui-id text-[12px]">WO {d.task.workOrderRef}</span>}</b>
                 <span className="shrink-0 font-display tabular-nums text-[11px] text-[var(--color-text-muted)]">{c.DTs(d.record.foundAt)}</span>
               </div>
               <div className="break-words"><b className="text-[11px] text-[var(--color-text-muted)] mr-1">{ADDED[kindOf(d.record)].word}</b>{d.record.what}</div>
@@ -2491,7 +2491,7 @@ function DiscoveryList({ list, c, print, now = false }: { list: Discovery[]; c: 
             {list.map((d) => (
               <tr key={d.record.id} className="border-b border-slate-100 dark:border-slate-800 align-top">
                 <td className={`${cell} font-display tabular-nums text-[11px] whitespace-nowrap`}>{c.DTs(d.record.foundAt)}</td>
-                <td className={`${cell} font-semibold break-words`}>{d.task?.name}{d.task?.workOrderRef && <div className="font-display tabular-nums font-normal text-[11px] text-[var(--color-text-muted)]">WO {d.task.workOrderRef}</div>}</td>
+                <td className={`${cell} font-semibold break-words`}>{d.task?.name}{d.task?.workOrderRef && <div className="ui-id text-[12px]">WO {d.task.workOrderRef}</div>}</td>
                 <td className={`${cell} break-words`}><div className="text-[12px] font-semibold text-[var(--color-text-muted)]">{ADDED[kindOf(d.record)].word}</div>{d.record.what}{d.record.approvedBy && <div className="text-[11px] text-[var(--color-text-muted)]">Approved by {d.record.approvedBy}</div>}</td>
                 <td className={`${cell} break-words`}>{d.steps.map((m) => <div key={m.id}>{discoveryStepLine(m, c.hrs)}</div>)}</td>
                 <td className={`${cell} break-words ${impactCls(d)}`}>{impactOf(d)}</td>

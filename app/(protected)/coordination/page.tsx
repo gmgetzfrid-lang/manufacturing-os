@@ -32,7 +32,7 @@ import Link from "next/link";
 import {
   RefreshCw, Map as MapIcon, ChevronRight,
   ShieldCheck, AlertTriangle, Users, Boxes,
-  Radar, Info, Tag, LayoutGrid,
+  Radar, Info, Tag, LayoutGrid, OctagonPause,
 } from "lucide-react";
 import { PageHero, PageBody, Card, heroQuiet, type HeroFact } from "@/components/ui/PageHero";
 import { bandSeg, bandSegItem } from "@/components/admin/band";
@@ -230,12 +230,12 @@ function CoordinationInner() {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Equipment state distribution */}
-          <Panel title="Equipment state" span={2}>
+          <Panel title="Equipment state" icon={<Boxes className="w-4 h-4" />} span={2}>
             {totalEquip === 0 ? (
               <div className="text-[15px] text-[var(--color-text-muted)]">No equipment tracked yet. <Link href="/admin/assets" className="text-[var(--color-accent-text)] hover:underline">Register equipment</Link></div>
             ) : (
               <>
-                <p className="text-[15px] mb-3 text-[var(--color-text)]"><span className="font-display text-[19px] font-semibold tabular-nums">{totalEquip}</span> tracked{blocked > 0 && <span className="ml-3 font-semibold text-[var(--state-overdue)]"><span className="font-display tabular-nums">{blocked}</span> blocked</span>}</p>
+                <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[15px] mb-3 text-[var(--color-text)]"><span className="inline-flex items-center gap-1.5"><span className="ui-count is-solid">{totalEquip}</span> tracked</span>{blocked > 0 && <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--state-overdue)]"><span className="ui-count is-bad">{blocked}</span> blocked</span>}</p>
                 <MiniBars
                   height={12}
                   segments={WHITEBOARD_STATES.map((s) => ({ value: snap.states[s], color: STATE_CONFIG[s].hex, label: STATE_CONFIG[s].label }))}
@@ -244,7 +244,7 @@ function CoordinationInner() {
                   {WHITEBOARD_STATES.map((s) => (
                     <span key={s} className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]">
                       <span className="w-2 h-2 rounded-full" style={{ backgroundColor: STATE_CONFIG[s].hex }} />
-                      {STATE_CONFIG[s].label} <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{snap.states[s]}</span>
+                      {STATE_CONFIG[s].label} <span className="ui-count">{snap.states[s]}</span>
                     </span>
                   ))}
                 </div>
@@ -253,10 +253,10 @@ function CoordinationInner() {
           </Panel>
 
           {/* Blockers (holds): framed around health, not just a count. */}
-          <Panel title="Blockers" href="/admin/holds">
+          <Panel title="Blockers" icon={<OctagonPause className="w-4 h-4" />} href="/admin/holds">
             {snap.failed.includes("holds")
               ? <p className="text-[15px] font-semibold text-[var(--state-overdue)]">Couldn&apos;t read the holds</p>
-              : <p className="text-[15px] text-[var(--color-text)]">{holds === 0 ? "Nothing blocked right now." : <><span className="font-display text-[19px] font-semibold tabular-nums text-[var(--state-held)]">{holds}</span> active hold{holds === 1 ? "" : "s"}</>}</p>}
+              : <p className="text-[15px] text-[var(--color-text)]">{holds === 0 ? "Nothing blocked right now." : <span className="inline-flex items-center gap-1.5"><span className="ui-count is-warn">{holds}</span> active hold{holds === 1 ? "" : "s"}</span>}</p>}
             {/* How holds are going: one fact a row. */}
             <dl className="mt-2 divide-y divide-[var(--color-border)] border-t border-[var(--color-border)] text-[14px]">
               {([
@@ -274,9 +274,8 @@ function CoordinationInner() {
             {snap.holds.activeByReason.length > 0 && (
               <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5">
                 {snap.holds.activeByReason.slice(0, 4).map((r) => (
-                  <span key={r.reason} className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]">
-                    <span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-held)]" />
-                    {r.reason} <span className="font-display tabular-nums text-[var(--color-text-muted)]">{r.count}</span>
+                  <span key={r.reason} className="ui-pill is-warn">
+                    {r.reason} <span className="font-display tabular-nums">{r.count}</span>
                   </span>
                 ))}
               </div>
@@ -284,14 +283,14 @@ function CoordinationInner() {
           </Panel>
 
           {/* Plot plans */}
-          <Panel title="Spatial boards" span={3}>
+          <Panel title="Spatial boards" icon={<MapIcon className="w-4 h-4" />} span={3}>
             {snap.plotPlans.length === 0 ? (
               <div className="text-[15px] text-[var(--color-text-muted)]">No plot plans yet. <Link href="/plot-plans" className="text-[var(--color-accent-text)] hover:underline">Create a plot plan</Link></div>
             ) : (
               <div className="flex flex-wrap gap-2">
                 {snap.plotPlans.slice(0, 8).map((p) => (
                   <Link key={p.id} href={`/plot-plans/${p.id}`} className={QUIET_LINK}>
-                    <MapIcon className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {p.name} <span className="text-[var(--color-text-muted)]">{p.markers.length}</span>
+                    <MapIcon className="w-3.5 h-3.5 text-[var(--color-main)]" /> {p.name} <span className="ui-count">{p.markers.length}</span>
                   </Link>
                 ))}
                 {snap.plotPlans.length > 8 && <Link href="/plot-plans" className="inline-flex items-center h-9 px-2 text-[14px] text-[var(--color-accent-text)] hover:underline">Show {snap.plotPlans.length - 8} more</Link>}
@@ -306,7 +305,7 @@ function CoordinationInner() {
 }
 
 /** The radar's heading, with what it watches one tap away. */
-const RADAR_LABEL = <>Collision radar <HelpTooltip>Two people with different documents checked out on the same equipment tag, unit or system. Checked every 45 seconds.</HelpTooltip></>;
+const RADAR_LABEL = <span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm is-solid"><Radar className="w-4 h-4" /></span>Collision radar <HelpTooltip>Two people with different documents checked out on the same equipment tag, unit or system. Checked every 45 seconds.</HelpTooltip></span>;
 
 /** A quiet link that looks like a button (ink on a warm fill). */
 const QUIET_LINK = heroQuiet;
@@ -354,7 +353,7 @@ function CoordinationRadar({
   // STATE 1: collisions found.
   if (overlaps.length > 0) {
     return (
-      <Card label={RADAR_LABEL} pad={false} className="overflow-hidden" action={<span className="text-[14px] font-semibold text-[var(--state-overdue)]">{overlaps.length} active</span>}>
+      <Card label={RADAR_LABEL} pad={false} className="overflow-hidden" action={<span className="inline-flex items-center gap-1.5 text-[14px] font-semibold text-[var(--state-overdue)]"><span className="ui-count is-bad">{overlaps.length}</span> active</span>}>
         <div className="px-4 sm:px-5 pt-4">{notes}{Header}</div>
         <div className="border-t border-[var(--color-border)] divide-y divide-[var(--color-border)]">
           {overlaps.slice(0, 8).map((o, i) => {
@@ -369,11 +368,11 @@ function CoordinationRadar({
             const href = first ? `/documents/${first.libraryId}?doc=${first.documentId}` : "/checkouts";
             return (
               <Link key={i} href={href} className="flex items-center gap-3 px-4 sm:px-5 py-3 hover:bg-[var(--color-surface-2)] transition-colors">
-                <AlertTriangle className="w-4 h-4 text-[var(--state-overdue)] shrink-0" />
+                <span aria-hidden className="ui-icon-tile is-sm !bg-[color-mix(in_srgb,var(--state-overdue)_14%,transparent)] !text-[var(--state-overdue)]"><AlertTriangle className="w-4 h-4" /></span>
                 <div className="min-w-0 flex-1 sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_auto] sm:items-center sm:gap-4">
                   <div className="text-[15px] font-semibold text-[var(--color-text)] truncate">
                     <span className="text-[13px] font-normal text-[var(--color-text-muted)] mr-1.5">{scope.kind}</span>
-                    <span className="font-display tabular-nums">{scope.tag}</span>
+                    <span className="ui-tag">{scope.tag}</span>
                   </div>
                   <div className="text-[14px] text-[var(--color-text)] flex items-center gap-1.5 min-w-0">
                     <Users className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" />
@@ -443,16 +442,17 @@ function CoordinationRadar({
 }
 
 function Panel({
-  title, children, span = 1, href,
+  title, icon, children, span = 1, href,
 }: {
   title: string;
+  icon?: React.ReactNode;
   children: React.ReactNode;
   span?: 1 | 2 | 3;
   href?: string;
 }) {
   const spanCls = span === 3 ? "lg:col-span-3" : span === 2 ? "lg:col-span-2" : "";
   return (
-    <Card label={title} className={spanCls}
+    <Card label={icon ? <span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm is-solid">{icon}</span>{title}</span> : title} className={spanCls}
       action={href ? <Link href={href} className="text-[14px] text-[var(--color-accent-text)] hover:underline">Open {title.toLowerCase()}</Link> : undefined}>
       {children}
     </Card>

@@ -14,7 +14,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Plus, Search, Lock, ChevronRight, ChevronDown, Download } from "lucide-react";
+import { Plus, Search, Lock, ChevronRight, ChevronDown, Download, Briefcase, HardHat, Factory, Wrench } from "lucide-react";
 import { listedTypeOf, typePlural, typeOrder } from "@/lib/projectType";
 import { loadProjectUnits, type UnitChoice } from "@/lib/projectEquipment";
 import { useRole } from "@/components/providers/RoleContext";
@@ -25,7 +25,7 @@ import { bandInput, bandInputIcon, bandSelect, bandSeg, bandSegItem } from "@/co
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import MoreMenu from "@/components/ui/MoreMenu";
 import { badgeText } from "@/lib/badge";
-import { listProjects } from "@/lib/projects";
+import { listProjects, myProjectIds } from "@/lib/projects";
 import { listMilestones } from "@/lib/milestones";
 import { computeExecutionReport } from "@/lib/executionReport";
 import { projectDue, type ProjectDue } from "@/lib/projectPhases";
@@ -72,10 +72,18 @@ export default function ProjectsPage() {
     return () => clearTimeout(t);
   }, [search]);
   const [showCreate, setShowCreate] = useState(false);
-  // Status counts come from a separate all-statuses query so the badges are
-  // right no matter which status is picked.
-  const [tabCounts, setTabCounts] = useState<Record<string, number>>({});
   const hasLoadedOnce = useRef(false);
+  // The projects you own or are a member of: the page shows these unless
+  // you switch to All projects (remembered on this device).
+  const [mine, setMine] = useState<Set<string>>(new Set());
+  const [scope, setScopeState] = useState<"mine" | "all">("mine");
+  useEffect(() => {
+    try { if (localStorage.getItem("projects:scope") === "all") setScopeState("all"); } catch { /* private mode */ }
+  }, []);
+  const setScope = (v: "mine" | "all") => {
+    setScopeState(v);
+    try { localStorage.setItem("projects:scope", v); } catch { /* private mode */ }
+  };
 
   const refresh = useCallback(async () => {
     if (!activeOrgId || !uid) return;
@@ -84,7 +92,7 @@ export default function ProjectsPage() {
     if (!hasLoadedOnce.current) setLoading(true);
     setError(null);
     try {
-      const [rows, all] = await Promise.all([
+      const [rows, all, my] = await Promise.all([
         listProjects({
           orgId: activeOrgId,
           status: statusFilter,
@@ -92,13 +100,11 @@ export default function ProjectsPage() {
           visibleToUserId: isAdmin ? undefined : uid,
         }),
         listProjects({ orgId: activeOrgId, status: "all", visibleToUserId: isAdmin ? undefined : uid }),
+        myProjectIds(activeOrgId, uid),
       ]);
       setProjects(rows);
       setAllProjects(all);
-      const counts: Record<string, number> = {};
-      for (const p of all) counts[p.status] = (counts[p.status] || 0) + 1;
-      counts.all = all.length;
-      setTabCounts(counts);
+      setMine(my);
       hasLoadedOnce.current = true;
     } catch (e) {
       setError((e as Error).message || "Failed to load projects");
@@ -108,6 +114,19 @@ export default function ProjectsPage() {
   }, [activeOrgId, uid, statusFilter, searchQ, isAdmin]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  // Everything below follows the scope: yours, or every project you can see.
+  const inScope = useCallback((p: Project) => scope === "all" || (!!p.id && mine.has(p.id)), [scope, mine]);
+  const scopedProjects = useMemo(() => projects.filter(inScope), [projects, inScope]);
+  const scopedAll = useMemo(() => allProjects.filter(inScope), [allProjects, inScope]);
+  // Status counts from the all-statuses list, so the badges are right no
+  // matter which status is picked.
+  const tabCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const p of scopedAll) counts[p.status] = (counts[p.status] || 0) + 1;
+    counts.all = scopedAll.length;
+    return counts;
+  }, [scopedAll]);
   const filterActive = statusFilter !== "active" || searchQ.length > 0;
 
   // How far each running project's work is: its schedule read the way the
@@ -117,7 +136,7 @@ export default function ProjectsPage() {
   const asked = useRef(new Set<string>());
   useEffect(() => {
     if (!activeOrgId) return;
-    const want = allProjects
+    const want = scopedAll
       .filter((p) => p.id && (p.status === "active" || p.status === "paused") && !asked.current.has(`${activeOrgId}:${p.id}`))
       .slice(0, Math.max(0, PROGRESS_CAP - asked.current.size));
     if (!want.length) return;
@@ -136,7 +155,7 @@ export default function ProjectsPage() {
       }
     };
     void Promise.all([worker(), worker(), worker()]);
-  }, [activeOrgId, allProjects]);
+  }, [activeOrgId, scopedAll]);
 
   // Today, read once.
   const [nowMs] = useState(() => Date.now());
@@ -155,16 +174,16 @@ export default function ProjectsPage() {
   const unitChoices = useMemo(() => {
     if (!units) return [];
     const n = new Map<string, number>();
-    for (const p of projects) for (const c of units.byProject.get(p.id ?? "") ?? ["-"]) n.set(c, (n.get(c) ?? 0) + 1);
+    for (const p of scopedProjects) for (const c of units.byProject.get(p.id ?? "") ?? ["-"]) n.set(c, (n.get(c) ?? 0) + 1);
     return [...n.entries()].map(([code, k]) => ({ code, n: k, label: code === "-" ? "No unit set" : `${units.units.find((u) => u.code === code)?.label ?? `Unit ${code}`} (${code})` }))
       .sort((a, b) => (a.code === "-" ? 1 : b.code === "-" ? -1 : a.label.localeCompare(b.label)));
-  }, [units, projects]);
+  }, [units, scopedProjects]);
   // The kinds of project on screen, each with its projects (most recent
   // activity first, as listed). A kind picked narrows the list to it.
   const groups = useMemo(() => {
     const onUnit = (p: Project) => !unitPick || (units?.byProject.get(p.id ?? "") ?? ["-"]).includes(unitPick);
     const m = new Map<string, { key: string; label: string; order: number; items: Project[] }>();
-    for (const p of projects.filter(onUnit)) {
+    for (const p of scopedProjects.filter(onUnit)) {
       const t = listedTypeOf(p);
       const key = typePlural(t).toLowerCase();
       const g = m.get(key) ?? { key, label: typePlural(t), order: typeOrder(t), items: [] };
@@ -172,7 +191,7 @@ export default function ProjectsPage() {
       m.set(key, g);
     }
     return [...m.values()].sort((a, b) => a.order - b.order || a.label.localeCompare(b.label));
-  }, [projects, unitPick, units]);
+  }, [scopedProjects, unitPick, units]);
   const [typePick, setTypeFilter] = useState<string | null>(null);
   // A kind with nothing left on screen (another status, a search) lets go.
   const typeFilter = typePick && groups.some((g) => g.key === typePick) ? typePick : null;
@@ -192,12 +211,19 @@ export default function ProjectsPage() {
 
   // The answer: how many projects are running, and how many of them are late.
   const nActive = tabCounts.active ?? 0, nPaused = tabCounts.paused ?? 0;
-  const nLate = useMemo(() => allProjects.filter((p) => factsOf(p).late).length, [allProjects, factsOf]);
+  const nLate = useMemo(() => scopedAll.filter((p) => factsOf(p).late).length, [scopedAll, factsOf]);
+  const yours = scope === "mine";
+  // You on no active project: say so, and point at All projects.
+  const noneOfYours = yours && !loading && allProjects.length > 0 && nActive === 0;
   const answer = loading ? "Projects"
-    : (tabCounts.all ?? 0) === 0 ? "No projects yet."
-      : nLate > 0 ? (nLate >= nActive ? (nActive === 1 ? "The active project is late." : `All ${nActive} active projects are late.`) : `${nLate} of ${nActive} active projects ${nLate === 1 ? "is" : "are"} late.`)
-        : `${nActive} active project${nActive === 1 ? "" : "s"}.`;
-  const facts: HeroFact[] | undefined = loading || (tabCounts.all ?? 0) === 0 ? undefined : [
+    : allProjects.length === 0 ? "No projects yet."
+      : yours
+        ? (nActive === 0 ? "You're not on any active project."
+          : nLate > 0 ? (nLate >= nActive ? (nActive === 1 ? "Your active project is late." : `All ${nActive} of your active projects are late.`) : `${nLate} of ${nActive} of your projects ${nLate === 1 ? "is" : "are"} late.`)
+            : nActive === 1 ? "You're on 1 active project." : `Your ${nActive} active projects.`)
+        : nLate > 0 ? (nLate >= nActive ? (nActive === 1 ? "The active project is late." : `All ${nActive} active projects are late.`) : `${nLate} of ${nActive} active projects ${nLate === 1 ? "is" : "are"} late.`)
+          : `${nActive} active project${nActive === 1 ? "" : "s"}.`;
+  const facts: HeroFact[] | undefined = loading || (tabCounts.all ?? 0) === 0 || noneOfYours ? undefined : [
     { label: "Active", value: nActive },
     { label: "Late", value: nLate, tone: nLate > 0 ? "bad" : undefined },
     { label: "Paused", value: nPaused, tone: nPaused > 0 ? "warn" : undefined },
@@ -207,10 +233,11 @@ export default function ProjectsPage() {
   return (
     <PageShell width="work">
       <PageHero
-        kicker="Work · Projects"
+        kicker={yours ? "Work · Your projects" : "Work · All projects"}
         title={answer}
+        sub={noneOfYours ? "Switch to All projects to see the workspace." : undefined}
         facts={facts}
-        tools={activeOrgId && (tabCounts.all ?? 0) > 0 ? (
+        tools={activeOrgId && allProjects.length > 0 ? (
           <MoreMenu triggerClass={heroQuiet} items={[{ icon: <Download className="w-4 h-4" />, label: "Export all to CSV", onClick: async () => {
             try { await exportAllProjectsToCsv(activeOrgId); }
             catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
@@ -221,6 +248,12 @@ export default function ProjectsPage() {
         {/* What steers the list: status, search, unit and kind. */}
         <div className="space-y-2.5">
           <div className="flex flex-wrap items-center gap-2">
+            {/* Whose projects: yours (the default), or every one you can see. */}
+            <div role="radiogroup" aria-label="Whose projects" className={bandSeg}>
+              {([["mine", "Your projects"], ["all", "All projects"]] as const).map(([v, l]) => (
+                <button key={v} type="button" role="radio" aria-checked={scope === v} onClick={() => setScope(v)} className={bandSegItem(scope === v)}>{l}</button>
+              ))}
+            </div>
             <div role="group" aria-label="Status" className={bandSeg}>
               {STATUS_TABS.map((t) => {
                 const on = statusFilter === t.value;
@@ -228,7 +261,7 @@ export default function ProjectsPage() {
                 return (
                   <button key={t.value} type="button" onClick={() => setStatusFilter(t.value)} aria-pressed={on} className={bandSegItem(on)}>
                     {t.label}
-                    {typeof n === "number" && n > 0 && <span className="text-[12px] font-medium tabular-nums text-[var(--color-text-muted)]">{badgeText(n)}</span>}
+                    {typeof n === "number" && n > 0 && <span className={`ui-count ${on ? "is-solid" : ""}`}>{badgeText(n)}</span>}
                   </button>
                 );
               })}
@@ -256,7 +289,7 @@ export default function ProjectsPage() {
               <button type="button" onClick={() => setTypeFilter(null)} aria-pressed={!typeFilter} className={bandSegItem(!typeFilter)}>All kinds</button>
               {groups.map((g) => (
                 <button key={g.key} type="button" onClick={() => setTypeFilter(typeFilter === g.key ? null : g.key)} aria-pressed={typeFilter === g.key} className={bandSegItem(typeFilter === g.key)}>
-                  {g.label} <span className="text-[12px] font-medium tabular-nums text-[var(--color-text-muted)]">{badgeText(g.items.length)}</span>
+                  {g.label} <span className={`ui-count ${typeFilter === g.key ? "is-solid" : ""}`}>{badgeText(g.items.length)}</span>
                 </button>
               ))}
             </div>
@@ -275,7 +308,16 @@ export default function ProjectsPage() {
               <button type="button" onClick={() => void refresh()} className="text-[var(--color-accent-text)] hover:underline">Try again</button>
             </div>
           </Card>
-        ) : projects.length === 0 ? (
+        ) : yours && allProjects.length > 0 && scopedAll.length === 0 ? (
+          <Card label="Your projects">
+            <p className="flex items-center gap-3 text-[15px] text-[var(--color-text)]">
+              <span aria-hidden className="ui-icon-tile"><Briefcase className="w-5 h-5" /></span>
+              <span>You&apos;re not on any project yet.{" "}
+                <button type="button" onClick={() => setScope("all")} className="text-[var(--color-accent-text)] hover:underline">See all projects</button>
+              </span>
+            </p>
+          </Card>
+        ) : scopedProjects.length === 0 ? (
           filterActive && (tabCounts.all ?? 0) > 0 ? (
             <Card label="No projects match">
               <p className="text-[15px] text-[var(--color-text-muted)]">
@@ -295,7 +337,7 @@ export default function ProjectsPage() {
               const open = !folded.has(g.key) || !!typeFilter;
               return (
                 <Card key={g.key} as="section" pad={false} className="overflow-hidden"
-                  label={<>{g.label} <span className="text-[var(--color-text-muted)] font-medium tabular-nums">{g.items.length}</span></>}
+                  label={<span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm is-solid">{kindIcon(g.label)}</span>{g.label} <span className="ui-count is-solid">{g.items.length}</span></span>}
                   action={
                     <button type="button" onClick={() => toggleFold(g.key)} aria-expanded={open} aria-label={open ? `Fold ${g.label}` : `Show ${g.label}`}
                       className="w-8 h-8 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]">
@@ -366,23 +408,29 @@ function rowFacts(p: Project, nowMs: number, progress: WorkProgress | null | und
   return { due, dueDay: due ? humanDay(due.day) : null, dueNote, phaseNote, progress, late };
 }
 
-const TAG: Record<ProjectStatus, { word: string; dot: string; text: string }> = {
-  active:    { word: "Active",    dot: "var(--color-text-faint)", text: "text-[var(--color-text)]" },
-  paused:    { word: "Paused",    dot: "var(--state-held)",       text: "text-[var(--state-held)]" },
-  completed: { word: "Completed", dot: "var(--state-released)",   text: "text-[var(--color-text)]" },
-  cancelled: { word: "Cancelled", dot: "var(--color-border-strong)", text: "text-[var(--color-text-muted)]" },
-  archived:  { word: "Archived",  dot: "var(--color-border-strong)", text: "text-[var(--color-text-muted)]" },
+const TAG: Record<ProjectStatus, { word: string; pill: string }> = {
+  active:    { word: "Active",    pill: "" },
+  paused:    { word: "Paused",    pill: "is-warn" },
+  completed: { word: "Completed", pill: "is-good" },
+  cancelled: { word: "Cancelled", pill: "is-muted" },
+  archived:  { word: "Archived",  pill: "is-muted" },
 };
 
-/** Status, quietly: a dot in the status color and the word. */
-function StatusTag({ status, late }: { status: ProjectStatus; late: boolean }) {
-  const t = late ? { word: "Late", dot: "var(--state-overdue)", text: "text-[var(--state-overdue)]" } : TAG[status] ?? TAG.active;
-  return (
-    <span className={`inline-flex items-center gap-1.5 text-[13px] font-semibold whitespace-nowrap ${t.text}`}>
-      <span aria-hidden className="w-2 h-2 rounded-full shrink-0" style={{ background: t.dot }} />
-      {t.word}
-    </span>
-  );
+/** Status as a soft pill: late red, paused amber, done green, running brand. */
+function StatusTag({ status, late, workDone = false }: { status: ProjectStatus; late: boolean; workDone?: boolean }) {
+  if (late) return <span className="ui-pill is-bad">Late</span>;
+  if (status === "active" && workDone) return <span className="ui-pill is-good">Work done</span>;
+  const t = TAG[status] ?? TAG.active;
+  return <span className={`ui-pill ${t.pill}`}>{t.word}</span>;
+}
+
+/** A tile icon for each kind of project. */
+function kindIcon(label: string): React.ReactNode {
+  const l = label.toLowerCase();
+  if (l.includes("turnaround") || l.includes("outage")) return <HardHat className="w-4 h-4" />;
+  if (l.includes("capital")) return <Factory className="w-4 h-4" />;
+  if (l.includes("maint")) return <Wrench className="w-4 h-4" />;
+  return <Briefcase className="w-4 h-4" />;
 }
 
 /** A thin bar and the %: how far the work is. */
@@ -392,7 +440,7 @@ function ProgressBar({ f, className = "" }: { f: RowFacts; className?: string })
   const fill = f.late ? "var(--state-overdue)" : "var(--color-main)";
   return (
     <span className={`inline-flex items-center gap-2 ${className}`} title={`${pr.done} of ${pr.steps} steps done`}>
-      <span className="relative h-1.5 w-24 rounded-full bg-[var(--color-accent-soft)] overflow-hidden" role="progressbar" aria-valuenow={pr.pct} aria-valuemin={0} aria-valuemax={100} aria-label="Work done">
+      <span className="relative h-2 w-24 rounded-full bg-[var(--color-accent-soft)] overflow-hidden" role="progressbar" aria-valuenow={pr.pct} aria-valuemin={0} aria-valuemax={100} aria-label="Work done">
         <span className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${Math.min(100, Math.max(0, pr.pct))}%`, background: fill }} />
       </span>
       <span className="font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)]">{pr.pct}%</span>
@@ -430,14 +478,14 @@ function ProjectTable({ projects, factsOf }: { projects: Project[]; factsOf: (p:
                 <div className="flex items-baseline gap-2 min-w-0">
                   <Link href={href} className="min-w-0 font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{p.name}</Link>
                   {p.visibility === "private" && <span className="shrink-0 inline-flex items-center gap-1 text-[13px] text-[var(--color-text-muted)]"><Lock className="w-3 h-3" /> Private</span>}
-                  {p.mocReference && <span className="shrink-0 font-display tabular-nums text-[14px] text-[var(--color-text-muted)]">{p.mocReference}</span>}
+                  {p.mocReference && <span className="shrink-0 ui-id text-[14px]">{p.mocReference}</span>}
                 </div>
                 {p.description && <p className="mt-0.5 text-[13px] text-[var(--color-text-muted)] line-clamp-1">{p.description}</p>}
               </td>
-              <td className="px-4 py-3"><StatusTag status={p.status} late={f.late} /></td>
+              <td className="px-4 py-3"><StatusTag status={p.status} late={f.late} workDone={!!f.progress && f.progress.pct >= 100} /></td>
               <td className="px-4 py-3">
                 {f.progress ? <ProgressBar f={f} /> : f.progress === null ? <span className="text-[14px] text-[var(--color-text-muted)]">No schedule yet</span> : !f.phaseNote ? <span className="text-[var(--color-text-faint)]">-</span> : null}
-                {f.phaseNote && <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{f.phaseNote}</div>}
+                {f.phaseNote && <div className="mt-1"><span className="ui-tag">{f.phaseNote}</span></div>}
               </td>
               <td className="px-4 py-3">
                 {f.dueDay ? (
@@ -466,12 +514,12 @@ function ProjectTable({ projects, factsOf }: { projects: Project[]; factsOf: (p:
                   {p.name}
                   {p.visibility === "private" && <Lock className="inline w-3 h-3 ml-1.5 -mt-0.5 text-[var(--color-text-muted)]" aria-label="Private" />}
                 </span>
-                <StatusTag status={p.status} late={f.late} />
+                <StatusTag status={p.status} late={f.late} workDone={!!f.progress && f.progress.pct >= 100} />
               </div>
               <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] text-[var(--color-text-muted)]">
                 {f.progress && <ProgressBar f={f} />}
                 {f.progress === null && <span>No schedule yet</span>}
-                {f.phaseNote && <span>{f.phaseNote}</span>}
+                {f.phaseNote && <span className="ui-tag">{f.phaseNote}</span>}
                 {f.dueDay && <span className={f.late && (f.due?.kind === "past target" || f.due?.kind === "ended") ? "text-[var(--state-overdue)] font-semibold" : ""}>{f.due?.kind === "starts" ? "Starts" : f.due?.kind === "ended" ? "Ended" : "Due"} {f.dueDay}</span>}
               </div>
             </Link>

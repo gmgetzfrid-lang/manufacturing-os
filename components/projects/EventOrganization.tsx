@@ -7,7 +7,7 @@
 
 import { Card } from "@/components/ui/PageHero";
 import React, { useEffect, useMemo, useState } from "react";
-import { Check, Loader2, Plus, X } from "lucide-react";
+import { Check, Loader2, Plus, X, Network } from "lucide-react";
 import { defaultRoles, loadOrg, orgStanding, saveOrg, type OrgRole } from "@/lib/eventOrganization";
 
 const field = "w-full h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[14px] text-[var(--color-text)] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 disabled:opacity-70";
@@ -47,10 +47,9 @@ export default function EventOrganization({ projectId, canManage, actor, people 
   const all = st.required > 0 && st.missing.length === 0;
 
   return (
-    <Card as="section" pad={false} className="overflow-hidden" label="Event organization"
+    <Card as="section" pad={false} className="overflow-hidden" label={<span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm is-solid"><Network className="w-4 h-4" /></span>Event organization</span>}
       action={<span className="inline-flex flex-wrap items-center justify-end gap-x-3 gap-y-1 min-w-0">
-        <span className={`inline-flex items-center gap-1.5 text-[13px] font-semibold ${!recorded ? "text-[var(--state-held)]" : all ? "text-[var(--color-text)]" : "text-[var(--state-overdue)]"}`} data-event-organization>
-          <span aria-hidden className="w-2 h-2 rounded-full" style={{ background: !recorded ? "var(--state-held)" : all ? "var(--state-released)" : "var(--state-overdue)" }} />
+        <span className={`ui-pill ${!recorded ? "is-warn" : all ? "is-good" : "is-bad"}`} data-event-organization>
           {!recorded ? "Not recorded yet" : `${st.filled} of ${st.required} required roles named`}
         </span>
         {recorded && !editing && canManage && <button type="button" onClick={() => setEditing(true)} className={btn}>Edit roles</button>}
@@ -72,7 +71,11 @@ export default function EventOrganization({ projectId, canManage, actor, people 
               return (
                 <tr key={r.id} className="align-top max-sm:flex max-sm:flex-wrap max-sm:gap-x-3 max-sm:px-4 max-sm:py-2.5">
                   <th scope="row" className="sm:px-4 sm:py-2.5 text-left font-semibold text-[var(--color-text)] max-sm:flex-1">{r.role}</th>
-                  <td className={`sm:px-4 sm:py-2.5 ${named ? "text-[var(--color-text)]" : r.required ? "font-semibold text-[var(--state-overdue)]" : "text-[var(--color-text-muted)]"}`}>{named || (r.required ? "Not named (required)" : "Not named")}</td>
+                  <td className="sm:px-4 sm:py-2">
+                    {named
+                      ? <span className="inline-flex items-center gap-2 text-[var(--color-text)]"><span aria-hidden className="ui-icon-tile is-sm font-display text-[12px] font-semibold">{named.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase()}</span>{named}</span>
+                      : <span className={`ui-pill ${r.required ? "is-bad" : "is-muted"}`}>{r.required ? "Not named (required)" : "Not named"}</span>}
+                  </td>
                   <td className="sm:px-4 sm:py-2.5 text-[14px] text-[var(--color-text-muted)] max-sm:basis-full">{r.does}</td>
                 </tr>
               );

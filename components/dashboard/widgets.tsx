@@ -23,7 +23,7 @@ import {
   Plus, Zap, Rocket, Loader2, Bell, Layers, Send,
   XCircle, LayoutDashboard,
   Sparkles,
-  type LucideIcon, History,
+  type LucideIcon, History, PenLine, FileLock, OctagonPause, Flag, CircleAlert, Lightbulb,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
@@ -107,8 +107,10 @@ function NudgeList({ nudges }: { nudges: ReturnType<typeof computeNudges> }) {
   return (
     <ul className="divide-y divide-[var(--color-border)]">
       {nudges.map((n) => (
-        <li key={n.id} className="py-2.5 flex items-baseline gap-2.5 text-[15px] text-[var(--color-text)]">
-          <span aria-hidden className={`w-2 h-2 rounded-full shrink-0 translate-y-[-1px] ${n.severity === "high" ? "bg-[var(--state-overdue)]" : "bg-[var(--state-held)]"}`} />
+        <li key={n.id} className="py-2.5 flex items-center gap-3 text-[15px] text-[var(--color-text)]">
+          <span aria-hidden className={`ui-icon-tile is-sm ${n.severity === "high" ? "!bg-[color-mix(in_srgb,var(--state-overdue)_14%,transparent)] !text-[var(--state-overdue)]" : "!bg-[color-mix(in_srgb,var(--state-held)_16%,transparent)] !text-[var(--state-held)]"}`}>
+            {n.severity === "high" ? <CircleAlert className="w-4 h-4" /> : <Lightbulb className="w-4 h-4" />}
+          </span>
           <span className="flex-1 min-w-0">{n.message}</span>
           {n.actionLabel && n.href && (
             <Link href={n.href} className={`shrink-0 text-[14px] ${link}`}>{n.actionLabel}</Link>
@@ -288,7 +290,7 @@ function SuggestedActionsBody() {
 // stale warning), holds I opened, transmittals awaiting receipt, and milestones
 // due this week. Interactive markup respond is preserved via resolveMarkupRequest.
 function WidgetCard({
-  title, count, children,
+  icon: Icon, title, count, children,
 }: {
   icon?: LucideIcon;
   title: string;
@@ -298,9 +300,10 @@ function WidgetCard({
 }) {
   return (
     <section className="pt-1">
-      <div className="flex items-baseline gap-2 pb-1.5 border-b border-[var(--color-border-strong)]">
+      <div className="flex items-center gap-2 pb-1.5 border-b border-[var(--color-border-strong)]">
+        {Icon && <span aria-hidden className="ui-icon-tile is-sm"><Icon className="w-4 h-4" /></span>}
         <h3 className="text-[15px] font-semibold text-[var(--color-text)]">{title}</h3>
-        <span className="font-display text-[15px] text-[var(--color-text-muted)] tabular-nums">{badgeText(count)}</span>
+        <span className="ui-count">{badgeText(count)}</span>
       </div>
       {children}
     </section>
@@ -356,13 +359,13 @@ function OutstandingBody() {
     <div className={FILL}>
       <div className={`space-y-5 ${SCROLL}`}>
         {snap.markupRequestsToMe.length > 0 && (
-          <WidgetCard title="Markup requests for you" count={snap.markupRequestsToMe.length}>
+          <WidgetCard icon={PenLine} title="Markup requests for you" count={snap.markupRequestsToMe.length}>
             {resolveError && <p role="alert" className="mt-2 text-[13px] font-semibold text-[var(--state-overdue)]">{resolveError}</p>}
             <ul className="divide-y divide-[var(--color-border)]">
               {snap.markupRequestsToMe.slice(0, 6).map((mr) => (
                 <li key={mr.id} className={`${row} flex-wrap`}>
                   <span className="min-w-0 flex-1">
-                    <Link href={mr.libraryId ? `/documents/${mr.libraryId}?doc=${mr.documentId}` : "/documents"} className="font-display font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
+                    <Link href={mr.libraryId ? `/documents/${mr.libraryId}?doc=${mr.documentId}` : "/documents"} className="ui-id">
                       {mr.documentNumber || mr.documentTitle || mr.documentId.slice(0, 8)}
                     </Link>
                     {mr.requestedByName && <span className="text-[var(--color-text-muted)]"> from {mr.requestedByName}</span>}
@@ -383,7 +386,7 @@ function OutstandingBody() {
         )}
 
         {snap.myCheckouts.length > 0 && (
-          <WidgetCard title="Your checkouts" count={snap.myCheckouts.length}>
+          <WidgetCard icon={FileLock} title="Your checkouts" count={snap.myCheckouts.length}>
             {snap.myStaleCheckouts.length > 0 && (
               <p className="pt-2.5"><StatusTag tone="overdue">{snap.myStaleCheckouts.length} past the expected release. Check in or extend.</StatusTag></p>
             )}
@@ -396,7 +399,7 @@ function OutstandingBody() {
                   <Link href={`/documents/${s.libraryId ?? ""}?doc=${s.documentId}`} className="min-w-0 flex-1 truncate font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
                     {s.purpose || "Checked-out document"}
                   </Link>
-                  <span className="shrink-0 text-[13px] text-[var(--color-text-muted)] capitalize">{String(s.mode).replace(/_/g, " ")}</span>
+                  <span className="shrink-0 ui-tag is-more capitalize">{String(s.mode).replace(/_/g, " ")}</span>
                   <span className="shrink-0 w-16 text-right text-[13px] text-[var(--color-text-muted)] tabular-nums">{formatAgo(typeof s.startedAt === "string" ? s.startedAt : undefined)}</span>
                 </li>
               ))}
@@ -405,7 +408,7 @@ function OutstandingBody() {
         )}
 
         {snap.myOpenHolds.length > 0 && (
-          <WidgetCard title="Holds you opened" count={snap.myOpenHolds.length}>
+          <WidgetCard icon={OctagonPause} title="Holds you opened" count={snap.myOpenHolds.length}>
             <ul className="divide-y divide-[var(--color-border)]">
               {snap.myOpenHolds.slice(0, 6).map((h) => (
                 <li key={h.id} className={row}>
@@ -422,13 +425,13 @@ function OutstandingBody() {
         )}
 
         {snap.transmittalsAwaitingAck.length > 0 && (
-          <WidgetCard title="Transmittals awaiting receipt" count={snap.transmittalsAwaitingAck.length}>
+          <WidgetCard icon={Send} title="Transmittals awaiting receipt" count={snap.transmittalsAwaitingAck.length}>
             <ul className="divide-y divide-[var(--color-border)]">
               {snap.transmittalsAwaitingAck.slice(0, 6).map((t) => {
                 const tone = ageTone(t.__ageDays);
                 return (
                   <li key={t.id} className={row}>
-                    <Link href="/transmittals" className="shrink-0 font-display font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{t.number}</Link>
+                    <Link href="/transmittals" className="shrink-0 ui-id">{t.number}</Link>
                     <span className="min-w-0 flex-1 truncate text-[var(--color-text-muted)]">{t.subject || [t.recipientName, t.recipientCompany].filter(Boolean).join(", ") || `${t.documentCount} doc${t.documentCount === 1 ? "" : "s"}`}</span>
                     {tone ? <StatusTag tone={tone}>{ageWords(t.__ageDays)}</StatusTag> : <span className="shrink-0 text-[13px] text-[var(--color-text-muted)]">{ageWords(t.__ageDays)}</span>}
                   </li>
@@ -440,7 +443,7 @@ function OutstandingBody() {
         )}
 
         {snap.milestonesUpcoming.length > 0 && (
-          <WidgetCard title="Milestones due this week" count={snap.milestonesUpcoming.length}>
+          <WidgetCard icon={Flag} title="Milestones due this week" count={snap.milestonesUpcoming.length}>
             <ul className="divide-y divide-[var(--color-border)]">
               {snap.milestonesUpcoming.slice(0, 8).map((m) => {
                 const d = m.__dueInDays ?? 0;
@@ -527,7 +530,7 @@ function AdminAnalyticsBody() {
                 <Link href={`/documents/${l.id}`} className="group flex items-center gap-3 py-2">
                   <span className="text-[15px] font-semibold text-[var(--color-text)] truncate w-40 group-hover:text-[var(--color-accent-text)]">{l.name}</span>
                   <span className="flex-1 h-2 rounded-sm bg-[var(--color-surface-2)] overflow-hidden">
-                    <span className="block h-full rounded-sm bg-[var(--color-text-muted)]" style={{ width: `${(l.count / maxLib) * 100}%` }} />
+                    <span className="block h-full rounded-sm bg-[var(--color-main)]" style={{ width: `${(l.count / maxLib) * 100}%` }} />
                   </span>
                   <span className="font-display text-[15px] tabular-nums text-[var(--color-text)] w-14 text-right">{l.count.toLocaleString()}</span>
                 </Link>
@@ -714,12 +717,12 @@ export const WIDGET_CATALOG: Record<WidgetType, WidgetMeta> = {
     defaultW: 6, defaultH: 6, minW: 4, minH: 4, Body: OutstandingBody,
   },
   projects: {
-    type: "projects", title: "Projects", description: "Active, mine, due soon, going quiet.",
+    type: "projects", title: "Projects", description: "Yours, all active, due soon, going quiet.",
     icon: Briefcase, tone: "violet", href: "/projects", cta: "Open projects", category: "Work",
     defaultW: 6, defaultH: 4, minW: 3, minH: 3, multi: true,
     settings: [
-      { key: "scope", type: "select", label: "Show", default: "active", options: [
-        { value: "active", label: "All active projects" }, { value: "mine", label: "My projects" },
+      { key: "scope", type: "select", label: "Show", default: "mine", options: [
+        { value: "mine", label: "My projects" }, { value: "active", label: "All active projects" },
         { value: "due", label: "Due within 14 days" }, { value: "quiet", label: "Quiet for 14+ days" },
       ] },
     ],

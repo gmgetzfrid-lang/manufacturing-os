@@ -67,7 +67,7 @@ export function PhaseBar({ phases, pick, onPick, onEdit }: { phases: ProjectPhas
   const seg = (on: boolean) => `shrink-0 inline-flex items-center gap-1.5 h-9 px-3 text-[13px] font-bold border-r last:border-r-0 border-[var(--color-border-strong)] ${on ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
   return (
     <div className="flex items-center gap-2 mb-4 min-w-0">
-      <div className="inline-flex max-w-full overflow-x-auto [scrollbar-width:none] rounded-lg border border-[var(--color-border-strong)]" role="group" aria-label="Phase">
+      <div className="inline-flex max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden rounded-lg border border-[var(--color-border-strong)]" role="group" aria-label="Phase">
         <button type="button" aria-pressed={pick === null} onClick={() => onPick(null)} className={seg(pick === null)}>All phases</button>
         {phases.map((p, i) => (
           <button key={p.id} type="button" aria-pressed={pick === p.id} onClick={() => onPick(p.id)} className={seg(pick === p.id)} title={phaseDates(p)}>

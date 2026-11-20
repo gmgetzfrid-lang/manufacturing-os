@@ -21,7 +21,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Flag, Plus, Loader2, AlertTriangle, Check, Calendar, ChevronRight, Upload, Eye, EyeOff, Clock, Trash2, RotateCcw, MoreHorizontal } from "lucide-react";
+import { Flag, Plus, Loader2, AlertTriangle, Check, Calendar, ChevronRight, Upload, Eye, EyeOff, Clock, Trash2, RotateCcw, MoreHorizontal, ListChecks } from "lucide-react";
 import DiscoveryTag from "@/components/projects/DiscoveryTag";
 import { discoveryOf } from "@/lib/discovery";
 import {
@@ -616,7 +616,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       {/* Planning view — the schedule as an editable list, on its own card:
           search and filters as a quiet row, then the rows. */}
       {!loading && milestones.length > 0 && view === "planning" && (
-        <Card pad={false} label={<>Tasks <span className="font-display font-medium tabular-nums text-[var(--color-text-muted)]">{visible.length}</span></>}
+        <Card pad={false} label={<span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm is-solid"><ListChecks className="w-4 h-4" /></span>Tasks <span className="ui-count is-solid">{visible.length}</span></span>}
           action={
             <HelpTooltip>
               <b>Imported rows</b> are read-only milestones from your scheduling tool (P6 / MS Project). They still count toward the earned-value rollup. More › Hide imported rows takes them off this list; they still count.
@@ -666,7 +666,8 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
                   onSave={(when, note) => saveMark(marking.id, marking.status, when, note)} onClose={() => setMarking(null)} />
               )}
               <PlanTable rows={planningRows.slice(0, rowLimit)} progress={planProgress} freshId={justAdded}
-                canEdit={canEdit} busy={busy} onSetStatus={onSetStatus} onDelete={onDelete} />
+                canEdit={canEdit} busy={busy} onSetStatus={onSetStatus} onDelete={onDelete}
+                query={planFilter.query} onQuery={(q) => setPlanFilter((f) => ({ ...f, query: f.query === q ? "" : q }))} />
               {/* A long schedule ends with "Show N more", so it's plain there's more. */}
               {planningRows.length > rowLimit && (
                 <div className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] flex flex-wrap items-center gap-2">
@@ -813,27 +814,33 @@ const STATUS_DOT: Record<MilestoneStatus, string> = {
   on_hold: "var(--state-held)", blocked: "var(--state-overdue)", missed: "var(--state-overdue)",
 };
 
-/** Soft status pills: color only where it means something. */
-const PILL = "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[13px] font-semibold whitespace-nowrap";
+/** Soft status pills: done green, blocked or missed red, on hold amber,
+ *  under way in the brand color, not started grey. */
 const PILL_TONE: Record<MilestoneStatus, string> = {
-  completed: "bg-[color-mix(in_srgb,var(--state-released)_14%,transparent)] text-[var(--state-released)]",
-  blocked: "bg-[color-mix(in_srgb,var(--state-overdue)_14%,transparent)] text-[var(--state-overdue)]",
-  missed: "bg-[color-mix(in_srgb,var(--state-overdue)_14%,transparent)] text-[var(--state-overdue)]",
-  on_hold: "bg-[color-mix(in_srgb,var(--state-held)_14%,transparent)] text-[var(--state-held)]",
-  in_progress: "bg-[var(--color-surface-2)] text-[var(--color-text)] ring-1 ring-inset ring-[var(--color-border)]",
-  planned: "text-[var(--color-text-muted)] ring-1 ring-inset ring-[var(--color-border)]",
+  completed: "is-good", blocked: "is-bad", missed: "is-bad", on_hold: "is-warn", in_progress: "", planned: "is-muted",
 };
 
 /** Its status as a small soft pill. */
 function StatusTag({ status }: { status: MilestoneStatus }) {
-  return <span className={`${PILL} ${PILL_TONE[status]}`}>{STATUS_WORD[status]}</span>;
+  return <span className={`ui-pill ${PILL_TONE[status]}`}>{STATUS_WORD[status]}</span>;
+}
+
+/** A tag that filters the list (again: clears it); brand-filled while on. */
+function FilterTag({ value, on, onPick, title, className = "", children }: {
+  value: string; on: boolean; onPick?: (v: string) => void; title: string; className?: string; children: React.ReactNode;
+}) {
+  if (!onPick) return <span className={`ui-tag ${className}`}>{children}</span>;
+  return (
+    <button type="button" onClick={() => onPick(value)} aria-pressed={on} title={on ? "Show every task" : title}
+      className={`ui-tag ${on ? "!bg-[var(--color-main)] !text-white !border-[var(--color-main)]" : ""} ${className}`}>{children}</button>
+  );
 }
 
 /** A thin bar in the main color and the %. */
 function PctBar({ f }: { f: PlanFacts }) {
   return (
     <span className="inline-flex items-center gap-2" title={f.isParent ? "Rolled up from its steps" : "% complete"}>
-      <span className="relative h-1.5 w-14 rounded-full bg-[var(--color-accent-soft)] overflow-hidden" role="progressbar" aria-valuenow={f.pct} aria-valuemin={0} aria-valuemax={100} aria-label="% complete">
+      <span className="relative h-2 w-14 rounded-full bg-[var(--color-accent-soft)] overflow-hidden" role="progressbar" aria-valuenow={f.pct} aria-valuemin={0} aria-valuemax={100} aria-label="% complete">
         <span className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-main)]" style={{ width: `${Math.min(100, Math.max(0, f.pct))}%` }} />
       </span>
       <span className="font-display text-[14px] font-semibold tabular-nums text-[var(--color-text)] w-9">{f.pct}%</span>
@@ -947,7 +954,7 @@ function RowDetails({ m, f, fmtWhen, fmtDay }: { m: Milestone; f: PlanFacts; fmt
     ["Planned finish", fmtWhen(f.finish)],
     ...(f.actual ? [["Finished", <span key="a" className={f.slipDays > 0 ? "text-[var(--state-overdue)] font-semibold" : ""}>{fmtWhen(f.actual)}</span>] as [string, React.ReactNode]] : []),
     ...(typeof m.durationHours === "number" && m.durationHours > 0 ? [["Hours of work", <span key="h" className="font-display tabular-nums">{m.durationHours} h</span>] as [string, React.ReactNode]] : []),
-    ...(m.workOrderRef ? [["Work order", <span key="w" className="font-display tabular-nums">{m.workOrderRef}</span>] as [string, React.ReactNode]] : []),
+    ...(m.workOrderRef ? [["Work order", <span key="w" className="ui-id">WO {m.workOrderRef}</span>] as [string, React.ReactNode]] : []),
     ...(f.crew ? [["Crew", f.crew] as [string, React.ReactNode]] : []),
     ...(m.location ? [["Location", m.location] as [string, React.ReactNode]] : []),
     ...(m.linkedRevisionLabel ? [["Linked ref", <span key="l" className="font-display tabular-nums">{m.linkedRevisionLabel}</span>] as [string, React.ReactNode]] : []),
@@ -973,8 +980,11 @@ function RowDetails({ m, f, fmtWhen, fmtDay }: { m: Milestone; f: PlanFacts; fmt
 
 /** The Plan list: a ruled table on the desk, two-line rows on a phone.
  *  A row opens to its details. */
-function PlanTable({ rows, progress, freshId, canEdit, busy, onSetStatus, onDelete }: {
+function PlanTable({ rows, progress, freshId, canEdit, busy, onSetStatus, onDelete, query = "", onQuery }: {
   rows: Array<{ m: Milestone; depth: number }>;
+  /** The list's search, and a way to set it (a WO or crew tag filters by itself). */
+  query?: string;
+  onQuery?: (q: string) => void;
   progress: Map<string, ProgressInfo>;
   freshId: string | null;
   canEdit: boolean; busy: boolean;
@@ -999,14 +1009,24 @@ function PlanTable({ rows, progress, freshId, canEdit, busy, onSetStatus, onDele
       <ChevronRight className={`w-4 h-4 transition-transform ${isOpen ? "rotate-90" : ""}`} />
     </button>
   );
-  // The WBS, the name and an Added tag, in one line of text that wraps.
+  // The WBS, the name, its work order and an Added tag, in one line of text that wraps.
+  // The WO tag filters the list to that work order.
   const name = (m: Milestone, f: PlanFacts) => (
     <span className="min-w-0 flex-1 break-words">
       {m.wbs && <span className="mr-1.5 font-display tabular-nums text-[13px] text-[var(--color-text-muted)]">{m.wbs}</span>}
       <span className={`text-[var(--color-text)] ${f.isParent ? "font-semibold" : ""}`}>{m.name}</span>
+      {m.workOrderRef && (
+        <FilterTag value={m.workOrderRef} on={query === m.workOrderRef} onPick={onQuery} title={`Show only WO ${m.workOrderRef}`} className="ml-1.5 !h-[1.375rem] !px-1.5 align-middle !text-[var(--color-heading)]">
+          WO {m.workOrderRef}
+        </FilterTag>
+      )}
       <DiscoveryTag m={m} tz={tz} className="ml-1.5" />
     </span>
   );
+  // The crew as a tag: tap it to see only that crew's tasks.
+  const crewTag = (f: PlanFacts) => f.crew
+    ? <FilterTag value={f.crew.split(" / ")[0]} on={query === f.crew.split(" / ")[0]} onPick={onQuery} title={`Show only ${f.crew}`} className="max-w-[180px] truncate">{f.crew}</FilterTag>
+    : <span className="text-[var(--color-text-faint)]">-</span>;
   return (
     <>
       {/* Desk: a ruled table. */}
@@ -1043,7 +1063,7 @@ function PlanTable({ rows, progress, freshId, canEdit, busy, onSetStatus, onDele
                     <div className={`whitespace-nowrap font-display tabular-nums ${f.overdue ? "text-[var(--state-overdue)] font-semibold" : "text-[var(--color-text)]"}`}>{fmtDay(f.finish)}</div>
                     <FinishNote f={f} fmtDay={fmtDay} />
                   </td>
-                  <td className="px-3 py-2.5 leading-6 hidden lg:table-cell"><span className="block max-w-[180px] truncate text-[var(--color-text)]" title={f.crew || undefined}>{f.crew || <span className="text-[var(--color-text-faint)]">-</span>}</span></td>
+                  <td className="px-3 py-2.5 leading-6 hidden lg:table-cell">{crewTag(f)}</td>
                   {canEdit && <td className="pl-3 pr-4 sm:pr-5 py-1.5"><RowActions m={m} f={f} busy={busy} onSetStatus={onSetStatus} onDelete={onDelete} /></td>}
                 </tr>
                 {isOpen && (
@@ -1077,7 +1097,7 @@ function PlanTable({ rows, progress, freshId, canEdit, busy, onSetStatus, onDele
                   <span className={`shrink-0 font-display tabular-nums ${f.overdue ? "text-[var(--state-overdue)] font-semibold" : ""}`}>
                     {f.start && fmtDay(f.start) !== fmtDay(f.finish) ? `${fmtDay(f.start)} to ${fmtDay(f.finish)}` : fmtDay(f.finish)}
                   </span>
-                  <span className="min-w-0 flex-1 truncate">{f.crew}</span>
+                  <span className="min-w-0 flex-1 truncate">{f.crew && crewTag(f)}</span>
                   {canEdit && <span className="shrink-0 -my-1"><RowActions m={m} f={f} busy={busy} onSetStatus={onSetStatus} onDelete={onDelete} /></span>}
                 </div>
               </div>

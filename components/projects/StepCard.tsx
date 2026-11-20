@@ -705,8 +705,8 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
       {m.description?.trim() && <div className="text-[13px] text-[var(--color-text-muted)] line-clamp-2 break-words">{m.description.trim()}</div>}
       {/* What it is and when, as labeled cells: plan against actual. */}
       <dl className="flex flex-wrap gap-x-8 gap-y-2">
-        {wo && <div><dt className="text-[13px] text-[var(--color-text-muted)]">Work order</dt><dd className="font-display tabular-nums text-[var(--color-text)]">{wo}</dd></div>}
-        <div><dt className="text-[13px] text-[var(--color-text-muted)]">Crew</dt><dd className="text-[var(--color-text)]">{planned || "-"}
+        {wo && <div><dt className="text-[13px] text-[var(--color-text-muted)]">Work order</dt><dd className="ui-id">WO {wo}</dd></div>}
+        <div><dt className="text-[13px] text-[var(--color-text-muted)]">Crew</dt><dd className="text-[var(--color-text)]">{planned ? <span className="ui-tag">{planned}</span> : "-"}
           {m.actualParty?.trim() && m.actualParty.trim() !== planned && <div className="text-[13px] font-semibold">done by {m.actualParty.trim()}</div>}</dd></div>
         <div><dt className="text-[13px] text-[var(--color-text-muted)]">Hours</dt><dd className="font-display tabular-nums text-[var(--color-text)]">{allotted} h</dd></div>
       </dl>

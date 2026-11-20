@@ -40,6 +40,9 @@ const KIND_GROUPS: Array<{ key: string; label: string; match: (k: string) => boo
   { key: "locks", label: "Checkouts and holds", match: (k) => k.includes("checkout") || k.includes("lock") || k.includes("hold") || k.includes("conflict") },
 ];
 
+/** A filter tag while it is the filter: brand-filled. */
+const tagOn = "!bg-[var(--color-main)] !text-white !border-[var(--color-main)]";
+
 function groupOf(kind: string): string {
   const k = kind.toLowerCase();
   for (const g of KIND_GROUPS) if (g.match(k)) return g.key;
@@ -74,25 +77,13 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
                 ? "border-[var(--color-main)] font-semibold text-[var(--color-text)]"
                 : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
               {t.label}
-              <span className="font-display tabular-nums text-[var(--color-text-muted)]">{t.n}</span>
+              <span className={`ui-count ${on ? "is-solid" : plain ? "" : "!bg-[var(--color-surface)]"}`}>{t.n}</span>
             </button>
           );
         })}
       </div>
       <div className="flex-1" />
       <div className="flex items-center gap-2 pb-1.5">
-        {counts.all > 0 && (
-          <label className="inline-flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]">
-            <span className="max-sm:sr-only">About</span>
-            <select value={group} onChange={(e) => setGroup(e.target.value)}
-              className="h-9 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] text-[var(--color-text)] outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/40">
-              <option value="all">Everything</option>
-              {groupCounts.filter((g) => g.n > 0 || g.key === group).map((g) => (
-                <option key={g.key} value={g.key}>{g.label} ({g.n})</option>
-              ))}
-            </select>
-          </label>
-        )}
         {counts.unread > 0 && (
           <button type="button" onClick={onMarkAll} disabled={markingAll} title="Mark all updates read. Items waiting on you stay until you open them." className={rowBtn}>
             {markingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCheck className="w-3.5 h-3.5" />}
@@ -102,6 +93,22 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
       </div>
     </div>
   );
+
+  // What it's about: one tap narrows the list to that kind, again shows all.
+  const kinds = groupCounts.filter((g) => g.n > 0 || g.key === group);
+  const chips = counts.all > 0 && kinds.length > 1 ? (
+    <div role="group" aria-label="About" className={`flex flex-wrap items-center gap-1.5 ${plain ? "px-4 py-2.5 border-b border-[var(--color-border)]" : "mb-3"}`}>
+      <button type="button" aria-pressed={group === "all"} onClick={() => setGroup("all")} className={`ui-tag ${group === "all" ? tagOn : ""}`}>Everything</button>
+      {kinds.map((g) => {
+        const on = group === g.key;
+        return (
+          <button key={g.key} type="button" aria-pressed={on} onClick={() => setGroup(on ? "all" : g.key)} className={`ui-tag ${on ? tagOn : ""}`}>
+            {g.label} <span className="tabular-nums opacity-80">{g.n}</span>
+          </button>
+        );
+      })}
+    </div>
+  ) : null;
 
   const body = counts.all === 0 ? (
     <p className="px-4 py-4 text-[15px] text-[var(--color-text-muted)]">You&apos;re all caught up. Nothing needs your attention right now.</p>
@@ -126,6 +133,7 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
     return (
       <div className="min-w-0">
         {bar}
+        {chips}
         {body}
       </div>
     );
@@ -133,6 +141,7 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
   return (
     <div className="min-w-0">
       {bar}
+      {chips}
       <div className={sheet}>{body}</div>
     </div>
   );

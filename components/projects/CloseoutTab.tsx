@@ -867,12 +867,12 @@ function Fact({ k, v, s, tone, bar }: { k: string; v: string; s: string; tone?: 
 }
 
 // A quiet status tag: a dot in the status color and the word.
-const STATUS: Record<TurnoverItem["status"], { word: string; dot: string }> = {
-  open: { word: "Needed", dot: "var(--state-held)" },
-  received: { word: "Received", dot: "var(--color-text-faint)" },
-  accepted: { word: "Accepted", dot: "var(--state-released)" },
-  rejected: { word: "Rejected", dot: "var(--state-overdue)" },
-  waived: { word: "Waived", dot: "var(--color-border-strong)" },
+const STATUS: Record<TurnoverItem["status"], { word: string; pill: string }> = {
+  open: { word: "Needed", pill: "is-warn" },
+  received: { word: "Received", pill: "" },
+  accepted: { word: "Accepted", pill: "is-good" },
+  rejected: { word: "Rejected", pill: "is-bad" },
+  waived: { word: "Waived", pill: "is-muted" },
 };
 
 /** One turnover document: needed for this job or not, where it stands,
@@ -890,18 +890,18 @@ function TurnoverRow({ it, canManage, busy, onRequired, onAccept, onFile }: { it
     finally { setSending(null); }
   };
   const drag = useFileDrag((fs) => { void send(fs[0]); }, !canAttach || busy || !!sending);
-  const st = it.required ? STATUS[it.status] : { word: "Not for this job", dot: "var(--color-border-strong)" };
+  const st = it.required ? STATUS[it.status] : { word: "Not for this job", pill: "is-muted" };
   const small = "shrink-0 inline-flex items-center h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
   return (
     <div {...drag.bind} className={`${drag.ring}`}>
     <div className={`py-2 flex items-center gap-3 text-[14px] ${it.required ? "" : "opacity-60"}`}>
       <button type="button" role="switch" aria-checked={it.required} aria-label={`${it.name} needed for this job`} disabled={!canManage || busy} onClick={onRequired}
-        className={`relative w-9 h-5 rounded-full shrink-0 transition-colors ${it.required ? "bg-[var(--color-text)]" : "bg-[var(--color-border-strong)]"} disabled:opacity-60`}>
+        className={`relative w-9 h-5 rounded-full shrink-0 transition-colors ${it.required ? "bg-[var(--color-main)]" : "bg-[var(--color-border-strong)]"} disabled:opacity-60`}>
         <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-[var(--color-surface)] shadow transition-all ${it.required ? "left-[18px]" : "left-0.5"}`} />
       </button>
       <span className="min-w-0 flex-1 break-words leading-snug text-[var(--color-text)]" title={it.description ?? undefined}>{it.name}</span>
-      <span className="shrink-0 inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)] whitespace-nowrap">
-        {busy || sending ? <Loader2 className="w-3 h-3 animate-spin" /> : <span aria-hidden className="w-2 h-2 rounded-full" style={{ background: st.dot }} />}
+      <span className={`shrink-0 ui-pill ${st.pill}`}>
+        {(busy || sending) && <Loader2 className="w-3 h-3 animate-spin" />}
         {st.word}
       </span>
       {canAttach && (

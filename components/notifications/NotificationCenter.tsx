@@ -15,7 +15,7 @@ import React, { createContext, useCallback, useContext, useEffect, useState, use
 import { appAlert } from "@/components/providers/DialogProvider";
 import { createPortal } from "react-dom";
 import Link from "next/link";
-import { X } from "lucide-react";
+import { X, Bell } from "lucide-react";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import { useTicketNotifications } from "@/hooks/useTicketNotifications";
 import { AttentionFeed, type AttnFilter } from "@/components/cockpit/AttentionFeed";
@@ -137,6 +137,7 @@ function CenterPanel({
       >
         <div className="px-5 pt-4 pb-4 shrink-0 border-b border-[var(--color-border-strong)]">
           <div className="flex items-center gap-2">
+            <span aria-hidden className="ui-icon-tile is-sm is-solid"><Bell className="w-4 h-4" /></span>
             <div className="text-[14px] font-medium text-[var(--color-text-muted)]">Notifications</div>
             <div className="flex-1" />
             <button
@@ -159,7 +160,7 @@ function CenterPanel({
               ].map((f, i) => (
                 <div key={f.label} className={`pr-5 ${i ? "pl-5 border-l border-[var(--color-border-strong)]" : ""}`}>
                   <dt className="text-[13px] text-[var(--color-text-muted)]">{f.label}</dt>
-                  <dd className={`font-display text-[24px] leading-none mt-1 font-semibold tabular-nums ${f.bad ? "text-[var(--state-overdue)]" : "text-[var(--color-text)]"}`}>{f.value}</dd>
+                  <dd className="mt-1"><span className={`ui-count !h-8 !min-w-8 !text-[18px] font-display ${f.bad ? "is-bad" : f.value > 0 ? "is-solid" : ""}`}>{f.value}</span></dd>
                 </div>
               ))}
             </dl>

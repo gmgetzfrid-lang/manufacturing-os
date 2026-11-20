@@ -24,6 +24,7 @@ import {
   type Company, type CompanyEvent, type CompanyProfileData,
 } from "@/lib/companies";
 import { scoreBand } from "@/lib/companyScore";
+import { ScoreBadge, ScoreFigure } from "../score";
 import { QUALITY_MANUAL_RUBRIC, type RubricFinding } from "@/lib/checklistEngine";
 import { CO_REASON_LABEL, type CoReason } from "@/lib/changeOrders";
 import { fmtMoney } from "@/lib/costs";
@@ -121,8 +122,8 @@ export default function CompanyProfilePage() {
     { label: <span title="Recordable injuries and stop works">Incidents</span>, value: bad, tone: bad > 0 ? "bad" : undefined },
   ] : [];
   const cells: Array<[string, React.ReactNode]> = [
-    ["Kind", COMPANY_KIND_LABEL[company.kind]],
-    ["Trade", company.trade || <Faint key="t">None</Faint>],
+    ["Kind", <span key="k" className="ui-tag">{COMPANY_KIND_LABEL[company.kind]}</span>],
+    ["Trade", company.trade ? <span key="t" className="ui-tag">{company.trade}</span> : <Faint key="t">None</Faint>],
     ["Status", company.status === "do_not_use" ? <StatusTag key="s" tone="bad">Do not use</StatusTag> : company.status === "inactive" ? <StatusTag key="s">Inactive</StatusTag> : <StatusTag key="s" tone="good">Active</StatusTag>],
     ["Contact", company.contactName || <Faint key="c">None</Faint>],
     ["Phone", company.contactPhone ? <a key="p" href={`tel:${company.contactPhone}`} className="text-[var(--color-accent-text)] hover:underline underline-offset-2">{company.contactPhone}</a> : <Faint key="p">None</Faint>],
@@ -176,7 +177,8 @@ export default function CompanyProfilePage() {
       </Card>
 
       <Card pad={false} className="overflow-hidden" label={
-        <span className="inline-flex items-center gap-1.5">Score
+        <span className="inline-flex items-center gap-2">Score
+          {sc && <ScoreBadge score={sc.composite} size="sm" />}
           <HelpTooltip>Scored from recorded work only, never from typed-in ratings. A part with no evidence stays unrated and doesn&apos;t count.</HelpTooltip>
         </span>
       }>
@@ -198,11 +200,11 @@ export default function CompanyProfilePage() {
               {(sc?.dimensions ?? []).map((d) => (
                 <tr key={d.key}>
                   <td className="px-4 py-2.5 font-semibold text-[var(--color-text)] whitespace-nowrap">{d.label}</td>
-                  <td className="px-4 py-2.5 text-right">{d.score != null ? <span className="font-display text-[17px] font-semibold tabular-nums">{Math.round(d.score)}</span> : <Faint>None</Faint>}</td>
+                  <td className="px-4 py-2.5 text-right">{d.score != null ? <ScoreFigure score={d.score} className="text-[17px]" /> : <Faint>None</Faint>}</td>
                   <td className="px-4 py-2.5 hidden sm:table-cell">
                     {d.score != null && (
-                      <span className="block h-1.5 w-32 rounded-full bg-[var(--color-border)] overflow-hidden" aria-hidden>
-                        <span className="block h-full rounded-full bg-[var(--color-text)]" style={{ width: `${d.score}%` }} />
+                      <span className="block h-2 w-32 rounded-full bg-[var(--color-accent-soft)] overflow-hidden" aria-hidden>
+                        <span className="block h-full rounded-full bg-[var(--color-main)]" style={{ width: `${d.score}%` }} />
                       </span>
                     )}
                   </td>
@@ -311,7 +313,7 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
       action={company.qualityManualReviewedAt ? <span className="text-[13px] text-[var(--color-text-muted)]">Confirmed {fmtDay(company.qualityManualReviewedAt)}</span> : undefined}>
       <div className="px-4 py-3 flex items-baseline gap-2">
         {company.qualityManualScore != null ? (
-          <><span className="font-display text-[22px] font-semibold tabular-nums text-[var(--color-text)]">{Math.round(company.qualityManualScore)}%</span><span className="text-[15px] text-[var(--color-text-muted)]">covered</span></>
+          <><span className="text-[22px]"><ScoreFigure score={company.qualityManualScore} />%</span><span className="text-[15px] text-[var(--color-text-muted)]">covered</span></>
         ) : (
           <span className="text-[15px] text-[var(--color-text-muted)]">Not checked yet.</span>
         )}

@@ -9,7 +9,7 @@
 // The customizable dashboard renders it as the `commandDeck` widget.
 
 import React from "react";
-import { RefreshCw, Download } from "lucide-react";
+import { RefreshCw, Download, BellRing, MailPlus, FileLock, Briefcase } from "lucide-react";
 import type { InboxSnapshot } from "@/lib/inbox";
 import type { AttentionItem } from "@/hooks/useTicketNotifications";
 import { useNotificationCenter } from "@/components/notifications/NotificationCenter";
@@ -78,8 +78,9 @@ export function CommandDeck({
   return (
     <section aria-label="Needs you" className={`min-w-0 ${fill ? "h-full flex flex-col" : ""}`}>
       <div className="flex items-center gap-2 mb-2.5 min-h-9">
+        <span aria-hidden className="ui-icon-tile is-sm is-solid"><BellRing className="w-4 h-4" /></span>
         <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Needs you</h2>
-        {rows.length > 0 && <span className="text-[15px] text-[var(--color-text-muted)] tabular-nums">{rows.length.toLocaleString()}</span>}
+        {rows.length > 0 && <span className={`ui-count ${rows.some((r) => r.overdue) ? "is-bad" : "is-solid"}`}>{rows.length.toLocaleString()}</span>}
         <div className="flex-1" />
         {!fill && (<>
         <button type="button" onClick={onRefresh} disabled={refreshing} aria-label="Refresh" title={lastLoadedAt ? `Updated ${humanTime(new Date(lastLoadedAt).toISOString())}` : "Refresh"} className={iconBtn}>
@@ -111,10 +112,10 @@ export function CommandDeck({
         )}
         {/* The three main tools, with their live counts. */}
         <FactRow className="border-t border-[var(--color-border-strong)] bg-[var(--color-surface-2)]/50" cells={[
-          { label: "Open drafting requests", value: n(pillars.openRequests), href: "/requests", note: data ? `${data.ticketsAssigned.length} yours` : undefined },
-          { label: "Documents checked out", value: n(pillars.lockedDocs), href: "/checkouts", tone: stale > 0 ? "bad" : undefined,
+          { icon: <MailPlus className="w-4 h-4" />, label: "Open drafting requests", value: n(pillars.openRequests), href: "/requests", note: data ? `${data.ticketsAssigned.length} yours` : undefined },
+          { icon: <FileLock className="w-4 h-4" />, label: "Documents checked out", value: n(pillars.lockedDocs), href: "/checkouts", tone: stale > 0 ? "bad" : undefined,
             note: data ? (stale > 0 ? `${stale} past due` : `${data.myCheckouts.length} by you`) : undefined },
-          { label: "Active projects", value: n(pillars.activeProjects), href: "/projects", note: data && data.milestonesUpcoming.length ? `${data.milestonesUpcoming.length} milestones this week` : undefined },
+          { icon: <Briefcase className="w-4 h-4" />, label: "Active projects", value: n(pillars.activeProjects), href: "/projects", note: data && data.milestonesUpcoming.length ? `${data.milestonesUpcoming.length} milestones this week` : undefined },
         ]} />
       </div>
     </section>

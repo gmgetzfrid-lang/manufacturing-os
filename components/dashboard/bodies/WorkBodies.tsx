@@ -14,7 +14,8 @@ import { useRole } from "@/components/providers/RoleContext";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
 import { TrendChip, MiniBars, Sparkline, SegmentBar, dayBuckets, type Segment } from "../viz";
-import { StatusTag, LateEdge, rowBtn, link, thead, th, humanDate, humanTime } from "@/components/cockpit/ui";
+import { StatusTag, LateEdge, WorkBar, rowBtn, link, thead, th, humanDate, humanTime } from "@/components/cockpit/ui";
+import { useProjectProgress } from "@/components/cockpit/projectProgress";
 import {
   useWidget, useSetting, useWidgetData, Tabs, SearchField, useDebounced, Skeleton, Empty, timeAgo,
   headCount, fetchRecentDates, weekSplit, sum, FILL,
@@ -24,7 +25,7 @@ import {
 
 // A request's status as a quiet tag: amber where it waits on a review or an
 // approval, plain otherwise.
-const TICKET_STATUS: Record<string, { label: string; tone: "held" | "neutral" }> = {
+const TICKET_STATUS: Record<string, { label: string; tone: "held" | "neutral" | "released" | "muted" }> = {
   NEW: { label: "New", tone: "neutral" },
   PENDING_ENG_INITIAL: { label: "Eng review", tone: "held" },
   PENDING_ENG_TEAM: { label: "Eng team", tone: "held" },
@@ -32,11 +33,11 @@ const TICKET_STATUS: Record<string, { label: string; tone: "held" | "neutral" }>
   DRAFTING: { label: "Drafting", tone: "neutral" },
   PENDING_REVIEW: { label: "In review", tone: "held" },
   REVISION_REQ: { label: "Revisions", tone: "held" },
-  PENDING_IFC: { label: "Pending IFC", tone: "neutral" },
-  FINAL_DRAFT: { label: "Final draft", tone: "neutral" },
+  PENDING_IFC: { label: "Pending IFC", tone: "released" },
+  FINAL_DRAFT: { label: "Final draft", tone: "released" },
   PENDING_FINAL_APPROVAL: { label: "Final approval", tone: "held" },
-  CLOSED: { label: "Closed", tone: "neutral" },
-  CANCELED: { label: "Canceled", tone: "neutral" },
+  CLOSED: { label: "Closed", tone: "released" },
+  CANCELED: { label: "Canceled", tone: "muted" },
 };
 const ticketStatus = (s: string | null | undefined) =>
   (s && TICKET_STATUS[s]) || { label: s ?? "–", tone: "neutral" as const };
@@ -139,12 +140,19 @@ export function DraftingRequestsBody() {
       </div>
       {(stagesOn.length > 1 || inScope.length > 4) && (
         <div className="mt-3 shrink-0 flex items-center gap-2 flex-wrap">
+          {/* The pipeline: tap a stage to see just those, tap again for all. */}
           {stagesOn.length > 1 && (
-            <select value={stage ?? ""} onChange={(e) => setStage(e.target.value || null)} aria-label="Stage"
-              className="h-9 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] text-[var(--color-text)]">
-              <option value="">Every stage ({inScope.length})</option>
-              {stagesOn.map((s) => <option key={s.key} value={s.key}>{s.label} ({s.count})</option>)}
-            </select>
+            <div role="group" aria-label="Stage" className="flex flex-wrap items-center gap-1.5">
+              {stagesOn.map((s) => {
+                const on = stage === s.key;
+                return (
+                  <button key={s.key} type="button" aria-pressed={on} onClick={() => setStage(on ? null : s.key)}
+                    className={`ui-tag ${on ? "!bg-[var(--color-main)] !text-white !border-[var(--color-main)]" : ""}`}>
+                    {s.label} <span className="tabular-nums opacity-80">{s.count}</span>
+                  </button>
+                );
+              })}
+            </div>
           )}
           {inScope.length > 4 && <div className="flex-1 min-w-[12rem]"><SearchField value={q} onChange={setQ} placeholder="Filter by number, title, person" /></div>}
         </div>
@@ -177,7 +185,7 @@ export function DraftingRequestsBody() {
                   <tr key={t.id} className={wRow} onClick={() => router.push(`/requests/${t.id}`)}>
                     <td className={`${td} relative whitespace-nowrap`}>
                       {t.priority === 1 && <LateEdge />}
-                      <Link href={`/requests/${t.id}`} onClick={(e) => e.stopPropagation()} className="font-display font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{t.ticket_id ?? "–"}</Link>
+                      <Link href={`/requests/${t.id}`} onClick={(e) => e.stopPropagation()} className="ui-id">{t.ticket_id ?? "–"}</Link>
                     </td>
                     <td className={`${td} max-w-0 w-full`}>
                       <span className="block truncate text-[var(--color-text)]">{t.title ?? "Untitled request"}</span>
@@ -206,7 +214,7 @@ export function DraftingRequestsBody() {
                   <Link href={`/requests/${t.id}`} className="block px-4 py-2.5 hover:bg-[var(--color-surface-2)]">
                     <span className="flex items-baseline gap-3">
                       <span className="min-w-0 flex-1 truncate text-[15px]">
-                        <span className="font-display font-semibold tabular-nums mr-2">{t.ticket_id ?? "–"}</span>{t.title ?? "Untitled request"}
+                        <span className="ui-id mr-2">{t.ticket_id ?? "–"}</span>{t.title ?? "Untitled request"}
                       </span>
                       <StatusTag tone={t.priority === 1 ? "overdue" : st.tone}>{st.label}</StatusTag>
                     </span>
@@ -235,8 +243,8 @@ type ProjScope = "active" | "mine" | "quiet" | "due";
 
 export function ProjectsBody() {
   const { uid } = useRole();
-  const router = useRouter();
-  const [scope, setScope] = useSetting<ProjScope>("scope", "active");
+  // Yours first: the whole workspace is a tab away.
+  const [scope, setScope] = useSetting<ProjScope>("scope", "mine");
   const [q, setQ] = useState("");
   const dq = useDebounced(q.trim().toLowerCase(), 150);
   const { data, loading } = useWidgetData(async (orgId, me) => {
@@ -260,6 +268,18 @@ export function ProjectsBody() {
     const mine = new Set(((memberOf.data ?? []) as Array<{ project_id: string }>).map((r) => r.project_id));
     return { rows, activityDates, mine };
   });
+  return <ProjectsTable data={data} loading={loading} scope={scope} setScope={setScope} q={q} setQ={setQ} dq={dq} uid={uid} />;
+}
+
+type ProjData = { rows: Array<ProjRow & { quietDays: number | null; due: ReturnType<typeof projectDue> }>; activityDates: string[]; mine: Set<string> };
+
+function ProjectsTable({ data, loading, scope, setScope, q, setQ, dq, uid }: {
+  data: ProjData | null; loading: boolean; scope: ProjScope; setScope: (v: ProjScope) => void;
+  q: string; setQ: (v: string) => void; dq: string; uid: string | null | undefined;
+}) {
+  const { activeOrgId } = useRole();
+  const router = useRouter();
+  const progress = useProjectProgress(activeOrgId, (data?.rows ?? []).map((p) => ({ id: p.id, timezone: p.timezone })), 12);
   if (loading) return <Skeleton />;
   const rows = data?.rows ?? [];
   const isMine = (p: ProjRow) => p.owner_user_id === uid || !!data?.mine.has(p.id);
@@ -281,12 +301,25 @@ export function ProjectsBody() {
   };
   // Only a project going quiet gets a mark; activity itself isn't news.
   const quiet = (p: (typeof rows)[number]) => p.quietDays != null && p.quietDays > 7;
+  const projState = (p: (typeof rows)[number]) => {
+    const pr = progress.get(p.id);
+    if (p.due?.kind === "past target" && !(pr && pr.pct >= 100)) return <StatusTag tone="overdue">Late</StatusTag>;
+    if (pr && pr.pct >= 100) return <StatusTag tone="released">Work done</StatusTag>;
+    if (pr && pr.overdue > 0) return <StatusTag tone="held">{pr.overdue} late step{pr.overdue === 1 ? "" : "s"}</StatusTag>;
+    return <StatusTag tone="neutral">Active</StatusTag>;
+  };
+  const workCell = (p: (typeof rows)[number]) => {
+    const pr = progress.get(p.id);
+    if (pr) return <WorkBar pct={pr.pct} late={p.due?.kind === "past target" && pr.pct < 100} width="w-20" title={`${pr.done} of ${pr.steps} steps done`} />;
+    if (pr === null) return <span className="text-[13px] text-[var(--color-text-muted)]">No schedule</span>;
+    return <span className="text-[var(--color-text-faint)]">–</span>;
+  };
   return (
     <div className={FILL}>
       <div className="flex items-end justify-between gap-x-4 gap-y-2 flex-wrap shrink-0">
         <Tabs<ProjScope> value={scope} onChange={setScope} className="min-w-0" options={[
-          { value: "active", label: "Active", count: rows.length },
           { value: "mine", label: "Mine", count: rows.filter(isMine).length },
+          { value: "active", label: "All active", count: rows.length },
           { value: "due", label: "Due soon", count: rows.filter(filters.due).length },
           { value: "quiet", label: "Going quiet", count: rows.filter(filters.quiet).length },
         ]} />
@@ -298,17 +331,19 @@ export function ProjectsBody() {
       </div>
       {rows.length > 5 && <div className="mt-3 shrink-0"><SearchField value={q} onChange={setQ} placeholder="Filter projects by name, MOC, owner" /></div>}
       {shown.length === 0 ? (
-        <Empty>{rows.length === 0 ? "No active projects." : "No projects match."}</Empty>
+        <Empty>{rows.length === 0 ? "No active projects." : scope === "mine" && !q ? "You're not on any active project. All active shows the workspace." : "No projects match."}</Empty>
       ) : (
         <div className="@container -mx-4 -mb-4 mt-3 flex-1 min-h-0 overflow-y-auto border-t border-[var(--color-border)]">
           <table className={`hidden @[40rem]:table ${wTable}`}>
             <thead className={`${thead} sticky top-0 z-[1]`}>
               <tr>
                 <th className={th}>Project</th>
-                <th className={th}>Owner</th>
-                <th className={th}>MOC</th>
+                <th className={th}>Status</th>
+                <th className={th}>Work done</th>
+                <th className={`${th} hidden @[56rem]:table-cell`}>Owner</th>
+                <th className={`${th} hidden @[48rem]:table-cell`}>MOC</th>
                 <th className={th}>Dates</th>
-                <th className={th}>Last activity</th>
+                <th className={`${th} hidden @[52rem]:table-cell`}>Last activity</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
@@ -318,10 +353,12 @@ export function ProjectsBody() {
                     {p.due?.kind === "past target" && <LateEdge />}
                     <Link href={`/projects/${p.id}`} onClick={(e) => e.stopPropagation()} className="block truncate font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{p.name ?? "Untitled project"}</Link>
                   </td>
-                  <td className={`${td} whitespace-nowrap text-[var(--color-text-muted)]`}>{p.owner_user_id === uid ? "You" : p.owner_user_name ?? "–"}</td>
-                  <td className={`${td} whitespace-nowrap font-display tabular-nums text-[var(--color-text-muted)]`}>{p.moc_reference ?? "–"}</td>
+                  <td className={`${td} whitespace-nowrap`}>{projState(p)}</td>
+                  <td className={`${td} whitespace-nowrap`}>{workCell(p)}</td>
+                  <td className={`${td} hidden @[56rem]:table-cell whitespace-nowrap text-[var(--color-text-muted)]`}>{p.owner_user_id === uid ? "You" : p.owner_user_name ?? "–"}</td>
+                  <td className={`${td} hidden @[48rem]:table-cell whitespace-nowrap`}>{p.moc_reference ? <span className="ui-id">{p.moc_reference}</span> : <span className="text-[var(--color-text-faint)]">–</span>}</td>
                   <td className={`${td} whitespace-nowrap`} data-project-due>{dueTag(p)}</td>
-                  <td className={`${td} whitespace-nowrap`}>
+                  <td className={`${td} hidden @[52rem]:table-cell whitespace-nowrap`}>
                     {quiet(p) && p.quietDays! <= 14
                       ? <StatusTag tone="held">{agoWords(p.last_activity_at)}</StatusTag>
                       : <span className="text-[var(--color-text-muted)]">{agoWords(p.last_activity_at)}</span>}
@@ -335,9 +372,13 @@ export function ProjectsBody() {
               <li key={p.id} className="relative">
                 {p.due?.kind === "past target" && <LateEdge />}
                 <Link href={`/projects/${p.id}`} className="block px-4 py-2.5 hover:bg-[var(--color-surface-2)]">
-                  <span className="flex items-baseline gap-3">
+                  <span className="flex items-center gap-3">
                     <span className="min-w-0 flex-1 truncate font-semibold text-[15px] text-[var(--color-text)]">{p.name ?? "Untitled project"}</span>
-                    <span className="shrink-0 text-[13px]" data-project-due>{dueTag(p)}</span>
+                    {projState(p)}
+                  </span>
+                  <span className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px]">
+                    {progress.get(p.id) && workCell(p)}
+                    <span data-project-due>{dueTag(p)}</span>
                   </span>
                   <span className="mt-0.5 block text-[13px] text-[var(--color-text-muted)] truncate">
                     {[p.owner_user_id === uid ? "You" : p.owner_user_name, p.moc_reference ? `MOC ${p.moc_reference}` : null, p.last_activity_at ? `last activity ${agoLower(p.last_activity_at)}` : null].filter(Boolean).join(", ")}
@@ -367,6 +408,10 @@ const KIND_OF = (r: AuditRow): Exclude<ActKind, "all"> => {
   if (t.includes("project") || a.includes("PROJECT") || a.includes("MILESTONE")) return "projects";
   if (t.includes("document") || t.includes("collection") || t.includes("library") || t.includes("version") || a.includes("DOCUMENT") || a.includes("FOLDER")) return "documents";
   return "admin";
+};
+
+const KIND_WORD: Record<Exclude<ActKind, "all">, string> = {
+  documents: "Document", requests: "Request", projects: "Project", knowledge: "Knowledge", admin: "Admin",
 };
 
 /** "DOCUMENT_REV_UP" → "Document rev up". */
@@ -468,10 +513,12 @@ function ActivityFeed({ adminView }: { adminView: boolean }) {
                   <tr key={r.id} className={href ? wRow : ""} onClick={href ? () => router.push(href) : undefined}>
                     <td className={`${td} whitespace-nowrap text-[var(--color-text-muted)] tabular-nums`} title={r.timestamp ? new Date(r.timestamp).toLocaleString("en-US") : undefined}>{when(r.timestamp)}</td>
                     <td className={`${td} whitespace-nowrap text-[var(--color-text)]`}>{who}</td>
-                    <td className={`${td} whitespace-nowrap text-[var(--color-text)]`}>{humanize(r.action)}</td>
+                    <td className={`${td} whitespace-nowrap text-[var(--color-text)]`}>
+                      <span className="inline-flex items-center gap-2"><span className="ui-tag is-more !h-6 !text-[12.5px]">{KIND_WORD[KIND_OF(r)]}</span>{humanize(r.action)}</span>
+                    </td>
                     <td className={`${td} max-w-0 w-full`}>
                       {href
-                        ? <Link href={href} onClick={(e) => e.stopPropagation()} className="block truncate font-display font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{label ?? "Open"}</Link>
+                        ? <Link href={href} onClick={(e) => e.stopPropagation()} className="ui-id block truncate">{label ?? "Open"}</Link>
                         : <span className="block truncate text-[var(--color-text-muted)]">{label ?? "–"}</span>}
                     </td>
                   </tr>
@@ -487,7 +534,7 @@ function ActivityFeed({ adminView }: { adminView: boolean }) {
                 <>
                   <span className="flex items-baseline gap-3">
                     <span className="min-w-0 flex-1 truncate text-[15px] text-[var(--color-text)]">
-                      {humanize(r.action)}{label ? <span className="font-display font-semibold tabular-nums"> {label}</span> : null}
+                      {humanize(r.action)}{label ? <span className="ui-id"> {label}</span> : null}
                     </span>
                     <span className="shrink-0 text-[13px] text-[var(--color-text-muted)] tabular-nums">{when(r.timestamp)}</span>
                   </span>
@@ -544,7 +591,7 @@ export function EquipmentBody() {
     <div className={FILL}>
       <div className="flex items-center gap-3 shrink-0">
         <span className="shrink-0 text-[14px] text-[var(--color-text-muted)]">
-          <span className="font-display text-[18px] font-semibold text-[var(--color-text)] tabular-nums">{(data?.count ?? 0).toLocaleString()}</span> in the registry
+          <span className="ui-count is-solid">{(data?.count ?? 0).toLocaleString()}</span> in the registry
         </span>
         <div className="flex-1 min-w-0">
           <SearchField value={q} onChange={setQ} placeholder="Find a tag, description or location, like P-101"
@@ -567,7 +614,7 @@ export function EquipmentBody() {
               {rows.map((a) => (
                 <tr key={a.id} className={wRow} onClick={() => router.push(`/assets/${encodeURIComponent(a.tag)}`)}>
                   <td className={`${td} whitespace-nowrap`}>
-                    <Link href={`/assets/${encodeURIComponent(a.tag)}`} onClick={(e) => e.stopPropagation()} className="font-display font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{a.tag}</Link>
+                    <Link href={`/assets/${encodeURIComponent(a.tag)}`} onClick={(e) => e.stopPropagation()} className="ui-tag">{a.tag}</Link>
                   </td>
                   <td className={`${td} max-w-0 w-full`}><span className="block truncate text-[var(--color-text-muted)]">{a.description ?? "–"}</span></td>
                   <td className={`${td} hidden sm:table-cell whitespace-nowrap text-[var(--color-text-muted)]`}>{a.location ?? "–"}</td>
@@ -604,10 +651,10 @@ export function RecentDocsBody() {
               <DocThumb documentId={r.documentId} width={28} />
             </DocHoverPreview>
             <span className="min-w-0 flex-1">
-              <span className="block font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)] truncate">{r.documentNumber || r.title || "Document"}</span>
+              <span className="ui-id block text-[15px] truncate">{r.documentNumber || r.title || "Document"}</span>
               {r.title && r.title !== r.documentNumber && <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{r.title}</span>}
             </span>
-            {r.rev && <span className="shrink-0 text-[13px] text-[var(--color-text)]">Rev <span className="font-display font-semibold tabular-nums">{r.rev}</span></span>}
+            {r.rev && <span className="shrink-0 ui-tag">Rev {r.rev}</span>}
             <span className="shrink-0 w-24 text-right text-[13px] text-[var(--color-text-muted)] tabular-nums">{agoWords(r.viewedAt)}</span>
           </Link>
         </li>
@@ -646,10 +693,10 @@ export function AdminUsersBody() {
     <div className={FILL}>
       <div className="flex items-baseline justify-between gap-3 shrink-0">
         <span className="text-[14px] text-[var(--color-text-muted)]">
-          <span className="font-display text-[18px] font-semibold text-[var(--color-text)] tabular-nums">{active.length}</span> active members
+          <span className="ui-count is-solid">{active.length}</span> active members
         </span>
         {pending.length > 0 && (
-          <Link href="/admin/users" className={`text-[14px] ${link}`}>{pending.length} invite{pending.length === 1 ? "" : "s"} pending</Link>
+          <Link href="/admin/users" className={`text-[14px] ${link}`}><span className="ui-count is-warn">{pending.length}</span> invite{pending.length === 1 ? "" : "s"} pending</Link>
         )}
       </div>
       {segments.length > 0 && <SegmentBar segments={segments} className="mt-2 shrink-0" />}
@@ -664,14 +711,14 @@ export function AdminUsersBody() {
       {shown.length === 0 ? <Empty>No members match.</Empty> : (
         <ul className="-mx-4 -mb-4 mt-3 flex-1 min-h-0 overflow-y-auto border-t border-[var(--color-border)] divide-y divide-[var(--color-border)]">
           {shown.map((m) => (
-            <li key={m.uid}>
-              <Link href="/admin/users" className="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-surface-2)]">
-                <span className="min-w-0 flex-1 truncate text-[15px] text-[var(--color-text)]">{m.display_name || m.email || m.uid.slice(0, 8)}</span>
-                <span className="shrink-0 text-[14px] font-semibold text-[var(--color-text)]">{m.role || "Member"}</span>
+            <li key={m.uid} className="flex items-center gap-3 pr-4 hover:bg-[var(--color-surface-2)]">
+              <Link href="/admin/users" className="min-w-0 flex-1 truncate px-4 py-2.5 text-[15px] text-[var(--color-text)]">{m.display_name || m.email || m.uid.slice(0, 8)}</Link>
+              <span className="shrink-0 flex items-center gap-1.5">
+                <button type="button" onClick={() => setRoleFilter(m.role || "Member")} aria-pressed={roleFilter === (m.role || "Member")} title={`Show only ${m.role || "Member"}`} className="ui-tag">{m.role || "Member"}</button>
                 {(m.roles ?? []).filter((r) => r !== m.role).slice(0, 2).map((r) => (
-                  <span key={r} className="shrink-0 text-[13px] text-[var(--color-text-muted)]">and {r}</span>
+                  <span key={r} className="ui-tag is-more">{r}</span>
                 ))}
-              </Link>
+              </span>
             </li>
           ))}
         </ul>

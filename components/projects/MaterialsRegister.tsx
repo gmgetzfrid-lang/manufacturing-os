@@ -27,11 +27,12 @@ const btn = "inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-
 const pri = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-semibold whitespace-nowrap disabled:opacity-50";
 const field = "w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[13px] text-[var(--color-text)]";
 const label = "text-[12px] font-semibold text-[var(--color-text-muted)]";
-const red = "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300";
-const amber = "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300";
-const green = "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300";
-const quiet = "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]";
-const tag = "inline-block text-[11px] font-semibold px-1.5 py-0.5 rounded whitespace-nowrap";
+// State as soft pills (app/globals.css .ui-pill): red short, amber waiting, green here.
+const red = "is-bad";
+const amber = "is-warn";
+const green = "is-good";
+const quiet = "is-muted";
+const tag = "ui-pill";
 const statusTone = (s: MaterialStatus) => (s === "to_specify" || s === "short" ? red : arrived(s) ? green : s === "cancelled" ? quiet : amber);
 const dateWord = (d: string | null) => { if (!d) return ""; const [, m, day] = d.split("-"); return `${Number(m)}/${Number(day)}`; };
 
@@ -108,9 +109,9 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
     if (!r.question.trim()) return null;
     if (!questionOpen(r)) return <span className="text-[12px] text-[var(--color-text-muted)]">&ldquo;{r.question}&rdquo; Answered: {r.answer}</span>;
     const age = questionAgeH(r, now);
-    return <span className={`${tag} ${age >= QUESTION_LIMIT_H ? red : amber} !whitespace-normal`}>&ldquo;{r.question}&rdquo; · open {ageWord(age)}{r.questionBy ? ` · asked by ${r.questionBy}` : ""}</span>;
+    return <span className={`${tag} ${age >= QUESTION_LIMIT_H ? red : amber} !whitespace-normal !h-auto py-0.5`}>&ldquo;{r.question}&rdquo; · open {ageWord(age)}{r.questionBy ? ` · asked by ${r.questionBy}` : ""}</span>;
   };
-  const specCell = (r: Material) => <>{r.spec || <span className="text-[var(--color-text-muted)]">None written</span>}{r.qty ? <span className="text-[var(--color-text-muted)]"> · qty {r.qty}</span> : null}{r.specMissing.trim() ? <> <span className={`${tag} ${red}`}>Missing: {r.specMissing}</span></> : null}</>;
+  const specCell = (r: Material) => <>{r.spec || <span className="text-[var(--color-text-muted)]">None written</span>}{r.qty ? <span className="text-[var(--color-text-muted)]"> · qty {r.qty}</span> : null}{r.specMissing.trim() ? <> <span className={`${tag} ${red} !whitespace-normal !h-auto py-0.5`}>Missing: {r.specMissing}</span></> : null}</>;
   const etaCell = (r: Material) => <>{r.eta ? <span className={late(r, now) ? "font-bold text-rose-700 dark:text-rose-400" : ""}>{dateWord(r.eta)}</span> : null}{r.etaNote ? <span className="text-[var(--color-text-muted)]">{r.eta ? " · " : ""}{r.etaNote}</span> : null}</>;
 
   return (

@@ -64,6 +64,9 @@ import {
   HelpCircle,
   Archive,
   QrCode,
+  Info,
+  Paperclip as PaperclipIcon,
+  ClipboardList,
 } from 'lucide-react';
 
 // =========================================================================================
@@ -1728,11 +1731,11 @@ export default function TicketDetailView() {
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(360px,420px)] gap-x-6 gap-y-8 items-start">
         {/* LEFT: the request and its files */}
         <div className="space-y-8 min-w-0">
-          <Card label="Details" pad={false} className="overflow-hidden">
+          <Card label={<span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm is-solid"><Info className="w-4 h-4" /></span>Details</span>} pad={false} className="overflow-hidden">
             <dl className="grid grid-cols-2 md:grid-cols-4 gap-px bg-[var(--color-border)]">
               {([
-                ['Unit', <span key="u" className="font-display text-[17px] font-semibold tabular-nums">{ticket.unit}</span>],
-                ['Type', ticket.requestType || <Muted key="t">None</Muted>],
+                ['Unit', ticket.unit ? <span key="u" className="ui-tag">Unit {ticket.unit}</span> : <Muted key="u">None</Muted>],
+                ['Type', ticket.requestType ? <span key="t" className="ui-tag">{ticket.requestType}</span> : <Muted key="t">None</Muted>],
                 ['Requester', <span key="r" title={ticket.requesterEmail || undefined}>{ticket.requesterName || <Muted>Unknown</Muted>}</span>],
                 ['Drafter', ticket.assignedDrafterName || <Muted key="d">Not assigned</Muted>],
                 ['Engineer reviewer', ticket.assignedEngineerName ? (
@@ -1742,10 +1745,10 @@ export default function TicketDetailView() {
                   </span>
                 ) : <Muted key="e">Not assigned</Muted>],
                 ['Started', fmtDay(ticket.createdAt)],
-                ['Deliverable', ticket.deliverableRev ? <span key="rev" className="font-display font-semibold tabular-nums">Rev {ticket.deliverableRev}</span> : <Muted key="rev">Not issued</Muted>],
+                ['Deliverable', ticket.deliverableRev ? <span key="rev" className="ui-pill is-good">Rev {ticket.deliverableRev}</span> : <span key="rev" className="ui-pill is-muted">Not issued</span>],
                 ['Watchers', (
                   <span key="w" className="flex items-center gap-2">
-                    <span className="tabular-nums">{(ticket.watchers ?? []).length}</span>
+                    <span className="ui-count">{(ticket.watchers ?? []).length}</span>
                     <button type="button" onClick={toggleWatch} aria-pressed={watching}
                       className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                       {watching ? <><Check className="w-3.5 h-3.5" /> Watching</> : <><Eye className="w-3.5 h-3.5" /> Watch</>}
@@ -1761,14 +1764,16 @@ export default function TicketDetailView() {
             </dl>
           </Card>
 
-          <Card label="Scope of work">
+          <Card label={<span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm is-solid"><ClipboardList className="w-4 h-4" /></span>Scope of work</span>}>
             <p className="text-[15px] text-[var(--color-text)] leading-relaxed whitespace-pre-wrap max-w-[80ch]">{ticket.description || <Muted>No scope written.</Muted>}</p>
           </Card>
 
           {/* Files: drop one anywhere here to add it. */}
           <section {...filesDrag.bind} className={`min-w-0 rounded-lg ${filesDrag.ring}`}>
             <div className="flex items-end gap-3 mb-2.5 min-h-8">
+              <span aria-hidden className="ui-icon-tile is-sm is-solid self-center"><PaperclipIcon className="w-4 h-4" /></span>
               <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Files</h2>
+              <span className="ui-count is-solid self-center">{fileGroups.reduce((n, g) => n + g.rows.length, 0)}</span>
               <div className="flex-1" />
               {filesDrag.over
                 ? <span className="text-[13px] font-semibold text-[var(--color-text)]">{filesDrag.say}</span>
@@ -1800,12 +1805,19 @@ export default function TicketDetailView() {
                         className={`cursor-pointer hover:bg-[var(--color-surface-2)] ${r.faded ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-text)]'}`}>
                         <td className="px-4 py-2.5 max-w-0">
                           <div className="flex items-center gap-2.5 min-w-0">
-                            {r.issued ? <CheckSquare className="w-4 h-4 shrink-0 text-[var(--state-released)]" /> : r.kind.startsWith('Draft') ? <FileText className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" /> : <FileIcon className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" />}
+                            <span aria-hidden className={`ui-icon-tile is-sm ${r.issued ? '!bg-[color-mix(in_srgb,var(--state-released)_15%,transparent)] !text-[var(--state-released)]' : r.faded ? '!bg-[var(--color-surface-2)] !text-[var(--color-text-muted)]' : ''}`}>
+                              {r.issued ? <CheckSquare className="w-4 h-4" /> : r.kind.startsWith('Draft') || r.kind.startsWith('Earlier') ? <FileText className="w-4 h-4" /> : <FileIcon className="w-4 h-4" />}
+                            </span>
                             <button type="button" onClick={() => setViewerFile(r.file)} title={r.file.name} className={`min-w-0 text-left truncate hover:text-[var(--color-accent-text)] ${r.faded ? '' : 'font-semibold'}`}>{r.file.name}</button>
                           </div>
-                          <div className="sm:hidden pl-[26px] text-[13px] text-[var(--color-text-muted)] flex flex-wrap items-center gap-x-2">{r.kind}{r.file.uploadedAt ? `, ${fmtDay(r.file.uploadedAt)}` : ''}{r.tag}</div>
+                          <div className="sm:hidden pl-[38px] text-[13px] text-[var(--color-text-muted)] flex flex-wrap items-center gap-x-2">{r.kind}{r.file.uploadedAt ? `, ${fmtDay(r.file.uploadedAt)}` : ''}{r.tag}</div>
                         </td>
-                        <td className="px-4 py-2.5 hidden sm:table-cell whitespace-nowrap">{r.kind}{r.tag && <div className="max-sm:hidden">{r.tag}</div>}</td>
+                        <td className="px-4 py-2.5 hidden sm:table-cell whitespace-nowrap">
+                          <span className="flex flex-col items-start gap-1">
+                            <span className={`ui-tag ${r.faded ? 'is-more' : ''}`}>{r.kind}</span>
+                            {r.tag}
+                          </span>
+                        </td>
                         <td className="px-4 py-2.5 hidden 2xl:table-cell whitespace-nowrap tabular-nums text-[var(--color-text-muted)]">{r.file.size}</td>
                         <td className="px-4 py-2.5 hidden sm:table-cell whitespace-nowrap tabular-nums text-[var(--color-text-muted)]">{fmtWhen(r.file.uploadedAt)}</td>
                         <td className="pr-3 py-1.5 whitespace-nowrap text-right">
@@ -1844,10 +1856,11 @@ export default function TicketDetailView() {
         {/* RIGHT: discussion and history */}
         <section className="min-w-0 xl:sticky xl:top-4">
           <div role="tablist" aria-label="Discussion and history" className="flex items-end gap-5 mb-2.5 min-h-8">
-            {([['discussion', `Discussion${(ticket.comments?.length ?? 0) > 0 ? ` (${ticket.comments?.length})` : ''}`], ['audit', 'History']] as const).map(([key, label]) => (
+            {([['discussion', 'Discussion', ticket.comments?.length ?? 0], ['audit', 'History', 0]] as const).map(([key, label, n]) => (
               <button key={key} type="button" role="tab" aria-selected={activeTab === key} onClick={() => setActiveTab(key)}
-                className={`pb-1 -mb-px border-b-2 font-display text-[19px] leading-tight font-semibold transition-colors ${activeTab === key ? 'text-[var(--color-text)] border-[var(--color-main)]' : 'text-[var(--color-text-muted)] border-transparent hover:text-[var(--color-text)]'}`}>
+                className={`inline-flex items-center gap-2 pb-1 -mb-px border-b-2 font-display text-[19px] leading-tight font-semibold transition-colors ${activeTab === key ? 'text-[var(--color-heading)] border-[var(--color-main)]' : 'text-[var(--color-text-muted)] border-transparent hover:text-[var(--color-text)]'}`}>
                 {label}
+                {n > 0 && <span className={`ui-count font-sans ${activeTab === key ? 'is-solid' : '!bg-[var(--color-surface)]'}`}>{n}</span>}
               </button>
             ))}
           </div>

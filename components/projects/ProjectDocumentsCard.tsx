@@ -12,7 +12,17 @@ import HelpTooltip from "@/components/ui/HelpTooltip";
 import { Card } from "@/components/ui/PageHero";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Search, Plus, X, Loader2 } from "lucide-react";
+import { Search, Plus, X, Loader2, FileText } from "lucide-react";
+
+/** A document's status as a pill: issued green, in review amber, draft grey. */
+function docPill(status: string): string {
+  const s = status.toLowerCase();
+  if (/issued|ifc|approved|released|current|effective/.test(s)) return "is-good";
+  if (/review|pending|hold|check/.test(s)) return "is-warn";
+  if (/superseded|obsolete|void|cancel|retired/.test(s)) return "is-muted";
+  if (/draft|wip|work/.test(s)) return "is-muted";
+  return "";
+}
 import { supabase } from "@/lib/supabase";
 
 interface LinkedDoc {
@@ -146,7 +156,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
   };
 
   return (
-    <Card pad={false} className="overflow-hidden" label={<>Project documents <span className="text-[var(--color-text-muted)] font-medium tabular-nums">{rows.length}</span></>}
+    <Card pad={false} className="overflow-hidden" label={<span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm is-solid"><FileText className="w-4 h-4" /></span>Project documents <span className="ui-count is-solid">{rows.length}</span></span>}
       action={canManage ? (
         <button
           onClick={() => { setAttachOpen((v) => !v); setQ(""); setResults([]); }}
@@ -217,13 +227,13 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
               return (
                 <tr key={r.linkId} className="hover:bg-[var(--color-surface-2)] align-top max-sm:flex max-sm:flex-wrap max-sm:items-center max-sm:gap-x-3 max-sm:px-4 max-sm:py-2.5">
                   <td className="sm:px-4 sm:py-3 max-sm:flex-1 min-w-0">
-                    {href ? <Link href={href} className="font-display font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{r.label}</Link>
-                      : <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{r.label}</span>}
-                    {r.status && <div className="md:hidden text-[13px] text-[var(--color-text-muted)]">{r.status}</div>}
+                    {href ? <Link href={href} className="ui-id">{r.label}</Link>
+                      : <span className="ui-id">{r.label}</span>}
+                    {r.status && <div className="md:hidden mt-1"><span className={`ui-pill ${docPill(r.status)}`}>{r.status}</span></div>}
                   </td>
-                  <td className="sm:px-4 sm:py-3 font-display tabular-nums text-[14px] text-[var(--color-text)] max-sm:text-[var(--color-text-muted)]">{r.rev ? <><span className="sm:hidden">Rev </span>{r.rev}</> : "-"}</td>
-                  <td className="px-4 py-3 hidden md:table-cell text-[14px] text-[var(--color-text)]">{r.status || "-"}</td>
-                  <td className="px-4 py-3 hidden md:table-cell text-[14px] text-[var(--color-text)]" title={badge.hint}>{badge.label}</td>
+                  <td className="sm:px-4 sm:py-3">{r.rev ? <span className="ui-tag">Rev {r.rev}</span> : <span className="text-[var(--color-text-faint)]">-</span>}</td>
+                  <td className="px-4 py-3 hidden md:table-cell">{r.status ? <span className={`ui-pill ${docPill(r.status)}`}>{r.status}</span> : <span className="text-[var(--color-text-faint)]">-</span>}</td>
+                  <td className="px-4 py-3 hidden md:table-cell" title={badge.hint}><span className="ui-tag is-more">{badge.label}</span></td>
                   <td className="px-4 py-3 hidden lg:table-cell text-[14px] text-[var(--color-text-muted)] whitespace-nowrap">{r.lastSeenAt ? new Date(r.lastSeenAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "-"}</td>
                   <td className="sm:px-4 sm:py-2 whitespace-nowrap">
                     {canManage && (

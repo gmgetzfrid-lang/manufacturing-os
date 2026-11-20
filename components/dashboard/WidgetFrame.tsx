@@ -83,6 +83,7 @@ export default function WidgetFrame({ widget, editing, size, onRemove, onOpenSet
 
   if (!meta) return null;
   const Body = meta.Body;
+  const Icon = meta.icon;
   const title = (typeof widget.settings?.title === "string" && widget.settings.title.trim()) || meta.title;
 
   // ── Bare widgets bring their own heading and sheet (the Command Deck) ──
@@ -114,6 +115,7 @@ export default function WidgetFrame({ widget, editing, size, onRemove, onOpenSet
   const header = (isExpanded: boolean) => (
     <div className={`flex items-center gap-2 shrink-0 min-h-9 ${isExpanded ? "" : "mb-2.5"}`}>
       {editing && <GripVertical className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" aria-hidden />}
+      <span aria-hidden className="ui-icon-tile is-sm is-solid"><Icon className="w-4 h-4" /></span>
       <h2 title={meta.description} className="min-w-0 flex-1 truncate font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">{title}</h2>
       {editing ? (
         <div data-no-drag className="shrink-0 flex items-center gap-1">

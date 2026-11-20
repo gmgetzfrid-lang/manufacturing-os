@@ -121,16 +121,17 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
         <div role="dialog" aria-label="Notifications" className={`${isHeader ? "absolute right-0 top-full mt-2 origin-top-right" : "absolute left-full ml-2 bottom-0"} w-[26rem] max-w-[calc(100vw-1.5rem)] max-h-[70vh] bg-[var(--color-surface)] text-[var(--color-text)] rounded-lg border border-[var(--color-border-strong)] shadow-[0_30px_60px_-24px_rgb(11_18_32/0.55)] z-[90] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150`}>
             <div className="px-4 pt-3 pb-3 border-b border-[var(--color-border-strong)]">
               <div className="flex items-center gap-3">
+                <span aria-hidden className="ui-icon-tile is-sm is-solid"><Bell className="w-4 h-4" /></span>
                 <h2 className="min-w-0 flex-1 font-display text-[19px] font-semibold leading-tight">
                   {unread === 0 ? "All caught up" : `${unread} ${unread === 1 ? "thing needs" : "things need"} you`}
                 </h2>
                 <Link href="/settings/notifications" onClick={() => setOpen(false)} className={`text-[14px] ${link}`}>Settings</Link>
               </div>
               {unread > 0 && (
-                <dl className="mt-2 flex text-[13px] divide-x divide-[var(--color-border)]">
-                  <div className="pr-3"><dt className="text-[var(--color-text-muted)]">Overdue</dt><dd className={`font-display text-[19px] font-semibold tabular-nums ${facts.overdue ? "text-[var(--state-overdue)]" : ""}`}>{facts.overdue}</dd></div>
-                  <div className="px-3"><dt className="text-[var(--color-text-muted)]">Waiting on you</dt><dd className="font-display text-[19px] font-semibold tabular-nums">{decisions}</dd></div>
-                  <div className="pl-3"><dt className="text-[var(--color-text-muted)]">Updates</dt><dd className="font-display text-[19px] font-semibold tabular-nums">{facts.news}</dd></div>
+                <dl className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1.5 text-[13px] text-[var(--color-text-muted)]">
+                  <div className="inline-flex items-center gap-1.5"><dd className={`ui-count ${facts.overdue ? "is-bad" : ""}`}>{facts.overdue}</dd><dt>Overdue</dt></div>
+                  <div className="inline-flex items-center gap-1.5"><dd className={`ui-count ${decisions ? "is-solid" : ""}`}>{decisions}</dd><dt>Waiting on you</dt></div>
+                  <div className="inline-flex items-center gap-1.5"><dd className="ui-count">{facts.news}</dd><dt>Updates</dt></div>
                 </dl>
               )}
               {markError && <div role="alert" className="mt-1 text-[13px] font-semibold text-[var(--state-overdue)]">{markError}</div>}

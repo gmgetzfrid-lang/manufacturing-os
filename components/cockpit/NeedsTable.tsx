@@ -9,7 +9,10 @@
 import React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CheckCheck } from "lucide-react";
+import {
+  CheckCheck, ClipboardList, MessageSquare, FileText, UserPlus, OctagonAlert, Lock, GitBranch, Briefcase, Check,
+  PenLine, ListChecks, MailPlus, Bell, CalendarClock, BadgeCheck, KeyRound, Trash2,
+} from "lucide-react";
 import type { NeedsRow } from "./needsYou";
 import { sheet, thead, th, rowHover, rowBtn, StatusTag, LateEdge, humanDate, humanTime } from "./ui";
 
@@ -26,14 +29,36 @@ function dateWords(r: NeedsRow): string {
 function Status({ r }: { r: NeedsRow }) {
   if (r.overdue) return <StatusTag tone="overdue">Overdue</StatusTag>;
   if (r.dueSoon) return <StatusTag tone="held">Due soon</StatusTag>;
-  if (r.yourTurn) return <span className="text-[13px] font-semibold text-[var(--color-text)] whitespace-nowrap">Your turn</span>;
-  return <span className="text-[13px] text-[var(--color-text-muted)] whitespace-nowrap">Update</span>;
+  if (r.yourTurn) return <StatusTag tone="neutral">Your turn</StatusTag>;
+  return <StatusTag tone="muted">Update</StatusTag>;
+}
+
+/** What a row is about, as an icon on a tile (red when late). */
+const KIND_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
+  ticket: ClipboardList, ticket_comment: MessageSquare, ticket_mention: MessageSquare, ticket_status: FileText,
+  ticket_assigned: UserPlus, checkout_conflict: OctagonAlert, checkout_handoff: Lock, checkout_message: MessageSquare,
+  revision_published_over_checkout: GitBranch, project_member: Briefcase, project_status: Briefcase, project_comment: Briefcase,
+  hold_opened: OctagonAlert, hold_released: Check, markup_request: PenLine, doc_superseded: GitBranch,
+  checkout_released: Lock, overlap_advisory: OctagonAlert, branch_open: GitBranch, branch_resolved: Check,
+  provenance_flag: FileText, task_overdue_digest: ListChecks, request_pending_approval: MailPlus, equipment_request: MailPlus,
+  orchestrator_message: MessageSquare, review_due: CalendarClock, review_overdue: CalendarClock, review_requested: BadgeCheck,
+  review_invalidated: BadgeCheck, ack_requested: BadgeCheck, ack_overdue: BadgeCheck, access_recert_due: KeyRound,
+  deletion_requested: Trash2,
+};
+
+function KindTile({ r }: { r: NeedsRow }) {
+  const Icon = KIND_ICON[r.kind] ?? (r.kind.startsWith("ticket") ? ClipboardList : Bell);
+  return (
+    <span aria-hidden className={`ui-icon-tile is-sm ${r.overdue ? "!bg-[color-mix(in_srgb,var(--state-overdue)_14%,transparent)] !text-[var(--state-overdue)]" : r.yourTurn ? "is-solid" : ""}`}>
+      <Icon className="w-4 h-4" />
+    </span>
+  );
 }
 
 function Item({ r }: { r: NeedsRow }) {
   return (
     <>
-      {r.ref && <span className="font-display font-semibold tabular-nums text-[var(--color-text)] mr-2">{r.ref}</span>}
+      {r.ref && <span className="ui-id mr-2">{r.ref}</span>}
       <span className={r.ref ? "text-[var(--color-text)]" : "font-semibold text-[var(--color-text)]"}>{r.name}</span>
     </>
   );
@@ -75,7 +100,7 @@ export default function NeedsTable({
             <tr key={r.key} className={rowHover} onClick={() => open(r)}>
               <td className="relative px-4 py-3 max-w-[22rem]">
                 {r.overdue && <LateEdge />}
-                <div className="truncate"><Item r={r} /></div>
+                <div className="flex items-center gap-3 min-w-0"><KindTile r={r} /><span className="min-w-0 truncate"><Item r={r} /></span></div>
               </td>
               <td className="px-4 py-3 text-[var(--color-text-muted)] max-w-[24rem]"><div className="truncate">{r.todo}</div></td>
               <td className="px-4 py-3"><Status r={r} /></td>
@@ -101,7 +126,9 @@ export default function NeedsTable({
         {shown.map((r) => (
           <li key={r.key} className="relative flex items-stretch">
             {r.overdue && <LateEdge />}
-            <Link href={r.link} onClick={() => onOpen?.(r)} className="min-w-0 flex-1 block px-4 py-3 hover:bg-[var(--color-surface-2)] transition-colors">
+            <Link href={r.link} onClick={() => onOpen?.(r)} className="min-w-0 flex-1 flex items-start gap-3 px-4 py-3 hover:bg-[var(--color-surface-2)] transition-colors">
+              <KindTile r={r} />
+              <span className="min-w-0 flex-1 block">
               <span className="flex items-baseline gap-3 min-w-0">
                 <span className="min-w-0 flex-1 truncate text-[15px]"><Item r={r} /></span>
                 <span className="shrink-0"><Status r={r} /></span>
@@ -109,6 +136,7 @@ export default function NeedsTable({
               <span className="mt-0.5 flex items-baseline gap-3 min-w-0 text-[13px] text-[var(--color-text-muted)]">
                 <span className="min-w-0 flex-1 truncate">{r.todo}</span>
                 <span className={`shrink-0 tabular-nums ${r.overdue ? "text-[var(--state-overdue)] font-semibold" : ""}`}>{dateWords(r)}</span>
+              </span>
               </span>
             </Link>
             {onMarkRead && r.notificationId && (

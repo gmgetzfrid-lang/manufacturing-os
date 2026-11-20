@@ -13,7 +13,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, CalendarDays, FilePlus, Lock, OctagonPause, Flag, Wrench, Eye, Download, Activity as ActivityIcon, FolderInput } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { PageShell } from "@/components/ui/PageShell";
@@ -37,6 +37,21 @@ interface ActivityRow {
 
 // What each recorded action reads as, and whether it is bad news (a forced
 // release, a hold, a missed or blocked milestone gets a red edge).
+/** The kind of change, as an icon on a tile in the What column. */
+function actIcon(action: string): React.ReactNode {
+  const c = "w-4 h-4";
+  if (["REV_UP", "REV_BACKFILL", "SUPERSEDE_DOC", "DOC_SPLIT", "DOC_MERGED", "DOC_RENUMBERED"].includes(action)) return <FilePlus className={c} />;
+  if (["CHECK_OUT", "CHECK_IN", "ABANDON", "FORCE_RELEASE", "DOCUMENT_CHECKOUT", "DOCUMENT_CHECKIN"].includes(action)) return <Lock className={c} />;
+  if (action.startsWith("HOLD_")) return <OctagonPause className={c} />;
+  if (action.startsWith("MILESTONE_")) return <Flag className={c} />;
+  if (action.startsWith("EQUIPMENT_")) return <Wrench className={c} />;
+  if (action === "VIEW") return <Eye className={c} />;
+  if (action === "DOWNLOAD") return <Download className={c} />;
+  if (action.includes("MOVE") || action.includes("FOLDER")) return <FolderInput className={c} />;
+  return <ActivityIcon className={c} />;
+}
+const badTile = "!bg-[color-mix(in_srgb,var(--state-overdue)_14%,transparent)] !text-[var(--state-overdue)]";
+
 const ACTION_VERBS: Record<string, { verb: string; bad?: boolean }> = {
   CHECK_OUT:           { verb: "checked out" },
   CHECK_IN:            { verb: "checked in" },
@@ -229,7 +244,7 @@ export default function ActivityFeedPage() {
         {loading && rows.length === 0 ? (
           <Card><LoadingBlock what="activity" rows={6} className="border-0 p-0" /></Card>
         ) : rows.length === 0 ? (
-          <Card><p className="text-[15px] text-[var(--color-text-muted)]">No activity recorded yet.</p></Card>
+          <Card><p className="flex items-center gap-3 text-[15px] text-[var(--color-text-muted)]"><span aria-hidden className="ui-icon-tile"><ActivityIcon className="w-5 h-5" /></span>No activity recorded yet.</p></Card>
         ) : (
           <>
             {grouped.map((group) => {
@@ -250,10 +265,11 @@ export default function ActivityFeedPage() {
               return (
                 <section key={group.day} aria-label={group.day}>
                   <div className="flex items-center gap-2 mb-2.5 min-h-9">
+                    <span aria-hidden className="ui-icon-tile is-sm is-solid"><CalendarDays className="w-4 h-4" /></span>
                     <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">
                       {group.day === today ? `Today, ${group.day.split(", ").slice(1).join(", ")}` : group.day === yesterday ? `Yesterday, ${group.day.split(", ").slice(1).join(", ")}` : group.day}
                     </h2>
-                    <span className="text-[15px] text-[var(--color-text-muted)] tabular-nums">{group.rows.length}</span>
+                    <span className="ui-count is-solid">{group.rows.length}</span>
                   </div>
                   <div className={`${sheet} @container`}>
                     <table className="hidden @[40rem]:table w-full table-fixed text-[15px]">
@@ -273,7 +289,12 @@ export default function ActivityFeedPage() {
                               {it.time}
                             </td>
                             <td className="px-4 py-2.5 truncate text-[var(--color-text)]">{it.who}</td>
-                            <td className={`px-4 py-2.5 truncate ${it.meta?.bad ? "text-[var(--state-overdue)] font-semibold" : "text-[var(--color-text)]"}`}>{it.verb}</td>
+                            <td className={`px-4 py-2 ${it.meta?.bad ? "text-[var(--state-overdue)] font-semibold" : "text-[var(--color-text)]"}`}>
+                              <span className="flex items-center gap-2.5 min-w-0">
+                                <span aria-hidden className={`ui-icon-tile is-sm ${it.meta?.bad ? badTile : ""}`}>{actIcon(it.r.action)}</span>
+                                <span className="min-w-0 truncate">{it.verb}</span>
+                              </span>
+                            </td>
                             <td className="px-4 py-2">
                               <span className="flex items-center gap-3 min-w-0">
                                 {it.filePath && (
@@ -282,9 +303,9 @@ export default function ActivityFeedPage() {
                                   </DocHoverPreview>
                                 )}
                                 {it.href ? (
-                                  <Link href={it.href} className="min-w-0 truncate font-display font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{it.resourceLabel}</Link>
+                                  <Link href={it.href} className="ui-id min-w-0 truncate">{it.resourceLabel}</Link>
                                 ) : (
-                                  <span className="min-w-0 truncate font-display font-semibold tabular-nums text-[var(--color-text)]">{it.resourceLabel}</span>
+                                  <span className="ui-id min-w-0 truncate">{it.resourceLabel}</span>
                                 )}
                                 {it.name && <span className="min-w-0 truncate text-[14px] text-[var(--color-text-muted)]">{it.name}</span>}
                               </span>
@@ -297,11 +318,12 @@ export default function ActivityFeedPage() {
                       {items.map((it) => {
                         const inner = (
                           <>
-                            <span className="flex items-baseline gap-3">
-                              <span className="min-w-0 flex-1 truncate font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)]">{it.resourceLabel}</span>
+                            <span className="flex items-center gap-3">
+                              <span aria-hidden className={`ui-icon-tile is-sm ${it.meta?.bad ? badTile : ""}`}>{actIcon(it.r.action)}</span>
+                              <span className="ui-id min-w-0 flex-1 truncate text-[15px]">{it.resourceLabel}</span>
                               <span className="shrink-0 text-[13px] text-[var(--color-text-muted)] tabular-nums">{it.time}</span>
                             </span>
-                            <span className={`mt-0.5 block text-[13px] truncate ${it.meta?.bad ? "text-[var(--state-overdue)] font-semibold" : "text-[var(--color-text-muted)]"}`}>{it.who} {it.verb}</span>
+                            <span className={`mt-0.5 block pl-10 text-[13px] truncate ${it.meta?.bad ? "text-[var(--state-overdue)] font-semibold" : "text-[var(--color-text-muted)]"}`}>{it.who} {it.verb}</span>
                           </>
                         );
                         return (

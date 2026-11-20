@@ -656,7 +656,7 @@ export default function ProjectDetailPage() {
             ))}
             {RECORD_TABS.filter((t) => t.id === tab).map((t) => (
               <TabButton key={t.id} active onClick={() => setTab(t.id)}>
-                {t.label}{t.id === "documents" && checkouts.length > 0 && <span className="text-[13px] font-medium tabular-nums text-[var(--color-text-muted)]">{checkouts.length}</span>}
+                {t.label}{t.id === "documents" && checkouts.length > 0 && <span className="ui-count is-solid">{checkouts.length}</span>}
               </TabButton>
             ))}
           </nav>
@@ -1037,12 +1037,12 @@ function DocumentsTab({ checkouts }: { checkouts: CheckoutWithDoc[] }) {
   return (
     <>
       {active.length > 0 && (
-        <Card label={<>Checked out now <span className="text-[var(--color-text-muted)] font-medium tabular-nums">{active.length}</span></>} pad={false} className="overflow-hidden">
+        <Card label={<span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm is-solid"><Lock className="w-4 h-4" /></span>Checked out now <span className="ui-count is-solid">{active.length}</span></span>} pad={false} className="overflow-hidden">
           <CheckoutTable rows={active} />
         </Card>
       )}
       {released.length > 0 && (
-        <Card label={<>Checked out before <span className="text-[var(--color-text-muted)] font-medium tabular-nums">{released.length}</span></>} pad={false} className="overflow-hidden">
+        <Card label={<span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm is-solid"><RotateCcw className="w-4 h-4" /></span>Checked out before <span className="ui-count is-solid">{released.length}</span></span>} pad={false} className="overflow-hidden">
           <CheckoutTable rows={released} historical />
         </Card>
       )}
@@ -1072,16 +1072,16 @@ function CheckoutTable({ rows, historical }: { rows: CheckoutWithDoc[]; historic
             <tr key={c.id} className="hover:bg-[var(--color-surface-2)] cursor-pointer align-top max-sm:flex max-sm:flex-wrap max-sm:gap-x-3 max-sm:px-4 max-sm:py-3"
               onClick={(e) => { if (!(e.target as HTMLElement).closest("a, button")) router.push(href); }}>
               <td className="sm:px-4 sm:py-3 max-sm:basis-full min-w-0">
-                <Link href={href} className="font-display font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{c.docNumber || "-"}</Link>
+                <Link href={href} className="ui-id">{c.docNumber || "-"}</Link>
                 {c.docTitle && <div className="text-[13px] text-[var(--color-text-muted)] line-clamp-1">{c.docTitle}</div>}
                 {note && <div className="text-[13px] text-[var(--color-text-muted)] line-clamp-1 md:hidden">{note}</div>}
               </td>
-              <td className="px-4 py-3 hidden lg:table-cell text-[14px] text-[var(--color-text)]">{c.libraryName || "-"}</td>
+              <td className="px-4 py-3 hidden lg:table-cell">{c.libraryName ? <Link href={`/documents/${c.libraryId}`} className="ui-tag">{c.libraryName}</Link> : <span className="text-[var(--color-text-faint)]">-</span>}</td>
               <td className="sm:px-4 sm:py-3 text-[14px] text-[var(--color-text)] max-sm:text-[13px] max-sm:text-[var(--color-text-muted)]">
                 {c.userName || "-"}
                 {note && <div className="max-md:hidden text-[13px] text-[var(--color-text-muted)] line-clamp-1">{note}</div>}
               </td>
-              <td className="px-4 py-3 hidden md:table-cell text-[14px] text-[var(--color-text)] capitalize">{c.mode}</td>
+              <td className="px-4 py-3 hidden md:table-cell"><span className="ui-tag is-more capitalize">{String(c.mode).replace(/_/g, " ")}</span></td>
               <td className="sm:px-4 sm:py-3 text-[14px] text-[var(--color-text-muted)] whitespace-nowrap max-sm:text-[13px]">{formatRelative(historical ? (c.releasedAt ?? c.endedAt) : c.startedAt)}</td>
             </tr>
           );
@@ -1129,7 +1129,7 @@ function ActivityTab({
         </Card>
       )}
 
-      <Card label={timeline.length ? <>Activity <span className="font-display font-medium tabular-nums text-[var(--color-text-muted)]">{timeline.length}</span></> : "Activity"}>
+      <Card label={timeline.length ? <span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm is-solid"><ActivityIcon className="w-4 h-4" /></span>Activity <span className="ui-count is-solid">{timeline.length}</span></span> : "Activity"}>
         {/* Empty: one plain line on the sheet, not a box inside it. */}
         {timeline.length === 0 ? <p className="text-[15px] text-[var(--color-text-muted)]">No activity yet. Comments, checkouts and revisions show up here.</p> : <TimelineFeed
           events={timeline.slice(0, shown)}
@@ -1256,7 +1256,7 @@ function MembersTab({
           onDone={(note) => { setTransferTo(undefined); setTransferNote(note ?? "Ownership transferred."); onAdded(); }} />
       )}
 
-      <Card label={<>Members <span className="text-[var(--color-text-muted)] font-medium tabular-nums">{members.length}</span></>} pad={false} className="overflow-hidden"
+      <Card label={<span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm is-solid"><Users className="w-4 h-4" /></span>Members <span className="ui-count is-solid">{members.length}</span></span>} pad={false} className="overflow-hidden"
         action={canTransfer ? (
           <span className="flex items-center gap-3">
             {transferNote && <span role="status" className="text-[13px] font-semibold text-[var(--state-released)]">{transferNote}</span>}
@@ -1300,8 +1300,13 @@ function MembersTab({
               return (
                 <tr key={m.id} className="group align-top max-sm:flex max-sm:flex-wrap max-sm:items-center max-sm:gap-x-3 max-sm:px-4 max-sm:py-3">
                   <td className="sm:px-4 sm:py-3 max-sm:flex-1 max-sm:min-w-0">
-                    <div className="font-semibold text-[var(--color-text)] truncate">{who}</div>
-                    {m.userEmail && m.userEmail !== who && <div className="text-[13px] text-[var(--color-text-muted)] truncate">{m.userEmail}</div>}
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span aria-hidden className={`ui-icon-tile is-sm font-display text-[13px] font-semibold ${isOwner ? "is-solid" : ""}`}>{initials(who)}</span>
+                      <div className="min-w-0">
+                        <div className="font-semibold text-[var(--color-text)] truncate">{who}</div>
+                        {m.userEmail && m.userEmail !== who && <div className="text-[13px] text-[var(--color-text-muted)] truncate">{m.userEmail}</div>}
+                      </div>
+                    </div>
                   </td>
                   <td className="sm:px-4 sm:py-3">
                     {canManage && !isOwner ? (
@@ -1311,7 +1316,7 @@ function MembersTab({
                         {MEMBER_ROLES.map((r) => <option key={r.role} value={r.role}>{r.label}</option>)}
                       </select>
                     ) : (
-                      <span className="inline-flex h-9 items-center text-[14px] font-semibold text-[var(--color-text)]">{roleLabel(isOwner ? "owner" : m.role)}</span>
+                      <span className="inline-flex h-9 items-center"><span className={`ui-pill ${isOwner ? "is-solid" : ""}`}>{roleLabel(isOwner ? "owner" : m.role)}</span></span>
                     )}
                   </td>
                   <td className="hidden max-sm:block max-sm:basis-full max-sm:pt-1.5 md:table-cell md:px-4 md:py-3">{resp}</td>
@@ -1348,6 +1353,13 @@ function MembersTab({
       {addCard}
     </>
   );
+}
+
+/** "Gary Getzfrid" → "GG"; an email's name part when there's no name. */
+function initials(who: string): string {
+  const base = who.includes("@") ? who.split("@")[0].replace(/[._-]+/g, " ") : who;
+  const parts = base.trim().split(/\s+/).filter(Boolean);
+  return ((parts[0]?.[0] ?? "") + (parts.length > 1 ? parts[parts.length - 1][0] : parts[0]?.[1] ?? "")).toUpperCase() || "?";
 }
 
 function formatRelative(ts: Timestamp | undefined): string {

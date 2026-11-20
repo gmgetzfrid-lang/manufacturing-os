@@ -25,6 +25,10 @@ export interface Group {
   title: string;
   count: number;
   help?: React.ReactNode;
+  /** An icon for the group's band (shown on a brand tile). */
+  icon?: React.ReactNode;
+  /** The count's badge tone: late items red, waiting amber. */
+  tone?: "bad" | "warn";
   rows: GroupRow[];
   more?: { href: string; label: string };
 }
@@ -34,8 +38,9 @@ export default function GroupedTable({ groups, label }: { groups: Group[]; label
   if (shown.length === 0) return null;
   const bandTitle = (g: Group) => (
     <span className="inline-flex items-center gap-2">
+      {g.icon && <span aria-hidden className="ui-icon-tile is-sm !bg-[var(--color-surface)]">{g.icon}</span>}
       <span className="font-semibold text-[var(--color-text)]">{g.title}</span>
-      <span className="font-display tabular-nums text-[var(--color-text-muted)]">{g.count.toLocaleString()}</span>
+      <span className={`ui-count ${g.tone === "bad" ? "is-bad" : g.tone === "warn" ? "is-warn" : "is-solid"}`}>{g.count.toLocaleString()}</span>
       {g.help && <HelpTooltip>{g.help}</HelpTooltip>}
     </span>
   );

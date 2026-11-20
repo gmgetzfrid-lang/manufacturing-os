@@ -221,13 +221,17 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
     return (
       <>
         {descOf(o.owner) && <div className="text-[12px] text-[var(--color-text)] line-clamp-2 break-words">{descOf(o.owner)}</div>}
-        <div className="text-[11.5px] text-[var(--color-text-muted)]">
-          {[classWords(o.owner), o.crews.join(", ") || null, single ? null : `${o.done} of ${o.steps.length} steps done`].filter(Boolean).join(" · ")}
+        {/* Its class, crews and added work as tags; how far, in words. */}
+        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[12.5px] text-[var(--color-text-muted)]">
+          {classWords(o.owner) && <span className="ui-tag is-more">{classWords(o.owner)}</span>}
+          {o.crews.slice(0, 4).map((c) => <span key={c} className="ui-tag">{c}</span>)}
+          {o.crews.length > 4 && <span className="ui-tag is-more" title={o.crews.slice(4).join(", ")}>+{o.crews.length - 4}</span>}
           {o.added.map((x) => (
-            <span key={x.kind} className={`ml-1.5 font-semibold ${x.kind === "added" ? "text-[var(--color-text)] dark:text-[var(--color-text)]" : "text-[var(--color-text)] dark:text-[var(--color-text)]"}`} title={ADDED[x.kind].tip}>
+            <span key={x.kind} className="ui-tag" title={ADDED[x.kind].tip}>
               + {x.n} {ADDED[x.kind].lower} step{x.n === 1 ? "" : "s"} ({x.h} h)
             </span>
           ))}
+          {!single && <span><span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{o.done}</span> of <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{o.steps.length}</span> steps done</span>}
         </div>
         <div className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 text-[11.5px]">
           <span className="text-[var(--color-text-muted)]">Plan</span>
@@ -240,9 +244,9 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
   };
   // Done against where the plan says it should be by now.
   const barOf = (o: WorkOrder) => (
-    <span className="relative mt-1.5 ml-9 block h-1.5 rounded-full bg-slate-200 dark:bg-slate-700" aria-hidden>
-      <span className={`absolute inset-y-0 left-0 rounded-full ${o.standing === "done" ? "bg-emerald-500" : "bg-[var(--color-text)]"}`} style={{ width: `${Math.min(100, o.pct)}%` }} />
-      {o.standing !== "done" && <span className="absolute -top-[3px] w-0.5 h-3 bg-rose-700" style={{ left: `calc(${Math.min(100, o.plan)}% - 1px)` }} title={`Plan ${o.plan}% by now`} />}
+    <span className="relative mt-2 ml-9 block h-2 rounded-full bg-[var(--color-accent-soft)]" aria-hidden>
+      <span className={`absolute inset-y-0 left-0 rounded-full ${o.standing === "done" ? "bg-[var(--state-released)]" : "bg-[var(--color-main)]"}`} style={{ width: `${Math.min(100, o.pct)}%` }} />
+      {o.standing !== "done" && <span className="absolute -top-[3px] w-0.5 h-3.5 bg-[var(--state-overdue)]" style={{ left: `calc(${Math.min(100, o.plan)}% - 1px)` }} title={`Plan ${o.plan}% by now`} />}
     </span>
   );
 
@@ -273,25 +277,26 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
         {(() => {
           const ALL = [["all", "All"], ["open", "Open"], ["critical", "Critical path"], ["behind", "Behind"], ["notStarted", "Not started"], ["held", "Held"], ["done", "Done"], ["added", "Discovery & added"]] as const;
           const UP_FRONT: Show[] = ["all", "open", "behind", "held"];
-          const chip = (on: boolean) => `h-9 px-3 rounded-full text-[13px] font-semibold ${on ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
+          const chip = (on: boolean) => `inline-flex items-center gap-1.5 h-9 pl-3 pr-1.5 rounded-full text-[13px] font-semibold ${on ? "bg-[var(--color-main)] text-white" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
+          const n = (on: boolean, v: number, bad = false) => <span className={`ui-count ${on ? "!bg-white !text-[var(--color-main)]" : bad && v > 0 ? "is-bad" : ""}`}>{v}</span>;
           const folded = ALL.filter(([k]) => !UP_FRONT.includes(k));
           const pickedFolded = !showCancelled && !UP_FRONT.includes(show) ? ALL.find(([k]) => k === show) : undefined;
           return (
             <div className="inline-flex flex-wrap items-center gap-1" role="group" aria-label="Show">
               {ALL.filter(([k]) => UP_FRONT.includes(k)).map(([k, l]) => (
                 <button key={k} type="button" aria-pressed={!showCancelled && show === k} onClick={() => { setShow(k); setShowCancelled(false); }} className={chip(!showCancelled && show === k)}>
-                  {l} <span className="tabular-nums opacity-80">{found.filter(is(k)).length}</span>
+                  {l} {n(!showCancelled && show === k, found.filter(is(k)).length, k === "behind" || k === "held")}
                 </button>
               ))}
               {/* A folded filter in use shows as a chip of its own. */}
               {pickedFolded && (
                 <button type="button" aria-pressed onClick={() => setShow("all")} title="Show all again" className={chip(true)}>
-                  {pickedFolded[1]} <span className="tabular-nums opacity-80">{found.filter(is(pickedFolded[0])).length}</span>
+                  {pickedFolded[1]} {n(true, found.filter(is(pickedFolded[0])).length)}
                 </button>
               )}
               {showCancelled && (
                 <button type="button" aria-pressed onClick={() => setShowCancelled(false)} title="Back to the live work orders" className={chip(true)}>
-                  Cancelled <span className="tabular-nums opacity-80">{cancelledShown.length}</span>
+                  Cancelled {n(true, cancelledShown.length)}
                 </button>
               )}
               <MoreMenu label="More filters" triggerClass="inline-flex items-center gap-1 h-9 px-3 rounded-full text-[13px] font-semibold border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
@@ -370,33 +375,33 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
             const st = STANDING[o.standing];
             // Ink and paper: the standing is a word; colour only when held (a
             // problem) or done.
-            const stTone = o.standing === "held" ? "text-amber-700 dark:text-amber-300" : o.standing === "done" ? "text-emerald-700 dark:text-emerald-300" : o.standing === "in_progress" ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]";
+            const stTone = o.standing === "held" ? "is-warn" : o.standing === "done" ? "is-good" : o.standing === "in_progress" ? "" : "is-muted";
             const single = o.steps.length === 1 && o.steps[0].id === o.owner.id;
             const name = `${o.wo ? `WO ${o.wo}` : "No WO"} ${o.owner.name}`;
             return (
               // Each work order a row on the card; open, its steps sit under it
               // on the warm fill, framed by a dark edge on the left.
               <li key={o.key} className={`relative ${isOpen ? "bg-[var(--color-surface-2)]/50" : ""}`}>
-                {isOpen && <span aria-hidden className="absolute left-0 top-0 bottom-0 w-[3px] bg-[var(--color-text)]" />}
+                {isOpen && <span aria-hidden className="absolute left-0 top-0 bottom-0 w-[3px] z-30 bg-[var(--color-main)]" />}
                 <button type="button" onClick={() => toggle(o.key)} aria-expanded={isOpen} aria-label={`${isOpen ? "Close" : "Open"} ${name}`}
                   ref={(el) => { if (el) heads.current.set(o.key, el); else heads.current.delete(o.key); }}
-                  className={`w-full text-left px-3 sm:px-4 py-3 ${isOpen ? "sticky top-0 z-20 bg-[var(--color-surface-2)] border-b border-[var(--color-border-strong)]" : "hover:bg-[var(--color-surface-2)]/60"}`}>
+                  className={`w-full text-left px-3 sm:px-4 py-3 ${isOpen ? "sticky top-0 z-20 bg-[var(--color-accent-soft)] border-b border-[var(--color-border-strong)]" : "hover:bg-[var(--color-surface-2)]/60"}`}>
                   <div className="flex items-start gap-2.5">
-                    <span className={`mt-0.5 shrink-0 inline-flex items-center justify-center w-7 h-7 rounded-full border ${isOpen ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`} aria-hidden>
+                    <span className={`mt-0.5 ui-icon-tile is-sm ${isOpen ? "is-solid" : ""}`} aria-hidden>
                       {isOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                     </span>
                     <div className="flex-1 min-w-0">
                       <div className="flex flex-wrap items-baseline gap-x-2">
-                        <span className={`font-display tabular-nums text-[12.5px] font-bold ${o.wo ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{o.wo ? `WO ${o.wo}` : "No WO"}</span>
+                        {o.wo ? <span className="ui-id text-[15px]">WO {o.wo}</span> : <span className="ui-pill is-muted">No WO</span>}
                         <span className="text-[14px] font-bold text-[var(--color-text)] break-words">{o.owner.name}{o.also?.map((x) => <span key={x.id} className="text-[var(--color-text-muted)]"> · {x.name}</span>)}</span>
                       </div>
                       {!isOpen && detailsOf(o)}
                     </div>
                     <div className="shrink-0 flex flex-col items-end gap-1">
-                      <span className={`text-[12px] font-bold ${stTone}`}>{st.word}</span>
-                      <span className="text-[13px] font-bold tabular-nums text-[var(--color-text)]">{o.pct}%</span>
+                      <span className={`ui-pill ${stTone}`}>{st.word}</span>
+                      <span className="font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)]">{o.pct}%</span>
                       {o.standing !== "done" && Math.abs(o.hours) >= 0.1 && (
-                        <span className={`font-display tabular-nums text-[11px] font-bold ${o.hours < 0 ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>{o.hours > 0 ? "+" : "−"}{Math.abs(o.hours)} h</span>
+                        <span className={`ui-pill !h-5 !text-[12px] font-display tabular-nums ${o.hours < 0 ? "is-bad" : "is-good"}`}>{o.hours > 0 ? "+" : "−"}{Math.abs(o.hours)} h</span>
                       )}
                     </div>
                   </div>

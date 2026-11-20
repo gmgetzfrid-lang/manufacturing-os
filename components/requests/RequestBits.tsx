@@ -7,23 +7,20 @@
 import React from "react";
 import type { Ticket, TicketStatus } from "@/types/schema";
 
-export type Tone = "bad" | "warn" | "good" | "none";
+export type Tone = "bad" | "warn" | "good" | "brand" | "none";
 
-const DOT: Record<Tone, string> = {
-  bad: "bg-[var(--state-overdue)]",
-  warn: "bg-[var(--state-held)]",
-  good: "bg-[var(--state-released)]",
-  none: "bg-[var(--color-text-faint)]",
+const PILL: Record<Tone, string> = {
+  bad: "is-bad",
+  warn: "is-warn",
+  good: "is-good",
+  brand: "",
+  none: "is-muted",
 };
 
-/** A small, quiet state tag: an 8px dot and the word. */
+/** A state as a soft colored pill: red late or blocked, amber waiting,
+ *  green done, brand for work under way, grey for not set. */
 export function StatusTag({ tone = "none", children, className = "" }: { tone?: Tone; children: React.ReactNode; className?: string }) {
-  return (
-    <span className={`inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)] whitespace-nowrap ${className}`}>
-      <span aria-hidden className={`w-2 h-2 rounded-full shrink-0 ${DOT[tone]}`} />
-      {children}
-    </span>
-  );
+  return <span className={`ui-pill ${PILL[tone]} ${className}`}>{children}</span>;
 }
 
 /** The stage a request is at, in the words the team uses. */
@@ -45,12 +42,23 @@ export function stageLabel(status: TicketStatus | string): string {
   }
 }
 
-/** Color only where it means something: sent back is waiting on a fix,
- *  closed is done; every other stage is normal work. */
+/** Color by what the stage means: waiting on a review or a decision is
+ *  amber, sent back for a fix is red, issued or closed is green, canceled
+ *  is grey; drafting and new requests are work under way (brand). */
 export function stageTone(status: TicketStatus | string): Tone {
-  if (status === "REVISION_REQ") return "warn";
-  if (status === "CLOSED") return "good";
-  return "none";
+  switch (status) {
+    case "REVISION_REQ": return "bad";
+    case "PENDING_ENG_INITIAL":
+    case "PENDING_ENG_TEAM":
+    case "PENDING_ASSIGNMENT":
+    case "PENDING_REVIEW":
+    case "PENDING_FINAL_APPROVAL": return "warn";
+    case "PENDING_IFC":
+    case "FINAL_DRAFT":
+    case "CLOSED": return "good";
+    case "CANCELED": return "none";
+    default: return "brand";
+  }
 }
 
 /** Who the request sits with now, by the workflow's own rules. */

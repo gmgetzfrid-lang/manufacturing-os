@@ -12,7 +12,7 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { FileDown, GitBranch, Check, Loader2, Clock } from "lucide-react";
+import { FileDown, GitBranch, Check, Loader2, Clock, FileLock } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { listMyStaleCopies, type StaleCopy } from "@/lib/staleCopies";
 import { StatusTag, rowBtn } from "./ui";
@@ -174,19 +174,21 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
     libraryId ? `/documents/${libraryId}?doc=${docId}` : "/documents";
 
   const band = "px-4 h-10 flex items-center gap-2 bg-[var(--color-surface-2)] text-[14px] font-semibold text-[var(--color-text)] border-t border-[var(--color-border-strong)] first:border-t-0";
-  const count = (n: number) => <span className="font-display font-normal tabular-nums text-[var(--color-text-muted)]">{n}</span>;
+  const count = (n: number) => <span className="ui-count is-solid">{n}</span>;
+  const tile = (icon: React.ReactNode) => <span aria-hidden className="ui-icon-tile is-sm !bg-[var(--color-surface)]">{icon}</span>;
 
   return (
     <section aria-label="Checked out to you">
       <div className="flex items-center gap-2 mb-2.5 min-h-9">
+        <span aria-hidden className="ui-icon-tile is-sm is-solid"><FileLock className="w-4 h-4" /></span>
         <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Checked out to you</h2>
-        <span className="text-[15px] text-[var(--color-text-muted)] tabular-nums">{total}</span>
+        <span className="ui-count is-solid">{total}</span>
       </div>
       {releaseError && <p role="alert" className="mb-2 border-l-[3px] border-[var(--state-overdue)] pl-2.5 text-[14px] font-semibold text-[var(--state-overdue)]">{releaseError}</p>}
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
         {checkouts.length > 0 && (
           <>
-            <h3 className={band}>Your checkouts {count(checkouts.length)}</h3>
+            <h3 className={band}>{tile(<FileLock className="w-4 h-4" />)}Your checkouts {count(checkouts.length)}</h3>
             <ul className="divide-y divide-[var(--color-border)]">
               {checkouts.map((c) => {
                 const k = clock(c);
@@ -194,7 +196,7 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
                   <li key={c.sessionId} className="relative flex items-center gap-3 px-4 py-2.5">
                     {k.hot && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-held)]" />}
                     <Link href={docHref(c.libraryId, c.documentId)} className="min-w-0 flex-1">
-                      <span className="block font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)] truncate hover:text-[var(--color-accent-text)]">{c.docLabel}</span>
+                      <span className="ui-id block text-[15px] truncate hover:text-[var(--color-accent-text)]">{c.docLabel}</span>
                       {c.purpose && <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{c.purpose}</span>}
                     </Link>
                     <span className="shrink-0 text-[14px] tabular-nums">
@@ -219,12 +221,12 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
 
         {staleCopies.length > 0 && (
           <>
-            <h3 className={band}><FileDown className="w-4 h-4 text-[var(--color-text-muted)]" aria-hidden />Your copies that are out of date {count(staleCopies.length)}</h3>
+            <h3 className={band}>{tile(<FileDown className="w-4 h-4" />)}Your copies that are out of date {count(staleCopies.length)}</h3>
             <ul className="divide-y divide-[var(--color-border)]">
               {staleCopies.slice(0, 5).map((s) => (
                 <li key={s.documentId}>
                   <Link href={docHref(s.libraryId, s.documentId)} className="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-surface-2)]">
-                    <span className="min-w-0 flex-1 font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)] truncate">{s.docLabel}</span>
+                    <span className="ui-id min-w-0 flex-1 text-[15px] truncate">{s.docLabel}</span>
                     <StatusTag tone="held">You have Rev {s.downloadedRev ?? "?"}, now Rev {s.currentRev ?? "?"}</StatusTag>
                   </Link>
                 </li>
@@ -238,12 +240,12 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
 
         {branches.length > 0 && (
           <>
-            <h3 className={band}><GitBranch className="w-4 h-4 text-[var(--color-text-muted)]" aria-hidden />Your branches to reconcile {count(branches.length)}</h3>
+            <h3 className={band}>{tile(<GitBranch className="w-4 h-4" />)}Your branches to reconcile {count(branches.length)}</h3>
             <ul className="divide-y divide-[var(--color-border)]">
               {branches.map((b) => (
                 <li key={b.id}>
                   <Link href={docHref(b.libraryId, b.documentId)} className="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-surface-2)]">
-                    <span className="min-w-0 flex-1 font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)] truncate">{b.docLabel}</span>
+                    <span className="ui-id min-w-0 flex-1 text-[15px] truncate">{b.docLabel}</span>
                     <span className="shrink-0 text-[13px] text-[var(--color-text-muted)]">
                       Since {new Date(b.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                     </span>

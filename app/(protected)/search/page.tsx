@@ -32,6 +32,16 @@ function badgeWords(b: string): string {
   return b.split("_").map((w, i) => (["IFC", "ENG", "MOC"].includes(w) ? w : i === 0 ? w.charAt(0) + w.slice(1).toLowerCase() : w.toLowerCase())).join(" ");
 }
 
+/** A status's pill tone: done green, waiting amber, stopped grey, else brand. */
+function badgeTone(b: string): string {
+  const u = b.toUpperCase();
+  if (/CLOSED|COMPLETE|DONE|ISSUED|FINAL_DRAFT|PENDING_IFC/.test(u)) return "is-good";
+  if (/CANCEL|ARCHIV/.test(u)) return "is-muted";
+  if (/REVISION|LATE|OVERDUE|BLOCK/.test(u)) return "is-bad";
+  if (/PENDING|REVIEW|PAUSED|HELD|WAIT/.test(u)) return "is-warn";
+  return "";
+}
+
 export default function SearchPage() {
   const params = useSearchParams();
   const router = useRouter();
@@ -130,8 +140,9 @@ export default function SearchPage() {
       {others.length > 0 && (
         <section aria-label="Requests, projects, notes">
           <div className="flex items-center gap-2 mb-2.5 min-h-9">
+            <span aria-hidden className="ui-icon-tile is-sm is-solid"><Search className="w-4 h-4" /></span>
             <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Requests, projects, notes</h2>
-            <span className="text-[15px] text-[var(--color-text-muted)] tabular-nums">{others.length}</span>
+            <span className="ui-count is-solid">{others.length}</span>
           </div>
           <div className={sheet}>
             <table className="w-full text-[15px]">
@@ -149,7 +160,7 @@ export default function SearchPage() {
                     <tr key={`${h.kind}-${h.id}`} className="hover:bg-[var(--color-surface-2)] cursor-pointer" onClick={() => router.push(h.href)}>
                       <td className="px-4 py-2.5 max-w-0 w-full">
                         <span className="flex items-start gap-3 min-w-0">
-                          <Icon className="w-4 h-4 mt-1 shrink-0 text-[var(--color-text-muted)]" />
+                          <span aria-hidden className="ui-icon-tile is-sm"><Icon className="w-4 h-4" /></span>
                           <span className="min-w-0">
                             <Link href={h.href} onClick={(e) => e.stopPropagation()} className="block truncate font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{h.title}</Link>
                             {h.subtitle && <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{h.subtitle}</span>}
@@ -157,8 +168,8 @@ export default function SearchPage() {
                           </span>
                         </span>
                       </td>
-                      <td className="px-4 py-2.5 hidden sm:table-cell whitespace-nowrap text-[var(--color-text-muted)]">{OTHER_LABEL[h.kind]}</td>
-                      <td className="px-4 py-2.5 hidden md:table-cell whitespace-nowrap text-[14px] text-[var(--color-text)]">{h.badge ? badgeWords(h.badge) : "–"}</td>
+                      <td className="px-4 py-2.5 hidden sm:table-cell whitespace-nowrap"><span className="ui-tag is-more">{OTHER_LABEL[h.kind]}</span></td>
+                      <td className="px-4 py-2.5 hidden md:table-cell whitespace-nowrap">{h.badge ? <span className={`ui-pill ${badgeTone(h.badge)}`}>{badgeWords(h.badge)}</span> : <span className="text-[var(--color-text-faint)]">–</span>}</td>
                     </tr>
                   );
                 })}
