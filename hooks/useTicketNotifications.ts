@@ -3,7 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
 import { Ticket } from '@/types/schema';
 import {
-  listMyNotifications, markRead, markAllRead, markManyRead, type NotificationRow,
+  listMyNotifications, markRead, markAllRead, markManyRead, DECISION_KINDS, type NotificationRow,
 } from '@/lib/inAppNotifications';
 import {
   isActionRequired, attentionLabel, isManagementRole, isEngineerRole,
@@ -276,7 +276,8 @@ export function useTicketNotifications() {
     // Conflict-class notifications carry the "action" treatment in the feed:
     // a stale-base branch, a lost checkout, or an edit overlap is something
     // to ACT on, not passive activity.
-    const actionKinds = new Set(['checkout_conflict', 'checkout_released', 'overlap_advisory', 'branch_open']);
+    // Approvals, reviews, acknowledgements and holds wait on the person too.
+    const actionKinds: ReadonlySet<string> = DECISION_KINDS;
 
     for (const n of notifs) {
       // Dedupe: if a ticket is already in the feed, fold its notification in.
@@ -298,7 +299,8 @@ export function useTicketNotifications() {
         when: n.createdAt,
         notificationId: n.id,
       });
-      tally(section, false);
+      tally(section, actionKinds.has(n.kind));
+      if (actionKinds.has(n.kind)) ar++; else ur++;
     }
 
     out.sort((a, b) => (b.when || '').localeCompare(a.when || ''));

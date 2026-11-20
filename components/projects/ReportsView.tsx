@@ -46,6 +46,7 @@ import { defaultMeeting, type MeetingKind } from "@/lib/meetingPlan";
 import { useProjectWord } from "@/components/projects/ProjectTypeContext";
 import { useWoClasses, passes, WoClassSelects } from "@/components/projects/WoClassFilter";
 import { typeLabel, unitLabel, NONE } from "@/lib/woClass";
+import { appAlert } from "@/components/providers/DialogProvider";
 
 interface Props {
   milestones: Milestone[];
@@ -433,7 +434,8 @@ export default function ReportsView(p: Props) {
         // Kept with the shift: entering it shows these lines, in this order.
         const orgId = live[0]?.orgId;
         if (p.canEdit && p.userId && orgId) {
-          void saveShiftRecord({ orgId, projectId, shiftKey: sheetKey, userId: p.userId, change: (r) => ({ ...r, sheet: { ids: sheetIds(sheet), printedAt: Date.now(), by: p.userName ?? null } }) }).catch(() => undefined);
+          void saveShiftRecord({ orgId, projectId, shiftKey: sheetKey, userId: p.userId, change: (r) => ({ ...r, sheet: { ids: sheetIds(sheet), printedAt: Date.now(), by: p.userName ?? null } }) })
+            .catch((e) => appAlert({ title: "Printed, not kept", message: `The sheet printed, but its lines weren't kept with the shift (${(e as Error).message}), so entering it won't show them in this order. Print it again to try again.`, tone: "danger" }));
         }
         remember({ report: "sheet", label: sheetLabel, shift: sheetPick });
       }

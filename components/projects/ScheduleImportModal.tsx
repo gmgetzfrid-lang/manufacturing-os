@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 import { parseScheduleFileFromBytes, type ParseResult, type ScheduleFormat } from "@/lib/scheduleParsers";
 import { rowsForPhase, phaseRef, type ProjectPhase } from "@/lib/projectPhases";
-import { importMilestonesFromParsed, clearProjectSchedule, snapshotSchedule, undoImport, reapplyCancellations, type ScheduleSnapshot, type ImportResult } from "@/lib/milestones";
+import { importMilestonesFromParsed, clearProjectSchedule, snapshotSchedule, undoImport, rollbackImport, reapplyCancellations, type ScheduleSnapshot, type ImportResult } from "@/lib/milestones";
 import type { MilestoneSource } from "@/types/schema";
 import { Select } from "@/components/ui/Field";
 import Spinner from "@/components/ui/Spinner";
@@ -117,6 +117,8 @@ export default function ScheduleImportModal({
   const [replaced, setReplaced] = useState(false);
   const [undoing, setUndoing] = useState<"idle" | "busy" | "done">("idle");
   const [undoError, setUndoError] = useState<string | null>(null);
+  // An import that stopped: what went wrong, and whether the schedule is back as it was.
+  const [failed, setFailed] = useState<{ message: string; back: boolean | null; backError?: string; retry?: () => Promise<void> } | null>(null);
   const undo = async () => {
     if (!snapshot || !importResult) return;
     setUndoing("busy"); setUndoError(null);
@@ -215,16 +217,18 @@ export default function ScheduleImportModal({
 
   const submit = useCallback(async () => {
     if (!parseResult || parseResult.rows.length === 0) return;
-    setImporting(true);
+    setImporting(true); setFailed(null);
+    let before: ScheduleSnapshot | null = null, cleared = false;
     try {
       // A copy of the schedule as it is, so the import can be undone.
-      const before = (existingCount ?? 0) > 0 ? await snapshotSchedule(orgId, projectId) : { rows: [], notes: [] };
+      before = (existingCount ?? 0) > 0 ? await snapshotSchedule(orgId, projectId) : { rows: [], notes: [] };
       setSnapshot(before);
       // A project in phases is only ever merged into: replacing would wipe every phase.
       const replace = replaceExisting && !phased;
       setReplaced(replace && (existingCount ?? 0) > 0);
       if (replace && (existingCount ?? 0) > 0) {
         await clearProjectSchedule({ orgId, projectId, actorUserId: userId, actorUserEmail: userEmail, actorUserRole: userRole });
+        cleared = true;
       }
       const shaped0 = parseResult.rows.map(applyColConfig);
       const shaped = phased ? rowsForPhase(shaped0 as unknown as Array<typeof shaped0[number] & { attributes?: Record<string, unknown> | null }>, target!, ownKeys) as unknown as typeof shaped0 : shaped0;
@@ -274,7 +278,7 @@ export default function ScheduleImportModal({
         createdByName: userName,
       });
       // A replace re-creates every row: cancelled jobs stay cancelled.
-      if (replaceExisting && !phased && before.rows.length) await reapplyCancellations(orgId, projectId, before.rows as unknown as Array<Record<string, unknown>>);
+      if (replaceExisting && !phased && before && before.rows.length) await reapplyCancellations(orgId, projectId, before.rows as unknown as Array<Record<string, unknown>>);
       setImportResult(res);
       // Only auto-close when at least one row was actually INSERTED
       // into this project. Pure-update results (which happen when
@@ -284,6 +288,20 @@ export default function ScheduleImportModal({
       // re-imported into a fresh project and saw nothing because
       // every row was an update to a different project's rows.
       // Stays open on the result, with Undo, until the person closes it.
+    } catch (e) {
+      // Stopped partway: put the schedule back as it was, then say so.
+      const message = (e as Error)?.message || "The import stopped.";
+      if (!before) { setFailed({ message, back: null }); return; }
+      const snap = before, wasCleared = cleared;
+      const putBack = async (): Promise<void> => {
+        try {
+          await rollbackImport({ orgId, projectId, snapshot: snap, cleared: wasCleared, actorUserId: userId, actorUserEmail: userEmail });
+          setFailed({ message, back: true });
+        } catch (e2) {
+          setFailed({ message, back: false, backError: (e2 as Error)?.message, retry: putBack });
+        }
+      };
+      await putBack();
     } finally { setImporting(false); }
   }, [parseResult, orgId, projectId, userId, userName, userEmail, userRole, applyColConfig, tz, replaceExisting, existingCount, phased, target, ownKeys]);
 
@@ -584,6 +602,14 @@ export default function ScheduleImportModal({
           </div>
         </div>
 
+        {failed && (
+          <div role="alert" className="px-5 py-3 border-t border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 text-[13px] text-rose-900 dark:text-rose-100">
+            <b>The import stopped:</b> {failed.message}{" "}
+            {failed.back === true ? "The schedule is back the way it was before you pressed Import. Your file is still here: press Import to try again."
+              : failed.back === false ? <>Putting the schedule back also failed ({failed.backError}). The copy from before is kept in this window: keep it open and press <button type="button" onClick={() => void failed.retry?.()} className="font-bold underline cursor-pointer">Put the schedule back</button>.</>
+              : "Nothing was changed. Your file is still here: press Import to try again."}
+          </div>
+        )}
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2 shrink-0">
           {/* After an import (or its undo) closing refreshes the schedule. */}
           <button onClick={importResult ? onDone : onClose} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">{importResult ? "Done" : "Close"}</button>

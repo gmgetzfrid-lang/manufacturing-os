@@ -337,8 +337,10 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
         if (r !== "ok") { setFixMsg(r === "missing" ? "Fixing a time needs the database update run first." : r === "range" ? "That's more than 60 days back." : "Not saved."); return; }
       }
       if (x.fix && onFixTimes && !(await onFixTimes(x.fix === "start" ? { start: t } : { finish: t }))) { setFixMsg("Not saved."); return; }
-      // Its comments go with it.
-      for (const id of x.noteIds) await setNoteTime(id, t).catch(() => undefined);
+      // Its comments go with it; say so when one didn't.
+      let notesLeft = 0;
+      for (const id of x.noteIds) await setNoteTime(id, t).catch(() => { notesLeft++; });
+      if (notesLeft) { setFixMsg(`Time saved; ${notesLeft} of its comment${notesLeft === 1 ? "" : "s"} kept the old time. Save again to move ${notesLeft === 1 ? "it" : "them"}.`); return; }
       if (!(await addComment(t))) { setFixMsg("Time saved; the comment wasn't."); return; }
       window.dispatchEvent(new CustomEvent("milestone-notes:changed"));
       setFixing(null); setSaved(`Saved: ${when(t)}`);
@@ -503,7 +505,9 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
             const r = await setProgressTime(v.e.logId, v.t);
             if (r !== "ok") { setMsg(r === "missing" ? "Fixing a time needs the database update run first." : r === "range" ? `“${v.e.text}”: that's more than 60 days back.` : `“${v.e.text}” wasn't saved.`); return; }
           }
-          for (const id of v.e.noteIds) await setNoteTime(id, v.t).catch(() => undefined);
+          let notesLeft = 0;
+          for (const id of v.e.noteIds) await setNoteTime(id, v.t).catch(() => { notesLeft++; });
+          if (notesLeft) { setMsg(`“${v.e.text}”: the time moved, but ${notesLeft} of its comment${notesLeft === 1 ? "" : "s"} kept the old time. Save again.`); return; }
           if (v.e.fix === "start") s = v.t;
           if (v.e.fix === "finish") f = v.t;
         }
@@ -574,8 +578,10 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
         const r = await removeProgressEntry(x.logId);
         if (r !== "ok") { setFixMsg(r === "missing" ? "Removing an entry needs the database update (20261112_history_remove_entry.sql) run first." : r === "status" ? "A start, finish or hold comes off only when it's the latest - or Start over." : "Not removed."); return; }
       }
-      for (const id of x.noteIds) await deleteMilestoneNote(id).catch(() => undefined);
+      let notesLeft = 0;
+      for (const id of x.noteIds) await deleteMilestoneNote(id).catch(() => { notesLeft++; });
       changed([m.id]);
+      if (notesLeft) { setFixMsg(`${notesLeft} comment${notesLeft === 1 ? " wasn't" : "s weren't"} removed. Try again.`); return; }
       setFixing(null); setSaved(kind === "change" ? `Took back “${x.text}”` : kind === "entry" ? `Removed “${x.text}”` : "Comment removed");
     } catch (e) { setFixMsg((e as Error).message || "Not removed."); }
     finally { setFixBusy(false); }

@@ -114,9 +114,9 @@ const inputCls = "h-7 rounded-md border border-[var(--color-border-strong)] bg-[
 export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, onAdd, onRemove, onEdit, onRestore }: {
   incidents?: { none?: { at: number; by?: string | null } | null; items?: Incident[] };
   edit: boolean; print: boolean; shift: ShiftWindow; tz: string; T: (ms: number) => string;
-  onNone: (none: boolean) => void; onAdd: (x: { at: number; kind: IncidentKind; text: string }) => void; onRemove: (id: string) => void;
+  onNone: (none: boolean) => void; onAdd: (x: { at: number; kind: IncidentKind; text: string }) => void | Promise<boolean>; onRemove: (id: string) => void;
   /** Change one in place. Unset: written from here (or remove-then-add). */
-  onEdit?: (id: string, x: { at: number; kind: IncidentKind; text: string }) => void;
+  onEdit?: (id: string, x: { at: number; kind: IncidentKind; text: string }) => void | Promise<boolean>;
   /** Put a removed one back exactly (Undo). Unset: written from here (or re-added). */
   onRestore?: (x: Incident) => void;
 }) {
@@ -139,13 +139,16 @@ export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, on
     if ("error" in r) { setMsg(r.error); return; }
     if (!text.trim()) { setMsg("Say what happened."); return; }
     const x = { at: r.at, kind, text: text.trim() };
+    // Cleared only once it's saved; a failed save keeps it here to try again.
+    const after = (ok: boolean | void) => { if (ok === false) setMsg("Didn't save. It's still here: press the button again to try again."); else reset(); };
+    let saving: void | Promise<boolean> = undefined;
     if (editingId) {
       const id = editingId;
-      if (onEdit) onEdit(id, x);
-      else if (write) void write(key, (rec) => editIncident(rec, id, x, by)).catch((e) => setMsg((e as Error).message));
-      else { onRemove(id); onAdd(x); }
-    } else onAdd(x);
-    reset();
+      if (onEdit) saving = onEdit(id, x);
+      else if (write) saving = write(key, (rec) => editIncident(rec, id, x, by)).then(() => true, (e) => { setMsg((e as Error).message); return false; });
+      else { onRemove(id); saving = onAdd(x); }
+    } else saving = onAdd(x);
+    if (saving) void saving.then(after); else reset();
   };
   const startEdit = (x: Incident) => {
     setEditingId(x.id); setClock(clockOf(x.at, tz)); setKind(x.kind); setText(x.text); setMsg(null); setOpen(true); setRemoved(null);
@@ -224,12 +227,12 @@ export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, on
 export function ShiftNotesBox({ notes, edit, print, shift, tz, T, D, onAdd, onClear, onRemove, onEdit, onUnclear, onRestore }: {
   notes: Array<ShiftNote & { from?: string; shiftKey: string }>;
   edit: boolean; print: boolean; shift: ShiftWindow; tz: string; T: (ms: number) => string; D: (ms: number) => string;
-  onAdd: (x: { at: number; text: string; followUp: boolean }) => void;
+  onAdd: (x: { at: number; text: string; followUp: boolean }) => void | Promise<boolean>;
   onClear: (n: ShiftNote & { shiftKey: string }) => void;
   onRemove: (n: ShiftNote & { shiftKey: string }) => void;
   /** Change one of this shift's notes in place. Unset: written from here
    *  (or remove-then-add). */
-  onEdit?: (n: ShiftNote & { shiftKey: string }, x: { at: number; text: string; followUp: boolean }) => void;
+  onEdit?: (n: ShiftNote & { shiftKey: string }, x: { at: number; text: string; followUp: boolean }) => void | Promise<boolean>;
   /** Open a cleared follow-up again. Unset: written from here. */
   onUnclear?: (n: ShiftNote & { shiftKey: string }) => void;
   /** Put a removed note back exactly (Undo). Unset: written from here (or re-added). */
@@ -252,13 +255,16 @@ export function ShiftNotesBox({ notes, edit, print, shift, tz, T, D, onAdd, onCl
     if ("error" in r) { setMsg(r.error); return; }
     if (!text.trim()) { setMsg("Type the note."); return; }
     const x = { at: r.at, text: text.trim(), followUp: follow };
+    // Cleared only once it's saved; a failed save keeps it here to try again.
+    const after = (ok: boolean | void) => { if (ok === false) setMsg("Didn't save. Your note is still here: press the button again to try again."); else reset(); };
+    let saving: void | Promise<boolean> = undefined;
     if (editing) {
       const n = editing;
-      if (onEdit) onEdit(n, x);
-      else if (write) void write(n.shiftKey, (rec) => editNote(rec, n.id, x, by)).catch(fail);
-      else { onRemove(n); onAdd(x); }
-    } else onAdd(x);
-    reset();
+      if (onEdit) saving = onEdit(n, x);
+      else if (write) saving = write(n.shiftKey, (rec) => editNote(rec, n.id, x, by)).then(() => true, (e) => { fail(e); return false; });
+      else { onRemove(n); saving = onAdd(x); }
+    } else saving = onAdd(x);
+    if (saving) void saving.then(after); else reset();
   };
   const startEdit = (n: ShiftNote & { shiftKey: string }) => {
     setEditing(n); setClock(clockOf(n.at, tz)); setText(n.text); setFollow(!!n.followUp); setMsg(null); setRemoved(null);

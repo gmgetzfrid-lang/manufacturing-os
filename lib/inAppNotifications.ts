@@ -196,13 +196,24 @@ export async function markManyRead(ids: string[]): Promise<void> {
   await supabase.from("notifications").update({ read_at: new Date().toISOString() }).in("id", ids);
 }
 
-/** Mark every unread notification read. Pass the active workspace's orgId to
+/** Kinds that wait on the person (approve, review, acknowledge, sort out a
+ *  conflict): they stay until opened, never cleared by "Mark all read". */
+export const DECISION_KINDS: ReadonlySet<NotificationKind> = new Set<NotificationKind>([
+  "request_pending_approval", "markup_request", "equipment_request", "deletion_requested",
+  "ack_requested", "review_requested", "review_invalidated", "review_due", "hold_opened",
+  "checkout_conflict", "checkout_released", "overlap_advisory", "branch_open",
+]);
+
+/** Mark every unread notification read, except the ones waiting on a
+ *  decision (those clear when opened). Pass the active workspace's orgId to
  *  clear only that workspace — without it, a user who belongs to several
  *  workspaces would clear the bell for all of them at once. */
 export async function markAllRead(orgId?: string | null): Promise<void> {
-  let q = supabase.from("notifications").update({ read_at: new Date().toISOString() }).is("read_at", null);
+  let q = supabase.from("notifications").update({ read_at: new Date().toISOString() }).is("read_at", null)
+    .not("kind", "in", `(${[...DECISION_KINDS].join(",")})`);
   if (orgId) q = q.eq("org_id", orgId);
-  await q;
+  const { error } = await q;
+  if (error) throw new Error(error.message);
 }
 
 function rowToNotification(r: Record<string, unknown>): NotificationRow {

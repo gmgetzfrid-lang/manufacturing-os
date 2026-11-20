@@ -331,6 +331,16 @@ export async function createDocumentWithFile(input: {
   if (!docNum) throw new Error("A document number is required.");
   const title = input.title?.trim() || docNum;
 
+  // The file goes up first: a failed upload leaves no empty document behind.
+  const fileHash = await sha256Hex(input.file);
+  const storagePath = makeLibraryStoragePath({
+    orgId: input.orgId,
+    libraryId: input.libraryId,
+    folderPath: input.folderPath,
+    filename: `Rev0_${input.file.name || "drawing.pdf"}`,
+  });
+  const uploadResult = await uploadToPath(input.file, storagePath, { contentType: input.file.type });
+
   const { data: docRow, error: docErr } = await supabase
     .from("documents")
     .insert({
@@ -352,15 +362,6 @@ export async function createDocumentWithFile(input: {
   if (docErr || !docRow) throw new Error(docErr?.message || "Failed to create document");
   const documentId = docRow.id as string;
 
-  const fileHash = await sha256Hex(input.file);
-  const storagePath = makeLibraryStoragePath({
-    orgId: input.orgId,
-    libraryId: input.libraryId,
-    folderPath: input.folderPath,
-    filename: `Rev0_${input.file.name || "drawing.pdf"}`,
-  });
-  const uploadResult = await uploadToPath(input.file, storagePath, { contentType: input.file.type });
-
   const { data: ver, error: verErr } = await supabase
     .from("document_versions")
     .insert({
@@ -379,7 +380,11 @@ export async function createDocumentWithFile(input: {
     })
     .select("id")
     .single();
-  if (verErr || !ver) throw new Error(verErr?.message || "Failed to create the document's file version");
+  if (verErr || !ver) {
+    // No file version: take the empty document back out rather than leave it.
+    await supabase.from("documents").delete().eq("id", documentId);
+    throw new Error(verErr?.message || "Failed to create the document's file version");
+  }
 
   await supabase.from("documents").update({ current_version_id: ver.id, updated_at: now }).eq("id", documentId);
   // Seed the review clock so a new doc picks up any library/folder review cycle.

@@ -52,6 +52,7 @@ import { isDefaultType, typeWord } from "@/lib/projectType";
 import { closeNeeds, type NeedGo } from "@/lib/closeNeeds";
 import { requestSetup } from "@/lib/scheduleSetup";
 import CloseNeeds from "@/components/projects/CloseNeeds";
+import { appAlert } from "@/components/providers/DialogProvider";
 
 const btn = "inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
 const dark = "inline-flex items-center gap-1.5 h-9 px-3 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[12.5px] font-black whitespace-nowrap disabled:opacity-50";
@@ -197,14 +198,14 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
         const out = `out:${projectId}:${scope}:${f.key}`;
         if (inRegister.has(`${scope}:${f.key}`) && !SYNCED.has(out)) {
           SYNCED.add(out);
-          void syncLesson({ orgId, projectId, projectType: ptype.word, unitCode: unit?.code ?? null, scope, finding: f, kept: false, actor: { id: actor.uid, name: who } }).catch(() => undefined);
+          void syncLesson({ orgId, projectId, projectType: ptype.word, unitCode: unit?.code ?? null, scope, finding: f, kept: false, actor: { id: actor.uid, name: who } }).catch((e) => { SYNCED.delete(out); void appAlert({ title: "Lessons register not updated", message: `"${f.title}" didn't come off the lessons register (${(e as Error).message}). It tries again the next time this review opens.`, tone: "danger" }); });
         }
         continue;
       }
       const sig = `${projectId}:${scope}:${f.key}:${f.applies}:${ptype.word}:${unit?.code ?? ""}:${f.title}:${f.next}:${f.ask}`;
       if (SYNCED.has(sig)) continue;
       SYNCED.add(sig);
-      void syncLesson({ orgId, projectId, projectType: ptype.word, unitCode: unit?.code ?? null, scope, finding: f, kept: true, actor: { id: actor.uid, name: who } }).catch(() => undefined);
+      void syncLesson({ orgId, projectId, projectType: ptype.word, unitCode: unit?.code ?? null, scope, finding: f, kept: true, actor: { id: actor.uid, name: who } }).catch((e) => { SYNCED.delete(sig); void appAlert({ title: "Lessons register not updated", message: `"${f.title}" didn't reach the lessons register (${(e as Error).message}). It tries again the next time this review opens.`, tone: "danger" }); });
     }
   }, [review, canManage, orgId, projectId, scope, ptype.word, unit?.code, actor.uid, who, projectFindings]);
   const act = async (key: string, change: (s: ReviewSaved) => void, after?: (next: ReviewSaved) => Promise<void> | void) => {

@@ -83,6 +83,7 @@ export default function AssetPhotoUploader({
     const PHOTO_CONCURRENCY = 4;
     try {
       const todo = pending.filter((p) => p.status !== "done");
+      const failed = new Set<string>();
 
       const uploadOne = async (p: PendingPhoto) => {
         updatePending(p.id, { status: "uploading" });
@@ -103,6 +104,7 @@ export default function AssetPhotoUploader({
           });
           updatePending(p.id, { status: "done" });
         } catch (e) {
+          failed.add(p.id);
           updatePending(p.id, { status: "error", error: (e as Error).message });
         }
       };
@@ -115,9 +117,11 @@ export default function AssetPhotoUploader({
       }
 
       invalidateAssetCache();
-      // If everything succeeded, close + notify parent
-      const anyFailed = pending.some((p) => p.status === "error");
-      if (!anyFailed) {
+      // If everything succeeded, close + notify parent. (Counted as the
+      // uploads finish: `pending` here is the list from before they ran.)
+      const anyFailed = failed.size > 0;
+      if (anyFailed) onUploaded();
+      else {
         pending.forEach((p) => URL.revokeObjectURL(p.previewUrl));
         setPending([]);
         onUploaded();

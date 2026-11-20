@@ -39,6 +39,11 @@ export interface ProjectStateSnapshot {
   overdueMilestones: number;
   spi: number | null;
   hasBaseline: boolean;
+  /** Steps finished, and how many of those on or before their planned finish. */
+  finishedSteps?: number;
+  finishedOnTime?: number;
+  /** Every step done: hours the last finish came after the planned finish (null: not all done). */
+  finishLateH?: number | null;
   // Quality & closeout
   checklistCount: number;
   checklistOpenItems: number;
@@ -86,16 +91,24 @@ export function computeProjectHealth(s: ProjectStateSnapshot): ProjectHealth {
     parts.push({ label: "Cost", score: null, detail: "No budget set yet" });
   }
 
-  // Schedule health.
+  // Schedule health: what really happened (steps finished on time, how
+  // late the job finished), and what's overdue now.
   if (s.milestoneCount > 0) {
     const spiScore = s.spi != null ? clamp(s.spi * 100) : null;
     const overduePenalty = clamp((s.overdueMilestones / Math.max(s.milestoneCount, 1)) * 200, 0, 60);
+    const finished = s.finishedSteps ?? 0, onTime = s.finishedOnTime ?? 0;
+    const onTimeScore = finished > 0 ? (onTime / finished) * 100 : null;
+    const late = s.finishLateH != null && s.finishLateH >= 0.5 ? Math.round(s.finishLateH * 10) / 10 : null;
+    const base = spiScore ?? onTimeScore ?? 100;
     parts.push({
       label: "Schedule",
-      score: spiScore != null ? clamp(spiScore - overduePenalty * 0.3) : clamp(100 - overduePenalty),
-      detail: s.overdueMilestones > 0
-        ? `${s.overdueMilestones} task${s.overdueMilestones === 1 ? "" : "s"} overdue${s.spi != null ? ` · SPI ${s.spi.toFixed(2)}` : ""}`
-        : s.spi != null ? `SPI ${s.spi.toFixed(2)}` : "On the board, nothing overdue",
+      score: clamp(base - (spiScore != null ? overduePenalty * 0.3 : overduePenalty)),
+      detail: [
+        late != null ? `Finished ${late} h after its planned finish` : null,
+        s.overdueMilestones > 0 ? `${s.overdueMilestones} task${s.overdueMilestones === 1 ? "" : "s"} overdue` : null,
+        finished > 0 ? `${onTime} of ${finished} steps finished on time` : null,
+        s.spi != null ? `SPI ${s.spi.toFixed(2)}` : null,
+      ].filter(Boolean).join(" · ") || "On the board, nothing overdue",
     });
   } else {
     parts.push({ label: "Schedule", score: null, detail: "No schedule yet" });

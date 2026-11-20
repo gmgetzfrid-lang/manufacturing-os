@@ -30,7 +30,7 @@ export async function gatherProjectSnapshot(orgId: string, projectId: string): P
       safe(supabase.from("change_orders").select("status, amount").eq("project_id", projectId).limit(500)
         .then((r) => (r.error ? [] : ((r.data ?? []) as Array<{ status: string; amount: number }>))), []),
       safe(activeOnly((a) => {
-        const q = supabase.from("milestones").select("id, parent_id, is_summary, status, planned_at, percent_complete, baseline_finish_at, source").eq("project_id", projectId);
+        const q = supabase.from("milestones").select("id, parent_id, is_summary, status, planned_at, percent_complete, baseline_finish_at, actual_at, cancelled_at, source").eq("project_id", projectId);
         return (a ? q.is("cancelled_at", null) : q).limit(1000);
       })
         .then((r) => (r.error ? [] : ((r.data ?? []) as Array<Record<string, unknown>>))), []),
@@ -95,6 +95,20 @@ export async function gatherProjectSnapshot(orgId: string, projectId: string): P
   }
 
   const now = Date.now();
+  const finishFacts = (steps: Array<Record<string, unknown>>) => {
+    const ms = (v: unknown) => (v ? Date.parse(String(v)) : NaN);
+    const planOf = (m: Record<string, unknown>) => (Number.isFinite(ms(m.baseline_finish_at)) ? ms(m.baseline_finish_at) : ms(m.planned_at));
+    const done = steps.filter((m) => String(m.status ?? "") === "completed" || Number(m.percent_complete ?? 0) >= 100);
+    const timed = done.filter((m) => Number.isFinite(ms(m.actual_at)) && Number.isFinite(planOf(m)));
+    const allDone = steps.length > 0 && done.length === steps.length;
+    const lastActual = Math.max(...timed.map((m) => ms(m.actual_at)));
+    const lastPlan = Math.max(...steps.map(planOf).filter(Number.isFinite));
+    return {
+      finishedSteps: timed.length,
+      finishedOnTime: timed.filter((m) => ms(m.actual_at) <= planOf(m) + 60_000).length,
+      finishLateH: allDone && timed.length && Number.isFinite(lastPlan) ? (lastActual - lastPlan) / 3_600_000 : null,
+    };
+  };
   const reqTurnover = turnover.filter((t) => t.required !== false);
   const goals = proj.goals;
 
@@ -127,6 +141,9 @@ export async function gatherProjectSnapshot(orgId: string, projectId: string): P
       const status = String(m.status ?? "planned");
       return Number.isFinite(planned) && planned < now && status !== "completed" && Number(m.percent_complete ?? 0) < 100;
     }).length,
+    // What really happened: steps finished on or before their planned
+    // finish, and (all done) how late the last one came in.
+    ...finishFacts(live.filter((m) => !parentIds.has(String(m.id)) && m.is_summary !== true && !m.cancelled_at)),
     spi: null, // needs the schedule tab's EV math + history; null stays honest
     hasBaseline: live.some((m) => !!m.baseline_finish_at),
 

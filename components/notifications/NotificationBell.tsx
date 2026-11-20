@@ -137,7 +137,8 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
               <div className="flex items-center gap-3">
                 {hasNotifRows && (
                   <button
-                    onClick={async () => { await markAllRead(); }}
+                    title="Items waiting on your decision stay until you open them"
+                    onClick={async () => { try { await markAllRead(); } catch { /* the list stays as it is; nothing claimed */ } }}
                     className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                   >
                     <CheckCheck className="w-3.5 h-3.5" /> Mark all read

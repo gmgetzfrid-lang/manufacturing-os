@@ -43,6 +43,7 @@ import StepCard from "@/components/projects/StepCard";
 import { loadProgressLog, type ProgressLogRow } from "@/lib/progressHistory";
 import { lastChanges, saidWithLatest } from "@/lib/stepComment";
 import { searchMatcher, hasQuery } from "@/lib/fuzzySearch";
+import { appAlert } from "@/components/providers/DialogProvider";
 
 interface Props {
   day: string; // "YYYY-MM-DD" in the plant zone
@@ -825,7 +826,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
       // (work in progress always says what got done).
       // A timed change is saved only once it has its time.
       if (progressPending() && !needsNote() && !needsTime()) void commit();
-      else if (!progressPending() && notePending()) void writeNote(note.trim()).catch(() => undefined);
+      else if (!progressPending() && notePending()) { const typed = note.trim(); void writeNote(typed).catch((e) => appAlert({ title: "Note not saved", message: `Your note didn't save (${(e as Error).message}). Here it is to put in again: "${typed}"`, tone: "danger" })); }
       if (holdPending() && hold && onSetStatus) {
         if (!timed) onSetStatus(id, hold, reason.trim() || undefined);
         else if (reason.trim() && whenAt != null) void saveHold();

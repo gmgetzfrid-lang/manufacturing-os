@@ -89,6 +89,7 @@ import { quickLook, quickLookIndex } from "@/lib/taskQuickLook";
 import type { CancelledJob } from "@/lib/cancelledJobs";
 import { handoverKey, decisionsToShip, suggestCrews, askedOutcomes, askedResult, capacityOf, type HandoverDecision } from "@/lib/shiftHandover";
 import { TryControl, ShipBar } from "@/components/projects/HandoverControls";
+import { appAlert } from "@/components/providers/DialogProvider";
 import { PullAheadPicker } from "@/components/projects/PullAheadPicker";
 import { ShiftPlanPicker } from "@/components/projects/ShiftPlanPicker";
 import { planChoices, planSearchPool, planSetText, offPlanText, planCheckText } from "@/lib/nightPlan";
@@ -532,11 +533,22 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     const p = progress?.get(id)?.percent;
     return p == null ? undefined : { pct: p, plan: planByTask.get(id) };
   }, [progress, planByTask]);
-  const [recMsg, setRecMsg] = useState<string | null>(null);
-  const saveRec = useCallback(async (key: string, change: (r: ShiftRecord) => ShiftRecord) => {
-    if (!userId || !orgId) return;
-    try { await saveShiftRecord({ orgId, projectId, shiftKey: key, userId, change }); setRecMsg(null); }
-    catch (e) { setRecMsg((e as Error).message); }
+  // A save to the shift's record that didn't go through: what went wrong,
+  // and the same save again (shown above the report until it's done).
+  const [recFail, setRecFail] = useState<{ msg: string; retry: () => void } | null>(null);
+  const recMsg = recFail?.msg ?? null;
+  const saveRec = useCallback(async (key: string, change: (r: ShiftRecord) => ShiftRecord): Promise<boolean> => {
+    if (!userId || !orgId) { setRecFail({ msg: "Sign in to save.", retry: () => undefined }); return false; }
+    try { await saveShiftRecord({ orgId, projectId, shiftKey: key, userId, change }); setRecFail(null); return true; }
+    catch (e) {
+      const again = (): void => { void saveShiftRecordAgain(); };
+      const saveShiftRecordAgain = async () => {
+        try { await saveShiftRecord({ orgId, projectId, shiftKey: key, userId, change }); setRecFail(null); }
+        catch (e2) { setRecFail({ msg: (e2 as Error).message, retry: again }); }
+      };
+      setRecFail({ msg: (e as Error).message, retry: again });
+      return false;
+    }
   }, [orgId, projectId, userId]);
   // The shift's entries — the time log for its window — for the
   // hour-by-hour notes to be written from.
@@ -592,15 +604,15 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       setCrew: (which, crew, v) => void saveRec(which === "this" ? thisKey : nextKey, (r) => ({ ...r, crews: { ...(r.crews ?? {}), [crew]: { ...(r.crews?.[crew] ?? {}), ...v } } })),
       incidents: recThis?.incidents,
       setNone: (none) => void saveRec(thisKey, (r) => ({ ...r, incidents: { ...(r.incidents ?? {}), none: none ? { at: Date.now(), by } : null } })),
-      addIncident: (x) => void saveRec(thisKey, (r) => ({ ...r, incidents: { none: null, items: [...(r.incidents?.items ?? []), { id: newId(), ...x, by }] } })),
+      addIncident: (x) => saveRec(thisKey, (r) => ({ ...r, incidents: { none: null, items: [...(r.incidents?.items ?? []), { id: newId(), ...x, by }] } })),
       removeIncident: (id) => void saveRec(thisKey, (r) => ({ ...r, incidents: { ...(r.incidents ?? {}), items: (r.incidents?.items ?? []).filter((x) => x.id !== id) } })),
-      editIncident: (id, x) => void saveRec(thisKey, (r) => editIncident(r, id, x, by)),
+      editIncident: (id, x) => saveRec(thisKey, (r) => editIncident(r, id, x, by)),
       restoreIncident: (x) => void saveRec(thisKey, (r) => restoreIncident(r, x)),
       notes: [...(recThis?.notes ?? []).map((n) => ({ ...n, shiftKey: thisKey })), ...openFollowUps(records, thisKey).map((n) => ({ ...n, from: labelOf(n.shiftKey) }))],
-      addNote: (x) => void saveRec(thisKey, (r) => ({ ...r, notes: [...(r.notes ?? []), { id: newId(), ...x, by }] })),
+      addNote: (x) => saveRec(thisKey, (r) => ({ ...r, notes: [...(r.notes ?? []), { id: newId(), ...x, by }] })),
       clearNote: (n) => void saveRec(n.shiftKey, (r) => ({ ...r, notes: (r.notes ?? []).map((y) => (y.id === n.id ? { ...y, cleared: { at: Date.now(), by } } : y)) })),
       removeNote: (n) => void saveRec(n.shiftKey, (r) => ({ ...r, notes: (r.notes ?? []).filter((y) => y.id !== n.id) })),
-      editNote: (n, x) => void saveRec(n.shiftKey, (r) => editNote(r, n.id, x, by)),
+      editNote: (n, x) => saveRec(n.shiftKey, (r) => editNote(r, n.id, x, by)),
       unclearNote: (n) => void saveRec(n.shiftKey, (r) => unclearNote(r, n.id)),
       restoreNote: (n) => { const { shiftKey, ...note } = n; void saveRec(shiftKey, (r) => restoreNote(r, note)); },
       error: recMsg ?? (recErr && canEdit ? recErr : null),
@@ -1155,6 +1167,12 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           onToggle={togglePull} onPull={hand.setPull}
           onSaveDefault={(p) => saveProjectShiftTimes(projectId, { ...times, helpers: p })}
           onClose={() => setPickerOpen(false)} />
+      )}
+      {recFail && (
+        <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-[13px] text-rose-900 dark:text-rose-100">
+          <span className="flex-1 min-w-[200px]"><b>Didn&apos;t save to the shift&apos;s record:</b> {recFail.msg}</span>
+          <button type="button" onClick={recFail.retry} className="h-9 px-3 rounded-lg border border-rose-300 dark:border-rose-700 bg-[var(--color-surface)] font-bold text-rose-900 dark:text-rose-100 cursor-pointer">Try again</button>
+        </div>
       )}
       {meeting === "turnover" && (
         <ShipBar shippedAt={shippedAt} shippedBy={hand.shippedByName} canShip={canShip} busy={shipBusy} err={hand.err} label={`${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })} ${shift.kind} shift`}
@@ -1755,15 +1773,16 @@ interface SheetCtx {
   known: Record<string, string[]>;
   incidents?: ShiftRecord["incidents"];
   setNone: (none: boolean) => void;
-  addIncident: (x: Omit<Incident, "id" | "by">) => void;
+  /** Each resolves true once saved; the box keeps what was typed if not. */
+  addIncident: (x: Omit<Incident, "id" | "by">) => Promise<boolean>;
   removeIncident: (id: string) => void;
-  editIncident: (id: string, x: { at: number; kind: IncidentKind; text: string }) => void;
+  editIncident: (id: string, x: { at: number; kind: IncidentKind; text: string }) => Promise<boolean>;
   restoreIncident: (x: Incident) => void;
   notes: Array<ShiftNote & { from?: string; shiftKey: string }>;
-  addNote: (x: { at: number; text: string; followUp: boolean }) => void;
+  addNote: (x: { at: number; text: string; followUp: boolean }) => Promise<boolean>;
   clearNote: (n: ShiftNote & { shiftKey: string }) => void;
   removeNote: (n: ShiftNote & { shiftKey: string }) => void;
-  editNote: (n: ShiftNote & { shiftKey: string }, x: { at: number; text: string; followUp: boolean }) => void;
+  editNote: (n: ShiftNote & { shiftKey: string }, x: { at: number; text: string; followUp: boolean }) => Promise<boolean>;
   unclearNote: (n: ShiftNote & { shiftKey: string }) => void;
   restoreNote: (n: ShiftNote & { shiftKey: string }) => void;
   error: string | null;
@@ -2095,7 +2114,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       body: (print: boolean) => (
         <SafetyMomentBox jobs={hazardJobs} shift={next} T={c.T} print={print} project={o.safety?.project} recent={o.safety?.recent} label={`${shiftName(next)} ${c.D(next.start)}`}
           chosen={endMeeting?.record?.meeting?.safety}
-          onUse={endMeeting && sh?.edit && !print ? (title) => { void endMeeting.save((r) => ({ ...r, meeting: { ...(r.meeting ?? {}), safety: title } })).catch(() => undefined); } : undefined} />
+          onUse={endMeeting && sh?.edit && !print ? (title) => { void endMeeting.save((r) => ({ ...r, meeting: { ...(r.meeting ?? {}), safety: title } })).catch((e) => appAlert({ title: "Safety topic not saved", message: `"${title}" didn't save to the meeting: ${(e as Error).message}. Pick it again to try again.`, tone: "danger" })); } : undefined} />
       ),
     }] : []),
   ];

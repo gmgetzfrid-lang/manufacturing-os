@@ -169,6 +169,10 @@ export default function NewTicketPage() {
   // Dropzone state (visual feedback while a file is being dragged)
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+  // Kept across a retry: the request's number, and the files already up
+  // (a failed attachment never costs a new number or a second upload).
+  const ticketNoRef = React.useRef<string | null>(null);
+  const uploadedRef = React.useRef(new Map<File, TicketAttachment>());
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     // Snapshot the picked files synchronously. The setFiles updater runs
@@ -211,8 +215,26 @@ export default function NewTicketPage() {
       if (!uid) throw new Error("Not authenticated");
 
       if (!activeOrgId) throw new Error("No active workspace selected.");
-      // Atomic, collision-proof, human request number (e.g. KE-DDRT-26-0001).
-      const ticketNumber = await generateTicketNumber(activeOrgId);
+      // Validate required custom fields before insert
+      for (const cat of (config.customCategories ?? []).filter((c) => c.enabled)) {
+        const vals = customValues[cat.id] ?? {};
+        for (const f of cat.fields) {
+          if (!f.required) continue;
+          const v = vals[f.key];
+          const empty = v == null || v === "" || (Array.isArray(v) && v.length === 0);
+          if (empty) {
+            await appAlert(`"${f.label}" (${cat.label}) is required.`);
+            setIsSubmitting(false);
+            setUploadStatus('');
+            return;
+          }
+        }
+      }
+
+      // Atomic, collision-proof, human request number (e.g. KE-DDRT-26-0001),
+      // taken once: a retry after a failed attachment keeps it.
+      const ticketNumber = ticketNoRef.current ?? await generateTicketNumber(activeOrgId);
+      ticketNoRef.current = ticketNumber;
       const uploadedAttachments: TicketAttachment[] = [];
 
       // If we arrived via "Send to Drafting" with a source file URL,
@@ -232,19 +254,38 @@ export default function NewTicketPage() {
       }
 
       if (files.length > 0) {
-        setUploadStatus(`Uploading ${files.length} files...`);
+        // Each file on its own: one that fails doesn't stop the rest, and
+        // the ones already up aren't sent again on a retry.
+        const failedFiles: string[] = [];
+        let n = 0;
         for (const file of files) {
-          const result = await uploadTicketAttachment({ file, orgId: activeOrgId, ticketId: ticketNumber });
-          uploadedAttachments.push({
-            id: crypto.randomUUID(),
-            name: file.name,
-            url: result.url,
-            type: 'Source',
-            status: 'submitted',
-            size: (file.size / 1024 / 1024).toFixed(2) + ' MB',
-            uploadedBy: userEmail || 'Unknown',
-            uploadedAt: new Date().toISOString()
-          });
+          n++;
+          const had = uploadedRef.current.get(file);
+          if (had) { uploadedAttachments.push(had); continue; }
+          setUploadStatus(`Uploading ${n} of ${files.length}: ${file.name}`);
+          try {
+            const result = await uploadTicketAttachment({ file, orgId: activeOrgId, ticketId: ticketNumber });
+            const att: TicketAttachment = {
+              id: crypto.randomUUID(),
+              name: file.name,
+              url: result.url,
+              type: 'Source',
+              status: 'submitted',
+              size: (file.size / 1024 / 1024).toFixed(2) + ' MB',
+              uploadedBy: userEmail || 'Unknown',
+              uploadedAt: new Date().toISOString()
+            };
+            uploadedRef.current.set(file, att);
+            uploadedAttachments.push(att);
+          } catch (e) {
+            failedFiles.push(`${file.name} (${e instanceof Error ? e.message : String(e)})`);
+          }
+        }
+        if (failedFiles.length) {
+          await appAlert({ title: "Not sent yet", message: `${failedFiles.length} of ${files.length} file${files.length === 1 ? "" : "s"} didn't upload: ${failedFiles.join("; ")}. The request isn't sent yet and everything you typed is still here. Press Submit to try ${failedFiles.length === 1 ? "that file" : "those files"} again; the ones that went up won't upload twice.`, tone: "danger" });
+          setIsSubmitting(false);
+          setUploadStatus('');
+          return;
         }
       }
 
@@ -267,22 +308,6 @@ export default function NewTicketPage() {
           action: 'Source Linked', user: userEmail, role: activeRole, date: now,
           details: `Sent from document viewer · ${sourceDocNum || sourceDocTitle || sourceDocId} Rev ${sourceDocRev || '?'}`,
         });
-      }
-
-      // Validate required custom fields before insert
-      for (const cat of (config.customCategories ?? []).filter((c) => c.enabled)) {
-        const vals = customValues[cat.id] ?? {};
-        for (const f of cat.fields) {
-          if (!f.required) continue;
-          const v = vals[f.key];
-          const empty = v == null || v === "" || (Array.isArray(v) && v.length === 0);
-          if (empty) {
-            await appAlert(`"${f.label}" (${cat.label}) is required.`);
-            setIsSubmitting(false);
-            setUploadStatus('');
-            return;
-          }
-        }
       }
 
       const metadata: Record<string, unknown> = {};

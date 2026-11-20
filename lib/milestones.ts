@@ -1611,6 +1611,26 @@ export async function undoImport(input: {
   }).catch(() => undefined);
 }
 
+/** An import that stopped partway: put the schedule back exactly as the
+ *  snapshot taken before it. `cleared`: a replace already removed the old
+ *  rows (they are restored); otherwise only rows the import added are
+ *  removed and the old rows are written back as they were (nothing old is
+ *  deleted, so their history stays). */
+export async function rollbackImport(input: {
+  orgId: string; projectId: string; snapshot: ScheduleSnapshot; cleared: boolean;
+  actorUserId: string; actorUserEmail?: string;
+}): Promise<void> {
+  if (input.cleared) {
+    await undoImport({ orgId: input.orgId, projectId: input.projectId, snapshot: input.snapshot, insertedIds: [], replaced: true, actorUserId: input.actorUserId, actorUserEmail: input.actorUserEmail });
+    return;
+  }
+  const { rows, error } = await fetchAllRows<{ id: string }>((from, to) => supabase.from("milestones").select("id")
+    .eq("org_id", input.orgId).eq("project_id", input.projectId).order("id").range(from, to));
+  if (error) throw new Error(error);
+  const old = new Set(input.snapshot.rows.map((r) => r.id));
+  await undoImport({ orgId: input.orgId, projectId: input.projectId, snapshot: input.snapshot, insertedIds: rows.map((r) => r.id).filter((id) => !old.has(id)), replaced: false, actorUserId: input.actorUserId, actorUserEmail: input.actorUserEmail });
+}
+
 export async function importGhostMilestones(input: ImportGhostMilestonesInput): Promise<ImportResult> {
   const result: ImportResult = { inserted: 0, updated: 0, skipped: 0, errors: [] };
   const lines = input.csv.trim().split(/\r?\n/).filter((l) => l.trim().length > 0);
