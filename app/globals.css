@@ -324,6 +324,10 @@ a.ui-id:hover, button.ui-id:hover { color: var(--color-accent-text); text-decora
 .ui-pill.is-muted { background: var(--color-surface-2); color: var(--color-text-muted); }
 .ui-pill.is-solid { background: var(--color-main); color: #ffffff; }
 
+/* Tab rows and chip strips scroll sideways without a scroll bar. */
+[role="tablist"], [role="radiogroup"], .no-scrollbar { scrollbar-width: none; }
+[role="tablist"]::-webkit-scrollbar, [role="radiogroup"]::-webkit-scrollbar, .no-scrollbar::-webkit-scrollbar { display: none; }
+
 /* Section headings carry the brand's deep shade. */
 h2.font-display, h3.font-display { color: var(--color-heading); }
 .dark { --color-heading: #cedffd; }
