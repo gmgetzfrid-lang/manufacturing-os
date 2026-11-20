@@ -78,14 +78,24 @@ export default function Composer({
   const fileRef = useRef<HTMLInputElement>(null);
   const drag = useFileDrag(onAddFiles, busy);
 
-  // Auto-grow: measure, cap at ~8 lines, then scroll inside.
+  // Auto-grow: measure, cap at ~8 lines, then scroll inside. Measured again
+  // when the box changes width (a first measure taken before the layout
+  // settled left a phone's empty box several lines tall).
   useEffect(() => {
     const ta = taRef.current;
     if (!ta) return;
-    ta.style.height = "0px";
-    const max = 8 * 24 + 16;
-    ta.style.height = `${Math.min(ta.scrollHeight, max)}px`;
-    ta.style.overflowY = ta.scrollHeight > max ? "auto" : "hidden";
+    const measure = () => {
+      ta.style.height = "0px";
+      const max = 8 * 24 + 16;
+      ta.style.height = `${Math.min(ta.scrollHeight, max)}px`;
+      ta.style.overflowY = ta.scrollHeight > max ? "auto" : "hidden";
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    let w = ta.clientWidth;
+    const ro = new ResizeObserver(() => { if (ta.clientWidth !== w) { w = ta.clientWidth; measure(); } });
+    ro.observe(ta);
+    return () => ro.disconnect();
   }, [value]);
 
 
@@ -204,7 +214,7 @@ export default function Composer({
           </button>
         ) : (
           <button onClick={onSend} disabled={!canSend} title="Send (Enter)" aria-label="Send"
-            className="h-8 w-8 inline-flex items-center justify-center rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-35 disabled:cursor-not-allowed transition-colors">
+            className="shrink-0 h-8 w-8 inline-flex items-center justify-center rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-35 disabled:cursor-not-allowed transition-colors">
             <Send className="w-4 h-4" />
           </button>
         )}

@@ -16,8 +16,8 @@ import Link from "next/link";
 import { Activity, RefreshCw, AlertTriangle, FileText, Briefcase, Lock, Unlock, AlertOctagon, GitBranch, Zap, Pencil, Trash2, FileSignature, Layers, Download } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
-import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
-import { Button } from "@/components/ui/Button";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card, heroQuiet } from "@/components/ui/PageHero";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import ViewTabs, { ACTIVITY_VIEWS } from "@/components/navigation/ViewTabs";
 import DocThumb from "@/components/documents/DocThumb";
@@ -200,63 +200,51 @@ export default function ActivityFeedPage() {
     return { today, actors: actors.size, ...cat };
   }, [rows]);
 
+  // The pulse, said in words: what kinds of change happened in the window.
+  const kinds = ([
+    [pulse.revisions, "revision", "revisions"],
+    [pulse.locks, "checkout", "checkouts"],
+    [pulse.holds, "hold", "holds"],
+    [pulse.milestones, "milestone update", "milestone updates"],
+    [pulse.equipment, "equipment change", "equipment changes"],
+  ] as Array<[number, string, string]>).filter(([n]) => n > 0).map(([n, one, many]) => `${n} ${n === 1 ? one : many}`);
+  const answer = loading && rows.length === 0 ? "Activity"
+    : rows.length === 0 ? (error ? "The activity didn't load." : "Nothing has happened yet.")
+      : pulse.today === 0 ? "Quiet today." : `${pulse.today} ${pulse.today === 1 ? "change" : "changes"} today.`;
+
   return (
     <PageShell width="work">
-        <ViewTabs title="History" tabs={ACTIVITY_VIEWS} />
-        <PageHeaderBar
-          icon={Activity}
-          title="Activity feed"
-          subtitle={<>What happened in the workspace, in plain words. The Audit Log has the raw detail.</>}
-          actions={
-            <Button variant="secondary" size="sm" onClick={refresh} disabled={loading}>
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
-            </Button>
+        <PageHero
+          kicker="History · Activity"
+          title={answer}
+          sub={
+            <>
+              {rows.length > 0
+                ? <>{rows.length.toLocaleString()} loaded, {pulse.actors} {pulse.actors === 1 ? "person" : "people"} active{kinds.length ? `: ${kinds.join(", ")}` : ""}. </>
+                : null}
+              What happened in the workspace, in plain words. The Audit log has the raw detail.
+              {error && <span role="alert" className="block mt-1 text-rose-300 font-semibold"><AlertTriangle className="inline w-3.5 h-3.5 -mt-0.5 mr-1" />{error}</span>}
+            </>
           }
-        />
+          tools={
+            <button type="button" className={heroQuiet} onClick={refresh} disabled={loading} aria-label="Refresh">
+              <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} /><span className="max-sm:hidden">Refresh</span>
+            </button>
+          }
+        >
+          <ViewTabs tabs={ACTIVITY_VIEWS} variant="dark" />
+        </PageHero>
 
-        {error && (
-          <div role="alert" className="mb-4 border-l-2 border-red-500 pl-3 text-xs font-semibold text-red-700 dark:text-red-400 flex items-start gap-2">
-            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
-          </div>
-        )}
-
-        {/* Pulse widget — at-a-glance summary of the loaded window. */}
-        {rows.length > 0 && (
-          <div className="mb-6 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm p-4">
-            <div className="text-sm font-bold text-[var(--color-text)] mb-3">
-              {pulse.today} event{pulse.today === 1 ? "" : "s"} today
-              <span className="text-[var(--color-text-faint)] font-medium"> · {rows.length} loaded · {pulse.actors} {pulse.actors === 1 ? "person" : "people"} active</span>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-              {([
-                ["Revisions", pulse.revisions, GitBranch, "text-[var(--color-text)] bg-[var(--color-surface-2)]"],
-                ["Checkouts", pulse.locks, Lock, "text-[var(--color-text)] bg-[var(--color-surface-2)]"],
-                ["Holds", pulse.holds, AlertOctagon, "text-rose-600 bg-rose-50"],
-                ["Milestones", pulse.milestones, Zap, "text-[var(--color-text)] bg-[var(--color-surface-2)]"],
-                ["Equipment", pulse.equipment, Layers, "text-[var(--color-text)] bg-[var(--color-surface-2)]"],
-              ] as const).map(([label, n, Icon, cls]) => (
-                <div key={label} className="rounded-xl border border-[var(--color-border)] p-2.5">
-                  <div className={`w-7 h-7 rounded-lg flex items-center justify-center mb-1.5 ${cls}`}><Icon className="w-3.5 h-3.5" /></div>
-                  <div className="text-lg font-black text-[var(--color-text)] leading-none">{n}</div>
-                  <div className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase tracking-wider mt-1">{label}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
+        <PageBody>
         {loading && rows.length === 0 ? (
-          <LoadingBlock what="activity" rows={6} />
+          <Card><LoadingBlock what="activity" rows={6} className="border-0 p-0" /></Card>
         ) : rows.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-12 text-center text-sm italic text-[var(--color-text-faint)]">No activity recorded yet.</div>
+          <Card><p className="py-8 text-center text-[14px] text-[var(--color-text-muted)]">No activity recorded yet.</p></Card>
         ) : (
-          <div className="space-y-6">
+          <>
             {grouped.map((group) => (
-              <div key={group.day}>
-                <div className="sticky top-0 bg-[var(--color-canvas)]/80 backdrop-blur z-10 py-2 mb-2 text-xs font-black text-[var(--color-text-muted)] uppercase tracking-widest border-b border-[var(--color-border)]">
-                  {group.day}
-                </div>
-                <div className="space-y-1.5">
+              <Card key={group.day} label={group.day}>
+                <div className="divide-y divide-[var(--color-border)] -mx-4 sm:-mx-5 border-t border-[var(--color-border)]">
                   {group.rows.map((r) => {
                     const meta = ACTION_VERBS[r.action];
                     const Icon = meta?.icon ?? Activity;
@@ -273,17 +261,17 @@ export default function ActivityFeedPage() {
                       : xm?.href ?? null;
                     const filePath = dm ? docFile.get(r.resourceId) : undefined;
                     return (
-                      <div key={r.id} className="flex items-start gap-3 px-3 py-2 rounded-lg hover:bg-[var(--color-surface)] transition-colors">
+                      <div key={r.id} className="flex items-start gap-3 px-4 sm:px-5 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors">
                         {filePath ? (
                           <DocHoverPreview documentId={r.resourceId} filePath={filePath} label={resourceLabel}>
                             <DocThumb filePath={filePath} width={36} className="mt-0.5" />
                           </DocHoverPreview>
                         ) : (
-                          <div className={`shrink-0 w-7 h-7 rounded-md border flex items-center justify-center ${tone}`}>
+                          <div className={`shrink-0 w-8 h-8 rounded-[9px] flex items-center justify-center ${tone.replace(/border-\S+/g, "")}`}>
                             <Icon className="w-3.5 h-3.5" />
                           </div>
                         )}
-                        <div className="flex-1 min-w-0 text-xs leading-relaxed">
+                        <div className="flex-1 min-w-0 text-[13.5px] leading-relaxed pt-1">
                           <span className="font-bold text-[var(--color-text)]">{r.userEmail?.split("@")[0] ?? "Someone"}</span>
                           {" "}<span className="text-[var(--color-text-muted)]">{verb}</span>{" "}
                           {href ? (
@@ -293,24 +281,25 @@ export default function ActivityFeedPage() {
                           ) : (
                             <span className="font-bold text-[var(--color-text)]">{resourceLabel}</span>
                           )}
-                          <span className="text-[var(--color-text-faint)] ml-1">· {new Date(r.timestamp).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</span>
+                          <span className="text-[var(--color-text-muted)] ml-1">· {new Date(r.timestamp).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</span>
                         </div>
                       </div>
                     );
                   })}
                 </div>
-              </div>
+              </Card>
             ))}
 
             {rows.length >= limit && (
-              <div className="text-center">
-                <Button variant="secondary" size="sm" onClick={() => setLimit((n) => n + 200)}>
-                  Load 200 more
-                </Button>
+              <div className="px-1">
+                <button type="button" onClick={() => setLimit((n) => n + 200)} className="text-[13px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">
+                  Show 200 more
+                </button>
               </div>
             )}
-          </div>
+          </>
         )}
+        </PageBody>
     </PageShell>
   );
 }

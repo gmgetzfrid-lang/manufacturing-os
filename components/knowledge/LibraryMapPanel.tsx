@@ -89,7 +89,7 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
   const catalogs = data?.catalogs ?? [];
 
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 mb-6">
+    <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
       <div className="flex items-center gap-3 flex-wrap">
         <div className="w-9 h-9 rounded-lg bg-[var(--color-text-muted)] flex items-center justify-center shrink-0">
           <MapIcon className="w-4 h-4 text-[var(--color-surface)]" />

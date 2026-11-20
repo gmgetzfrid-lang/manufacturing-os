@@ -101,11 +101,11 @@ export interface WidgetMeta {
 }
 
 // ─── small shared bits (the rest live in ./kit) ───────────────────
-function Stat({ value, label, accent }: { value: React.ReactNode; label: string; accent?: boolean }) {
+// A count in a sentence, not a big number on a tile: "3 requests".
+function Stat({ value, label }: { value: React.ReactNode; label: string }) {
   return (
-    <div>
-      <div className={`text-2xl font-black leading-none ${accent ? "text-[var(--color-text)]" : "text-[var(--color-text)]"}`}>{value}</div>
-      <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] mt-1">{label}</div>
+    <div className="text-[13px] text-[var(--color-text-muted)]">
+      <span className="text-[14px] font-bold text-[var(--color-text)] tabular-nums">{value}</span> {label.toLowerCase()}
     </div>
   );
 }
@@ -187,14 +187,14 @@ function DailyBriefBody() {
     <div className={`${FILL} ${SCROLL} gap-3`}>
       <DailyBrief data={snap} />
       {nudges.length > 0 && (
-        <div className="rounded-2xl border border-[var(--color-border)] p-4 bg-[var(--color-surface)]">
+        <div className="border-t border-[var(--color-border)] pt-3">
           <div className="flex items-center gap-1.5 mb-2">
-            <Zap className="w-4 h-4 text-[var(--color-text-muted)]" />
-            <span className="text-sm font-black text-[var(--color-text)]">Suggested actions</span>
+            <Zap className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
+            <span className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">Suggested actions</span>
           </div>
           <ul className="space-y-1.5">
             {nudges.map((n) => (
-              <li key={n.id} className="text-xs text-[var(--color-text-faint)] flex items-start gap-2">
+              <li key={n.id} className="text-[13px] text-[var(--color-text)] flex items-start gap-2">
                 <span className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${n.severity === "high" ? "bg-rose-500" : "bg-amber-500"}`} />
                 <span className="flex-1">{n.message}</span>
                 {n.actionLabel && n.href && (
@@ -276,6 +276,7 @@ function AttentionBody() {
   return (
     <div className={`${FILL} ${SCROLL}`}>
       <AttentionFeed
+        plain
         items={filtered}
         counts={counts}
         filter={filter}
@@ -300,11 +301,7 @@ function SuggestedActionsBody() {
   }
   return (
     <div className={`${FILL}`}>
-      <div className={`rounded-2xl border border-[var(--color-border)] p-4 bg-[var(--color-surface)] ${SCROLL}`}>
-        <div className="flex items-center gap-1.5 mb-2">
-          <Zap className="w-4 h-4 text-[var(--color-text-muted)]" />
-          <span className="text-sm font-black text-[var(--color-text)]">Suggested actions</span>
-        </div>
+      <div className={SCROLL}>
         <ul className="space-y-1.5">
           {nudges.map((n) => (
             <li key={n.id} className="text-xs text-[var(--color-text-faint)] flex items-start gap-2">
@@ -345,13 +342,13 @@ function WidgetCard({
     violet: "text-[var(--color-text-muted)]", slate: "text-[var(--color-text-faint)]",
   };
   return (
-    <div className={`rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] ${edge} p-4`}>
+    <div className={`border-t border-[var(--color-border)] pt-3 ${edge ? `${edge} pl-3` : ""}`}>
       <div className="flex items-center justify-between mb-2">
-        <h2 className="text-sm font-black text-[var(--color-text)] inline-flex items-center gap-1.5">
-          <Icon className={`w-4 h-4 ${iconTones[tone]}`} />
+        <h2 className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
+          <Icon className={`w-3.5 h-3.5 ${iconTones[tone]}`} />
           {title}
         </h2>
-        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[11px] font-black text-[var(--color-text)]">{badgeText(count)}</span>
+        <span className="text-[12px] font-bold text-[var(--color-text-muted)] tabular-nums">{badgeText(count)}</span>
       </div>
       {children}
     </div>
@@ -568,9 +565,9 @@ function AdminAnalyticsBody() {
           { label: "Open requests", value: data?.openReqs ?? 0, href: "/requests" },
           { label: "Members", value: data?.members ?? 0, href: "/admin/users" },
         ] as const).map((s) => (
-          <Link key={s.label} href={s.href} className="group rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-2 hover:border-[var(--color-accent)] transition-colors">
-            <div className="text-lg font-black leading-none text-[var(--color-text)] tabular-nums group-hover:text-[var(--color-text)] transition-colors">{s.value.toLocaleString()}</div>
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] mt-1 truncate">{s.label}</div>
+          <Link key={s.label} href={s.href} className="group rounded-xl bg-[var(--color-surface-2)] px-2.5 py-2 hover:bg-[var(--color-border)] transition-colors">
+            <div className="text-[14px] font-bold leading-tight text-[var(--color-text)] tabular-nums">{s.value.toLocaleString()}</div>
+            <div className="text-[12px] text-[var(--color-text-muted)] truncate">{s.label}</div>
           </Link>
         ))}
       </div>
@@ -618,7 +615,7 @@ function AdminAnalyticsBody() {
 // body — to satisfy react-hooks/set-state-in-effect.
 function CommandDeckBody() {
   const { uid, userEmail, activeRole, activeOrgId } = useRole();
-  const { count: attentionCount, actionRequiredCount } = useTicketNotifications();
+  const { count: attentionCount, actionRequiredCount, items: attentionItems } = useTicketNotifications();
 
   const [data, setData] = useState<InboxSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -660,20 +657,15 @@ function CommandDeckBody() {
     return () => { alive = false; };
   }, [activeOrgId, reloadKey]);
 
-  // First paint, before any data: a tasteful skeleton in the deck's silhouette.
+  // First paint, before any data: the card's outline, quietly loading.
   if (loading && !data) {
     return (
-      <div className="relative h-full overflow-hidden rounded-3xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-5 sm:p-6" aria-busy="true">
-        <div className="flex items-center gap-2 mb-4 text-[12px] text-[var(--color-text-muted)]">
-          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading what needs you…
+      <div className="h-full rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5" aria-busy="true">
+        <div className="flex items-center gap-2 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Needs you
         </div>
-        <div className="h-7 w-64 rounded bg-[var(--color-surface-2)] animate-pulse mb-2" />
-        <div className="h-4 w-80 rounded bg-[var(--color-surface-2)] animate-pulse mb-5" />
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="h-36 rounded-2xl bg-[var(--color-surface-2)] animate-pulse" />
-          ))}
-        </div>
+        <div className="mt-4 h-4 w-2/3 rounded bg-[var(--color-surface-2)] animate-pulse" />
+        <div className="mt-3 h-4 w-1/2 rounded bg-[var(--color-surface-2)] animate-pulse" />
       </div>
     );
   }
@@ -690,6 +682,7 @@ function CommandDeckBody() {
       pillars={pillars}
       attentionCount={attentionCount}
       actionCount={actionRequiredCount}
+      items={attentionItems}
       focus={data ? roleFocus(activeRole, data) : null}
       lastLoadedAt={lastLoadedAt}
       refreshing={loading || refreshing}

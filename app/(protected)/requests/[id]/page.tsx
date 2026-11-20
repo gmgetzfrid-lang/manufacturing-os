@@ -6,7 +6,8 @@ import { useFileDrag } from '@/hooks/useFileDrag';
 import { tryUpload } from '@/lib/uploadRetry';
 import { Modal, ModalHeader, ModalBody, ModalFooter } from '@/components/ui/Modal';
 import LoadingBlock from '@/components/ui/LoadingBlock';
-import StepPath from '@/components/ui/StepPath';
+import { PageShell } from '@/components/ui/PageShell';
+import { PageHero, PageBody, Card, StepLine, heroPrimary, heroQuiet } from '@/components/ui/PageHero';
 import FileThumb from '@/components/ui/FileThumb';
 import dynamic from 'next/dynamic';
 import MoreMenu from '@/components/ui/MoreMenu';
@@ -16,7 +17,7 @@ import { uploadTicketAttachment, getSignedUrlForPath } from '@/lib/storage';
 import { useRole } from '@/components/providers/RoleContext';
 import { useToast } from '@/components/providers/ToastProvider';
 import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
-import { Ticket, TicketStatus, TicketAttachment, TicketComment } from '@/types/schema';
+import { Ticket, TicketAttachment, TicketComment } from '@/types/schema';
 import { WorkflowEngine, WorkflowAction } from '@/lib/workflow';
 import { loadCapabilityPolicy, type CapabilityPolicy } from '@/lib/capabilityPolicy';
 import EngineerPickerModal from '@/components/requests/EngineerPickerModal';
@@ -34,7 +35,6 @@ import { logAuditAction } from '@/lib/audit';
 const AdvancedRedlineEditor = dynamic(() => import('@/components/drafting/AdvancedRedlineEditor'), { ssr: false });
 import UserAvatar from '@/components/ui/UserAvatar';
 import {
-  ArrowLeft,
   Calendar,
   CheckCircle2,
   FileText,
@@ -42,7 +42,6 @@ import {
   Paperclip,
   Send,
   User,
-  AlertCircle,
   Download,
   Eye,
   X,
@@ -52,7 +51,6 @@ import {
   Loader2,
   FileIcon,
   Maximize2,
-  Flag,
   ShieldAlert,
   ChevronDown,
   UserPlus,
@@ -61,7 +59,6 @@ import {
   FileCheck,
   Stamp,
   Pen,
-  TrendingUp,
   Check, // Added Check icon
   HelpCircle,
   RotateCcw,
@@ -1367,29 +1364,29 @@ export default function TicketDetailView() {
     }
   };
 
-  const getStatusStyle = (status: TicketStatus) => {
-    switch (status) {
-      case 'DRAFTING': return 'bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]'; 
-      case 'PENDING_IFC': return 'bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]';
-      case 'REVISION_REQ': return 'bg-amber-100 text-amber-800 border-amber-200';
-      case 'PENDING_ASSIGNMENT': return 'bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]';
-      default: return 'bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]';
-    }
-  };
-
   if (loadError && !ticket) {
     return (
-      <div className="max-w-2xl mx-auto p-6">
-        <p role="alert" className="border-l-2 border-red-500 pl-3 text-sm font-semibold text-red-700 dark:text-red-400">{loadError}</p>
-        <button type="button" onClick={() => router.push('/requests')} className="mt-4 h-10 px-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Go to drafting requests</button>
-      </div>
+      <PageShell width="form">
+        <PageHero back={{ href: '/requests', label: 'Drafting requests' }} kicker="Drafting requests" title="This request didn't load." size="md" />
+        <PageBody>
+          <Card>
+            <p role="alert" className="text-[14px] font-semibold text-red-700 dark:text-red-400">{loadError}</p>
+            <button type="button" onClick={() => router.push('/requests')} className="mt-4 h-10 px-4 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Go to drafting requests</button>
+          </Card>
+        </PageBody>
+      </PageShell>
     );
   }
   if (loading || !ticket) {
     return (
-      <div className="max-w-[1920px] mx-auto p-4 sm:p-6 lg:p-8">
-        <LoadingBlock what="the request" rows={6} />
-      </div>
+      <PageShell width="full">
+        <div className="mx-auto max-w-[1920px]">
+          <PageHero back={{ href: '/requests', label: 'Drafting requests' }} kicker="Drafting requests" title="Loading the request…" size="md" />
+          <PageBody>
+            <Card><LoadingBlock what="the request" rows={6} className="border-0 p-0" /></Card>
+          </PageBody>
+        </div>
+      </PageShell>
     );
   }
 
@@ -1408,8 +1405,65 @@ export default function TicketDetailView() {
   // LOGIC: Check for Staged Files
   const hasStagedFiles = ticket.attachments?.some(a => a.status === 'staged' && a.type === 'Draft');
 
+  // The answer: where the request is, in words.
+  const stateWords = (() => {
+    switch (ticket.status) {
+      case 'NEW': return 'New. Waiting for a first look.';
+      case 'PENDING_ENG_INITIAL':
+      case 'PENDING_ENG_TEAM': return 'In engineering review.';
+      case 'PENDING_ASSIGNMENT': return 'Waiting for a drafter.';
+      case 'DRAFTING': return ticket.assignedDrafterName ? `Being drafted by ${ticket.assignedDrafterName}.` : 'Being drafted.';
+      case 'REVISION_REQ': return 'Sent back for a revision.';
+      case 'PENDING_REVIEW': return 'Draft out for review.';
+      case 'PENDING_FINAL_APPROVAL': return 'Waiting for engineer sign-off.';
+      case 'PENDING_IFC': return 'Approved. Ready to issue IFC.';
+      case 'FINAL_DRAFT': return 'Issued. Waiting to close.';
+      case 'CLOSED': return 'Closed.';
+      case 'CANCELED': return 'Canceled.';
+      default: return String(ticket.status).replace(/_/g, ' ').toLowerCase().replace(/^\w/, (c) => c.toUpperCase()) + '.';
+    }
+  })();
+  // One main step (drafts waiting to go out come first); the rest quiet;
+  // closing it in the menu. An override (Force close) or a destructive step
+  // is never the main one.
+  const isDanger = (a: typeof availableActions[number]) => a.variant === 'destructive' || /force/i.test(a.label);
+  const mainAct = (hasStagedFiles ? availableActions.find((a) => a.action === 'submit_draft') : undefined)
+    ?? availableActions.find((a) => !isDanger(a) && a.variant !== 'outline' && a.variant !== 'ghost') ?? null;
+  const restActs = availableActions.filter((a) => a !== mainAct);
+  const quietActs = restActs.filter((a) => !isDanger(a));
+  const dangerActs = restActs.filter(isDanger);
+  const iconOf = (a: typeof availableActions[number]) => actionLoading === a.action ? <Loader2 className="w-4 h-4 animate-spin" /> : a.action === 'save_progress' ? <Save className="w-4 h-4" /> : null;
+  const moreMenu = [
+    { icon: <HelpCircle className="w-4 h-4" />, label: "How a request flows", onClick: () => setShowWorkflowDiagram(true) },
+    { icon: <QrCode className="w-4 h-4" />, label: "Print the traveler", onClick: async () => {
+      const { printTicketTraveler } = await import("@/lib/physicalBridge");
+      await printTicketTraveler({
+        ticketRowId: ticketId,
+        ticketNumber: ticket.ticketId ?? null,
+        title: ticket.title,
+        status: ticket.status,
+        requesterName: ticket.requesterName ?? null,
+        drafterName: ticket.assignedDrafterName ?? null,
+        createdAt: ticket.createdAt ? String(ticket.createdAt) : null,
+        deliverableRev: ticket.deliverableRev ?? null,
+      });
+    } },
+    ...(isAdmin && ticket.assignedDrafterId && ticket.status !== 'CLOSED' ? [{ icon: <UserPlus className="w-4 h-4" />, label: "Reassign", onClick: () => handleReassignClick() }] : []),
+    ...dangerActs.map((a, i) => ({ icon: <ShieldAlert className="w-4 h-4" />, label: a.label, onClick: () => initiateWorkflowAction(a), tone: "bad" as const, line: i === 0 })),
+  ];
+  const stepAt = requestStepIndex(ticket.status);
+  const canAddFile = activeRole === 'Drafter' || activeRole === 'Requester' || activeRole === 'Admin' || uid === ticket.requesterId;
+  const pastDue = !!ticket.targetCompletionAt && isPastDue(ticket);
+  const meta = [
+    ticket.deliverableRev ? `Rev ${ticket.deliverableRev}` : null,
+    typeof ticket.priority === 'number' ? `P${ticket.priority}` : null,
+    ticket.requestType || null,
+    ticket.unit ? `Unit ${ticket.unit}` : null,
+  ].filter(Boolean).join(' · ');
+
   return (
-    <div className="pb-20">
+    <PageShell width="full">
+      <div className="mx-auto max-w-[1920px]">
 
       {/* MODALS */}
       {showRedlineEditor && fileToRedline && (
@@ -1526,65 +1580,31 @@ export default function TicketDetailView() {
         />
       )}
 
-      {/* HEADER */}
-      <div className="bg-[var(--color-surface)] border-b border-[var(--color-border)] sticky top-0 z-20 shadow-sm px-4 sm:px-6 lg:px-8 py-4">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 max-w-[1920px] mx-auto">
-          <div className="flex items-center gap-4">
-            <button onClick={() => router.back()} aria-label="Back" className="p-2 hover:bg-[var(--color-surface-2)] rounded-full text-[var(--color-text-muted)] transition-colors"><ArrowLeft className="w-5 h-5" /></button>
-            <div>
-              <div className="flex items-center gap-3">
-                <h1 className="text-xl font-bold text-[var(--color-text)] tracking-tight">{ticket.ticketId}</h1>
-                <button
-                  type="button"
-                  onClick={() => setShowWorkflowDiagram(true)}
-                  title="See where this request is in the workflow"
-                  className={`px-3 py-1 rounded-full text-xs font-bold border uppercase tracking-wider inline-flex items-center gap-1.5 hover:brightness-95 transition ${getStatusStyle(ticket.status)}`}
-                >
-                  {ticket.status.replace(/_/g, ' ')}
-                  <HelpCircle className="w-3 h-3 opacity-70" />
-                </button>
-                {ticket.deliverableRev && (
-                  <span
-                    title={/^\d+$/.test(ticket.deliverableRev)
-                      ? `Issued deliverable revision ${ticket.deliverableRev}`
-                      : `Review draft ${ticket.deliverableRev} - the letter drops when it's approved`}
-                    className={`px-2 py-0.5 text-[11px] font-black rounded border uppercase tracking-wider ${
-                      /^\d+$/.test(ticket.deliverableRev)
-                        ? 'text-emerald-700 bg-emerald-100 border-emerald-200'
-                        : 'text-amber-700 bg-amber-100 border-amber-200'
-                    }`}
-                  >
-                    Rev {ticket.deliverableRev}
-                  </span>
-                )}
-                {typeof ticket.priority === 'number' && (
-                  <span className={`px-2 py-0.5 text-[11px] font-bold rounded border flex items-center
-                    ${ticket.priority === 1 ? 'text-red-700 bg-red-100 border-red-200' : 
-                      ticket.priority === 2 ? 'text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]' :
-                      ticket.priority === 3 ? 'text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]' :
-                      'text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]'
-                    }`}>
-                    {ticket.priority === 1 && <AlertCircle className="w-3 h-3 mr-1" />}
-                    {ticket.priority === 2 && <TrendingUp className="w-3 h-3 mr-1" />}
-                    {ticket.priority >= 3 && <Flag className="w-3 h-3 mr-1" />}
-                    P{ticket.priority}
-                  </span>
-                )}
-                {/* Dynamically checking if requestType matches any known flag type would require config, but keeping RFI hardcheck for now as it's likely standard */}
-                {ticket.requestType === 'RFI' && <span className="px-2 py-0.5 bg-[var(--color-surface-2)] text-[var(--color-text)] text-[11px] font-bold rounded border border-[var(--color-border)] flex items-center"><Flag className="w-3 h-3 mr-1" /> RFI</span>}
-              </div>
-              <p className="text-sm text-[var(--color-text-muted)] mt-1 font-medium">{ticket.title}</p>
-              {hasStagedFiles && (availableActions.some((a) => a.action === 'submit_draft')
-                ? <p className="text-[13px] font-bold text-[var(--color-text)] mt-1">Your drafts aren&apos;t sent to the requester yet: Submit draft for review sends them.</p>
-                : <p className="text-[13px] text-[var(--color-text-muted)] mt-1">Drafts are added but not sent to the requester yet.</p>)}
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 justify-end">
-            {(activeRole === 'Drafter' || activeRole === 'Requester' || activeRole === 'Admin' || uid === ticket.requesterId) && (
+      {/* THE BAND: where it is, what it is, the one next step. */}
+      <PageHero
+        back={{ onClick: () => router.back(), label: 'Back' }}
+        size="md"
+        kicker={<>Drafting requests · <span className="font-mono">{ticket.ticketId}</span></>}
+        title={stateWords}
+        sub={
+          <>
+            <span className="text-white font-semibold">{ticket.title}</span>
+            {meta && <span> · {meta}</span>}
+            {pastDue && <span className="font-bold text-rose-300"> · Past due {toDate(ticket.targetCompletionAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>}
+            {hasStagedFiles && (availableActions.some((a) => a.action === 'submit_draft')
+              ? <span className="block mt-1 text-white">Your drafts aren&apos;t sent to the requester yet: Submit draft for review sends them.</span>
+              : <span className="block mt-1">Drafts are added but not sent to the requester yet.</span>)}
+            {availableActions.length === 0 && <span className="block mt-1">Nothing for you to do on this request.</span>}
+          </>
+        }
+        tools={
+          <>
+            {canAddFile && (
               <>
-                <label className={`cursor-pointer h-10 px-3 rounded-lg text-sm font-bold transition-all flex items-center bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] ${isUploading ? 'opacity-50 pointer-events-none' : ''}`}>
-                  {isUploading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <UploadCloud className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" />} 
-                  {isUploading ? `Uploading ${uploadProgress.toFixed(0)}%` : 'Add a file'}
+                <label className={`${heroQuiet} cursor-pointer ${isUploading ? 'opacity-50 pointer-events-none' : ''}`}>
+                  {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}
+                  <span className="max-sm:hidden">{isUploading ? `Uploading ${uploadProgress.toFixed(0)}%` : 'Add a file'}</span>
+                  <span className="sr-only sm:hidden">Add a file</span>
                   <input 
                     type="file" 
                     className="hidden" 
@@ -1613,11 +1633,11 @@ export default function TicketDetailView() {
                   <Modal onClose={() => setFileToUpload(null)} size="sm">
                     <ModalHeader title="What kind of file is it?" onClose={() => setFileToUpload(null)} />
                     <ModalBody>
-                      <div className="p-3 bg-[var(--color-surface-2)] rounded-lg mb-4 border border-[var(--color-border)] flex items-center gap-3">
+                      <div className="p-3 bg-[var(--color-surface-2)] rounded-lg mb-4 flex items-center gap-3">
                         <FileThumb file={fileToUpload} />
                         <div className="overflow-hidden">
-                          <p className="font-bold text-sm truncate text-[var(--color-text)]">{fileToUpload.name}</p>
-                          <p className="text-xs text-[var(--color-text-muted)]">{formatBytes(fileToUpload.size)}</p>
+                          <p className="font-bold text-[14px] truncate text-[var(--color-text)]">{fileToUpload.name}</p>
+                          <p className="text-[12px] text-[var(--color-text-muted)]">{formatBytes(fileToUpload.size)}</p>
                         </div>
                       </div>
                       <div className="flex flex-col gap-2">
@@ -1633,77 +1653,52 @@ export default function TicketDetailView() {
                 })()}
               </>
             )}
-
-            {availableActions.length === 0 && (
-              <div className="flex items-center h-10 px-3 bg-[var(--color-surface-2)] rounded-lg border border-[var(--color-border)] text-xs font-medium text-[var(--color-text-muted)]"><ShieldAlert className="w-3.5 h-3.5 mr-1.5" /> Nothing for you to do on this request</div>
-            )}
-            {(() => {
-              // One main step (drafts waiting to go out come first); the rest quiet; closing it in the menu.
-              // An override (Force close) or a destructive step is never the main one.
-              const isDanger = (a: typeof availableActions[number]) => a.variant === 'destructive' || /force/i.test(a.label);
-              const mainAct = (hasStagedFiles ? availableActions.find((a) => a.action === 'submit_draft') : undefined)
-                ?? availableActions.find((a) => !isDanger(a) && a.variant !== 'outline' && a.variant !== 'ghost') ?? null;
-              const rest = availableActions.filter((a) => a !== mainAct);
-              const quietActs = rest.filter((a) => !isDanger(a));
-              const dangerActs = rest.filter(isDanger);
-              const iconOf = (a: typeof availableActions[number]) => actionLoading === a.action ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : a.action === 'save_progress' ? <Save className="w-4 h-4 mr-1.5" /> : null;
-              const menu = [
-                { icon: <QrCode className="w-4 h-4" />, label: "Print the traveler", onClick: async () => {
-                const { printTicketTraveler } = await import("@/lib/physicalBridge");
-                await printTicketTraveler({
-                  ticketRowId: ticketId,
-                  ticketNumber: ticket.ticketId ?? null,
-                  title: ticket.title,
-                  status: ticket.status,
-                  requesterName: ticket.requesterName ?? null,
-                  drafterName: ticket.assignedDrafterName ?? null,
-                  createdAt: ticket.createdAt ? String(ticket.createdAt) : null,
-                  deliverableRev: ticket.deliverableRev ?? null,
-                });
-              } },
-                ...(isAdmin && ticket.assignedDrafterId && ticket.status !== 'CLOSED' ? [{ icon: <UserPlus className="w-4 h-4" />, label: "Reassign", onClick: () => handleReassignClick() }] : []),
-                ...dangerActs.map((a, i) => ({ icon: <ShieldAlert className="w-4 h-4" />, label: a.label, onClick: () => initiateWorkflowAction(a), tone: "bad" as const, line: i === 0 })),
-              ];
-              return (
-                <>
-                  {quietActs.map((a) => (
-                    <button key={a.action + a.label} onClick={() => initiateWorkflowAction(a)} disabled={!!actionLoading}
-                      className="h-10 px-3 rounded-lg text-sm font-bold flex items-center border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 disabled:cursor-not-allowed">
-                      {iconOf(a)}{a.label}
-                    </button>
-                  ))}
-                  <MoreMenu items={menu} iconOnly label="More: traveler, reassign, close" triggerClass="h-10 w-10 inline-flex items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]" />
-                  {mainAct && (
-                    <button onClick={() => initiateWorkflowAction(mainAct)} disabled={!!actionLoading}
-                      className="h-11 px-5 rounded-lg text-sm font-black flex items-center bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">
-                      {iconOf(mainAct)}{mainAct.label}
-                    </button>
-                  )}
-                </>
-              );
-            })()}
-          </div>
+            <MoreMenu items={moreMenu} iconOnly label="More: how it flows, traveler, reassign, close" triggerClass={heroQuiet} />
+          </>
+        }
+        primary={mainAct ? (
+          <button onClick={() => initiateWorkflowAction(mainAct)} disabled={!!actionLoading} className={heroPrimary}>
+            {iconOf(mainAct)}{mainAct.label}
+          </button>
+        ) : undefined}
+      >
+        <div className="space-y-5">
+          {stepAt >= 0 && (
+            <button type="button" onClick={() => setShowWorkflowDiagram(true)} title="See what each step means" className="block w-full text-left rounded-lg -m-1 p-1 hover:bg-[var(--color-ink-2)]">
+              <span className="sm:hidden block mb-3 text-[13px] font-bold text-white">Step {stepAt + 1} of {REQUEST_STEPS.length}: {REQUEST_STEPS[stepAt]}</span>
+              <span className="hidden sm:block">
+                <StepLine onDark steps={REQUEST_STEPS.map((label, i) => ({ label, state: i < stepAt ? 'done' : i === stepAt ? 'now' : 'next' }))} />
+              </span>
+              <span className="sm:hidden block">
+                <StepLine onDark steps={REQUEST_STEPS.map((_, i) => ({ label: '', state: i < stepAt ? 'done' : i === stepAt ? 'now' : 'next' }))} />
+              </span>
+            </button>
+          )}
+          {quietActs.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {quietActs.map((a) => (
+                <button key={a.action + a.label} onClick={() => initiateWorkflowAction(a)} disabled={!!actionLoading} className={heroQuiet}>
+                  {iconOf(a)}{a.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
-      </div>
+      </PageHero>
 
-      {requestStepIndex(ticket.status) >= 0 && (
-        <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-5">
-          <StepPath steps={REQUEST_STEPS} current={requestStepIndex(ticket.status)} />
-        </div>
-      )}
-
+      <PageBody>
       {ticket.status === 'REVISION_REQ' && latestRevision && (
-        <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6">
-          <div className="border-l-2 border-amber-500 pl-3">
+        <Card className="border-l-2 border-l-amber-500">
+          <div>
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <h3 className="text-sm font-black text-amber-800 dark:text-amber-300 inline-flex items-center gap-1.5"><RotateCcw className="w-4 h-4" /> Sent back for a revision. What to fix:</h3>
+                <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-amber-800 dark:text-amber-300 inline-flex items-center gap-1.5"><RotateCcw className="w-3.5 h-3.5" /> What to fix</h2>
                 {latestRevision.category && (
                   <span className="text-[12px] font-bold text-[var(--color-text-muted)]">{latestRevision.category}</span>
                 )}
               </div>
-              <p className="text-sm text-[var(--color-text)] mt-1 whitespace-pre-wrap leading-relaxed">{latestRevision.text}</p>
-              <p className="text-[11px] text-[var(--color-text-muted)] mt-1.5">
+              <p className="text-[14px] text-[var(--color-text)] mt-2 whitespace-pre-wrap leading-relaxed">{latestRevision.text}</p>
+              <p className="text-[12px] text-[var(--color-text-muted)] mt-1.5">
                 {latestRevision.user ?? 'Reviewer'}{latestRevision.date ? ` · ${new Date(latestRevision.date).toLocaleString()}` : ''}
               </p>
               {(() => {
@@ -1723,7 +1718,7 @@ export default function TicketDetailView() {
               })()}
             </div>
           </div>
-        </div>
+        </Card>
       )}
 
       {ticket.archivedAt && (() => {
@@ -1734,12 +1729,12 @@ export default function TicketDetailView() {
         const plural = (n: number | undefined, w: string) => `${n ?? 0} ${w}${(n ?? 0) === 1 ? '' : 's'}`;
         const hasShape = !!(sum.commentCount || sum.attachmentCount || sum.historyCount);
         return (
-          <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6">
-            <div className="border-l-2 border-[var(--color-border-strong)] pl-3 flex items-start gap-3">
-              <Archive className="w-5 h-5 text-[var(--color-text-muted)] shrink-0 mt-0.5" />
+          <Card>
+            <div className="flex items-start gap-3">
+              <Archive className="w-4 h-4 text-[var(--color-text-muted)] shrink-0 mt-0.5" />
               <div className="min-w-0">
-                <h3 className="text-sm font-black text-[var(--color-text)]">Archived</h3>
-                <p className="text-sm text-[var(--color-text)] mt-1 leading-relaxed">
+                <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Archived</h2>
+                <p className="text-[14px] text-[var(--color-text)] mt-1.5 leading-relaxed">
                   It closed a while ago, so its files and comments moved to the archive{' '}
                   {ticket.archiveId ? <span className="font-mono font-bold">{ticket.archiveId}</span> : ''}. This page keeps the summary.
                 </p>
@@ -1761,17 +1756,16 @@ export default function TicketDetailView() {
                 </button>
               </div>
             </div>
-          </div>
+          </Card>
         );
       })()}
 
-      <div className="max-w-[1920px] mx-auto p-4 sm:p-6 lg:p-8 grid grid-cols-1 xl:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 sm:gap-5">
         {/* LEFT: DETAILS & FILES */}
-        <div className="xl:col-span-2 space-y-8">
-          <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-6 shadow-sm relative overflow-hidden">
-            <div className="flex items-center justify-between mb-6 border-b border-[var(--color-border)] pb-4"><h2 className="text-sm font-bold text-[var(--color-text)] uppercase tracking-wide flex items-center"><FileText className="w-4 h-4 mr-2 text-[var(--color-text-muted)]" /> Project Specifications</h2></div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
-              <div><label className="text-[11px] text-[var(--color-text-faint)] font-medium">Unit</label><div className="font-mono text-sm font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] px-2 py-1 rounded w-fit mt-1 border border-[var(--color-border)]">{ticket.unit}</div></div>
+        <div className="xl:col-span-2 space-y-4 sm:space-y-5 min-w-0">
+          <Card label="Request details">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-5 [&_label]:block [&_label]:text-[11px] [&_label]:font-bold [&_label]:uppercase [&_label]:tracking-[0.12em] [&_label]:text-[var(--color-text-muted)]">
+              <div><label className="text-[11px] text-[var(--color-text-faint)] font-medium">Unit</label><div className="font-mono text-[14px] font-bold text-[var(--color-text)] mt-1">{ticket.unit}</div></div>
               <div><label className="text-[11px] text-[var(--color-text-faint)] font-medium">Requester</label><div className="min-w-0 text-sm text-[var(--color-text)] mt-1 flex items-center group cursor-help" title={ticket.requesterId}><User className="w-4 h-4 mr-2 text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)] transition-colors shrink-0" /><span className="truncate">{ticket.requesterName}</span></div></div>
               <div><label className="text-[11px] text-[var(--color-text-faint)] font-medium">Assigned Lead</label><div className="min-w-0 text-sm text-[var(--color-text)] mt-1">{ticket.assignedDrafterName ? (<div className="flex items-center"><span className="truncate">{ticket.assignedDrafterName}</span></div>) : <span className="text-[var(--color-text-faint)] italic">Unassigned</span>}</div></div>
               <div>
@@ -1788,12 +1782,12 @@ export default function TicketDetailView() {
               <div><label className="text-[11px] text-[var(--color-text-faint)] font-medium">Initiated</label><div className="text-sm font-semibold text-[var(--color-text)] mt-1 flex items-center"><Calendar className="w-4 h-4 mr-2 text-[var(--color-text-faint)] shrink-0" />{toDate(ticket.createdAt).toLocaleDateString()}</div></div>
               <div>
                 <label className="text-[11px] text-[var(--color-text-faint)] font-medium">Target Completion</label>
-                <div className="text-sm font-semibold mt-1 flex items-center gap-1.5">
+                <div className="text-sm font-semibold mt-1 flex flex-wrap items-center gap-1.5">
                   {ticket.targetCompletionAt ? (
                     <>
                       <Calendar className={`w-4 h-4 shrink-0 ${isPastDue(ticket) ? "text-red-500" : isNearingDue(ticket) ? "text-amber-500" : "text-[var(--color-text-faint)]"}`} />
                       <span className={isPastDue(ticket) ? "text-red-700" : "text-[var(--color-text)]"}>{toDate(ticket.targetCompletionAt).toLocaleDateString()}</span>
-                      {isPastDue(ticket) && <span className="text-[11px] font-black uppercase bg-red-100 text-red-700 px-1.5 py-0.5 rounded">Past Due</span>}
+                      {isPastDue(ticket) && <span className="whitespace-nowrap text-[11px] font-black uppercase bg-red-100 text-red-700 px-1.5 py-0.5 rounded">Past due</span>}
                       {!isPastDue(ticket) && isNearingDue(ticket) && <span className="text-[11px] font-black uppercase bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">Due Soon</span>}
                     </>
                   ) : (
@@ -1819,50 +1813,50 @@ export default function TicketDetailView() {
                 </div>
               </div>
             </div>
-            <div className="mt-6 pt-6 border-t border-[var(--color-border)]"><label className="text-[11px] text-[var(--color-text-faint)] font-bold uppercase tracking-wider mb-2 block">Scope of Work</label><div className="bg-[var(--color-surface-2)] rounded-lg p-4 text-sm text-[var(--color-text)] leading-relaxed border border-[var(--color-border)] shadow-inner">{ticket.description}</div></div>
-          </div>
+            <div className="mt-5 pt-4 border-t border-[var(--color-border)]"><div className="text-[11px] text-[var(--color-text-muted)] font-bold uppercase tracking-[0.12em] mb-1.5">Scope of work</div><div className="text-[14px] text-[var(--color-text)] leading-relaxed whitespace-pre-wrap">{ticket.description}</div></div>
+          </Card>
 
-          <div {...filesDrag.bind} className={`bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm overflow-hidden flex flex-col ${filesDrag.ring}`}>
-             <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex flex-col sm:flex-row justify-between sm:items-center gap-2">
-               <div><h2 className="text-sm font-bold text-[var(--color-text)] uppercase tracking-wide flex items-center"><Paperclip className="w-4 h-4 mr-2 text-[var(--color-text-muted)]" /> Files</h2></div>
+          <div {...filesDrag.bind} className={`bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden flex flex-col ${filesDrag.ring}`}>
+             <div className="px-4 sm:px-5 pt-4 pb-3 flex flex-col sm:flex-row justify-between sm:items-center gap-2">
+               <h2 className="text-[11px] font-extrabold text-[var(--color-text-muted)] uppercase tracking-[0.14em] flex items-center"><Paperclip className="w-3.5 h-3.5 mr-1.5" /> Files</h2>
                {filesDrag.over
-                 ? <span className="text-xs font-bold text-[var(--color-text)]">{filesDrag.say}</span>
+                 ? <span className="text-[13px] font-bold text-[var(--color-text)]">{filesDrag.say}</span>
                  : isUploading
-                   ? <span className="text-xs text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Uploading {uploadProgress.toFixed(0)}%</span>
-                   : !ticket.archivedAt && <span className="text-xs text-[var(--color-text-faint)]">Drop a file here to add it</span>}
+                   ? <span className="text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Uploading {uploadProgress.toFixed(0)}%</span>
+                   : !ticket.archivedAt && <span className="text-[12px] text-[var(--color-text-muted)]">Drop a file here to add it</span>}
              </div>
              {uploadError && (
                <p role="alert" className="mx-4 mt-3 border-l-2 border-red-500 pl-2 text-xs font-semibold text-red-700 dark:text-red-400">{uploadError}</p>
              )}
 
-             <div className="p-4 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] order-1">
-               <h3 className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase tracking-widest mb-3">Source and reference</h3>
-               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                 {sourceFiles.length === 0 ? <p className="text-xs text-[var(--color-text-faint)] italic pl-2">No source files provided.</p> : sourceFiles.map((file, idx) => (
-                   <div key={idx} className="flex items-center justify-between bg-[var(--color-surface)] p-2.5 rounded-lg border border-[var(--color-border)] shadow-sm hover:border-[var(--color-border-strong)]">
-                     <div className="flex items-center space-x-3 overflow-hidden"><div className="p-1.5 bg-[var(--color-surface-2)] rounded text-[var(--color-text-muted)]"><FileIcon className="w-4 h-4" /></div><span className="text-xs font-bold text-[var(--color-text)] truncate">{file.name}</span></div>
+             <div className="px-4 sm:px-5 py-4 border-t border-[var(--color-border)] order-1">
+               <h3 className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-2">Source and reference</h3>
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4">
+                 {sourceFiles.length === 0 ? <p className="text-[13px] text-[var(--color-text-muted)]">No source files provided.</p> : sourceFiles.map((file, idx) => (
+                   <div key={idx} className="flex items-center justify-between py-2 border-b border-[var(--color-border)] last:border-b-0 md:[&:nth-last-child(2):nth-child(odd)]:border-b-0">
+                     <div className="flex items-center gap-3 overflow-hidden"><div className="w-8 h-8 grid place-items-center bg-[var(--color-surface-2)] rounded-[9px] text-[var(--color-text-muted)] shrink-0"><FileIcon className="w-4 h-4" /></div><span className="text-[13.5px] font-semibold text-[var(--color-text)] truncate">{file.name}</span></div>
                      <button onClick={() => setViewerFile(file)} aria-label={`Open ${file.name}`} className="p-1.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><Eye className="w-4 h-4" /></button>
                    </div>
                  ))}
                </div>
              </div>
 
-             <div className={`p-4 border-b border-[var(--color-border)] ${['FINAL_DRAFT', 'PENDING_FINAL_APPROVAL', 'CLOSED'].includes(ticket.status) ? 'order-3 opacity-60 grayscale-[0.5]' : 'order-2'}`}>
-               <h3 className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase tracking-widest mb-3">Work in progress (drafts)</h3>
-               <div className="space-y-4">
-                 {sortedDrafts.length === 0 ? <p className="text-xs text-[var(--color-text-faint)] italic pl-2">No drafts started yet.</p> : (
+             <div className={`px-4 sm:px-5 py-4 border-t border-[var(--color-border)] ${['FINAL_DRAFT', 'PENDING_FINAL_APPROVAL', 'CLOSED'].includes(ticket.status) ? 'order-3 opacity-70' : 'order-2'}`}>
+               <h3 className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-2">Work in progress (drafts)</h3>
+               <div className="space-y-3">
+                 {sortedDrafts.length === 0 ? <p className="text-[13px] text-[var(--color-text-muted)]">No drafts started yet.</p> : (
                     <>
                       {/* LATEST DRAFT */}
                       {latestDraft && (
-                         <div className="bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-lg p-4 relative overflow-hidden group">
+                         <div className="py-1 relative group">
                            <div className="flex items-center justify-between relative z-10">
                               <div className="flex items-center space-x-4 min-w-0">
-                                <div className="p-2.5 bg-[var(--color-surface-2)] text-[var(--color-text-muted)] rounded-lg">
-                                  <FileText className="w-6 h-6" />
+                                <div className="w-10 h-10 grid place-items-center bg-[var(--color-surface-2)] text-[var(--color-text-muted)] rounded-[10px] shrink-0">
+                                  <FileText className="w-5 h-5" />
                                 </div>
                                 <div className="min-w-0">
-                                  <p className="text-sm font-bold text-[var(--color-text)] truncate hover:underline cursor-pointer" onClick={() => setViewerFile(latestDraft)}>{latestDraft.name}</p>
-                                  <div className="flex items-center text-xs text-[var(--color-text-muted)] mt-0.5 space-x-2">
+                                  <button type="button" className="block max-w-full text-left text-[14px] font-bold text-[var(--color-text)] truncate hover:underline" onClick={() => setViewerFile(latestDraft)}>{latestDraft.name}</button>
+                                  <div className="flex flex-wrap items-center text-[12px] text-[var(--color-text-muted)] mt-0.5 gap-x-2">
                                      <span>{latestDraft.size}</span>
                                      <span className="w-1 h-1 rounded-full bg-[var(--color-border-strong)]"/>
                                      <span>{toDate(latestDraft.uploadedAt).toLocaleString()}</span>
@@ -1894,14 +1888,14 @@ export default function TicketDetailView() {
                             <span className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase tracking-widest">Earlier versions</span>
                             <div className="h-px bg-[var(--color-border)] flex-1"/>
                           </div>
-                          <div className="grid grid-cols-1 gap-2">
+                          <div>
                             {previousDrafts.map((file, idx) => (
-                              <div key={idx} className="flex items-center justify-between bg-[var(--color-surface)] p-2.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text-faint)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-muted)] transition-all opacity-80 hover:opacity-100">
+                              <div key={idx} className="flex items-center justify-between py-2 border-b border-[var(--color-border)] last:border-b-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors">
                                  <div className="flex items-center space-x-3 min-w-0">
                                    <FileIcon className="w-4 h-4 shrink-0" />
                                    <div className="min-w-0">
-                                      <p className="text-xs font-medium truncate">{file.name}</p>
-                                      <p className="text-xs opacity-70">{toDate(file.uploadedAt).toLocaleString()}</p>
+                                      <p className="text-[13px] font-medium truncate">{file.name}</p>
+                                      <p className="text-[12px] opacity-80">{toDate(file.uploadedAt).toLocaleString()}</p>
                                    </div>
                                  </div>
                                  <button onClick={() => setViewerFile(file)} aria-label={`Open ${file.name}`} className="p-1.5 hover:bg-[var(--color-surface-2)] rounded"><Eye className="w-3.5 h-3.5" /></button>
@@ -1915,21 +1909,21 @@ export default function TicketDetailView() {
                </div>
              </div>
 
-             <div className={`p-4 ${['FINAL_DRAFT', 'PENDING_FINAL_APPROVAL', 'CLOSED'].includes(ticket.status) ? 'bg-[var(--color-surface-2)] order-2 border-b border-[var(--color-border)] shadow-sm relative overflow-hidden' : 'bg-[var(--color-surface-2)] order-3'}`}>
-               <h3 className={`text-[11px] font-bold uppercase tracking-widest mb-3 flex items-center ${['FINAL_DRAFT', 'PENDING_FINAL_APPROVAL', 'CLOSED'].includes(ticket.status) ? 'text-[var(--color-text)]' : 'text-[var(--color-text)]'}`}>
+             <div className={`px-4 sm:px-5 py-4 border-t border-[var(--color-border)] ${['FINAL_DRAFT', 'PENDING_FINAL_APPROVAL', 'CLOSED'].includes(ticket.status) ? 'order-2' : 'order-3'}`}>
+               <h3 className="text-[11px] font-bold uppercase tracking-[0.12em] mb-2 flex items-center text-[var(--color-text-muted)]">
                  <CheckCircle2 className="w-3 h-3 mr-1" /> Issued for construction
                  {ticket.deliverableRev && /^\d+$/.test(ticket.deliverableRev) && (
                    <span className="ml-2 px-1.5 py-0.5 bg-[var(--color-surface-2)] text-[var(--color-text)] text-[11px] font-black rounded normal-case tracking-normal">Rev {ticket.deliverableRev}</span>
                  )}
                </h3>
                <div className="space-y-2 relative z-10">
-                 {finalFiles.length === 0 ? <div className="text-center py-6 text-[var(--color-text-faint)] text-xs border-2 border-dashed border-[var(--color-border)] rounded-lg">Nothing issued for construction yet.</div> : finalFiles.map((file, idx) => (
-                   <div key={idx} className={`flex items-center justify-between bg-[var(--color-surface)] p-3 rounded-lg border shadow-sm ${['FINAL_DRAFT', 'PENDING_FINAL_APPROVAL', 'CLOSED'].includes(ticket.status) ? 'border-[var(--color-border)] ring-1 ring-[var(--color-border-strong)]' : 'border-[var(--color-border)]'}`}>
-                     <div className="flex items-center space-x-4 min-w-0">
-                       <div className="p-2 bg-[var(--color-surface-2)] text-[var(--color-text)] rounded"><CheckSquare className="w-5 h-5" /></div>
+                 {finalFiles.length === 0 ? <p className="text-[13px] text-[var(--color-text-muted)]">Nothing issued for construction yet.</p> : finalFiles.map((file, idx) => (
+                   <div key={idx} className="flex items-center justify-between py-2 border-b border-[var(--color-border)] last:border-b-0">
+                     <div className="flex items-center gap-3 min-w-0">
+                       <div className="w-9 h-9 grid place-items-center bg-[var(--color-surface-2)] text-emerald-700 dark:text-emerald-400 rounded-[9px] shrink-0"><CheckSquare className="w-4 h-4" /></div>
                        <div className="min-w-0">
-                         <p className="text-sm font-bold text-[var(--color-text)] truncate">{file.name}</p>
-                         <p className="text-xs text-[var(--color-text-muted)] font-semibold">Issued {toDate(file.uploadedAt).toLocaleDateString()}</p>
+                         <p className="text-[14px] font-bold text-[var(--color-text)] truncate">{file.name}</p>
+                         <p className="text-[12px] text-[var(--color-text-muted)]">Issued {toDate(file.uploadedAt).toLocaleDateString()}</p>
                        </div>
                      </div>
                      <button onClick={() => setViewerFile(file)} aria-label={`Open ${file.name}`} className="p-2 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded"><Maximize2 className="w-4 h-4" /></button>
@@ -1951,12 +1945,12 @@ export default function TicketDetailView() {
         </div>
 
         {/* RIGHT: ACTIVITY */}
-        <div className="h-[calc(100dvh-140px)] flex flex-col bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm overflow-hidden sticky top-24">
-          <div role="tablist" className="flex items-center border-b border-[var(--color-border)] bg-[var(--color-surface-2)]"><button role="tab" aria-selected={activeTab === 'discussion'} onClick={() => setActiveTab('discussion')} className={`flex-1 py-3 text-xs font-bold transition-all ${activeTab === 'discussion' ? 'text-[var(--color-text)] border-b-2 border-[var(--color-text)] bg-[var(--color-surface)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]'}`}>Discussion</button><button role="tab" aria-selected={activeTab === 'audit'} onClick={() => setActiveTab('audit')} className={`flex-1 py-3 text-xs font-bold transition-all ${activeTab === 'audit' ? 'text-[var(--color-text)] border-b-2 border-[var(--color-text)] bg-[var(--color-surface)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]'}`}>History</button></div>
-          <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-4 space-y-6 bg-[var(--color-canvas)] custom-scrollbar relative">
+        <div className="h-[calc(100dvh-140px)] min-h-[420px] flex flex-col bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden xl:sticky xl:top-4">
+          <div role="tablist" className="flex items-center gap-1 px-3 pt-3 border-b border-[var(--color-border)]"><button role="tab" aria-selected={activeTab === 'discussion'} onClick={() => setActiveTab('discussion')} className={`px-3 h-10 text-[13px] font-bold border-b-2 -mb-px transition-colors ${activeTab === 'discussion' ? 'text-[var(--color-text)] border-[var(--color-text)]' : 'text-[var(--color-text-muted)] border-transparent hover:text-[var(--color-text)]'}`}>Discussion{(ticket.comments?.length ?? 0) > 0 ? ` · ${ticket.comments?.length}` : ''}</button><button role="tab" aria-selected={activeTab === 'audit'} onClick={() => setActiveTab('audit')} className={`px-3 h-10 text-[13px] font-bold border-b-2 -mb-px transition-colors ${activeTab === 'audit' ? 'text-[var(--color-text)] border-[var(--color-text)]' : 'text-[var(--color-text-muted)] border-transparent hover:text-[var(--color-text)]'}`}>History</button></div>
+          <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-4 space-y-5 custom-scrollbar relative">
             {activeTab === 'discussion' && (
               <>
-                {(!ticket.comments || ticket.comments.length === 0) && <div className="absolute inset-0 flex flex-col items-center justify-center opacity-40 pointer-events-none"><MessageSquare className="w-12 h-12 text-[var(--color-text-faint)] mb-2" /><p className="text-sm text-[var(--color-text-faint)] font-medium">No comments yet</p></div>}
+                {(!ticket.comments || ticket.comments.length === 0) && <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none"><MessageSquare className="w-6 h-6 text-[var(--color-text-faint)] mb-2" /><p className="text-[13px] text-[var(--color-text-muted)]">No comments yet</p></div>}
                 {ticket.comments?.map((comment, idx) => (
                   <div key={`${comment.id}-${idx}`} id={`comment-${comment.id}`} className={`flex flex-col ${comment.user === userEmail ? 'items-end' : 'items-start'} animate-in slide-in-from-bottom-2 ${highlightCommentId === comment.id ? 'rounded-2xl ring-2 ring-[var(--color-border-strong)] ring-offset-2 transition-shadow' : ''}`}>
                     <div className="flex items-end gap-2 max-w-[90%]">
@@ -2063,9 +2057,9 @@ export default function TicketDetailView() {
                      {idx !== (ticket.history?.length || 0) - 1 && <div className="absolute left-[11px] top-8 bottom-[-24px] w-0.5 bg-[var(--color-border)]" />}
                      <div className="relative z-10"><div className="w-6 h-6 rounded-full bg-[var(--color-surface)] border-2 border-[var(--color-border)] flex items-center justify-center"><div className="w-2 h-2 rounded-full bg-[var(--color-text-muted)]" /></div></div>
                      <div className="flex-1 pb-1">
-                       <div className="flex items-center justify-between"><span className="text-xs font-bold text-[var(--color-text)]">{event.action.replace(/_/g, ' ')}</span><span className="text-[11px] text-[var(--color-text-faint)] font-mono">{toDate(event.date).toLocaleDateString()}</span></div>
-                       <p className="text-xs text-[var(--color-text-muted)] mt-0.5">by <span className="font-semibold text-[var(--color-text)]">{event.user?.split('@')[0]}</span></p>
-                       {event.details && <div className="mt-2 text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] p-2 rounded text-[var(--color-text-muted)] italic">&ldquo;{event.details}&rdquo;</div>}
+                       <div className="flex items-center justify-between gap-2"><span className="text-[13px] font-bold text-[var(--color-text)]">{event.action.replace(/_/g, ' ')}</span><span className="text-[12px] text-[var(--color-text-muted)] tabular-nums">{toDate(event.date).toLocaleDateString()}</span></div>
+                       <p className="text-[12px] text-[var(--color-text-muted)] mt-0.5">by <span className="font-semibold text-[var(--color-text)]">{event.user?.split('@')[0]}</span></p>
+                       {event.details && <p className="mt-1.5 text-[13px] text-[var(--color-text-muted)]">&ldquo;{event.details}&rdquo;</p>}
                      </div>
                    </div>
                  ))}
@@ -2097,7 +2091,7 @@ export default function TicketDetailView() {
                 <button
                   onClick={() => handlePostComment(newComment)}
                   disabled={!newComment.trim()}
-                  className="inline-flex items-center gap-1.5 h-9 px-3 bg-[var(--color-accent)] text-[var(--color-accent-fg)] rounded-lg text-sm font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="inline-flex items-center gap-1.5 h-9 px-3 bg-[var(--color-text)] text-[var(--color-surface)] rounded-lg text-[13px] font-bold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
                 ><Send className="w-4 h-4" /> Send</button>
               </div>
             </div>
@@ -2105,6 +2099,8 @@ export default function TicketDetailView() {
           )}
         </div>
       </div>
-    </div>
+      </PageBody>
+      </div>
+    </PageShell>
   );
 }

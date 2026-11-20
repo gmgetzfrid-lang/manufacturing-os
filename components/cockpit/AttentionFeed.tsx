@@ -58,6 +58,8 @@ export interface AttentionFeedProps {
   onMarkRead: (id: string) => void;
   onMarkAll: () => void;
   markingAll: boolean;
+  /** Inside a panel that is already white: no card of its own. */
+  plain?: boolean;
 }
 
 const KIND_GROUPS: Array<{ key: string; label: string; match: (k: string) => boolean }> = [
@@ -73,7 +75,7 @@ function groupOf(kind: string): string {
   return "other";
 }
 
-export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onMarkAll, markingAll }: AttentionFeedProps) {
+export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onMarkAll, markingAll, plain = false }: AttentionFeedProps) {
   const [visibleCount, setVisibleCount] = React.useState(30);
   // Second axis: filter by WHAT the notification is about. A DocCtrl drowning
   // in publish fan-out can isolate their mentions in one tap.
@@ -89,26 +91,28 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
   ];
 
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm overflow-hidden">
-      <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
-        <ClipboardList className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-sm font-black text-[var(--color-text)]">Needs your attention</span>
-        {counts.all > 0 && (
-          <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)] text-xs font-black">{counts.all}</span>
+    <div className={plain ? "" : "rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden"}>
+      <div className={`${plain ? "pb-3" : "px-4 sm:px-5 py-3"} border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap`}>
+        {!plain && (
+          <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
+            <ClipboardList className="w-3.5 h-3.5" aria-hidden />
+            Needs your attention{counts.all > 0 ? ` · ${counts.all}` : ""}
+          </h2>
         )}
         {/* One fixed-width segmented pill + Mark-all — everything else lives
             on its own WRAPPING chip row below. The old layout packed the
             group chips into this same non-wrapping row: at phone width the
             card's overflow-hidden clipped them (and often Mark-all) clean
             off screen, untappable. */}
-        <div className="ml-auto flex items-center gap-2 flex-wrap min-w-0">
+        <div className={`${plain ? "" : "ml-auto"} flex items-center gap-2 flex-wrap min-w-0`}>
           {/* Segmented filter */}
           <div className="inline-flex items-center gap-0.5 p-0.5 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)]">
             {FILTERS.map((f) => (
               <button
                 key={f.key}
                 onClick={() => onFilter(f.key)}
-                className={`inline-flex items-center gap-1 px-2 h-8 sm:h-6 rounded-md text-[11px] font-bold transition-colors ${
+                aria-pressed={filter === f.key}
+                className={`inline-flex items-center gap-1 px-2.5 h-8 sm:h-7 rounded-md text-[12px] font-bold transition-colors ${
                   filter === f.key ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                 }`}
               >
@@ -122,7 +126,7 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
               onClick={onMarkAll}
               disabled={markingAll}
               title="Mark all notifications read"
-              className="inline-flex items-center gap-1 px-2 h-8 sm:h-7 rounded-lg text-[11px] font-bold text-[var(--color-text-faint)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+              className="inline-flex items-center gap-1 px-2 h-8 rounded-lg text-[12px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
             >
               {markingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCheck className="w-3.5 h-3.5" />}
               <span className="hidden sm:inline">Mark all read</span>
@@ -134,7 +138,7 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
       {/* Kind-group chips — their own wrapping row, so every chip stays
           visible and tappable at any width. */}
       {counts.all > 0 && (
-        <div className="px-4 py-2 border-b border-[var(--color-border)] flex flex-wrap items-center gap-1.5">
+        <div className={`${plain ? "" : "px-4 sm:px-5"} py-2 border-b border-[var(--color-border)] flex flex-wrap items-center gap-1.5`}>
           <button
             onClick={() => setGroup("all")}
             className={`px-2.5 py-1.5 sm:py-1 rounded-full text-[11px] font-bold ${group === "all" ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
@@ -160,24 +164,22 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
       )}
 
       {counts.all === 0 ? (
-        <div className="px-4 py-10 text-center">
-          <div className="w-12 h-12 mx-auto rounded-2xl bg-emerald-50 border border-emerald-100 flex items-center justify-center mb-3">
-            <CheckCheck className="w-6 h-6 text-emerald-600 dark:text-emerald-500" />
-          </div>
-          <div className="text-sm font-bold text-[var(--color-text)]">You&apos;re all caught up</div>
-          <div className="text-xs text-[var(--color-text-muted)] mt-1">Nothing needs your attention right now.</div>
+        <div className="px-4 py-8 text-center">
+          <CheckCheck className="w-5 h-5 mx-auto mb-2 text-emerald-600 dark:text-emerald-500" />
+          <div className="text-[14px] font-bold text-[var(--color-text)]">You&apos;re all caught up</div>
+          <div className="text-[13px] text-[var(--color-text-muted)] mt-1">Nothing needs your attention right now.</div>
         </div>
       ) : grouped.length === 0 ? (
-        <div className="px-4 py-10 text-center text-xs text-[var(--color-text-muted)] italic">Nothing in this filter.</div>
+        <div className="px-4 py-8 text-center text-[13px] text-[var(--color-text-muted)]">Nothing in this filter.</div>
       ) : (
-        <ul className="divide-y divide-[var(--color-border)] max-h-[28rem] overflow-y-auto">
+        <ul className={`divide-y divide-[var(--color-border)] ${plain ? "" : "max-h-[28rem] overflow-y-auto"}`}>
           {grouped.slice(0, visibleCount).map((item) => (
-            <AttentionRow key={item.key} item={item} onMarkRead={onMarkRead} />
+            <AttentionRow key={item.key} item={item} onMarkRead={onMarkRead} plain={plain} />
           ))}
           {grouped.length > visibleCount && (
             <button
               onClick={() => setVisibleCount((v) => v + 30)}
-              className="w-full py-2 text-xs font-bold text-[var(--color-accent)] hover:underline"
+              className="w-full py-2.5 text-[13px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]"
             >
               Show {Math.min(30, grouped.length - visibleCount)} more ({grouped.length - visibleCount} hidden)
             </button>
@@ -188,29 +190,28 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
   );
 }
 
-function AttentionRow({ item, onMarkRead }: { item: AttentionItem; onMarkRead: (id: string) => void }) {
+function AttentionRow({ item, onMarkRead, plain }: { item: AttentionItem; onMarkRead: (id: string) => void; plain?: boolean }) {
   const { Icon, tone } = attentionVisual(item);
   return (
     <li className="relative group">
-      <span className={`absolute left-0 top-0 bottom-0 w-1 ${item.actionRequired ? "bg-[var(--color-text-muted)]" : "bg-transparent group-hover:bg-[var(--color-border-strong)]"}`} />
       <Link
         href={item.link}
         onClick={() => { if (item.notificationId) onMarkRead(item.notificationId); }}
-        className="flex items-center gap-3 pl-4 pr-3 py-2.5 hover:bg-[var(--color-canvas)]"
+        className={`flex items-center gap-3 ${plain ? "-mx-2 px-2 rounded-lg" : "px-4 sm:px-5"} py-3 hover:bg-[var(--color-surface-2)]`}
       >
-        <div className={`w-8 h-8 rounded-lg border flex items-center justify-center shrink-0 ${FEED_TONES[tone] ?? FEED_TONES.slate}`}>
+        <div className={`w-8 h-8 rounded-[9px] flex items-center justify-center shrink-0 ${(FEED_TONES[tone] ?? FEED_TONES.slate).replace(/border-\S+/g, "")}`}>
           <Icon className="w-4 h-4" />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-xs font-bold text-[var(--color-text)] truncate">{item.title}</div>
-          <div className={`text-[11px] font-semibold truncate ${item.actionRequired ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+          <div className={`text-[14px] text-[var(--color-text)] truncate ${item.actionRequired ? "font-bold" : "font-semibold"}`}>{item.title}</div>
+          <div className="text-[13px] truncate text-[var(--color-text-muted)]">
             {item.subtitle || "New activity"}
           </div>
         </div>
         {item.actionRequired && (
-          <span className="text-[11px] font-black uppercase tracking-wider text-red-700 dark:text-red-400 shrink-0">Waiting on you</span>
+          <span className="max-sm:hidden text-[11px] font-extrabold uppercase tracking-[0.12em] text-[var(--color-text)] shrink-0">Your turn</span>
         )}
-        <span className="text-[11px] text-[var(--color-text-muted)] shrink-0 tabular-nums">{formatAgo(item.when || undefined)}</span>
+        <span className="text-[12px] text-[var(--color-text-muted)] shrink-0 tabular-nums">{formatAgo(item.when || undefined)}</span>
         {item.notificationId ? (
           <button
             onClick={(e) => { e.preventDefault(); e.stopPropagation(); onMarkRead(item.notificationId!); }}
@@ -218,12 +219,12 @@ function AttentionRow({ item, onMarkRead }: { item: AttentionItem; onMarkRead: (
             aria-label="Mark read"
             // p-2 -m-1: ~32px touch target without growing the visual — a
             // near-miss used to hit the surrounding Link and navigate away.
-            className="p-2 -m-1 rounded-md text-[var(--color-text)] hover:text-emerald-600 hover:bg-emerald-50 shrink-0"
+            className="p-2 -m-1 rounded-md text-[var(--color-text-muted)] hover:text-emerald-700 hover:bg-[var(--color-surface)] shrink-0"
           >
             <CheckCheck className="w-4 h-4" />
           </button>
         ) : (
-          <ChevronRight className="w-4 h-4 text-[var(--color-text)] shrink-0" />
+          <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
         )}
       </Link>
     </li>

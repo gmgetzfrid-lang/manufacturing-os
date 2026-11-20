@@ -19,7 +19,8 @@ import {
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
-import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card, StepLine, heroPrimary } from "@/components/ui/PageHero";
 
 interface Facts {
   units: number; equipTypes: number;
@@ -189,83 +190,89 @@ export default function SetupPage() {
 
   const firstIncomplete = stages.findIndex((s) => !s.checks.every((c) => c.ok));
 
+  const doneCount = stages.filter((x) => x.checks.every((c) => c.ok)).length;
+  const next = firstIncomplete >= 0 ? stages[firstIncomplete] : null;
+
   return (
     <PageShell>
-      <PageHeaderBar
-        icon={Compass}
-        eyebrow="Facility setup"
-        title="Setup navigator"
-        subtitle={facts === null ? "Reading where your workspace is…" : firstIncomplete === -1 ? "Every stage reads healthy." : `${stages.filter((x) => x.checks.every((c) => c.ok)).length} of ${stages.length} stages done. Next: ${stages[firstIncomplete]?.title ?? ""}.`}
-      />
+      <PageHero
+        kicker="Facility setup"
+        title={facts === null ? "Setup navigator" : !next ? "Every stage reads healthy." : `${doneCount} of ${stages.length} stages done.`}
+        sub={facts === null ? "Reading where your workspace is…" : next ? <>Next: <span className="text-white font-semibold">{next.title}</span>. Each stage reads live counts, so this picks up wherever you left off.</> : "Nothing is waiting on you."}
+        primary={next ? <Link href={next.href} className={heroPrimary}>{next.cta} <ArrowRight className="w-4 h-4" /></Link> : undefined}
+      >
+        {facts !== null && (
+          <>
+            <p className="sm:hidden mb-3 text-[13px] font-bold text-white">{next ? `Stage ${firstIncomplete + 1} of ${stages.length}: ${next.title}` : `All ${stages.length} stages done`}</p>
+            <div className="max-sm:hidden">
+              <StepLine onDark steps={stages.map((st, i) => ({ label: st.title, state: st.checks.every((c) => c.ok) ? "done" : i === firstIncomplete ? "now" : "next" }))} />
+            </div>
+          </>
+        )}
+      </PageHero>
 
+      <PageBody>
       {facts === null ? (
-        <div className="flex items-center justify-center gap-2 py-20 text-sm text-[var(--color-text-muted)]"><Loader2 className="w-6 h-6 animate-spin" /> Reading where your workspace is…</div>
+        <Card><p className="flex items-center justify-center gap-2 py-12 text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin" /> Reading where your workspace is…</p></Card>
       ) : (
-        <div className="relative">
-          {/* The rail — setup as a route to walk, same stepper language as answers. */}
-          <div className="absolute left-[15px] top-6 bottom-6 w-0.5 bg-[var(--color-border)]" aria-hidden />
-          <div className="space-y-3">
+        <Card label="Stages" pad={false} className="overflow-hidden">
+          {/* One path: every stage on one line down the left, so setup reads as a route to walk. */}
+          <ol className="relative border-t border-[var(--color-border)]">
             {stages.map((s, i) => {
               const done = s.checks.every((c) => c.ok);
               const active = i === firstIncomplete;
               const Icon = s.icon;
+              const last = i === stages.length - 1;
               return (
-                <div key={s.key} className="relative pl-11"
+                <li key={s.key} aria-current={active ? "step" : undefined}
+                  className={`relative pl-14 sm:pl-16 pr-4 sm:pr-5 py-4 border-b border-[var(--color-border)] last:border-b-0 ${active ? "bg-[var(--color-surface-2)]" : ""}`}
                   style={{ animation: "rise 0.45s var(--ease-fluid) both", animationDelay: `${i * 60}ms` }}>
-                  <span className={`absolute left-0 top-3 w-8 h-8 rounded-full flex items-center justify-center text-[var(--color-text)] text-[12px] font-black ring-4 ring-[var(--color-canvas)] bg-[var(--color-surface-2)] ${active ? "ring-[var(--color-text)]" : ""}`}>
-                    {done ? <CheckCircle2 className="w-4 h-4" /> : i + 1}
+                  {!last && <span aria-hidden className={`absolute left-[27px] sm:left-[31px] top-[34px] -bottom-4 w-0.5 z-10 ${done ? "bg-[var(--color-text)]" : "bg-[var(--color-border)]"}`} />}
+                  <span className={`absolute left-4 sm:left-5 top-4 z-20 w-6 h-6 rounded-full grid place-items-center text-[11px] font-black ${done
+                    ? "bg-[var(--color-text)] text-[var(--color-surface)]"
+                    : active ? "border-2 border-[var(--color-text)] bg-[var(--color-surface)] text-[var(--color-text)]"
+                      : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>
+                    {done ? <CheckCircle2 className="w-3.5 h-3.5" /> : i + 1}
                   </span>
-                  <div className={`rounded-2xl border p-4 ${active
-                    ? "border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] shadow-md"
-                    : "border-[var(--color-border)] bg-[var(--color-surface)]"} ${done ? "opacity-80" : ""}`}>
-                    <div className="flex items-start gap-3 flex-wrap">
-                      <div className="flex-1 min-w-[16rem]">
-                        <div className="flex items-center gap-2">
-                          <Icon className="w-4 h-4 text-[var(--color-text-muted)]" />
-                          <span className="text-sm font-black text-[var(--color-text)]">{s.title}</span>
-                          {active && (
-                            <span className="px-1.5 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)] text-[11px] font-black uppercase tracking-wide">
-                              Continue here
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed mt-1">{s.blurb}</p>
-                        <div className="mt-2 space-y-0.5">
-                          {s.checks.map((c) => (
-                            <div key={c.label} className="flex items-center gap-1.5 text-[11px]">
-                              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${c.ok ? "bg-emerald-500" : "bg-amber-500"}`} />
-                              <span className={c.ok ? "text-[var(--color-text-muted)]" : "font-bold text-[var(--color-text)]"}>{c.label}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                      <div className="flex flex-col items-stretch gap-1.5 shrink-0">
-                        <Link href={s.href}
-                          className={`inline-flex items-center justify-center gap-1 px-3 py-2 rounded-lg text-[11px] font-black transition-colors ${active
-                            ? "text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]"
-                            : "text-[var(--color-text)] border border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]"}`}>
-                          {s.cta} <ArrowRight className="w-3 h-3" />
-                        </Link>
-                        {s.extraHref && (
-                          <Link href={s.extraHref}
-                            className="inline-flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
-                            {s.extraCta}
-                          </Link>
+                  <div className={`flex items-start gap-3 flex-wrap ${done ? "opacity-80" : ""}`}>
+                    <div className="flex-1 min-w-[14rem]">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                        <Icon className="w-4 h-4 text-[var(--color-text-muted)]" />
+                        <span className="text-[14px] font-bold text-[var(--color-text)]">{s.title}</span>
+                        {active && (
+                          <span className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-[var(--color-text)] whitespace-nowrap">Continue here</span>
                         )}
                       </div>
+                      <p className="text-[13px] text-[var(--color-text-muted)] leading-relaxed mt-1">{s.blurb}</p>
+                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+                        {s.checks.map((c) => (
+                          <div key={c.label} className="flex items-center gap-1.5 text-[12.5px]">
+                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${c.ok ? "bg-emerald-500" : "bg-amber-500"}`} />
+                            <span className={c.ok ? "text-[var(--color-text-muted)]" : "font-semibold text-[var(--color-text)]"}>{c.label}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      {s.extraHref && (
+                        <Link href={s.extraHref}
+                          className="inline-flex items-center justify-center gap-1 h-9 px-3 rounded-lg text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+                          {s.extraCta}
+                        </Link>
+                      )}
+                      <Link href={s.href}
+                        className="inline-flex items-center justify-center gap-1 h-9 px-3 rounded-lg text-[13px] font-bold text-[var(--color-text)] border border-[var(--color-border-strong)] hover:bg-[var(--color-surface)] transition-colors">
+                        {s.cta} <ArrowRight className="w-3.5 h-3.5" />
+                      </Link>
                     </div>
                   </div>
-                </div>
+                </li>
               );
             })}
-          </div>
-          {firstIncomplete === -1 && (
-            <p className="mt-4 border-l-2 border-emerald-500 pl-3 text-sm font-bold text-emerald-800 dark:text-emerald-300">
-              Every stage reads healthy. Nothing is waiting on you.
-            </p>
-          )}
-        </div>
+          </ol>
+        </Card>
       )}
+      </PageBody>
     </PageShell>
   );
 }

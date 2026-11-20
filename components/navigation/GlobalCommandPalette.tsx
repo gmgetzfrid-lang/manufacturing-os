@@ -346,24 +346,28 @@ export default function GlobalCommandPalette() {
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[600] bg-slate-900/50 backdrop-blur-[3px] flex items-start justify-center pt-[12vh] p-4 animate-in fade-in duration-150" onClick={() => setOpen(false)}>
+    <div className="fixed inset-0 z-[600] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] flex items-start justify-center pt-[10vh] p-3 sm:p-4 animate-in fade-in duration-150" onClick={() => setOpen(false)}>
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Search"
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-xl bg-[var(--color-surface)] text-[var(--color-text)] rounded-2xl shadow-xl ring-1 ring-black/5 border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95 slide-in-from-top-2 duration-200"
+        className="w-full max-w-xl bg-[var(--color-surface)] text-[var(--color-text)] rounded-2xl shadow-[0_30px_60px_-20px_rgb(0_0_0/0.55)] overflow-hidden animate-in fade-in zoom-in-95 slide-in-from-top-2 duration-200"
       >
-        <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
-          <Search className="w-4 h-4 text-[var(--color-text-faint)]" />
+        <div className="px-4 h-14 border-b border-[var(--color-border)] flex items-center gap-3">
+          <Search className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
           <input
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKey}
-            placeholder="Search or run an action - docs, tickets, 'new request', 'export data'… · 'g i' to go · '?' shortcuts"
-            className="flex-1 outline-none text-base sm:text-sm placeholder:text-[var(--color-text-faint)]"
+            aria-label="Search or run an action"
+            placeholder="Search documents, tags, requests, or type an action"
+            className="flex-1 min-w-0 bg-transparent outline-none text-[16px] sm:text-[15px] placeholder:text-[var(--color-text-faint)]"
           />
           {busy && <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-faint)]" />}
-          <button onClick={() => setOpen(false)} aria-label="Close" className="p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)] rounded">
-            <X className="w-3.5 h-3.5" />
+          <button onClick={() => setOpen(false)} aria-label="Close" className="w-8 h-8 grid place-items-center rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] shrink-0">
+            <X className="w-4 h-4" />
           </button>
         </div>
 
@@ -372,8 +376,8 @@ export default function GlobalCommandPalette() {
         ) : (
           <ul className="max-h-[60vh] overflow-y-auto py-1">
             {visible.length === 0 ? (
-              <li className="px-4 py-6 text-center text-xs italic text-[var(--color-text-faint)]">
-                {query.trim().length < 2 ? "Start typing to search" : busy ? "Searching…" : searchError ? <span className="not-italic font-semibold text-red-700 dark:text-red-400">Search didn&apos;t work: {searchError}</span> : "No matches"}
+              <li className="px-4 py-8 text-center text-[13px] text-[var(--color-text-muted)]">
+                {query.trim().length < 2 ? "Type two letters to search. 'g i' goes to the Inbox, '?' lists shortcuts." : busy ? "Searching…" : searchError ? <span className="font-semibold text-red-700 dark:text-red-400">Search didn&apos;t work: {searchError}</span> : "No matches"}
               </li>
             ) : (
               visible.map((it, i) => {
@@ -385,14 +389,14 @@ export default function GlobalCommandPalette() {
                     <button
                       onClick={() => onSelect(it)}
                       onMouseEnter={() => setActiveIdx(i)}
-                      className={`w-full px-3 py-2 flex items-center gap-3 text-left ${isActive ? "bg-[var(--color-surface-2)]" : "hover:bg-[var(--color-surface-2)]"}`}
+                      className={`w-full px-4 min-h-12 py-2 flex items-center gap-3 text-left ${isActive ? "bg-[var(--color-surface-2)]" : "hover:bg-[var(--color-surface-2)]"}`}
                     >
-                      <div className={`shrink-0 w-7 h-7 rounded-md border flex items-center justify-center ${tone}`}>
-                        <Icon className="w-3.5 h-3.5" />
+                      <div className={`shrink-0 w-8 h-8 rounded-[9px] flex items-center justify-center ${tone.replace(/border-\S+/g, "")}`}>
+                        <Icon className="w-4 h-4" />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <div className="text-xs font-bold text-[var(--color-text)] truncate">{it.label}</div>
-                        {it.subtitle && <div className="text-[11px] text-[var(--color-text-muted)] truncate">{it.subtitle}</div>}
+                        <div className="text-[14px] font-semibold text-[var(--color-text)] truncate">{it.label}</div>
+                        {it.subtitle && <div className="text-[12px] text-[var(--color-text-muted)] truncate">{it.subtitle}</div>}
                       </div>
                       {it.badge && <span className="text-[11px] font-bold uppercase text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded shrink-0">{it.badge}</span>}
                       {isActive && <CornerDownLeft className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />}
@@ -404,8 +408,8 @@ export default function GlobalCommandPalette() {
           </ul>
         )}
 
-        <div className="px-4 py-2 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
-          <div className="flex items-center gap-3">
+        <div className="px-4 py-2.5 border-t border-[var(--color-border)] flex items-center justify-between gap-3 text-[12px] text-[var(--color-text-muted)]">
+          <div className="max-sm:hidden flex items-center gap-3">
             <span className="inline-flex items-center gap-1"><ArrowUp className="w-2.5 h-2.5" /><ArrowDown className="w-2.5 h-2.5" /> navigate</span>
             <span className="inline-flex items-center gap-1"><CornerDownLeft className="w-2.5 h-2.5" /> open</span>
             <span>esc close</span>

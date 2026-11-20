@@ -52,14 +52,14 @@ export function UserTurn({ m, mine, onOpenAttachment }: {
     <>
     <div ref={bubbleRef} className="py-2">
       <div className="flex justify-end">
-        <div className="max-w-[85%] rounded-2xl rounded-tr-md bg-[var(--color-surface-2)] border border-[var(--color-border)] px-4 py-2.5 shadow-sm">
-          <div className="text-[14px] text-[var(--color-text)] whitespace-pre-wrap leading-relaxed">{m.content}</div>
+        <div className="max-w-[85%] rounded-2xl rounded-tr-md bg-[var(--color-ink)] px-4 py-2.5 shadow-[var(--shadow-card)]">
+          <div className="text-[14.5px] font-medium text-white whitespace-pre-wrap leading-relaxed">{m.content}</div>
           {(focus?.length || inputs) ? (
             <div className="mt-1.5 flex flex-wrap gap-1">
               {focus?.map((f) => (
-                <span key={f} className="text-[11px] font-black px-1.5 py-0.5 rounded-md bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]">{f}</span>
+                <span key={f} className="text-[11px] font-bold px-1.5 py-0.5 rounded-md border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] text-[var(--color-ink-fg)]">{f}</span>
               ))}
-              {inputs && <span className="text-[11px] font-black px-1.5 py-0.5 rounded-md bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]">{inputs}</span>}
+              {inputs && <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-md border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] text-[var(--color-ink-fg)]">{inputs}</span>}
             </div>
           ) : null}
           {m.attachments.length > 0 && (
@@ -67,7 +67,7 @@ export function UserTurn({ m, mine, onOpenAttachment }: {
               {m.attachments.map((a) => <AttachmentCard key={a.id || a.path} a={a} onOpen={() => onOpenAttachment(a)} />)}
             </div>
           )}
-          <div className="mt-1 text-[11px] text-[var(--color-text-faint)] text-right">
+          <div className="mt-1 text-[11px] text-[var(--color-ink-muted)] text-right">
             {who} · {relativeTime(m.createdAt)}
           </div>
         </div>

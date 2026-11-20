@@ -7,10 +7,11 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { Settings2, GraduationCap, BookMarked, Database, ArrowRight, Loader2 } from "lucide-react";
+import { GraduationCap, BookMarked, Database, ArrowRight, Loader2 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { getAiConnections } from "@/lib/knowledge";
-import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card } from "@/components/ui/PageHero";
 import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
 import { KeyEditor, EmbeddingKeyEditor, UsagePanel, JobModelsFor } from "@/components/knowledge/AiSettingsModal";
 
@@ -31,29 +32,37 @@ export default function IntelligenceSetupPage() {
     return () => { cancelled = true; };
   }, [activeOrgId, reloadTick]);
 
-  if (!activeOrgId) return <div className="p-8 text-sm text-[var(--color-text-muted)]">Pick a workspace to continue.</div>;
+  if (!activeOrgId) return <div className="p-8 text-[14px] text-[var(--color-text-muted)]">Pick a workspace to continue.</div>;
+
+  const answer = loadError ? "Your AI setup didn't load."
+    : !data ? "AI setup"
+      : data.personal?.keyLast4 ? "Your AI key is saved." : "No AI key yet.";
 
   return (
     <PageShell>
-      <ViewTabs title="Intelligence" tabs={INTELLIGENCE_VIEWS} />
-      <PageHeaderBar
-        title="AI setup"
-        subtitle={data ? (data.personal?.keyLast4 ? "Your key is saved. Caps and models are below." : "Add your AI key to start asking questions.") : "Your keys, spending caps and models."}
-        icon={Settings2}
-      />
+      <PageHero
+        kicker="Intelligence · Setup"
+        title={answer}
+        sub={loadError
+          ? <span className="text-rose-300 font-semibold">Couldn&apos;t load your AI setup: {loadError}</span>
+          : data ? (data.personal?.keyLast4 ? "Caps and models are below." : "Add your AI key below to start asking questions.") : "Your keys, spending caps and models."}
+      >
+        <ViewTabs tabs={INTELLIGENCE_VIEWS} variant="dark" />
+      </PageHero>
 
-      <div className="max-w-2xl space-y-4">
-        {loadError && (
-          <p role="alert" className="border-l-2 border-rose-500 pl-3 text-xs font-bold text-rose-700 dark:text-rose-300">Couldn&apos;t load your AI setup: {loadError}</p>
-        )}
+      <PageBody>
+      <div className="max-w-3xl space-y-4">
         {!data && !loadError && (
-          <div className="py-10 text-center text-sm text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin inline mr-2" /> Loading your AI setup…</div>
+          <Card><p className="py-6 text-center text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin inline mr-2" /> Loading your AI setup…</p></Card>
+        )}
+        {loadError && (
+          <Card><p role="alert" className="text-[14px] font-semibold text-rose-700 dark:text-rose-300">Couldn&apos;t load your AI setup: {loadError}</p></Card>
         )}
         {data && (
           <>
-            <UsagePanel orgId={activeOrgId} />
             <KeyEditor orgId={activeOrgId} current={data.personal}
               onChanged={() => setReloadTick((t) => t + 1)} />
+            <UsagePanel orgId={activeOrgId} />
             <JobModelsFor orgId={activeOrgId} data={data} onChanged={() => setReloadTick((t) => t + 1)} />
             <EmbeddingKeyEditor orgId={activeOrgId} current={data.personal}
               onChanged={() => setReloadTick((t) => t + 1)} />
@@ -61,10 +70,8 @@ export default function IntelligenceSetupPage() {
         )}
 
         {/* Org-level teaching + health, for the roles that hold them. */}
-        <div className="rounded-xl border border-[var(--color-border)] p-4 space-y-1">
-          <div className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-2">
-            Teach the workspace
-          </div>
+        <Card label="Teach the workspace">
+          <div className="divide-y divide-[var(--color-border)]">
           {isController && (
             <SetupLink href="/admin/ai-instructions" icon={GraduationCap}
               title="AI instructions (playbooks)"
@@ -81,12 +88,14 @@ export default function IntelligenceSetupPage() {
               body="Probes every table the AI features expect and names any migration still to run." />
           )}
           {!isController && (
-            <p className="text-[11px] text-[var(--color-text-muted)]">
+            <p className="py-2 text-[13px] text-[var(--color-text-muted)]">
               Org-level configuration (playbooks, codebook) is managed by Admin / Doc Control.
             </p>
           )}
-        </div>
+          </div>
+        </Card>
       </div>
+      </PageBody>
     </PageShell>
   );
 }
@@ -95,11 +104,11 @@ function SetupLink({ href, icon: Icon, title, body }: {
   href: string; icon: React.ComponentType<{ className?: string }>; title: string; body: string;
 }) {
   return (
-    <Link href={href} className="flex items-start gap-3 rounded-lg px-2 py-2 -mx-2 hover:bg-[var(--color-surface-2)] transition-colors">
+    <Link href={href} className="flex items-start gap-3 rounded-lg px-2 py-3 -mx-2 hover:bg-[var(--color-surface-2)] transition-colors">
       <Icon className="w-4 h-4 text-[var(--color-text-muted)] mt-0.5 shrink-0" />
       <div className="flex-1">
-        <div className="text-sm font-bold text-[var(--color-text)]">{title}</div>
-        <p className="text-[11px] text-[var(--color-text-muted)]">{body}</p>
+        <div className="text-[14px] font-bold text-[var(--color-text)]">{title}</div>
+        <p className="text-[13px] text-[var(--color-text-muted)]">{body}</p>
       </div>
       <ArrowRight className="w-3.5 h-3.5 text-[var(--color-text-faint)] mt-1" />
     </Link>

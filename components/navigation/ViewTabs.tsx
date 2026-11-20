@@ -52,11 +52,11 @@ export default function ViewTabs({
     el.scrollLeft = Math.max(0, on.offsetLeft - (el.clientWidth - on.offsetWidth) / 2);
   }, [pathname]);
   return (
-    <div className={`flex items-center gap-3 flex-wrap mb-4 min-w-0 max-w-full`}>
+    <div className={`flex items-center gap-3 flex-wrap min-w-0 max-w-full ${dark ? "" : "mb-4"}`}>
       {title && (
-        <span className={`text-xs font-black uppercase tracking-wider ${dark ? "text-[var(--color-text-muted)]" : "text-[var(--color-text-faint)]"}`}>{title}</span>
+        <span className={`text-[11px] font-extrabold uppercase tracking-[0.14em] ${dark ? "text-[var(--color-ink-muted)]" : "text-[var(--color-text-faint)]"}`}>{title}</span>
       )}
-      <div ref={strip} className={`inline-flex items-center gap-1 p-1 rounded-xl min-w-0 max-w-full overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${dark ? "bg-slate-900 border border-slate-800" : "bg-[var(--color-surface-2)] border border-[var(--color-border)]"}`}>
+      <div ref={strip} className={`inline-flex items-center gap-1 p-1 rounded-xl min-w-0 max-w-full overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${dark ? "bg-[var(--color-ink-2)] border border-[var(--color-ink-line)]" : "bg-[var(--color-surface-2)] border border-[var(--color-border)]"}`}>
         {tabs.map((t) => {
           const active = isActive(t);
           const Icon = t.icon;
@@ -67,14 +67,14 @@ export default function ViewTabs({
               aria-current={active ? "page" : undefined}
               className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 px-3 h-8 rounded-lg text-xs font-bold transition-colors ${
                 active
-                  ? (dark ? "bg-slate-700 text-white shadow" : "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm")
-                  : (dark ? "text-[var(--color-text-faint)] hover:text-slate-200" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]")
+                  ? (dark ? "bg-[var(--color-ink-line)] text-white" : "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm")
+                  : (dark ? "text-[var(--color-ink-muted)] hover:text-white" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]")
               }`}
             >
               {Icon && <Icon className="w-3.5 h-3.5" />}
               {t.label}
               {typeof t.badge === "number" && t.badge > 0 && (
-                <span className={`ml-0.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full text-[11px] font-black ${active ? "bg-[var(--color-text)] text-[var(--color-surface)]" : (dark ? "bg-slate-700 text-slate-200" : "bg-[var(--color-border)] text-[var(--color-text-muted)]")}`}>
+                <span className={`ml-0.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full text-[11px] font-black ${active ? (dark ? "bg-white text-[var(--color-ink)]" : "bg-[var(--color-text)] text-[var(--color-surface)]") : (dark ? "bg-[var(--color-ink-line)] text-[var(--color-ink-fg)]" : "bg-[var(--color-border)] text-[var(--color-text-muted)]")}`}>
                   {badgeText(t.badge)}
                 </span>
               )}

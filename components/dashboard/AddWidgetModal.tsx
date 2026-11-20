@@ -33,12 +33,13 @@ export default function AddWidgetModal({ open, onClose, existingTypes, isAdmin, 
 
   return (
     <div role="dialog" aria-modal="true" aria-label="Add a widget" className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-3xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden max-h-[85vh] flex flex-col">
+      <div className="absolute inset-0 bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)]" onClick={onClose} />
+      <div className="relative w-full max-w-3xl bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden max-h-[85vh] flex flex-col">
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="min-w-0 flex-1">
-            <h2 className="text-base font-black text-[var(--color-text)]">Add a widget</h2>
-            <p className="text-xs text-[var(--color-text-muted)]">Tap one to add it to your Home.</p>
+            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Home</div>
+            <h2 className="mt-1 text-[24px] leading-tight font-black tracking-[-0.02em] text-[var(--color-text)]">Add a widget.</h2>
+            <p className="mt-0.5 text-[13px] text-[var(--color-text-muted)]">Tap one to add it to your Home.</p>
           </div>
           <button onClick={onClose} aria-label="Close" className="p-2 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-5 h-5" /></button>
         </div>

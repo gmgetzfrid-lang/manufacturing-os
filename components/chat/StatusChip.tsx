@@ -18,7 +18,7 @@ interface Snap {
   known: boolean;
 }
 
-export default function StatusChip({ orgId, bump }: { orgId: string; /** Change to refetch (after an answer lands). */ bump: number }) {
+export default function StatusChip({ orgId, bump, onDark = false }: { orgId: string; /** Change to refetch (after an answer lands). */ bump: number; /** Sitting on the ink band. */ onDark?: boolean }) {
   const [snap, setSnap] = useState<Snap>({ model: null, keyOk: false, spentUsd: 0, capUsd: 0, known: false });
   const key = `chat-status-${orgId}`;
 
@@ -66,13 +66,15 @@ export default function StatusChip({ orgId, bump }: { orgId: string; /** Change 
         : snap.failed ? "Couldn't check the AI status. Open AI setup."
         : !snap.keyOk ? "No API key saved, so questions can't run. Open AI setup."
           : `${snap.model ?? "model"} · $${snap.spentUsd.toFixed(2)}${snap.capUsd > 0 ? ` of $${snap.capUsd.toFixed(2)}` : ""} this month`}
-      className="inline-flex items-center gap-2 h-7 pl-2 pr-2.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] transition-colors max-w-[220px]">
+      className={`inline-flex items-center gap-2 pl-2 pr-2.5 rounded-full border font-bold transition-colors max-w-[220px] ${onDark
+        ? "max-sm:hidden h-8 border-[var(--color-ink-line)] bg-[var(--color-ink-2)] text-[12px] text-[var(--color-ink-fg)] hover:text-white"
+        : "h-7 border-[var(--color-border)] bg-[var(--color-surface)] text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)]"}`}>
       {tone && <span className={`w-2 h-2 rounded-full shrink-0 ${tone}`} />}
       <span className="truncate">
         {!snap.known ? "AI status" : snap.failed ? "AI status unknown" : !snap.keyOk ? "No AI key" : (snap.model ?? "model")}
       </span>
       {snap.known && !snap.failed && snap.keyOk && (
-        <span className="tabular-nums text-[var(--color-text-faint)] shrink-0">
+        <span className={`tabular-nums shrink-0 ${onDark ? "text-[var(--color-ink-muted)]" : "text-[var(--color-text-faint)]"}`}>
           ${snap.spentUsd.toFixed(2)}{snap.capUsd > 0 ? `/${snap.capUsd.toFixed(0)}` : ""}
         </span>
       )}

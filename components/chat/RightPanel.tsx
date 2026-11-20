@@ -63,11 +63,11 @@ export default function RightPanel({
   const [popped, setPopped] = useState(false);
 
   const header = (title: string, Icon: React.ComponentType<{ className?: string }>, extra?: React.ReactNode) => (
-    <div className="h-11 px-3 border-b border-[var(--color-border)] flex items-center gap-2 shrink-0">
+    <div className="h-14 px-4 border-b border-[var(--color-border)] flex items-center gap-2 shrink-0">
       <Icon className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-      <span className="text-xs font-black text-[var(--color-text)] truncate flex-1">{title}</span>
+      <span className="text-[14px] font-bold text-[var(--color-text)] truncate flex-1">{title}</span>
       {extra}
-      <button onClick={onClose} title="Close panel" aria-label="Close" className="p-1 rounded-md text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+      <button onClick={onClose} title="Close panel" aria-label="Close" className="w-8 h-8 grid place-items-center rounded-[10px] bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
         <X className="w-4 h-4" />
       </button>
     </div>

@@ -35,7 +35,7 @@ export default function EquipmentTablePanel({ table, onOpenTag }: {
     .filter((c) => c.items.length > 0);
 
   return (
-    <div className="mt-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+    <div className="mt-3 rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden">
       <div className="px-4 py-2.5 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <Table2 className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
         <span className="text-xs font-black text-[var(--color-text)]">

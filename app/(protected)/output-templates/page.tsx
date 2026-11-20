@@ -11,7 +11,8 @@ import {
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { useToast } from "@/components/providers/ToastProvider";
-import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card, heroPrimary } from "@/components/ui/PageHero";
 import { Button } from "@/components/ui/Button";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -67,26 +68,35 @@ export default function OutputTemplatesPage() {
     } catch (e) { showToast({ type: "error", title: (e as Error).message }); }
   };
 
-  if (loading) return <PageShell><LoadingBlock what="output templates" rows={5} /></PageShell>;
+  const madeDocs = generations.reduce((n, g) => n + (g.documentCount ?? 0), 0);
+  const answer = loading ? "Output templates"
+    : loadError ? "The templates didn't load."
+      : templates.length === 0 ? "No output templates yet."
+        : `${templates.length} ${templates.length === 1 ? "template" : "templates"}${generations.length > 0 ? `, ${madeDocs.toLocaleString()} ${madeDocs === 1 ? "document" : "documents"} made lately` : ""}.`;
 
   return (
     <PageShell>
-      <PageHeaderBar
-        icon={FileOutput}
-        title="Output templates"
-        subtitle="Your template sets the format, your example sets the voice, your data fills the blanks."
-        actions={isController ? (
-          <Button onClick={() => setEditing(null)}><Plus className="w-4 h-4" /> New template</Button>
-        ) : undefined}
+      <PageHero
+        kicker="Output docs"
+        title={answer}
+        sub={
+          <>
+            Your template sets the format, your example sets the voice, your data fills the blanks.
+          </>
+        }
+        primary={isController ? <button type="button" className={heroPrimary} onClick={() => setEditing(null)}><Plus className="w-4 h-4" /> New template</button> : undefined}
       />
 
-      {loadError && (
-        <p role="alert" className="mb-4 border-l-2 border-rose-500 pl-3 text-xs font-bold text-rose-700 dark:text-rose-300">
-          Couldn&apos;t load the templates: {loadError}
-        </p>
-      )}
-
-      {templates.length === 0 && !loadError ? (
+      <PageBody>
+      {loading ? (
+        <Card><LoadingBlock what="output templates" rows={5} className="border-0 p-0" /></Card>
+      ) : templates.length === 0 && loadError ? (
+        <Card>
+          <p role="alert" className="text-[14px] font-semibold text-rose-700 dark:text-rose-300">Couldn&apos;t load the templates: {loadError}</p>
+          <button type="button" onClick={() => void refresh()} className="mt-3 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Try again</button>
+        </Card>
+      ) : templates.length === 0 ? (
+        <Card>
         <EmptyState
           icon={FileOutput}
           title="No output templates yet"
@@ -94,18 +104,19 @@ export default function OutputTemplatesPage() {
             ? "Upload a blank Word document with {placeholders} where content belongs, attach a finished example so the AI matches your voice, and every future batch is one click."
             : "Admin or Doc Control can set up templates here."}
         />
+        </Card>
       ) : (
-        <ul className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <ul className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {templates.map((t) => (
-            <li key={t.id} className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-              <div className="flex items-start gap-2">
-                <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-[var(--color-text)]">
-                  {t.kind === "xlsx" ? <Table2 className="w-4 h-4 text-[var(--color-surface)]" /> : <FileText className="w-4 h-4 text-[var(--color-surface)]" />}
+            <li key={t.id} className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-[10px] flex items-center justify-center shrink-0 bg-[var(--color-surface-2)]">
+                  {t.kind === "xlsx" ? <Table2 className="w-4 h-4 text-[var(--color-text-muted)]" /> : <FileText className="w-4 h-4 text-[var(--color-text-muted)]" />}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="text-sm font-black text-[var(--color-text)] truncate">{t.name}</div>
+                  <div className="text-[15px] font-bold text-[var(--color-text)] truncate">{t.name}</div>
                   {t.description && (
-                    <div className="text-[11px] text-[var(--color-text-muted)] line-clamp-2">{t.description}</div>
+                    <div className="text-[13px] text-[var(--color-text-muted)] line-clamp-2">{t.description}</div>
                   )}
                 </div>
                 {isController && (
@@ -121,30 +132,22 @@ export default function OutputTemplatesPage() {
                   </div>
                 )}
               </div>
-              <div className="mt-2.5 flex flex-wrap gap-1.5 text-[11px] font-black">
-                <span className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]">
-                  {MODE_LABEL[t.mode] ?? t.mode}
-                </span>
-                <span className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]">
-                  {t.placeholders.length} fill point{t.placeholders.length === 1 ? "" : "s"}
-                </span>
+              <div className="mt-3 text-[12.5px] text-[var(--color-text-muted)] flex flex-wrap gap-x-1">
+                <span className="font-semibold text-[var(--color-text)]">{MODE_LABEL[t.mode] ?? t.mode}</span>
+                <span>· {t.placeholders.length} fill point{t.placeholders.length === 1 ? "" : "s"}</span>
                 {t.placeholders.some((p) => p.kind === "ai") && (
-                  <span className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)] inline-flex items-center gap-1">
-                    <Sparkles className="w-2.5 h-2.5" /> AI-written sections
-                  </span>
+                  <span className="inline-flex items-center gap-1">· <Sparkles className="w-3 h-3" /> AI-written sections</span>
                 )}
                 {t.exampleFiles.length > 0 && (
-                  <span className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]">
-                    {t.exampleFiles.length} example{t.exampleFiles.length === 1 ? "" : "s"}
-                  </span>
+                  <span>· {t.exampleFiles.length} example{t.exampleFiles.length === 1 ? "" : "s"}</span>
                 )}
               </div>
-              <div className="mt-3">
+              <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
                 <Button size="sm" variant="secondary" onClick={() => setGenerating(t)} disabled={!t.templateFileKey}>
                   <Sparkles className="w-3.5 h-3.5" /> Generate documents
                 </Button>
                 {!t.templateFileKey && (
-                  <span className="ml-2 text-[11px] text-amber-600 font-bold">needs a template file</span>
+                  <span className="ml-2 text-[12px] text-amber-700 dark:text-amber-400 font-bold">needs a template file</span>
                 )}
               </div>
             </li>
@@ -153,13 +156,10 @@ export default function OutputTemplatesPage() {
       )}
 
       {generations.length > 0 && (
-        <div className="mt-6">
-          <h2 className="text-xs font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-2 flex items-center gap-1.5">
-            <History className="w-3.5 h-3.5" /> Recent production
-          </h2>
-          <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
+        <Card label={<span className="inline-flex items-center gap-1.5"><History className="w-3.5 h-3.5" /> Recent production</span>}>
+          <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)] -mx-4 sm:-mx-5">
             {generations.map((g) => (
-              <li key={g.id} className="px-3.5 py-2 bg-[var(--color-surface)] flex items-center gap-2 text-xs">
+              <li key={g.id} className="px-4 sm:px-5 py-2.5 flex items-center gap-2 text-[13.5px]">
                 <FileOutput className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
                 <span className="font-bold text-[var(--color-text)]">{g.templateName ?? "Template"}</span>
                 <span className="text-[var(--color-text-muted)] truncate">
@@ -172,14 +172,15 @@ export default function OutputTemplatesPage() {
                     {g.filedCount} filed
                   </span>
                 )}
-                <span className="ml-auto shrink-0 text-[11px] text-[var(--color-text-muted)]">
+                <span className="ml-auto shrink-0 text-[12px] text-[var(--color-text-muted)]">
                   {new Date(g.createdAt).toLocaleString()}
                 </span>
               </li>
             ))}
           </ul>
-        </div>
+        </Card>
       )}
+      </PageBody>
 
       {editing !== undefined && activeOrgId && (
         <TemplateEditor orgId={activeOrgId} template={editing}

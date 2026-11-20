@@ -360,7 +360,7 @@ export default function CitedPageViewer({
   return (
     <div className={embedded
       ? "relative h-full w-full flex"
-      : "fixed inset-0 z-[60] bg-black/70 backdrop-blur-[2px] flex items-center justify-center"}
+      : "fixed inset-0 z-[60] bg-[color-mix(in_srgb,var(--color-ink)_70%,transparent)] flex items-center justify-center"}
       onClick={embedded ? undefined : onClose}>
       {/* Centered proof stage: 75% of the viewport each way (full-bleed on
           phones), so the document reads like a document — not a sidebar.

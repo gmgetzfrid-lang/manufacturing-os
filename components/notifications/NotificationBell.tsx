@@ -113,7 +113,7 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
           aria-label={decisions > 0 ? `Notifications: ${decisions} waiting on you` : unread > 0 ? `Notifications: ${unread} new` : "Notifications"}
           aria-expanded={open}
           className={`relative w-9 h-9 inline-flex items-center justify-center rounded-full transition-all ${
-            open ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)]"
+            open ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface)] text-[var(--color-text)] shadow-[0_1px_2px_rgb(11_18_32/0.08)] hover:shadow-[var(--shadow-card)]"
           }`}
         >
           <Bell className="w-4 h-4" />
@@ -141,11 +141,11 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
       )}
 
       {open && (
-        <div className={`${isHeader ? "absolute right-0 top-full mt-2 origin-top-right" : "absolute left-full ml-2 bottom-0"} w-96 max-h-[70vh] bg-[var(--color-surface)] text-[var(--color-text)] rounded-xl shadow-lg border border-[var(--color-border)] ring-1 ring-black/5 z-[90] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150`}>
-            <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface-2)]">
-              <div>
-                <div className="text-sm font-black text-[var(--color-text)]">Notifications</div>
-                <div className="text-[11px] text-[var(--color-text-muted)]">
+        <div className={`${isHeader ? "absolute right-0 top-full mt-2 origin-top-right" : "absolute left-full ml-2 bottom-0"} w-96 max-w-[calc(100vw-1.5rem)] max-h-[70vh] bg-[var(--color-surface)] text-[var(--color-text)] rounded-2xl shadow-[0_30px_60px_-24px_rgb(11_18_32/0.55)] z-[90] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150`}>
+            <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Notifications</div>
+                <div className="text-[14px] font-bold text-[var(--color-text)]">
                   {decisions > 0 ? `${decisions} waiting on you` : ""}{decisions > 0 && unread > decisions ? ` · ${unread - decisions} new` : decisions === 0 && unread > 0 ? `${unread} new` : ""}{unread === 0 ? "All caught up" : ""}
                 </div>
                 {markError && <div role="alert" className="text-[11px] font-semibold text-red-700 dark:text-red-400">{markError}</div>}
@@ -155,7 +155,7 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
                   <button
                     title="Items waiting on your decision stay until you open them"
                     onClick={async () => { setMarkError(null); try { await markAllRead(); } catch (e) { setMarkError(`Not marked read: ${e instanceof Error ? e.message : String(e)}`); } }}
-                    className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                    className="inline-flex items-center gap-1 text-[12px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                   >
                     <CheckCheck className="w-3.5 h-3.5" /> Mark all read
                   </button>
@@ -163,21 +163,21 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
                 <button
                   type="button"
                   onClick={() => { setOpen(false); openCenter("all"); }}
-                  className="text-[11px] font-bold text-[var(--color-accent)] hover:underline"
+                  className="text-[12px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]"
                   title="Open the full notification center"
                 >
                   See all
                 </button>
-                <Link href="/settings/notifications" onClick={() => setOpen(false)} className="text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+                <Link href="/settings/notifications" onClick={() => setOpen(false)} className="text-[12px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
                   Settings
                 </Link>
               </div>
             </div>
             <div className="flex-1 overflow-y-auto">
               {loading ? (
-                <div className="py-8 flex justify-center items-center gap-2 text-xs text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin" /> Loading notifications…</div>
+                <div className="py-8 flex justify-center items-center gap-2 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin" /> Loading notifications…</div>
               ) : items.length === 0 ? (
-                <div className="py-10 text-center text-xs italic text-[var(--color-text-faint)]">You&rsquo;re all caught up.</div>
+                <div className="py-10 text-center text-[13px] text-[var(--color-text-muted)]">You&rsquo;re all caught up.</div>
               ) : (
                 <ul className="divide-y divide-[var(--color-border)]">
                   {items.map((item) => {
@@ -186,15 +186,15 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
                     return (
                       <li key={item.key}>
                         <Link href={item.link} onClick={() => void onItemClick(item)}>
-                          <div className={`px-4 py-3 flex items-start gap-3 ${item.actionRequired ? "bg-[var(--color-surface-2)]" : ""} hover:bg-[var(--color-surface-2)] cursor-pointer`}>
-                            <div className={`shrink-0 w-8 h-8 rounded-lg border flex items-center justify-center ${tone}`}>
+                          <div className="px-4 py-3 flex items-start gap-3 hover:bg-[var(--color-surface-2)] cursor-pointer">
+                            <div className={`shrink-0 w-8 h-8 rounded-[9px] flex items-center justify-center ${tone.replace(/border-\S+/g, "")}`}>
                               <Icon className="w-4 h-4" />
                             </div>
                             <div className="flex-1 min-w-0">
-                              <div className="text-xs font-bold text-[var(--color-text)] truncate">{item.title}</div>
-                              {item.subtitle && <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 line-clamp-2">{item.subtitle}</div>}
-                              <div className="text-[11px] text-[var(--color-text-faint)] mt-1 flex items-center gap-2">
-                                {item.actionRequired && <span className="font-black uppercase tracking-wider text-red-700 dark:text-red-400">Waiting on you</span>}
+                              <div className={`text-[14px] text-[var(--color-text)] truncate ${item.actionRequired ? "font-bold" : "font-semibold"}`}>{item.title}</div>
+                              {item.subtitle && <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5 line-clamp-2">{item.subtitle}</div>}
+                              <div className="text-[12px] text-[var(--color-text-muted)] mt-1 flex items-center gap-2">
+                                {item.actionRequired && <span className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-[var(--color-text)]">Your turn</span>}
                                 <time dateTime={item.when}>{formatTime(item.when)}</time>
                               </div>
                             </div>

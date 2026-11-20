@@ -13,14 +13,15 @@ import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   GitPullRequest, Gauge, Loader2,
-  CheckCircle2, XCircle, ArrowRight, Sparkles, MessageSquare,
+  CheckCircle2, XCircle, ArrowRight, MessageSquare,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { badgeText } from "@/lib/badge";
 import { supabase } from "@/lib/supabase";
 import { getAiConnections } from "@/lib/knowledge";
 import { countPendingProposals } from "@/lib/linkProposals";
-import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card, heroPrimary } from "@/components/ui/PageHero";
 import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
 
 interface Status {
@@ -171,7 +172,7 @@ export default function IntelligencePage() {
     return () => { cancelled = true; };
   }, [activeOrgId, isAdmin]);
 
-  if (!activeOrgId) return <div className="p-8 text-sm text-[var(--color-text-muted)]">Pick a workspace to continue.</div>;
+  if (!activeOrgId) return <div className="p-8 text-[14px] text-[var(--color-text-muted)]">Pick a workspace to continue.</div>;
 
   const s = status ?? EMPTY_STATUS;
   const coveragePct = s.chunksTotal > 0 ? Math.round((s.chunksEmbedded / s.chunksTotal) * 100) : 0;
@@ -185,25 +186,25 @@ export default function IntelligencePage() {
 
   return (
     <PageShell>
-      <ViewTabs title="Intelligence" tabs={INTELLIGENCE_VIEWS} />
-      <PageHeaderBar
-        title="Intelligence"
-        subtitle={lead ? lead.text : "Checking the AI status…"}
-        icon={Sparkles}
-        actions={lead ? (
-          <Link href={lead.href} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-bold hover:bg-[var(--color-accent-hover)]">
+      <PageHero
+        kicker="Intelligence · Status"
+        title={lead ? lead.text : error ? "Couldn't check the AI." : "Checking the AI…"}
+        sub={error
+          ? <span className="text-rose-300 font-semibold">Couldn&apos;t load the AI status: {error}</span>
+          : s.countsKnown ? `${s.docs.toLocaleString()} document${s.docs === 1 ? "" : "s"} across ${s.libraries} librar${s.libraries === 1 ? "y" : "ies"}${s.chunksTotal > 0 ? `, ${coveragePct}% of passages in the meaning index` : ""}.` : undefined}
+        primary={lead ? (
+          <Link href={lead.href} className={heroPrimary}>
             {lead.cta} <ArrowRight className="w-4 h-4" />
           </Link>
         ) : undefined}
-      />
+      >
+        <ViewTabs tabs={INTELLIGENCE_VIEWS} variant="dark" />
+      </PageHero>
 
-      {error && (
-        <p role="alert" className="mb-4 border-l-2 border-rose-500 pl-3 text-xs font-bold text-rose-700 dark:text-rose-300">Couldn&apos;t load the AI status: {error}</p>
-      )}
-
-      <div className="space-y-4">
-          {/* ── Is the machine on? ── */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      <PageBody>
+          {/* ── Is the machine on? One card, four checks. ── */}
+          <Card label="Is it on" pad={false}>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-px bg-[var(--color-border)] border-t border-[var(--color-border)] rounded-b-2xl overflow-hidden [&>*]:bg-[var(--color-surface)]">
             <StatusCard
               pending={!s.keysKnown}
               ok={!!s.chatKey}
@@ -247,70 +248,63 @@ export default function IntelligencePage() {
               />
             )}
           </div>
+          </Card>
 
           {/* ── What is it waiting on from me? ── */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-              <div className="flex items-center justify-between mb-3">
-                <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] flex items-center gap-1.5">
-                  <GitPullRequest className="w-3.5 h-3.5" /> Waiting on you
-                </div>
-              </div>
+            <Card label={<span className="inline-flex items-center gap-1.5"><GitPullRequest className="w-3.5 h-3.5" /> Waiting on you</span>}>
               {!s.countsKnown ? (
-                <p className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking what waits on you…</p>
+                <p className="flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking what waits on you…</p>
               ) : s.pendingProposals > 0 ? (
-                <Link href="/admin/proposed-links" className="flex items-center gap-3 rounded-xl border border-[var(--color-border)] p-3 hover:border-[var(--color-border-strong)] transition-colors">
-                  <span className="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)] font-black">{badgeText(s.pendingProposals)}</span>
+                <Link href="/admin/proposed-links" className="flex items-center gap-3 border-t border-[var(--color-border)] py-3 hover:bg-[var(--color-surface-2)] -mx-4 sm:-mx-5 px-4 sm:px-5 transition-colors">
+                  <span className="text-[15px] font-black text-[var(--color-text)] tabular-nums w-9">{badgeText(s.pendingProposals)}</span>
                   <div className="flex-1">
-                    <div className="text-sm font-bold text-[var(--color-text)]">Proposed connections to review</div>
-                    <div className="text-[11px] text-[var(--color-text-muted)]">Links found in your own data. Approve or dismiss each, with its evidence.</div>
+                    <div className="text-[14px] font-bold text-[var(--color-text)]">Proposed connections to review</div>
+                    <div className="text-[13px] text-[var(--color-text-muted)]">Links found in your own data. Approve or dismiss each, with its evidence.</div>
                   </div>
                   <ArrowRight className="w-4 h-4 text-[var(--color-text-faint)]" />
                 </Link>
               ) : (
-                <p className="text-xs text-[var(--color-text-muted)]">Nothing pending. New link proposals appear here as documents get indexed.</p>
+                <p className="text-[13.5px] text-[var(--color-text-muted)]">Nothing pending. New link proposals appear here as documents get indexed.</p>
               )}
               {s.chunksTotal > 0 && s.chunksEmbedded < s.chunksTotal && !!s.embeddingKey && (
-                <Link href="/knowledge" className="mt-2 flex items-center gap-3 rounded-xl border border-[var(--color-border)] p-3 hover:border-[var(--color-border-strong)] transition-colors">
+                <Link href="/knowledge" className="flex items-center gap-3 border-t border-[var(--color-border)] py-3 hover:bg-[var(--color-surface-2)] -mx-4 sm:-mx-5 px-4 sm:px-5 transition-colors">
                   <Gauge className="w-5 h-5 text-[var(--color-text-muted)]" />
                   <div className="flex-1">
-                    <div className="text-sm font-bold text-[var(--color-text)]">Meaning index {coveragePct}% built</div>
-                    <div className="text-[11px] text-[var(--color-text-muted)]">{s.chunksEmbedded} of {s.chunksTotal} passages embedded. Finish it from the library page.</div>
+                    <div className="text-[14px] font-bold text-[var(--color-text)]">Meaning index {coveragePct}% built</div>
+                    <div className="text-[13px] text-[var(--color-text-muted)]">{s.chunksEmbedded} of {s.chunksTotal} passages embedded. Finish it from the library page.</div>
                   </div>
                   <ArrowRight className="w-4 h-4 text-[var(--color-text-faint)]" />
                 </Link>
               )}
-            </div>
+            </Card>
 
-            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-              <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] flex items-center gap-1.5 mb-3">
-                <MessageSquare className="w-3.5 h-3.5" /> Recent questions
-              </div>
+            <Card label={<span className="inline-flex items-center gap-1.5"><MessageSquare className="w-3.5 h-3.5" /> Recent questions</span>}>
               {!s.countsKnown ? (
-                <p className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading recent questions…</p>
+                <p className="flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading recent questions…</p>
               ) : s.recentAsks.length === 0 ? (
-                <p className="text-xs text-[var(--color-text-muted)]">
+                <p className="text-[13.5px] text-[var(--color-text-muted)]">
                   Nobody has asked anything yet. Try &ldquo;what do we have on E-101?&rdquo;
                 </p>
               ) : (
-                <ul className="space-y-2">
+                <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)] -mx-4 sm:-mx-5">
                   {s.recentAsks.map((a) => (
                     <li key={a.id}>
                       {/* The conversation itself: new asks carry the chat thread id;
                           older rows were backfilled as one-turn threads under their own id. */}
-                      <Link href={`/assistant?thread=${a.threadId ?? a.id}`} className="block rounded-lg px-2 py-1.5 -mx-2 hover:bg-[var(--color-surface-2)] transition-colors">
-                        <div className="text-xs font-bold text-[var(--color-text)] truncate">{a.question}</div>
-                        <div className="text-[11px] text-[var(--color-text-faint)]">{a.userName ?? "someone"} · {new Date(a.at).toLocaleString()}</div>
+                      <Link href={`/assistant?thread=${a.threadId ?? a.id}`} className="block px-4 sm:px-5 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors">
+                        <div className="text-[14px] font-semibold text-[var(--color-text)] truncate">{a.question}</div>
+                        <div className="text-[12px] text-[var(--color-text-muted)]">{a.userName ?? "someone"} · {new Date(a.at).toLocaleString()}</div>
                       </Link>
                     </li>
                   ))}
                 </ul>
               )}
-            </div>
+            </Card>
           </div>
 
           {/* Ask, Knowledge, Graph and Setup live in the tabs above: one home each. */}
-        </div>
+      </PageBody>
     </PageShell>
   );
 }
@@ -323,28 +317,28 @@ function StatusCard({ ok, title, okText, fixText, href, cta, pending }: {
 }) {
   if (pending) {
     return (
-      <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-        <div className="flex items-center gap-1.5 mb-1.5">
-          <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)]" />
-          <span className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">{title}</span>
+      <div className="px-4 sm:px-5 py-3.5">
+        <div className="flex items-center gap-1.5 mb-1">
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-muted)]" />
+          <span className="text-[13px] font-bold text-[var(--color-text)]">{title}</span>
         </div>
-        <p className="text-xs text-[var(--color-text-muted)]">Checking…</p>
+        <p className="text-[13px] text-[var(--color-text-muted)]">Checking…</p>
       </div>
     );
   }
   return (
-    <div className={`rounded-2xl border p-4 border-[var(--color-border)] bg-[var(--color-surface)] ${ok ? "" : "border-l-2 border-l-amber-500"}`}>
-      <div className="flex items-center gap-1.5 mb-1.5">
+    <div className="px-4 sm:px-5 py-3.5">
+      <div className="flex items-center gap-1.5 mb-1">
         {ok
           ? <CheckCircle2 className="w-4 h-4 text-emerald-600" />
           : <XCircle className="w-4 h-4 text-amber-600" />}
-        <span className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">{title}</span>
+        <span className="text-[13px] font-bold text-[var(--color-text)]">{title}</span>
       </div>
-      <p className={`text-xs ${ok ? "text-[var(--color-text)]" : "font-bold text-amber-800 dark:text-amber-300"}`}>
+      <p className={`text-[13px] ${ok ? "text-[var(--color-text-muted)]" : "font-semibold text-amber-800 dark:text-amber-300"}`}>
         {ok ? okText : fixText}
       </p>
       {!ok && (
-        <Link href={href} className="mt-2 inline-flex items-center gap-1 text-[11px] font-black text-[var(--color-accent)] hover:underline">
+        <Link href={href} className="mt-1.5 inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">
           {cta} <ArrowRight className="w-3 h-3" />
         </Link>
       )}

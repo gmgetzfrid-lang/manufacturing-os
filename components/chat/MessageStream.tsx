@@ -109,23 +109,28 @@ export default function MessageStream({
           {empty && loading ? (
             <div className="pt-6 max-w-3xl mx-auto"><LoadingBlock what="the conversation" rows={5} /></div>
           ) : empty ? (
-            <div className="pt-[12vh] text-center animate-rise">
-              <div className="mx-auto w-12 h-12 rounded-2xl flex items-center justify-center bg-[var(--color-text)]">
-                <Icon className="w-6 h-6 text-[var(--color-surface)]" />
+            <div className="pt-[8vh] sm:pt-[10vh] max-w-2xl mx-auto animate-rise">
+              <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--color-text-muted)]">
+                <Icon className="w-3.5 h-3.5" aria-hidden /> {meta.label}
               </div>
-              <h2 className="mt-4 text-lg font-black text-[var(--color-text)]">{meta.label}</h2>
-              <p className="mt-1 text-xs text-[var(--color-text-muted)] max-w-md mx-auto">{meta.hint}</p>
-              {emptyNote && <p className="mt-2 text-[11px] font-bold text-amber-700 dark:text-amber-400 max-w-md mx-auto">{emptyNote}</p>}
-              <div className="mt-6 flex flex-wrap justify-center gap-2">
+              {/* The one big line on an empty chat: what you can do here. */}
+              <h2 className="mt-3 text-[34px] sm:text-[44px] leading-[1.03] font-black tracking-[-0.03em] text-[var(--color-text)]">
+                {scope === "library" ? "Ask the library." : scope === "tools" ? "Ask the system." : "Ask the internet."}
+              </h2>
+              <p className="mt-3 text-[14px] sm:text-[15px] text-[var(--color-text-muted)]">{meta.hint}</p>
+              {emptyNote && <p className="mt-2 text-[13px] font-semibold text-amber-700 dark:text-amber-400">{emptyNote}</p>}
+              <div className="mt-6 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Try</div>
+              <div className="mt-2 flex flex-col divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
                 {EXAMPLES[scope].map((e) => (
                   <button key={e} onClick={() => onExample(e)}
-                    className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-xs font-bold text-[var(--color-text)] hover:border-[var(--color-accent-ring)] hover:bg-[var(--color-surface-2)] transition-colors">
-                    {e}
+                    className="group flex items-center gap-3 py-3 text-left text-[14px] font-semibold text-[var(--color-text)] hover:text-[var(--color-accent)] transition-colors">
+                    <span className="flex-1">{e}</span>
+                    <ArrowDown className="w-4 h-4 -rotate-90 text-[var(--color-text-faint)] group-hover:text-[var(--color-accent)]" />
                   </button>
                 ))}
               </div>
               {scope !== "internet" && (
-                <p className="mt-6 text-[11px] text-[var(--color-text-faint)]">
+                <p className="mt-4 text-[12px] text-[var(--color-text-muted)]">
                   It reads only documents cleared for AI.
                 </p>
               )}
@@ -155,7 +160,7 @@ export default function MessageStream({
       </div>
       {!atBottom && !empty && (
         <button onClick={jump}
-          className="absolute left-1/2 -translate-x-1/2 bottom-3 inline-flex items-center gap-1.5 h-8 px-3 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[11px] font-black text-[var(--color-text)] shadow-lg hover:border-[var(--color-accent-ring)] transition-colors animate-pop">
+          className="absolute left-1/2 -translate-x-1/2 bottom-3 inline-flex items-center gap-1.5 h-8 px-3 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-bold text-[var(--color-text)] shadow-lg hover:border-[var(--color-accent-ring)] transition-colors animate-pop">
           <ArrowDown className="w-3.5 h-3.5" /> Latest
         </button>
       )}

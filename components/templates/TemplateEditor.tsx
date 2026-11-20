@@ -173,19 +173,20 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
   };
 
   return (
-    <div role="dialog" aria-modal="true" aria-label={template ? "Edit template" : "New output template"} className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
-      <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-xl mt-8 mb-8"
+    <div role="dialog" aria-modal="true" aria-label={template ? "Edit template" : "New output template"} className="fixed inset-0 z-50 bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
+      <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl mt-8 mb-8"
         onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between sticky top-0 bg-[var(--color-surface)] rounded-t-2xl z-10">
           <div>
-            <h2 className="text-base font-black text-[var(--color-text)]">
-              {template ? "Edit template" : "New output template"}
+            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Output docs</div>
+            <h2 className="mt-1 text-[24px] leading-tight font-black tracking-[-0.02em] text-[var(--color-text)]">
+              {template ? (template.name || "Edit template") : "New output template."}
             </h2>
-            <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
+            <p className="text-[13px] text-[var(--color-text-muted)] mt-1">
               Your file sets all the formatting. The AI only writes the words that go in the blanks.
             </p>
           </div>
-          <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+          <button onClick={onClose} aria-label="Close" className="w-9 h-9 grid place-items-center rounded-[10px] bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
         </div>
 
         <div className="p-5 space-y-5">

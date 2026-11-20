@@ -26,7 +26,8 @@ import {
   BrainCircuit,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
-import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card } from "@/components/ui/PageHero";
 import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
 import SkillStudio, { type StudioKind } from "@/components/intelligence/SkillStudio";
 import {
@@ -113,13 +114,12 @@ export default function SkillLibraryPage() {
   const loading = rules === undefined || rskills === undefined;
   const notInstalled = rules === null && rskills === null;
 
+  // A shelf is one card: its name, one line on what it does, then the
+  // skills in a hairline grid (no boxes inside the box).
   const shelfHeading = (icon: React.ReactNode, title: string, blurb: string) => (
-    <div className="flex items-start gap-2.5 mt-8 mb-3 first:mt-0">
-      {icon}
-      <div>
-        <h2 className="text-sm font-black text-[var(--color-text)] tracking-tight">{title}</h2>
-        <p className="text-[11px] text-[var(--color-text-muted)]">{blurb}</p>
-      </div>
+    <div className="px-4 sm:px-5 pt-4 pb-3">
+      <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">{icon}{title}</h2>
+      <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">{blurb}</p>
     </div>
   );
 
@@ -143,7 +143,7 @@ export default function SkillLibraryPage() {
     onToggle: () => Promise<void>; onFlip: () => Promise<void>; onDelete: () => Promise<void>;
   }) => (
     <div className="flex items-center gap-1.5 pt-1 border-t border-[var(--color-border)]/60">
-      <span className="text-[11px] text-[var(--color-text-faint)] flex-1 truncate">
+      <span className="text-[12px] text-[var(--color-text-muted)] flex-1 truncate">
         {opts.builtin ? "Ships with the engine" : `by ${opts.mine ? "you" : (opts.authorName ?? "a teammate")}`}
       </span>
       {!opts.builtin && opts.mayManage && (
@@ -181,94 +181,76 @@ export default function SkillLibraryPage() {
     activeOrgId && uid ? (
       <button type="button" onClick={() => setStudioKind(kind)}
         style={{ animation: "rise 0.45s var(--ease-fluid) both", animationDelay: `${Math.min(delayIndex, 9) * 60}ms` }}
-        className="rounded-2xl border-2 border-dashed border-[var(--color-border-strong)] hover:border-[var(--color-border-strong)] min-h-[10rem] flex flex-col items-center justify-center gap-2 text-[var(--color-text-muted)] hover:text-[var(--color-accent-hover)] transition-colors p-4">
-        <Sparkles className="w-6 h-6" />
-        <span className="text-xs font-black">Build a skill</span>
-        <span className="text-[11px] text-center max-w-[16rem]">{blurb}</span>
+        className="min-h-[9rem] flex flex-col items-center justify-center gap-1.5 bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors p-4">
+        <Sparkles className="w-5 h-5" />
+        <span className="text-[14px] font-bold text-[var(--color-accent)]">Build a skill</span>
+        <span className="text-[13px] text-center max-w-[18rem]">{blurb}</span>
       </button>
     ) : null
   );
 
   return (
     <PageShell>
-      <ViewTabs title="Intelligence" tabs={INTELLIGENCE_VIEWS} />
-      <PageHeaderBar
-        icon={Puzzle}
-        eyebrow="Skills"
-        title="Skill library"
-        subtitle="Two shelves: Connection skills grow the org graph; Reasoning skills shape how the AI answers. Describe either in plain words and your AI drafts it."
-      />
+      <PageHero
+        kicker="Intelligence · Skills"
+        title={loading ? "Skill library" : notInstalled ? "The skill library isn't installed yet." : `${stats.total} ${stats.total === 1 ? "skill" : "skills"}, ${stats.enabled} on.`}
+        sub={
+          <>
+            {!loading && !notInstalled && <>{stats.custom} written here, {stats.mine} by you. </>}
+            Connection skills grow the org graph; reasoning skills shape how the AI answers. Describe either in plain words and your AI drafts it.
+            {error && <span role="alert" className="block mt-1 text-rose-300 font-semibold"><AlertTriangle className="inline w-3.5 h-3.5 -mt-0.5 mr-1" />{error}</span>}
+          </>
+        }
+      >
+        <ViewTabs tabs={INTELLIGENCE_VIEWS} variant="dark" />
+      </PageHero>
 
-      {error && (
-        <div role="alert" className="mb-4 flex items-start gap-2 border-l-2 border-rose-500 pl-3">
-          <AlertTriangle className="w-4 h-4 text-rose-600 mt-0.5 shrink-0" />
-          <div className="text-xs text-rose-700 dark:text-rose-300">{error}</div>
-        </div>
-      )}
-
+      <PageBody>
       {loading ? (
-        <div className="flex items-center justify-center gap-2 py-20 text-sm text-[var(--color-text-muted)]"><Loader2 className="w-6 h-6 animate-spin" /> Loading the skill library…</div>
+        <Card><p className="flex items-center justify-center gap-2 py-12 text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin" /> Loading the skill library…</p></Card>
       ) : notInstalled ? (
-        <div className="text-center py-16 space-y-2 max-w-md mx-auto">
-          <Puzzle className="w-8 h-8 mx-auto text-[var(--color-text-faint)]" />
-          <div className="text-sm font-bold text-[var(--color-text)]">The skill library isn&apos;t installed yet</div>
-          <p className="text-xs text-[var(--color-text-muted)]">
-            Run the connection-skills and reasoning-skills migrations on your database, then reload.
-            The built-ins add themselves.
-          </p>
-        </div>
+        <Card>
+          <div className="text-center py-10 space-y-2 max-w-md mx-auto">
+            <Puzzle className="w-6 h-6 mx-auto text-[var(--color-text-faint)]" />
+            <p className="text-[14px] text-[var(--color-text-muted)]">
+              Run the connection-skills and reasoning-skills migrations on your database, then reload.
+              The built-ins add themselves.
+            </p>
+          </div>
+        </Card>
       ) : (
         <>
-          {/* Pulse row */}
-          <div className="mb-2 grid grid-cols-2 sm:grid-cols-4 gap-2">
-            {[
-              { n: stats.total, label: "skills" },
-              { n: stats.enabled, label: "enabled" },
-              { n: stats.custom, label: "org-authored" },
-              { n: stats.mine, label: "yours" },
-            ].map((s, i) => (
-              <div key={s.label}
-                style={{ animation: "rise 0.4s var(--ease-fluid) both", animationDelay: `${i * 60}ms` }}
-                className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2.5">
-                <div className="text-xl font-black text-[var(--color-text)] tabular-nums">{s.n}</div>
-                <div className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">{s.label}</div>
-              </div>
-            ))}
-          </div>
-
           {/* ── Reasoning skills ─────────────────────────────────────────── */}
+          <Card pad={false} className="overflow-hidden">
           {shelfHeading(
-            <BrainCircuit className="w-5 h-5 text-[var(--color-text-muted)] mt-0.5 shrink-0" />,
+            <BrainCircuit className="w-3.5 h-3.5" />,
             "Reasoning skills",
-            "Disciplines the AI carries when it answers. Each names when it applies - enabling several is safe.",
+            "Disciplines the AI carries when it answers. Each names when it applies, so enabling several is safe.",
           )}
           {rskills === null ? (
-            <div className="text-[11px] text-[var(--color-text-muted)]">Run the reasoning-skills migration to unlock this shelf.</div>
+            <div className="px-4 sm:px-5 pb-4 text-[13px] text-[var(--color-text-muted)]">Run the reasoning-skills migration to unlock this shelf.</div>
           ) : (
-            <div className="grid md:grid-cols-2 gap-3">
+            <div className="grid md:grid-cols-2 -mb-px border-t border-[var(--color-border)] [&>*]:border-b [&>*]:border-[var(--color-border)] md:[&>*:nth-child(odd)]:border-r">
               {rskills.map((r, i) => {
                 const mine = r.created_by === uid;
                 const mayManage = canManageOrg || mine;
                 return (
                   <div key={r.id}
                     style={{ animation: "rise 0.45s var(--ease-fluid) both", animationDelay: `${Math.min(i, 8) * 60}ms` }}
-                    className={`rounded-2xl border overflow-hidden transition-all ${r.enabled
-                      ? "border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm hover:shadow-md"
-                      : "border-dashed border-[var(--color-border)] bg-[var(--color-surface-2)]/40 opacity-75"}`}>
-                    <div className={`h-1 bg-[var(--color-border)] ${r.enabled ? "" : "opacity-30"}`} />
-                    <div className="p-4 space-y-2">
+                    className={`bg-[var(--color-surface)] transition-opacity ${r.enabled ? "" : "opacity-70"}`}>
+                    <div className="p-4 sm:px-5 space-y-2">
                       <div className="flex items-start gap-2.5">
-                        <span className={`shrink-0 w-9 h-9 rounded-xl bg-[var(--color-surface-2)] text-[var(--color-text)] flex items-center justify-center shadow-sm ${r.enabled ? "" : "grayscale"}`}>
+                        <span className={`shrink-0 w-9 h-9 rounded-[10px] bg-[var(--color-surface-2)] text-[var(--color-text)] flex items-center justify-center ${r.enabled ? "" : "grayscale"}`}>
                           <BrainCircuit className="w-[18px] h-[18px]" />
                         </span>
                         <div className="flex-1 min-w-0">
-                          <div className="text-sm font-black text-[var(--color-text)] leading-tight">{r.name}</div>
+                          <div className="text-[14px] font-bold text-[var(--color-text)] leading-tight">{r.name}</div>
                           {badgeRow(r, "Answer discipline")}
                         </div>
                         {toggleButton({ id: r.id, enabled: r.enabled, mayManage, onToggle: () => setAnswerSkillEnabled(r.id, !r.enabled) })}
                       </div>
                       {r.description && (
-                        <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">{r.description}</p>
+                        <p className="text-[13px] text-[var(--color-text-muted)] leading-relaxed">{r.description}</p>
                       )}
                       {/* The pack itself, on demand — the description sells it,
                           the details prove it. */}
@@ -276,7 +258,7 @@ export default function SkillLibraryPage() {
                         <summary className="cursor-pointer text-[11px] font-black uppercase tracking-wider text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] list-none">
                           View the discipline ▸
                         </summary>
-                        <pre className="mt-1.5 whitespace-pre-wrap text-[11px] leading-relaxed text-[var(--color-text-muted)] bg-[var(--color-surface-2)]/60 rounded-lg p-2.5 max-h-48 overflow-y-auto font-sans">{r.instructions}</pre>
+                        <pre className="mt-1.5 whitespace-pre-wrap text-[12.5px] leading-relaxed text-[var(--color-text-muted)] bg-[var(--color-surface-2)]/60 rounded-lg p-2.5 max-h-48 overflow-y-auto font-sans">{r.instructions}</pre>
                       </details>
                       {cardControls({
                         id: r.id, name: r.name, builtin: !!r.builtin_key, mayManage, mine,
@@ -290,20 +272,22 @@ export default function SkillLibraryPage() {
                 );
               })}
               {buildCard("reasoning", rskills.length,
-                "Describe a discipline in plain words - “when someone asks X, always do Y”. Your AI drafts the pack.")}
+                "Describe a discipline in plain words: “when someone asks X, always do Y”. Your AI drafts the pack.")}
             </div>
           )}
+          </Card>
 
           {/* ── Connection skills ────────────────────────────────────────── */}
+          <Card pad={false} className="overflow-hidden">
           {shelfHeading(
-            <Waypoints className="w-5 h-5 text-[var(--color-text-muted)] mt-0.5 shrink-0" />,
+            <Waypoints className="w-3.5 h-3.5" />,
             "Connection skills",
-            "Detectors the engine runs to grow the org graph. Findings queue for review - nothing custom applies itself.",
+            "Detectors the engine runs to grow the org graph. Findings queue for review; nothing custom applies itself.",
           )}
           {rules === null ? (
-            <div className="text-[11px] text-[var(--color-text-muted)]">Run the connection-skills migration to unlock this shelf.</div>
+            <div className="px-4 sm:px-5 pb-4 text-[13px] text-[var(--color-text-muted)]">Run the connection-skills migration to unlock this shelf.</div>
           ) : (
-            <div className="grid md:grid-cols-2 gap-3">
+            <div className="grid md:grid-cols-2 -mb-px border-t border-[var(--color-border)] [&>*]:border-b [&>*]:border-[var(--color-border)] md:[&>*:nth-child(odd)]:border-r">
               {rules.map((r, i) => {
                 const meta = KIND_META[r.kind] ?? KIND_META.reference;
                 const KindIcon = meta.icon;
@@ -312,23 +296,20 @@ export default function SkillLibraryPage() {
                 return (
                   <div key={r.id}
                     style={{ animation: "rise 0.45s var(--ease-fluid) both", animationDelay: `${Math.min(i, 8) * 60}ms` }}
-                    className={`rounded-2xl border overflow-hidden transition-all ${r.enabled
-                      ? "border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm hover:shadow-md"
-                      : "border-dashed border-[var(--color-border)] bg-[var(--color-surface-2)]/40 opacity-75"}`}>
-                    <div className={`h-1 bg-[var(--color-border)] ${r.enabled ? "" : "opacity-30"}`} />
-                    <div className="p-4 space-y-2">
+                    className={`bg-[var(--color-surface)] transition-opacity ${r.enabled ? "" : "opacity-70"}`}>
+                    <div className="p-4 sm:px-5 space-y-2">
                       <div className="flex items-start gap-2.5">
-                        <span className={`shrink-0 w-9 h-9 rounded-xl bg-[var(--color-surface-2)] text-[var(--color-text)] flex items-center justify-center shadow-sm ${r.enabled ? "" : "grayscale"}`}>
+                        <span className={`shrink-0 w-9 h-9 rounded-[10px] bg-[var(--color-surface-2)] text-[var(--color-text)] flex items-center justify-center ${r.enabled ? "" : "grayscale"}`}>
                           <KindIcon className="w-[18px] h-[18px]" />
                         </span>
                         <div className="flex-1 min-w-0">
-                          <div className="text-sm font-black text-[var(--color-text)] leading-tight">{r.name}</div>
+                          <div className="text-[14px] font-bold text-[var(--color-text)] leading-tight">{r.name}</div>
                           {badgeRow(r, meta.label)}
                         </div>
                         {toggleButton({ id: r.id, enabled: r.enabled, mayManage, onToggle: () => setLinkRuleEnabled(r.id, !r.enabled) })}
                       </div>
                       {r.description && (
-                        <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">{r.description}</p>
+                        <p className="text-[13px] text-[var(--color-text-muted)] leading-relaxed">{r.description}</p>
                       )}
                       {(r.config?.patterns?.length ?? 0) > 0 && (
                         <div className="flex items-center gap-1 flex-wrap">
@@ -352,14 +333,15 @@ export default function SkillLibraryPage() {
                 );
               })}
               {buildCard("connection", rules.length,
-                "Describe your facility's numbering convention - your AI drafts the detector, the tester proves it.")}
+                "Describe your facility's numbering convention: your AI drafts the detector, the tester proves it.")}
             </div>
           )}
+          </Card>
 
-          <div className="mt-6 flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
+          <div className="px-1 flex flex-wrap items-center gap-2 text-[13px] text-[var(--color-text-muted)]">
             <Waypoints className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
             Connection skills run with “Find connections”; reasoning skills ride every question.
-            <Link href="/admin/proposed-links" className="inline-flex items-center gap-0.5 font-black text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">
+            <Link href="/admin/proposed-links" className="inline-flex items-center gap-0.5 font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">
               Review what the engine found <ArrowUpRight className="w-3 h-3" />
             </Link>
           </div>
@@ -376,6 +358,7 @@ export default function SkillLibraryPage() {
           onCreated={() => { setStudioKind(null); void refresh(); }}
         />
       )}
+      </PageBody>
     </PageShell>
   );
 }

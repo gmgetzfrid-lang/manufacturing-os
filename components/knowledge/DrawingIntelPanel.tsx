@@ -118,7 +118,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
   };
 
   return (
-    <div className="mt-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+    <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4">
       <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-lg flex items-center justify-center bg-[var(--color-text)]">

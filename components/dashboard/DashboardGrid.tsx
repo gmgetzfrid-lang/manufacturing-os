@@ -20,10 +20,16 @@
 // readable column (drag/resize off); their relative order follows (y, x).
 
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import Link from "next/link";
 import SetupChecklist from "@/components/onboarding/SetupChecklist";
-import { Pencil, Check, Plus, Move, Sparkles, LayoutGrid } from "lucide-react";
+import { Pencil, Check, Plus, Move, LayoutGrid } from "lucide-react";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import { useRole } from "@/components/providers/RoleContext";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
+import { useTicketNotifications } from "@/hooks/useTicketNotifications";
+import { splitRef, shortDate } from "@/components/cockpit/CommandDeck";
+import HomeStrips from "@/components/cockpit/HomeStrips";
 import type { DashboardConfig, DashboardWidget, WidgetType } from "@/lib/dashboard/types";
 import {
   loadDashboardConfig, saveDashboardConfig, newWidgetId, GRID_COLS,
@@ -62,6 +68,9 @@ const dateLineNow = () =>
 export default function DashboardGrid() {
   const { uid, userEmail, hasAnyRole } = useRole();
   const isAdmin = hasAnyRole(["Admin", "DocCtrl"]);
+  // What waits on you: the same feed as the bell and the sidebar badge, so
+  // the band's answer never disagrees with them.
+  const { count: attnCount, items: attnItems, loading: attnLoading, loadError: attnError } = useTicketNotifications();
 
   const [config, setConfig] = useState<DashboardConfig | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -275,11 +284,101 @@ export default function DashboardGrid() {
     });
   };
 
+  const firstName = (() => {
+    const raw = (userEmail ?? "").split("@")[0];
+    const head = raw.split(/[._-]/)[0];
+    return head ? head.charAt(0).toUpperCase() + head.slice(1) : "";
+  })();
+
+  // ── The band: the date, the answer, the one thing named, "Open it". ──
+  const lead = attnItems.find((i) => i.actionRequired) ?? attnItems[0];
+  const answer = attnError && attnCount === 0
+    ? "Couldn't check what needs you."
+    : attnLoading && attnCount === 0
+      ? `${greeting}${firstName ? `, ${firstName}` : ""}.`
+      : attnCount > 0
+        ? `${attnCount} ${attnCount === 1 ? "thing needs" : "things need"} you.`
+        : "Nothing needs you right now.";
+  const leadLine = (() => {
+    if (attnError && attnCount === 0) return <>The list of what waits on you didn&apos;t load: {attnError}</>;
+    if (!lead) return attnLoading ? null : <>No requests, reviews or alerts are waiting on you.</>;
+    const since = lead.when ? shortDate(lead.when) : "";
+    if (lead.source === "ticket") {
+      const [ref, name] = splitRef(lead.title);
+      return (
+        <>
+          {lead.subtitle} on <span className="text-white font-semibold">{ref ?? name}</span>
+          {ref && name ? <span> ({name})</span> : null}.
+          {lead.actionRequired && since ? ` No change since ${since}.` : ""}
+        </>
+      );
+    }
+    return (
+      <>
+        <span className="text-white font-semibold">{lead.title}</span>
+        {lead.subtitle ? <span>. {lead.subtitle}</span> : null}
+        {since ? <span> · {since}</span> : null}
+      </>
+    );
+  })();
+
+  const band = (
+    <PageHero
+      kicker={<>{dateLine || "Home"}{dateLine ? <span className="max-sm:hidden"> · {greeting}</span> : null}</>}
+      title={answer}
+      sub={leadLine}
+      tools={loaded && config ? (
+        <>
+          <button type="button" onClick={() => setAddOpen(true)} className={heroQuiet} aria-label="Add widget">
+            <Plus className="w-4 h-4" /><span className="max-sm:hidden">Add widget</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => { setEditing((v) => !v); setResizing(null); setDrag(null); }}
+            aria-pressed={editing}
+            className={editing
+              ? "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-[10px] bg-white text-[13px] font-bold text-[var(--color-ink)] hover:bg-[var(--color-ink-fg)] transition-colors"
+              : heroQuiet}
+          >
+            {editing ? <><Check className="w-4 h-4" /> Done</> : <><Pencil className="w-4 h-4" /><span className="max-sm:hidden">Customize</span><span className="sr-only sm:hidden">Customize</span></>}
+          </button>
+        </>
+      ) : undefined}
+      primary={lead && !editing ? <Link href={lead.link} className={heroPrimary}>Open it</Link> : undefined}
+    >
+      {(editing || saveErr) && (
+        <div className="space-y-2">
+          {editing && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-[13px] text-[var(--color-ink-text)]">
+              <span className="min-w-0 flex-1">
+                {isMobile
+                  // Phones can't drag or resize; telling them to reads as broken.
+                  ? "Customizing. Arrange and resize on a larger screen. Changes save as you go."
+                  : "Customizing. Drag a card to move it, its corner to resize. Changes save as you go."}
+              </span>
+              <button type="button" onClick={tidyLayout} className={heroQuiet}
+                title="Close every gap: slide widgets together and stretch rows to the edges">
+                <LayoutGrid className="w-4 h-4" /> Tidy layout
+              </button>
+            </div>
+          )}
+          {saveErr && <p role="alert" className="text-[13px] text-amber-300">Your layout is saved on this device only. The account copy didn&apos;t save: {saveErr}</p>}
+        </div>
+      )}
+    </PageHero>
+  );
+
   if (!loaded || !config) {
     return (
-      <div className="p-4 sm:p-6 lg:px-10 max-w-[1720px] mx-auto">
-        <LoadingBlock what="your Home" rows={6} />
-      </div>
+      <PageShell width="full">
+        <div className="mx-auto max-w-[1720px]">
+          <h1 className="sr-only">Home</h1>
+          {band}
+          <PageBody>
+            <Card><LoadingBlock what="your Home" rows={6} className="border-0 p-0" /></Card>
+          </PageBody>
+        </div>
+      </PageShell>
     );
   }
 
@@ -289,67 +388,35 @@ export default function DashboardGrid() {
   const backdropRows = editing ? occupiedRows + 3 : occupiedRows;
   const addSlot = firstFreeSlot(config.widgets, 3, 2, GRID_COLS);
 
-  const firstName = (() => {
-    const raw = (userEmail ?? "").split("@")[0];
-    const head = raw.split(/[._-]/)[0];
-    return head ? head.charAt(0).toUpperCase() + head.slice(1) : "";
-  })();
+  // Outside of Customize, a "Needs you" card that heads the layout sits on
+  // its own at content height, right under the band, with your libraries and
+  // projects below it; the rest of the grid follows.
+  const deck = !editing ? displayWidgets.find((w) => w.type === "commandDeck" && w.y === 0) : undefined;
+  const pinned = deck && displayWidgets.every((w) => w.id === deck.id || w.y >= deck.y + deck.h) ? deck : undefined;
+  const gridWidgets = pinned
+    ? displayWidgets.filter((w) => w.id !== pinned.id).map((w) => ({ ...w, y: w.y - pinned.h }))
+    : displayWidgets;
+  const frame = (widget: DashboardWidget) => (
+    <WidgetFrame
+      widget={widget}
+      editing={editing}
+      onRemove={() => removeWidget(widget.id)}
+      onOpenSettings={() => setSettingsWidget(widget)}
+      onUpdateSettings={(patch) => updateWidgetSettings(widget.id, patch)}
+    />
+  );
 
   return (
-    <div className="relative min-h-full">
-
-      <div className="relative p-4 sm:p-6 lg:px-10 max-w-[1720px] mx-auto">
-      {/* Onboarding — admins of a fresh org see the setup checklist HERE,
-          where login actually lands, not only on /inbox. */}
-      {/* The deck below greets and says what needs you; here only the layout tools. */}
-      <div className="flex items-center justify-between gap-4 mb-3 flex-wrap">
-        <h1 className="sr-only">{greeting}{firstName ? `, ${firstName}` : ""}</h1>
-        <div className="min-w-0 text-[12.5px] text-[var(--color-text-muted)]">
-          <span className="font-semibold uppercase tracking-[0.12em] text-[11px] text-[var(--color-text-faint)]">{dateLine}</span>
-          {saveErr && <p role="alert" className="mt-1 border-l-2 border-amber-500 pl-2 text-[12.5px] text-amber-800 dark:text-amber-300">Your layout is saved on this device only. The account copy didn&apos;t save: {saveErr}</p>}
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            type="button"
-            onClick={() => setAddOpen(true)}
-            className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-sm font-bold bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] transition-colors"
-          >
-            <Plus className="w-4 h-4" /> Add widget
-          </button>
-          <button
-            type="button"
-            onClick={() => { setEditing((v) => !v); setResizing(null); setDrag(null); }}
-            aria-pressed={editing}
-            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all ${
-              editing
-                ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"
-                : "bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
-            }`}
-          >
-            {editing ? <><Check className="w-4 h-4" /> Done</> : <><Pencil className="w-4 h-4" /> Customize</>}
-          </button>
-        </div>
-      </div>
-
-      {/* Edit-mode helper strip */}
-      {editing && (
-        <div className="mb-4 flex items-center gap-2 rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface-2)] px-3 py-2 text-[12px] font-semibold text-[var(--color-text)]" style={{ animation: "rise 0.25s var(--ease-fluid) both" }}>
-          <Sparkles className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-          <span className="flex-1 min-w-0">
-            {isMobile
-              // Phones can't drag or resize — telling them to reads as broken.
-              ? "Customizing. Arrange and resize on a larger screen. Changes save as you go."
-              : "Customizing. Drag a card to move it, its corner to resize. Changes save as you go."}
-          </span>
-          <button
-            type="button"
-            onClick={tidyLayout}
-            title="Close every gap: slide widgets together and stretch rows to the edges"
-            className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-border-strong)] transition-colors"
-          >
-            <LayoutGrid className="w-3.5 h-3.5" /> Tidy layout
-          </button>
-        </div>
+    <PageShell width="full">
+      <div className="mx-auto max-w-[1720px]">
+      <h1 className="sr-only">Home</h1>
+      {band}
+      <PageBody>
+      {pinned && (
+        <>
+          <div style={{ animation: "rise 0.45s var(--ease-fluid) both" }}>{frame(pinned)}</div>
+          <HomeStrips />
+        </>
       )}
 
       {/* Stable measuring wrapper — keeps the ResizeObserver attached across the
@@ -358,7 +425,7 @@ export default function DashboardGrid() {
       {isMobile ? (
         // ── Mobile: single readable column, ordered by (y, x) ──
         <div className="flex flex-col gap-4">
-          {[...displayWidgets]
+          {[...gridWidgets]
             .sort((a, b) => a.y - b.y || a.x - b.x)
             .map((widget, idx) => (
               // DEFINITE height (not minHeight): the WidgetFrame body relies on
@@ -369,13 +436,7 @@ export default function DashboardGrid() {
               // phone floor) makes every widget fully visible and scrollable.
               <div key={widget.id} style={{ height: Math.max(widget.h * ROW_UNIT + (widget.h - 1) * GAP, 300) }} className="relative min-w-0">
                 <div className="h-full" style={{ animation: "rise 0.45s var(--ease-fluid) both", animationDelay: `${Math.min(idx, 10) * 45}ms` }}>
-                  <WidgetFrame
-                    widget={widget}
-                    editing={editing}
-                    onRemove={() => removeWidget(widget.id)}
-                    onOpenSettings={() => setSettingsWidget(widget)}
-                    onUpdateSettings={(patch) => updateWidgetSettings(widget.id, patch)}
-                  />
+                  {frame(widget)}
                 </div>
               </div>
             ))}
@@ -384,10 +445,10 @@ export default function DashboardGrid() {
               type="button"
               onClick={() => setAddOpen(true)}
               style={{ minHeight: 2 * ROW_UNIT + GAP }}
-              className="min-w-0 rounded-2xl border-2 border-dashed border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] transition-colors flex flex-col items-center justify-center gap-2"
+              className="min-w-0 rounded-2xl border-2 border-dashed border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] transition-colors flex flex-col items-center justify-center gap-2"
             >
               <Plus className="w-6 h-6" />
-              <span className="text-sm font-bold">Add widget</span>
+              <span className="text-[13px] font-bold">Add widget</span>
             </button>
           )}
         </div>
@@ -422,7 +483,7 @@ export default function DashboardGrid() {
             />
           )}
 
-          {displayWidgets.map((widget, idx) => {
+          {gridWidgets.map((widget, idx) => {
             const isDragging = drag?.id === widget.id;
             const isResizingThis = resizing?.id === widget.id;
             const liveW = isResizingThis ? resizing!.w : widget.w;
@@ -448,13 +509,7 @@ export default function DashboardGrid() {
                 {/* Entrance stagger lives on an inner wrapper so its transform
                     can never fight the drag translate on the tile itself. */}
                 <div className="h-full" style={{ animation: "rise 0.45s var(--ease-fluid) both", animationDelay: `${Math.min(idx, 10) * 45}ms` }}>
-                <WidgetFrame
-                  widget={widget}
-                  editing={editing}
-                  onRemove={() => removeWidget(widget.id)}
-                  onOpenSettings={() => setSettingsWidget(widget)}
-                  onUpdateSettings={(patch) => updateWidgetSettings(widget.id, patch)}
-                />
+                  {frame(widget)}
                 </div>
 
                 {/* Corner resize handle (bottom-right). */}
@@ -492,22 +547,29 @@ export default function DashboardGrid() {
             );
           })}
 
-          {/* Add tile — edit mode only (the header's Add button covers view
+          {/* Add tile — edit mode only (the band's Add button covers view
               mode); sits in the first free slot, inviting customization. */}
           {editing && (
             <button
               type="button"
               onClick={() => setAddOpen(true)}
               style={{ gridColumn: `${addSlot.x + 1} / span 3`, gridRow: `${addSlot.y + 1} / span 2`, zIndex: 10 }}
-              className="min-w-0 rounded-2xl border-2 border-dashed border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] transition-colors flex flex-col items-center justify-center gap-2"
+              className="min-w-0 rounded-2xl border-2 border-dashed border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] transition-colors flex flex-col items-center justify-center gap-2"
             >
               <Plus className="w-6 h-6" />
-              <span className="text-sm font-bold">Add widget</span>
+              <span className="text-[13px] font-bold">Add widget</span>
             </button>
           )}
         </div>
       )}
       </div>
+
+      {/* Libraries and projects follow the work when nothing heads the grid. */}
+      {!pinned && !editing && <HomeStrips />}
+
+      {/* Setting up a new workspace (admins; hides itself once done or closed): after the work. */}
+      <SetupChecklist />
+      </PageBody>
 
       <AddWidgetModal
         open={addOpen}
@@ -524,10 +586,8 @@ export default function DashboardGrid() {
           onSave={(settings) => saveSettings(settingsWidget.id, settings)}
         />
       )}
-      {/* Setting up a new workspace (admins; hides itself once done or closed): after the work. */}
-      <div className="mt-6"><SetupChecklist /></div>
       </div>
-    </div>
+    </PageShell>
   );
 }
 

@@ -156,7 +156,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
 
   if (!report) {
     return (
-      <div className="mb-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-xs text-[var(--color-text-muted)] flex items-center gap-2">
+      <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] px-4 py-3 text-xs text-[var(--color-text-muted)] flex items-center gap-2">
         {error ? <><AlertTriangle className="w-4 h-4 text-amber-600" /> {error} <button onClick={() => void check()} className="ml-1 font-bold underline">Try again</button></>
           : <><Loader2 className="w-4 h-4 animate-spin" /> Checking that every linked document is accounted for…</>}
       </div>
@@ -181,7 +181,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
   })() : null;
 
   return (
-    <div className={`mb-4 rounded-2xl border ${healthy && !report.incomplete ? "border-emerald-200 dark:border-emerald-900" : "border-amber-300 dark:border-amber-800"} bg-[var(--color-surface)] overflow-hidden`}>
+    <div className={`rounded-2xl shadow-[var(--shadow-card)] ${healthy && !report.incomplete ? "" : "border-l-2 border-l-amber-500"} bg-[var(--color-surface)] overflow-hidden`}>
       <div className="px-4 py-3 flex items-center gap-3 flex-wrap">
         {healthy && !report.incomplete
           ? <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0" />

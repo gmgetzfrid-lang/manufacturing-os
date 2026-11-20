@@ -125,8 +125,8 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
   }, [onClose, saving, drafting]);
 
   return (
-    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
-      <div className="w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl"
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] p-4" onClick={onClose}>
+      <div className="w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-2xl bg-[var(--color-surface)] shadow-2xl"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)]">
           {phase === "edit" && (

@@ -58,7 +58,7 @@ function useOutside(open: boolean, close: () => void) {
   return ref;
 }
 
-const pill = "h-8 inline-flex items-center gap-1.5 px-2.5 rounded-lg text-[11px] font-black border transition-colors";
+const pill = "h-8 inline-flex items-center gap-1.5 px-2.5 rounded-lg text-[12px] font-bold whitespace-nowrap border transition-colors";
 
 // ─── Sources ─────────────────────────────────────────────────────────
 
@@ -86,7 +86,7 @@ export function SourcesMenu({ scope, libraryId, libraries, onScopeChange, scopeL
   return (
     <div ref={ref} className="relative">
       <button type="button" onClick={() => setOpen((v) => !v)} aria-haspopup="menu" aria-expanded={open}
-        title="Where answers come from" className={`${pill} max-w-[280px] ${tone}`}>
+        title="Where answers come from" className={`${pill} max-w-[150px] sm:max-w-[280px] ${tone}`}>
         <Icon className="w-3.5 h-3.5 shrink-0" /> <span className="truncate">{label}</span>
         {webOn && scope === "library" && <Globe className="w-3 h-3 shrink-0" />}
         <ChevronDown className="w-3 h-3 shrink-0 opacity-70" />

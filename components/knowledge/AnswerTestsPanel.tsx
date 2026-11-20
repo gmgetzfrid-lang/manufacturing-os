@@ -66,7 +66,7 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
 
   if (error && !state) {
     return (
-      <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-6 text-xs text-[var(--color-text-muted)] flex items-center gap-2">
+      <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 text-xs text-[var(--color-text-muted)] flex items-center gap-2">
         <FlaskConical className="w-4 h-4" /> Answer tests: {error}
       </div>
     );
@@ -83,7 +83,7 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
   const toDraft = (c: AnswerTestCase): AnswerTestDraft => ({ id: c.id, question: c.question, expect: c.expect, tags: c.tags, notes: c.notes ?? undefined, sourceQuestionId: c.source_question_id });
 
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 mb-6">
+    <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
       <div className="flex items-center gap-3 flex-wrap">
         <div className="w-9 h-9 rounded-lg bg-[var(--color-text-muted)] flex items-center justify-center shrink-0">
           <FlaskConical className="w-4 h-4 text-[var(--color-surface)]" />

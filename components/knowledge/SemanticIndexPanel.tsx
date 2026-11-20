@@ -175,7 +175,7 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
     <div className={`mt-4 text-[11px] flex items-start gap-2 ${
       tone === "warn"
         ? "border-l-2 border-amber-500 pl-3 py-1 text-amber-900 dark:text-amber-200"
-        : "rounded-2xl border px-4 py-3 border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>
+        : "rounded-2xl px-4 py-3 bg-[var(--color-surface)] shadow-[var(--shadow-card)] text-[var(--color-text-muted)]"}`}>
       {tone === "warn"
         ? <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
         : <Brain className="w-4 h-4 shrink-0 mt-0.5 opacity-60" />}
@@ -209,7 +209,7 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
   const fullCents = Math.ceil((status.total / 1000) * CENTS_PER_1K_PASSAGES);
 
   return (
-    <div className="mt-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+    <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4">
       <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-lg flex items-center justify-center bg-[var(--color-text)]">

@@ -71,20 +71,20 @@ export default function SetupChecklist() {
   const dismiss = () => { try { localStorage.setItem(DISMISS_KEY, "1"); } catch { /* ignore */ } setDismissed(true); };
 
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 mb-6">
+    <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
       <div className="flex items-start gap-3">
         <div className="w-9 h-9 rounded-xl bg-[var(--color-surface-2)] flex items-center justify-center shrink-0">
           <Rocket className="w-[18px] h-[18px] text-[var(--color-text-muted)]" />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <h2 className="text-sm font-black text-[var(--color-text)]">Get your workspace ready</h2>
-            <span className="text-[11px] font-bold text-[var(--color-text-muted)]">{doneCount}/{steps.length} done</span>
+            <h2 className="text-[14px] font-bold text-[var(--color-text)]">Get your workspace ready</h2>
+            <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">{doneCount} of {steps.length} done</span>
           </div>
           {(() => {
             const next = steps.find((s) => !s.done);
             return next ? (
-              <Link href={next.href} className="mt-2 inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-bold hover:bg-[var(--color-accent-hover)]">
+              <Link href={next.href} className="mt-2 inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[13px] font-bold hover:opacity-90">
                 Next: {next.label} <ChevronRight className="w-3.5 h-3.5" />
               </Link>
             ) : null;
@@ -93,19 +93,19 @@ export default function SetupChecklist() {
         <button onClick={dismiss} aria-label="Dismiss" className="p-1.5 rounded-md text-[var(--color-text-faint)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
       </div>
 
-      <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
+      <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-x-6 border-t border-[var(--color-border)]">
         {steps.map((s) => {
           const Icon = s.icon;
           return (
             <Link
               key={s.key}
               href={s.href}
-              className={`flex items-center gap-3 rounded-xl border p-3 transition-colors ${s.done ? "border-[var(--color-border)] bg-[var(--color-surface-2)]" : "border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-border-strong)]"}`}
+              className="flex items-center gap-3 py-3 border-b border-[var(--color-border)] transition-colors hover:bg-[var(--color-surface-2)] -mx-2 px-2 rounded-lg"
             >
               {s.done ? <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" /> : <Circle className="w-5 h-5 text-[var(--color-text-faint)] shrink-0" />}
               <div className="flex-1 min-w-0">
-                <div className={`text-sm font-bold ${s.done ? "text-[var(--color-text-muted)] line-through" : "text-[var(--color-text)]"}`}>{s.label}</div>
-                {!s.done && <div className="text-[11px] text-[var(--color-text-muted)] truncate">{s.blurb}</div>}
+                <div className={`text-[14px] font-semibold ${s.done ? "text-[var(--color-text-muted)] line-through" : "text-[var(--color-text)]"}`}>{s.label}</div>
+                {!s.done && <div className="text-[12.5px] text-[var(--color-text-muted)] truncate">{s.blurb}</div>}
               </div>
               {!s.done && <Icon className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />}
               {!s.done && <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />}
@@ -113,6 +113,6 @@ export default function SetupChecklist() {
           );
         })}
       </div>
-    </div>
+    </section>
   );
 }

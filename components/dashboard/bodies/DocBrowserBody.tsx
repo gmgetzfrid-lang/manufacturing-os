@@ -204,9 +204,9 @@ export default function DocBrowserBody() {
     const wk = weekSplit(top?.newDates ?? []);
     const head = (
       <div className="mb-2 flex items-end justify-between gap-4 shrink-0">
-        <div className="flex items-end gap-2">
-          <span className="text-2xl font-black leading-none text-[var(--color-text)] tabular-nums">{(top?.totalDocs ?? 0).toLocaleString()}</span>
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] pb-0.5">controlled documents</span>
+        <div className="flex items-baseline gap-1.5">
+          <span className="text-[14px] font-bold text-[var(--color-text)] tabular-nums">{(top?.totalDocs ?? 0).toLocaleString()}</span>
+          <span className="text-[13px] text-[var(--color-text-muted)]">controlled documents</span>
         </div>
         <div className="flex items-center gap-3 min-w-0">
           <TrendChip current={wk.cur} previous={wk.prev} />

@@ -1,27 +1,24 @@
 "use client";
 
 // ─── COMMAND DECK ──────────────────────────────────────────────────────────
-// The cockpit hero. A dark, high-tech band: personal greeting + ops status on
-// the left, and the three main attractions (Requests · Documents · Projects)
-// as live, deep-linked pillars with their own primary actions.
+// Home's top card: "Needs you". The page's band above it says how many things
+// wait on you and names the first; this card lists them, the first one on its
+// own line and the rest under "Also open", then a quiet row of the three main
+// tools (requests, documents, projects) with their live counts.
 //
-// Extracted verbatim from /inbox so the SAME hero can power both surfaces. The
-// inbox imports these symbols unchanged (its masthead behavior is identical),
-// and the customizable dashboard renders <CommandDeck fill /> as a first-class
-// widget (see the `commandDeck` entry in the widget catalog).
+// The customizable dashboard renders <CommandDeck fill /> as a widget (see the
+// `commandDeck` entry in the widget catalog).
 
 import React from "react";
 import Link from "next/link";
-import {
-  Briefcase, RefreshCw, Download, FileStack, FolderKanban, ChevronRight,
-} from "lucide-react";
+import { RefreshCw, Download, ChevronRight } from "lucide-react";
 import type { InboxSnapshot } from "@/lib/inbox";
-import { useGreeting } from "@/components/cockpit/DailyBrief";
+import type { AttentionItem } from "@/hooks/useTicketNotifications";
 import { useNotificationCenter } from "@/components/notifications/NotificationCenter";
 
-// Headline counts for the three command-deck pillars. Fetched separately from
-// the personal inbox snapshot (org-wide numbers), each guarded so a missing
-// table/column degrades that one stat to 0 instead of blanking the deck.
+// Headline counts for the three tools in the card's last row. Fetched
+// separately from the personal inbox snapshot (org-wide numbers), each guarded
+// so a missing table/column degrades that one stat to 0 instead of blanking it.
 export interface PillarStats {
   openRequests: number;
   lockedDocs: number;
@@ -35,78 +32,125 @@ export interface CommandDeckProps {
   pillars: PillarStats;
   attentionCount: number;
   actionCount: number;
+  /** What waits on you, newest first (the same feed as the bell). */
+  items?: AttentionItem[];
   focus: string | null;
   lastLoadedAt: number | null;
   refreshing: boolean;
   canExport: boolean;
   onRefresh: () => void;
   onExport: () => void;
-  /** When true, the deck fills its parent's height (and scrolls internally if
-   *  cramped) instead of sitting at content height with a bottom margin. Used
-   *  when the deck is rendered as a dashboard grid widget rather than the inbox
-   *  masthead. */
+  /** When true, the card fills its parent's height (and scrolls inside if
+   *  cramped). Used while the dashboard is being arranged. */
   fill?: boolean;
 }
 
+/** "KE-DDRT-26-0003 do stuff" → ["KE-DDRT-26-0003", "do stuff"]. */
+export function splitRef(title: string): [string | null, string] {
+  const m = /^([A-Z0-9]+(?:-[A-Z0-9]+)+)\s+(.*)$/.exec(title.trim());
+  return m ? [m[1], m[2] || ""] : [null, title];
+}
+
+export function shortDate(iso: string | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return d.toLocaleDateString(undefined, sameYear ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" });
+}
+
+const SHOWN = 4;
+
 export function CommandDeck({
-  userEmail, data, pillars, attentionCount, actionCount, focus,
+  data, pillars, attentionCount, actionCount, items = [], focus,
   lastLoadedAt, refreshing, canExport, onRefresh, onExport, fill = false,
 }: CommandDeckProps) {
-  const name = userEmail?.split("@")[0];
-  const hello = useGreeting();
   const stale = data?.myStaleCheckouts.length ?? 0;
   const { open: openCenter } = useNotificationCenter();
+  const first = items.find((i) => i.actionRequired) ?? items[0];
+  const rest = items.filter((i) => i !== first);
+  const more = Math.max(0, rest.length - (SHOWN - 1));
+  const iconBtn = "h-8 w-8 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40";
+  const tool = "flex items-center gap-2 min-w-0 py-2.5 text-[13px] text-[var(--color-text)] hover:text-[var(--color-accent)]";
 
-  const n = attentionCount;
-  const row = "flex items-center gap-3 py-2.5 border-t border-[var(--color-border)] text-[13.5px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] -mx-4 px-4";
+  const row = (it: AttentionItem, lead: boolean) => {
+    const [ref, rest] = it.source === "ticket" ? splitRef(it.title) : [null, it.title];
+    return (
+      <Link key={it.key} href={it.link}
+        className={`group flex items-center gap-3 sm:gap-4 border-t border-[var(--color-border)] ${lead ? "py-3.5" : "py-3"} text-[var(--color-text)] hover:bg-[var(--color-surface-2)] -mx-4 sm:-mx-5 px-4 sm:px-5`}>
+        <span className="min-w-0 flex-1 flex flex-col sm:flex-row sm:items-center gap-x-4 gap-y-0.5">
+          {ref && <span className="sm:w-36 shrink-0 font-mono text-[12px] font-semibold text-[var(--color-text-muted)] truncate">{ref}</span>}
+          <span className={`min-w-0 flex-1 truncate text-[14px] ${lead ? "font-semibold" : ""}`}>
+            {rest || it.title}
+            {it.subtitle && <span className="font-normal text-[var(--color-text-muted)]"> · {it.subtitle}</span>}
+          </span>
+        </span>
+        {it.when && <span className={`shrink-0 text-[12px] ${it.actionRequired ? "font-bold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{shortDate(it.when)}</span>}
+        <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
+      </Link>
+    );
+  };
+
   return (
-    <div className={`rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] ${fill ? "h-full flex flex-col" : "mb-4"}`}>
-      <div className={`p-4 ${fill ? "flex-1 min-h-0 overflow-y-auto" : ""}`}>
-        <div className="flex flex-wrap items-start gap-3">
-          <div className="min-w-0 flex-1">
-            <p className="text-[12.5px] text-[var(--color-text-muted)]">{hello}{name ? `, ${name}` : ""}.</p>
-            <p className="text-[19px] font-black leading-snug">
-              {n > 0 ? `${n} ${n === 1 ? "thing needs" : "things need"} you${actionCount > 0 ? `, ${actionCount} to act on` : ""}.` : "Nothing needs you right now."}
-            </p>
-            {focus && <p className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{focus}</p>}
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {n > 0 && (
-              <button type="button" onClick={() => openCenter("all")}
-                className="h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-black hover:bg-[var(--color-accent-hover)]">
-                Show me
-              </button>
-            )}
-            <button type="button" onClick={onRefresh} disabled={refreshing} aria-label="Refresh" title={lastLoadedAt ? `Updated ${formatAgo(new Date(lastLoadedAt).toISOString())}` : "Refresh"}
-              className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] disabled:opacity-60">
-              <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
+    <section aria-label="Needs you"
+      className={`rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] text-[var(--color-text)] ${fill ? "h-full flex flex-col" : ""}`}>
+      <div className={`p-4 sm:p-5 ${fill ? "flex-1 min-h-0 overflow-y-auto" : ""}`}>
+        <div className="flex items-center gap-2">
+          <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+            {first ? (actionCount > 0 && actionCount < attentionCount ? `Needs you · ${actionCount} to act on` : "Needs you") : "Nothing waiting"}
+          </h2>
+          <div className="flex-1" />
+          {items.length > 0 && (
+            <button type="button" onClick={() => openCenter("all")}
+              className="h-8 px-2.5 rounded-lg text-[12.5px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+              Show all
             </button>
-            <button type="button" onClick={onExport} disabled={!canExport} aria-label="Export" title="Download what needs you as a spreadsheet (CSV)"
-              className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] disabled:opacity-40">
-              <Download className="w-4 h-4" />
-            </button>
-          </div>
+          )}
+          <button type="button" onClick={onRefresh} disabled={refreshing} aria-label="Refresh" title={lastLoadedAt ? `Updated ${formatAgo(new Date(lastLoadedAt).toISOString())}` : "Refresh"} className={iconBtn}>
+            <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
+          </button>
+          <button type="button" onClick={onExport} disabled={!canExport} aria-label="Export" title="Download what needs you as a spreadsheet (CSV)" className={iconBtn}>
+            <Download className="w-4 h-4" />
+          </button>
         </div>
-        <div className="mt-3">
-          <Link href="/requests" className={row}>
-            <Briefcase className="w-4 h-4 text-[var(--color-text-muted)]" />
-            <span className="flex-1"><b>Drafting requests</b> <span className="text-[var(--color-text-muted)]">{pillars.loaded ? `${pillars.openRequests} open` : ""}{data ? `, ${data.ticketsAssigned.length} assigned to you` : ""}</span></span>
-            <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)]" />
+
+        {first ? (
+          <div className="mt-2">
+            {row(first, true)}
+            {rest.length > 0 && (
+              <>
+                <div className="mt-3 mb-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Also open</div>
+                {rest.slice(0, SHOWN - 1).map((it) => row(it, false))}
+                {more > 0 && (
+                  <button type="button" onClick={() => openCenter("all")}
+                    className="w-full text-left border-t border-[var(--color-border)] pt-2.5 pb-1 text-[13px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">
+                    Show {more} more
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        ) : (
+          <p className="mt-2 text-[14px] text-[var(--color-text-muted)]">
+            {focus ?? "No requests, reviews or alerts are waiting on you."}
+          </p>
+        )}
+
+        {/* The three main tools, with their live counts. */}
+        <div className="mt-3 pt-1 border-t border-[var(--color-border)] grid grid-cols-1 sm:grid-cols-3 sm:gap-4">
+          <Link href="/requests" className={tool}>
+            <span className="min-w-0 truncate"><b>Drafting requests</b> <span className="text-[var(--color-text-muted)]">{pillars.loaded ? `${pillars.openRequests} open` : ""}{data ? `${pillars.loaded ? ", " : ""}${data.ticketsAssigned.length} yours` : ""}</span></span>
           </Link>
-          <Link href="/checkouts" className={row}>
-            <FileStack className="w-4 h-4 text-[var(--color-text-muted)]" />
-            <span className="flex-1"><b>Documents</b> <span className="text-[var(--color-text-muted)]">{pillars.loaded ? `${pillars.lockedDocs} checked out` : ""}{data ? `, ${data.myCheckouts.length} by you` : ""}</span>
+          <Link href="/checkouts" className={tool}>
+            <span className="min-w-0 truncate"><b>Documents</b> <span className="text-[var(--color-text-muted)]">{pillars.loaded ? `${pillars.lockedDocs} checked out` : ""}{data ? `${pillars.loaded ? ", " : ""}${data.myCheckouts.length} by you` : ""}</span>
               {stale > 0 && <span className="ml-1 font-bold text-rose-700 dark:text-rose-400">{stale} past due</span>}</span>
-            <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)]" />
           </Link>
-          <Link href="/projects" className={row}>
-            <FolderKanban className="w-4 h-4 text-[var(--color-text-muted)]" />
-            <span className="flex-1"><b>Projects</b> <span className="text-[var(--color-text-muted)]">{pillars.loaded ? `${pillars.activeProjects} active` : ""}{data && data.milestonesUpcoming.length ? `, ${data.milestonesUpcoming.length} milestones this week` : ""}</span></span>
-            <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)]" />
+          <Link href="/projects" className={tool}>
+            <span className="min-w-0 truncate"><b>Projects</b> <span className="text-[var(--color-text-muted)]">{pillars.loaded ? `${pillars.activeProjects} active` : ""}{data && data.milestonesUpcoming.length ? `, ${data.milestonesUpcoming.length} milestones this week` : ""}</span></span>
           </Link>
         </div>
       </div>
-    </div>
+    </section>
   );
 }
 

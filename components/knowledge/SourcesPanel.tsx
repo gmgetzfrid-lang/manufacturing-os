@@ -357,7 +357,7 @@ export default function SourcesPanel({ orgId, libraryId, isController, onChanged
   };
 
   return (
-    <div className="mb-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-3">
+    <div className="mb-3 rounded-xl bg-[var(--color-surface-2)] px-3.5 py-3">
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
           <Link2 className="w-3.5 h-3.5" /> Sources

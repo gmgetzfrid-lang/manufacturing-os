@@ -18,11 +18,11 @@ import { generateTicketNumber } from '@/lib/ticketNumber';
 import { takeDraft } from '@/lib/draftHandoff';
 import { loadCodebook } from '@/lib/codebook';
 import IsoGuidance from '@/components/ui/IsoGuidance';
-import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
+import { PageShell } from '@/components/ui/PageShell';
+import { PageHero, PageBody, Card, heroPrimary } from '@/components/ui/PageHero';
 import { Input, Select } from '@/components/ui/Field';
 import { appAlert } from '@/components/providers/DialogProvider';
 import {
-  ArrowLeft,
   UploadCloud,
   FileText,
   Loader2,
@@ -456,79 +456,87 @@ export default function NewTicketPage() {
   if (loadingConfig) {
     return (
       <PageShell width="form">
-        <LoadingBlock what="the request form" rows={6} />
+        <PageHero back={{ onClick: () => router.back(), label: "Back" }} kicker="Drafting requests · New" title="New drafting request." size="md" />
+        <PageBody>
+          <Card><LoadingBlock what="the request form" rows={6} className="border-0 p-0" /></Card>
+        </PageBody>
       </PageShell>
     );
   }
 
+  const submitLabel = isSubmitting
+    ? <><Loader2 className="w-4 h-4 animate-spin" />{uploadStatus || 'Sending…'}</>
+    : <><Save className="w-4 h-4" />Submit request</>;
+
   return (
     <PageShell width="form">
 
-      {/* Header */}
-      <div className="flex items-start gap-3">
-        <button
-          type="button"
-          onClick={() => router.back()}
-          aria-label="Back"
-          className="p-2 mt-1 hover:bg-[var(--color-surface-2)] rounded-full text-[var(--color-text-muted)] transition-colors"
-        >
-          <ArrowLeft className="w-5 h-5" />
-        </button>
-        <PageHeaderBar
-          className="flex-1 min-w-0"
-          title="New request"
-          subtitle={
-            <>
-              {draft.restored ? <>Your unsent draft is back. <button type="button" className="font-bold underline" onClick={() => { draft.clear(); setTitle(""); setDescription(""); setTargetDate(""); setCustomValues({}); }}>Start over</button>{" "}</> : <>What do you need drawn or changed?{" "}</>}
-              <IsoGuidance topic="drafting_request_intent" />
-            </>
-          }
-        />
-      </div>
+      <PageHero
+        back={{ onClick: () => router.back(), label: "Back" }}
+        kicker="Drafting requests · New"
+        title={draft.restored ? "Your draft is back." : "New drafting request."}
+        size="md"
+        sub={
+          <>
+            {draft.restored ? <>Your unsent draft is back. <button type="button" className="font-bold text-white underline" onClick={() => { draft.clear(); setTitle(""); setDescription(""); setTargetDate(""); setCustomValues({}); }}>Start over</button>{" "}</> : <>What do you need drawn or changed?{" "}</>}
+            <IsoGuidance topic="drafting_request_intent" />
+          </>
+        }
+        primary={<button type="submit" form="new-request" disabled={isSubmitting} className={heroPrimary}>{submitLabel}</button>}
+      />
 
-        <form onSubmit={handleSubmit} className="space-y-6">
+      <PageBody>
+        <form id="new-request" onSubmit={handleSubmit} className="space-y-4">
 
           {/* Source-document chip when arriving via "Send to Drafting" */}
           {sourceFileUrl && (
-            <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl p-3 flex items-start gap-3">
+            <Card className="flex items-start gap-3">
               <FileText className="w-5 h-5 text-[var(--color-text-muted)] mt-0.5 shrink-0" />
               <div className="flex-1 min-w-0">
-                <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Source document</div>
-                <div className="text-sm font-bold text-[var(--color-text)] truncate mt-0.5">
+                <div className="text-[11px] font-extrabold text-[var(--color-text-muted)] uppercase tracking-[0.14em]">Source document</div>
+                <div className="text-[14px] font-bold text-[var(--color-text)] truncate mt-1">
                   {sourceDocNum || sourceDocTitle || sourceFileName || 'Document'} {sourceDocRev ? `· Rev ${sourceDocRev}` : ''}
                 </div>
-                <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
+                <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">
                   Attached as the source file.
                 </div>
               </div>
-            </div>
+            </Card>
           )}
 
           {/* Section 1: Details */}
-          <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-6 shadow-sm">
-            <h2 className="text-sm font-bold text-[var(--color-text)] uppercase tracking-wide mb-4 flex items-center">
-              <FileText className="w-4 h-4 mr-2 text-[var(--color-text-muted)]" />
-              Job Details
-            </h2>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-              
+          <Card label="Job details">
+            <div className="space-y-5 mb-5">
               {/* DYNAMIC REQUEST TYPE */}
               <div>
-                <label className="block text-sm font-bold text-[var(--color-text)] mb-2">
-                  {config.requestTypes.label} <span className="text-red-500">*</span>
-                </label>
-                <Select
-                  className="font-medium"
-                  value={requestType}
-                  onChange={(e) => setRequestType(e.target.value)}
-                >
-                  {config.requestTypes.options.map((opt, idx) => (
-                    <option key={idx} value={opt.value}>{opt.label}</option>
-                  ))}
-                </Select>
+                {/* A few choices: one tap each. Many: a list. */}
+                {config.requestTypes.options.length <= 6 ? (
+                  <QuickPick
+                    label={<>{config.requestTypes.label} <span className="text-red-500">*</span></>}
+                    value={requestType}
+                    options={config.requestTypes.options.map((o) => ({ value: String(o.value), label: o.label }))}
+                    onPick={setRequestType}
+                  />
+                ) : (
+                  <>
+                    <label className="block text-sm font-bold text-[var(--color-text)] mb-2">
+                      {config.requestTypes.label} <span className="text-red-500">*</span>
+                    </label>
+                    <Select
+                      className="font-medium"
+                      value={requestType}
+                      onChange={(e) => setRequestType(e.target.value)}
+                    >
+                      {config.requestTypes.options.map((opt, idx) => (
+                        <option key={idx} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </Select>
+                  </>
+                )}
               </div>
 
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
               {/* DYNAMIC UNIT / AREA */}
               <div>
                 <label className="block text-sm font-bold text-[var(--color-text)] mb-2">
@@ -554,48 +562,58 @@ export default function NewTicketPage() {
                   />
                 )}
               </div>
-            </div>
-
-            {/* DYNAMIC PRIORITY + TARGET DATE */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-              <div>
-                <label className="block text-sm font-bold text-[var(--color-text)] mb-2">
-                  {config.priorities.label} <span className="text-red-500">*</span>
-                </label>
-                <select
-                  className="w-full p-3 bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] rounded-lg focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none transition-all font-medium text-sm"
-                  value={priority}
-                  onChange={(e) => setPriority(Number(e.target.value))}
-                >
-                  {config.priorities.options.map((opt, idx) => (
-                    <option key={idx} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
-              </div>
               <div>
                 <label className="block text-sm font-bold text-[var(--color-text)] mb-2">
                   Target Completion <span className="text-[var(--color-text-faint)] font-normal text-xs">(optional)</span>
                 </label>
                 <input
                   type="date"
-                  className="w-full p-3 bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] rounded-lg focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none transition-all font-medium text-sm"
+                  className="w-full h-11 px-3 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-lg focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none transition-all font-medium text-[14px]"
                   value={targetDate}
                   onChange={(e) => setTargetDate(e.target.value)}
                 />
-                <p className="text-[11px] text-[var(--color-text-muted)] mt-1">
+                <p className="text-[12px] text-[var(--color-text-muted)] mt-1">
                   Blank uses the usual time for this type.
                 </p>
               </div>
+              </div>
+
+              {/* DYNAMIC PRIORITY */}
+              <div>
+                {config.priorities.options.length <= 5 ? (
+                  <QuickPick
+                    label={<>{config.priorities.label} <span className="text-red-500">*</span></>}
+                    value={String(priority)}
+                    options={config.priorities.options.map((o) => ({ value: String(o.value), label: o.label }))}
+                    onPick={(v) => setPriority(Number(v))}
+                  />
+                ) : (
+                  <>
+                    <label className="block text-sm font-bold text-[var(--color-text)] mb-2">
+                      {config.priorities.label} <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      className="w-full h-11 px-3 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-lg focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none transition-all font-medium text-[14px]"
+                      value={priority}
+                      onChange={(e) => setPriority(Number(e.target.value))}
+                    >
+                      {config.priorities.options.map((opt, idx) => (
+                        <option key={idx} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  </>
+                )}
+              </div>
             </div>
 
-            <div className="mb-6">
+            <div className="mb-5">
               <label className="block text-sm font-bold text-[var(--color-text)] mb-2">
-                Title / Subject <span className="text-red-500">*</span>
+                Title <span className="text-red-500">*</span>
               </label>
               <input 
                 type="text"
-                placeholder="Brief summary of the work..."
-                className="w-full p-3 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-lg focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none transition-all text-sm font-bold text-[var(--color-text)]"
+                placeholder="A short summary of the work"
+                className="w-full h-11 px-3 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-lg focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none transition-all text-[15px] font-semibold text-[var(--color-text)]"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 required
@@ -604,17 +622,17 @@ export default function NewTicketPage() {
 
             <div>
               <label className="block text-sm font-bold text-[var(--color-text)] mb-2">
-                Detailed Scope <span className="text-red-500">*</span>
+                Scope of work <span className="text-red-500">*</span>
               </label>
               <textarea 
-                className="w-full p-3 h-32 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-lg focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none resize-none transition-all text-sm"
-                placeholder="Describe the work required in detail..."
+                className="w-full p-3 h-32 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-lg focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none resize-y transition-all text-[14px]"
+                placeholder="What needs to change, on which drawings, and why"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 required
               />
             </div>
-          </div>
+          </Card>
 
           {/* Admin-defined custom category sections */}
           {(config.customCategories ?? []).filter((c) => c.enabled).map((cat) => (
@@ -627,19 +645,15 @@ export default function NewTicketPage() {
           ))}
 
           {/* Section 2: Files */}
-          <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-6 shadow-sm">
-            <h2 className="text-sm font-bold text-[var(--color-text)] uppercase tracking-wide mb-4 flex items-center">
-              <UploadCloud className="w-4 h-4 mr-2 text-[var(--color-text-muted)]" />
-              Attachments
-            </h2>
-            
+          <Card label="Attachments">
+
             <div
               role="button"
               tabIndex={0}
               onClick={() => fileInputRef.current?.click()}
               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInputRef.current?.click(); } }}
               {...drag.bind}
-              className={`border-2 border-dashed rounded-xl p-8 text-center transition-all cursor-pointer group border-[var(--color-border-strong)] bg-[var(--color-surface-2)] hover:border-[var(--color-text-muted)] ${drag.ring}`}
+              className={`border-2 border-dashed rounded-xl p-7 text-center transition-all cursor-pointer group border-[var(--color-border-strong)] hover:border-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] ${drag.ring}`}
             >
               <input
                 ref={fileInputRef}
@@ -649,20 +663,18 @@ export default function NewTicketPage() {
                 onChange={handleFileSelect}
               />
               <div className="flex flex-col items-center pointer-events-none">
-                <div className="p-3 bg-[var(--color-surface)] rounded-full shadow-sm mb-3">
-                  <UploadCloud className={`w-6 h-6 ${drag.over ? 'text-[var(--color-text)]' : 'text-[var(--color-text-muted)]'}`} />
-                </div>
-                <p className="text-sm font-bold text-[var(--color-text)]">{drag.over ? drag.say : 'Drop files here, or tap to pick'}</p>
-                <p className="text-xs text-[var(--color-text-faint)] mt-1">PDF, JPG, PNG, DWG · multiple files OK</p>
+                <UploadCloud className={`w-6 h-6 mb-2 ${drag.over ? 'text-[var(--color-text)]' : 'text-[var(--color-text-muted)]'}`} />
+                <p className="text-[14px] font-bold text-[var(--color-text)]">{drag.over ? drag.say : 'Drop files here, or tap to pick'}</p>
+                <p className="text-[12px] text-[var(--color-text-muted)] mt-1">PDF, JPG, PNG, DWG · multiple files OK</p>
               </div>
             </div>
 
             {files.length > 0 && (
-              <div className="mt-4 space-y-2">
+              <div className="mt-3 divide-y divide-[var(--color-border)]">
                 {files.map((file, idx) => {
                   const st = fileState.get(file);
                   return (
-                  <div key={idx} className={`flex items-center justify-between gap-2 p-3 bg-[var(--color-surface)] border rounded-lg shadow-sm ${st?.state === 'failed' ? 'border-red-300 dark:border-red-500/50' : 'border-[var(--color-border)]'}`}>
+                  <div key={idx} className={`flex items-center justify-between gap-2 py-2.5 ${st?.state === 'failed' ? 'border-l-2 border-l-red-500 pl-2' : ''}`}>
                     <div className="flex items-center gap-3 min-w-0">
                       <FileThumb file={file} />
                       <div className="min-w-0">
@@ -698,34 +710,47 @@ export default function NewTicketPage() {
                 })}
               </div>
             )}
-          </div>
+          </Card>
 
-          {/* Actions */}
-          <div className="flex justify-end pt-4">
-            <button 
-              type="submit" 
-              disabled={isSubmitting}
-              className={`
-                flex items-center px-8 py-3 rounded-xl font-bold transition-colors
-                ${isSubmitting ? 'bg-[var(--color-surface-2)] text-[var(--color-text-muted)] cursor-not-allowed' : 'bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]'}
-              `}
-            >
-              {isSubmitting ? (
-                <>
-                  <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                  {uploadStatus}
-                </>
-              ) : (
-                <>
-                  <Save className="w-5 h-5 mr-2" />
-                  Submit request
-                </>
-              )}
+          {/* At the end of the form, for whoever filled it top to bottom (the
+              orange one is in the band; on a phone it rides at the bottom). */}
+          <div className="max-sm:hidden flex justify-end pt-1">
+            <button type="submit" disabled={isSubmitting}
+              className="inline-flex items-center gap-2 h-11 px-5 rounded-xl text-[14px] font-bold bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity">
+              {submitLabel}
             </button>
           </div>
 
         </form>
+      </PageBody>
     </PageShell>
+  );
+}
+
+// ─── Quick pick ───────────────────────────────────────────────────────
+// A short list of choices as one-tap chips (a radio group), so the usual
+// answer is a tap, not a dropdown.
+function QuickPick({ label, value, options, onPick }: {
+  label: React.ReactNode;
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  onPick: (v: string) => void;
+}) {
+  return (
+    <fieldset>
+      <legend className="block text-sm font-bold text-[var(--color-text)] mb-2">{label}</legend>
+      <div className="flex flex-wrap gap-2" role="radiogroup">
+        {options.map((o) => {
+          const on = o.value === value;
+          return (
+            <button key={o.value} type="button" role="radio" aria-checked={on} onClick={() => onPick(o.value)}
+              className={`h-10 px-3.5 rounded-lg border text-[13.5px] font-semibold transition-colors ${on ? 'bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]' : 'bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]'}`}>
+              {o.label}
+            </button>
+          );
+        })}
+      </div>
+    </fieldset>
   );
 }
 
@@ -746,12 +771,12 @@ function CustomCategoryCard({
 }) {
   const setField = (key: string, value: unknown) => onChange({ ...values, [key]: value });
   return (
-    <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-6 shadow-sm">
-      <h2 className="text-sm font-bold text-[var(--color-text)] uppercase tracking-wide mb-1 flex items-center">
-        <Info className="w-4 h-4 mr-2 text-[var(--color-text-muted)]" />
+    <div className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] p-4 sm:p-5">
+      <h2 className="text-[11px] font-extrabold text-[var(--color-text-muted)] uppercase tracking-[0.14em] mb-1 flex items-center">
+        <Info className="w-3.5 h-3.5 mr-1.5" />
         {category.label}
       </h2>
-      {category.description && <p className="text-xs text-[var(--color-text-muted)] mb-4">{category.description}</p>}
+      {category.description && <p className="text-[13px] text-[var(--color-text-muted)] mb-4">{category.description}</p>}
       <div className="space-y-3">
         {category.fields.map((f) => (
           <CustomFieldRenderer key={f.key} field={f} value={values[f.key]} onChange={(v) => setField(f.key, v)} />

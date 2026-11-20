@@ -11,7 +11,7 @@
 // Inside: the cockpit's AttentionFeed (filters, mark-read, deep links per
 // item), so every row is a doorway to the thing that needs you.
 
-import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useState, useSyncExternalStore } from "react";
 import { appAlert } from "@/components/providers/DialogProvider";
 import { createPortal } from "react-dom";
 import Link from "next/link";
@@ -32,6 +32,8 @@ interface CenterCtx {
 const NotificationCenterContext = createContext<CenterCtx>({ open: () => {}, close: () => {}, isOpen: false });
 
 export const useNotificationCenter = () => useContext(NotificationCenterContext);
+
+const subscribeNever = () => () => {};
 
 export function NotificationCenterProvider({ children }: { children: React.ReactNode }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -56,6 +58,7 @@ function CenterPanel({
 }) {
   const { items, markRead, markAllRead, loading, loadError } = useTicketNotifications();
   const [markingAll, setMarkingAll] = useState(false);
+  const mounted = useSyncExternalStore(subscribeNever, () => true, () => false);
 
   // Escape closes just the center (capture — the same trick every overlay in
   // the app uses so underlying Esc listeners don't also fire).
@@ -85,7 +88,10 @@ function CenterPanel({
     void markAllRead().catch((e: unknown) => console.warn("[notifications] clearing seen news failed; the bell keeps them", e));
   }, [isOpen, markAllRead]);
 
-  if (typeof document === "undefined") return null;
+  // Only after hydration: the server renders nothing here, so the first
+  // client pass must too (a portal on that pass made React hydrate the panel
+  // against the toast stack and report a mismatch).
+  if (!mounted) return null;
 
   const counts = {
     all: items.length,
@@ -98,13 +104,18 @@ function CenterPanel({
       ? items.filter((i) => !i.actionRequired)
       : items;
 
+  const lead = items.find((i) => i.actionRequired) ?? items[0];
+  const answer = loading && items.length === 0
+    ? "Notifications"
+    : counts.all === 0 ? "All caught up." : `${counts.all} ${counts.all === 1 ? "thing needs" : "things need"} you.`;
+
   return createPortal(
     <>
-      {/* Backdrop */}
+      {/* The page behind dims, so the panel is the one thing in front. */}
       <div
         onClick={onClose}
         aria-hidden
-        className={`fixed inset-0 z-[240] bg-slate-900/50 transition-opacity duration-300 ${
+        className={`fixed inset-0 z-[240] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] transition-opacity duration-300 ${
           isOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
         }`}
       />
@@ -113,36 +124,42 @@ function CenterPanel({
         role="dialog"
         aria-modal="true"
         aria-label="Notification center"
-        className={`fixed top-0 right-0 bottom-0 z-[241] w-[480px] max-w-[94vw] bg-[var(--color-surface)] border-l border-[var(--color-border)] shadow-2xl flex flex-col transition-transform duration-500 ${
-          isOpen ? "translate-x-0" : "translate-x-full"
+        className={`fixed top-0 sm:top-3.5 right-0 sm:right-3.5 bottom-0 z-[241] w-[480px] max-w-[94vw] bg-[var(--color-surface)] rounded-l-[20px] sm:rounded-[20px] sm:rounded-b-none shadow-[-30px_0_60px_-30px_rgb(0_0_0/0.6)] flex flex-col transition-transform duration-500 ${
+          isOpen ? "translate-x-0" : "translate-x-[110%]"
         }`}
         style={{ transitionTimingFunction: "var(--ease-spring)" }}
       >
-        <div className="px-4 py-3.5 border-b border-[var(--color-border)] flex items-center gap-3 shrink-0 bg-[var(--color-surface-2)]">
-          <span className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] shrink-0">
-            <BellRing className="w-4.5 h-4.5" />
-          </span>
-          <div className="flex-1 min-w-0">
-            <div className="text-sm font-black text-[var(--color-text)]">Needs your attention</div>
-            <div className="text-[11px] text-[var(--color-text-muted)]">
-              {counts.all === 0
-                ? "You're all caught up."
-                : `${counts.action > 0 ? `${counts.action} waiting on you` : ""}${counts.action > 0 && counts.unread > 0 ? " · " : ""}${counts.unread > 0 ? `${counts.unread} new` : ""}`}
-            </div>
+        <div className="px-5 sm:px-6 pt-5 pb-4 shrink-0">
+          <div className="flex items-center gap-2">
+            <BellRing className="w-3.5 h-3.5 text-[var(--color-text-muted)]" aria-hidden />
+            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Notifications</div>
+            <div className="flex-1" />
+            <button
+              onClick={onClose}
+              title="Close (Esc)"
+              aria-label="Close"
+              className="w-9 h-9 grid place-items-center rounded-[10px] bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
-          <button
-            onClick={onClose}
-            title="Close (Esc)"
-            aria-label="Close"
-            className="p-2 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <h2 className="mt-3 text-[30px] sm:text-[36px] leading-[1.05] font-black tracking-[-0.03em] text-[var(--color-text)]">{answer}</h2>
+          {counts.all > 0 && (
+            <p className="mt-2 text-[14px] text-[var(--color-text-muted)]">
+              {`${counts.action > 0 ? `${counts.action} waiting on you` : ""}${counts.action > 0 && counts.unread > 0 ? " · " : ""}${counts.unread > 0 ? `${counts.unread} new` : ""}`}
+            </p>
+          )}
+          {lead && (
+            <Link href={lead.link} onClick={() => { if (lead.notificationId) void markRead(lead.notificationId).catch(() => {}); onClose(); }}
+              className="mt-4 inline-flex items-center justify-center gap-2 h-11 px-5 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-extrabold hover:bg-[var(--color-accent-hover)] shadow-[0_12px_24px_-12px_var(--color-accent)] transition-colors">
+              {counts.all === 1 ? "Open it" : lead.actionRequired ? "Open the first one" : "Open the newest"}
+            </Link>
+          )}
         </div>
 
-        <div className="flex-1 min-h-0 overflow-y-auto p-4">
+        <div className="flex-1 min-h-0 overflow-y-auto px-5 sm:px-6 pb-4 border-t border-[var(--color-border)] pt-3">
           {loadError && (
-            <p role="alert" className="mx-3 mt-3 border-l-2 border-rose-500 pl-2 text-[12.5px] text-rose-800 dark:text-rose-300">
+            <p role="alert" className="mb-3 text-[13px] text-rose-800 dark:text-rose-300">
               Some of this couldn&apos;t load, so the list may be missing items: {loadError}
             </p>
           )}
@@ -150,6 +167,7 @@ function CenterPanel({
             <LoadingBlock what="notifications" rows={4} />
           ) : (
             <AttentionFeed
+              plain
               items={filtered}
               counts={counts}
               filter={filter}
@@ -161,13 +179,13 @@ function CenterPanel({
           )}
         </div>
 
-        <div className="px-4 py-2.5 border-t border-[var(--color-border)] shrink-0 bg-[var(--color-surface-2)]">
+        <div className="px-5 sm:px-6 py-3 border-t border-[var(--color-border)] shrink-0 pb-[calc(12px+env(safe-area-inset-bottom))]">
           <Link
             href="/inbox"
             onClick={onClose}
-            className="inline-flex items-center gap-1.5 text-[12px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors"
+            className="inline-flex items-center gap-1.5 text-[13px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-colors"
           >
-            <Inbox className="w-3.5 h-3.5" /> Open the full inbox cockpit
+            <Inbox className="w-3.5 h-3.5" /> Open the full inbox
           </Link>
         </div>
       </aside>

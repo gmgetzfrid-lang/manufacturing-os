@@ -9,7 +9,7 @@
 // branch points (engineer loop, revision loop) called out explicitly.
 
 import React from "react";
-import { X, ArrowDown, RotateCcw, GitBranch } from "lucide-react";
+import { X, RotateCcw } from "lucide-react";
 import type { TicketStatus } from "@/types/schema";
 
 interface StageDef {
@@ -49,12 +49,6 @@ const BRANCHES: StageDef[] = [
   { status: "CANCELED", label: "Canceled", blurb: "Withdrawn or returned to the requester. A terminal exit off the main flow." },
 ];
 
-const TONE: Record<string, string> = {
-  current: "border-[var(--color-text)] bg-[var(--color-surface-2)] ring-1 ring-[var(--color-text)]",
-  done: "border-emerald-200 bg-emerald-50/40",
-  upcoming: "border-[var(--color-border)] bg-[var(--color-surface)]",
-};
-
 export default function WorkflowDiagramModal({
   current,
   onClose,
@@ -72,39 +66,46 @@ export default function WorkflowDiagramModal({
 
   return (
     <div
-      className="fixed inset-0 z-[300] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4"
+      className="fixed inset-0 z-[300] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4"
       onClick={onClose}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="How a drafting request flows"
         className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl my-4 animate-in fade-in zoom-in-95 duration-200"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-2 px-5 py-4 border-b border-[var(--color-border)]">
-          <GitBranch className="w-4 h-4 text-[var(--color-text-muted)]" />
-          <div className="flex-1">
-            <h2 className="text-sm font-black text-[var(--color-text)]">How a drafting request flows</h2>
-            <p className="text-[11px] text-[var(--color-text-muted)]">The ringed stage is where it is now.</p>
+        <div className="flex items-start gap-2 px-5 sm:px-6 pt-5 pb-4 border-b border-[var(--color-border)]">
+          <div className="flex-1 min-w-0">
+            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">How a drafting request flows</div>
+            <h2 className="mt-1.5 text-[24px] leading-tight font-black tracking-[-0.02em] text-[var(--color-text)]">
+              {currentIdx >= 0 ? `Step ${currentIdx + 1} of ${MAIN_FLOW.length}: ${MAIN_FLOW[currentIdx].label}.` : BRANCHES.find((b) => b.status === current)?.label ?? "Seven steps, start to close."}
+            </h2>
           </div>
-          <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors"><X className="w-4 h-4" /></button>
+          <button onClick={onClose} aria-label="Close" className="w-9 h-9 grid place-items-center rounded-[10px] bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"><X className="w-4 h-4" /></button>
         </div>
 
-        <div className="p-5 max-h-[70vh] overflow-y-auto">
-          <ol className="space-y-1.5">
+        <div className="px-5 sm:px-6 py-5 max-h-[70vh] overflow-y-auto">
+          {/* One path: done steps filled, this one ringed, later ones faint. */}
+          <ol aria-label="Steps">
             {MAIN_FLOW.map((stage, i) => {
               const tone = stage.status === current ? "current" : currentIdx >= 0 && i < currentIdx ? "done" : "upcoming";
+              const last = i === MAIN_FLOW.length - 1;
               return (
-                <li key={stage.status}>
-                  <div className={`rounded-xl border p-3 ${TONE[tone]}`}>
+                <li key={stage.status} className="relative flex gap-3 pb-4 last:pb-0" aria-current={tone === "current" ? "step" : undefined}>
+                  {!last && <span aria-hidden className={`absolute left-[9px] top-5 bottom-0 w-0.5 ${tone === "done" ? "bg-[var(--color-text)]" : "bg-[var(--color-border)]"}`} />}
+                  <span className={`relative z-10 mt-0.5 w-5 h-5 rounded-full shrink-0 grid place-items-center text-[11px] font-black ${
+                    tone === "done" ? "bg-[var(--color-text)] text-[var(--color-surface)]"
+                      : tone === "current" ? "border-2 border-[var(--color-text)] bg-[var(--color-surface)] text-[var(--color-text)]"
+                        : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-faint)]"}`}>{i + 1}</span>
+                  <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[11px] font-black ${tone === "current" ? "bg-[var(--color-text)] text-[var(--color-surface)]" : tone === "done" ? "bg-emerald-500 text-white" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border border-[var(--color-border)]"}`}>{i + 1}</span>
-                      <span className="text-sm font-bold text-[var(--color-text)]">{stage.label}</span>
-                      {stage.status === current && <span className="ml-auto text-[11px] font-black uppercase tracking-wider text-[var(--color-text)]">You are here</span>}
+                      <span className={`text-[14px] font-bold ${tone === "upcoming" ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}>{stage.label}</span>
+                      {stage.status === current && <span className="ml-auto text-[11px] font-extrabold uppercase tracking-[0.12em] text-[var(--color-text)]">You are here</span>}
                     </div>
-                    <p className="text-[11px] text-[var(--color-text-muted)] mt-1 leading-relaxed pl-7">{stage.blurb}</p>
+                    <p className="text-[13px] text-[var(--color-text-muted)] mt-0.5 leading-relaxed">{stage.blurb}</p>
                   </div>
-                  {i < MAIN_FLOW.length - 1 && (
-                    <div className="flex justify-center py-0.5"><ArrowDown className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /></div>
-                  )}
                 </li>
               );
             })}
@@ -113,16 +114,16 @@ export default function WorkflowDiagramModal({
           <div className="mt-5 pt-4 border-t border-[var(--color-border)]">
             <div className="flex items-center gap-1.5 mb-2">
               <RotateCcw className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-              <h3 className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Branches & exits</h3>
+              <h3 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Branches and exits</h3>
             </div>
-            <div className="space-y-1.5">
+            <div className="divide-y divide-[var(--color-border)]">
               {BRANCHES.map((b) => (
-                <div key={b.status} className={`rounded-xl border p-3 ${b.status === current ? TONE.current : "border-[var(--color-border)] bg-[var(--color-surface)]"}`}>
+                <div key={b.status} className="py-2.5">
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-bold text-[var(--color-text)]">{b.label}</span>
-                    {b.status === current && <span className="ml-auto text-[11px] font-black uppercase tracking-wider text-[var(--color-text)]">You are here</span>}
+                    <span className="text-[14px] font-bold text-[var(--color-text)]">{b.label}</span>
+                    {b.status === current && <span className="ml-auto text-[11px] font-extrabold uppercase tracking-[0.12em] text-[var(--color-text)]">You are here</span>}
                   </div>
-                  <p className="text-[11px] text-[var(--color-text-muted)] mt-1 leading-relaxed">{b.blurb}</p>
+                  <p className="text-[13px] text-[var(--color-text-muted)] mt-0.5 leading-relaxed">{b.blurb}</p>
                 </div>
               ))}
             </div>

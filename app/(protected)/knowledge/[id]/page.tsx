@@ -7,7 +7,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
-  BookOpen, ArrowLeft, Sparkles, Loader2, FileText, Upload,
+  Sparkles, Loader2, FileText, Upload,
   Trash2, RefreshCw, CheckCircle2, AlertTriangle, History, Globe, Bot,
   ChevronRight, ChevronDown, Wand2, Eye, MessageSquare, ArrowRight, FolderUp, Search,
 } from "lucide-react";
@@ -15,7 +15,8 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useRole } from "@/components/providers/RoleContext";
 import { useToast } from "@/components/providers/ToastProvider";
-import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card, heroQuiet } from "@/components/ui/PageHero";
 import { Button } from "@/components/ui/Button";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import LoadingBlock from "@/components/ui/LoadingBlock";
@@ -431,19 +432,30 @@ export default function KnowledgeLibraryPage() {
     return next;
   });
 
-  if (loading) return <PageShell><LoadingBlock what="the library" rows={6} /></PageShell>;
+  if (loading) {
+    return (
+      <PageShell>
+        <PageHero back={{ href: "/knowledge", label: "Back to Knowledge" }} kicker="Intelligence · Knowledge" title="Loading the library…" size="md" />
+        <PageBody><Card><LoadingBlock what="the library" rows={6} className="border-0 p-0" /></Card></PageBody>
+      </PageShell>
+    );
+  }
   if (!library) {
     return (
       <PageShell>
-        <div className="py-16 text-center text-sm text-[var(--color-text-muted)]">
-          {loadError
-            ? <p role="alert" className="font-semibold text-red-700 dark:text-red-400">Couldn&apos;t open this library: {loadError}</p>
-            : <p>This library isn&apos;t there. It may have been deleted.</p>}
-          <div className="mt-3 flex justify-center gap-2">
-            {loadError && <Button variant="secondary" onClick={() => { setLoading(true); void refresh(); }}><RefreshCw className="w-4 h-4" /> Try again</Button>}
-            <Button variant="secondary" onClick={() => router.push("/knowledge")}>Go to Knowledge</Button>
-          </div>
-        </div>
+        <PageHero back={{ href: "/knowledge", label: "Back to Knowledge" }} kicker="Intelligence · Knowledge"
+          title={loadError ? "This library didn't open." : "This library isn't there."} size="md" />
+        <PageBody>
+          <Card>
+            {loadError
+              ? <p role="alert" className="text-[14px] font-semibold text-red-700 dark:text-red-400">Couldn&apos;t open this library: {loadError}</p>
+              : <p className="text-[14px] text-[var(--color-text-muted)]">It may have been deleted.</p>}
+            <div className="mt-4 flex gap-2">
+              {loadError && <Button variant="secondary" onClick={() => { setLoading(true); void refresh(); }}><RefreshCw className="w-4 h-4" /> Try again</Button>}
+              <Button variant="secondary" onClick={() => router.push("/knowledge")}>Go to Knowledge</Button>
+            </div>
+          </Card>
+        </PageBody>
       </PageShell>
     );
   }
@@ -451,45 +463,57 @@ export default function KnowledgeLibraryPage() {
   const readyDocs = docs.filter((d) => d.status === "ready").length;
   const indexingDocs = docs.filter((d) => d.status === "indexing" || d.status === "pending" || d.status === "stale").length;
 
+  // The answer: how much is in here, and how much of it can be asked.
+  const answer = docs.length === 0
+    ? "Empty. Nothing to ask yet."
+    : readyDocs === docs.length
+      ? `${docs.length.toLocaleString()} ${docs.length === 1 ? "document" : "documents"}, all indexed.`
+      : `${docs.length.toLocaleString()} ${docs.length === 1 ? "document" : "documents"}, ${readyDocs.toLocaleString()} indexed.`;
+
   return (
     <PageShell>
-      <PageHeaderBar
-        icon={BookOpen}
-        eyebrow={<button onClick={() => router.push("/knowledge")} aria-label="Back to Knowledge" className="inline-flex items-center gap-1 hover:underline"><ArrowLeft className="w-3 h-3" /> Knowledge</button>}
-        title={library.name}
-        subtitle={library.description || `${readyDocs} of ${docs.length} documents indexed and searchable`}
-        actions={isController ? (
-          <div className="flex items-center gap-2 flex-wrap">
-            <Button variant="secondary" onClick={() => setShowAiSetup(true)}>
-              <Wand2 className="w-4 h-4" /> Library AI setup
-            </Button>
-            <MoreMenu iconOnly label="More" items={[
+      <PageHero
+        back={{ href: "/knowledge", label: "Back to Knowledge" }}
+        kicker={<>Knowledge · {library.name}</>}
+        title={answer}
+        sub={
+          <>
+            {library.description || `${readyDocs} of ${docs.length} documents indexed and searchable.`}
+            {indexingDocs > 0 && <span className="block mt-1">{indexingDocs} in progress. Asking works on what&apos;s done.</span>}
+            {loadError && (
+              <span role="alert" className="block mt-1 text-rose-300 font-semibold">
+                Couldn&apos;t refresh the library: {loadError} <button type="button" onClick={() => void refresh()} className="font-bold underline text-white">Try again</button>
+              </span>
+            )}
+          </>
+        }
+        tools={isController ? (
+          <>
+            <button type="button" className={heroQuiet} onClick={() => setShowAiSetup(true)}>
+              <Wand2 className="w-4 h-4" /><span className="max-sm:hidden">Library AI setup</span><span className="sr-only sm:hidden">Library AI setup</span>
+            </button>
+            <MoreMenu iconOnly label="More" triggerClass={heroQuiet} items={[
               { icon: <Trash2 className="w-4 h-4" />, label: "Delete library", tone: "bad", onClick: () => { if (removing === null) void removeLibrary(); } },
             ]} />
-          </div>
+          </>
         ) : undefined}
-      />
+      >
+        {links.length > 0 && (
+          <div className="flex items-center gap-1.5 flex-wrap text-[12px] text-[var(--color-ink-text)]">
+            <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-ink-muted)] mr-1">Also searches</span>
+            {links.map((l) => (
+              <span key={l.id} className="h-7 inline-flex items-center px-2.5 rounded-full border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] font-semibold text-[var(--color-ink-fg)]">
+                {l.linkedLibraryName} · reference
+              </span>
+            ))}
+            <span className="ml-1">This library governs; answers say which document won.</span>
+          </div>
+        )}
+      </PageHero>
 
-      {links.length > 0 && (
-        <div className="mb-4 -mt-1 flex items-center gap-1.5 flex-wrap text-[11px] text-[var(--color-text-muted)]">
-          <span className="font-black uppercase tracking-wider">Also searches:</span>
-          {links.map((l) => (
-            <span key={l.id} className="font-black px-2 py-0.5 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)]">
-              {l.linkedLibraryName} · REFERENCE
-            </span>
-          ))}
-          <span className="italic">This library governs; answers say which document won.</span>
-        </div>
-      )}
-
-      {loadError && (
-        <p role="alert" className="mb-4 border-l-2 border-red-500 pl-3 text-xs font-semibold text-red-700 dark:text-red-400">
-          Couldn&apos;t refresh the library: {loadError} <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
-        </p>
-      )}
-
+      <PageBody>
       {removing && (
-        <div className="mb-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2.5 text-xs">
+        <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] px-4 py-3 text-[13px]">
           <div className="flex items-center gap-2">
             <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" />
             <span className="font-bold">{removing.label}…</span>
@@ -529,7 +553,7 @@ export default function KnowledgeLibraryPage() {
         <div
           {...docsDrag.bind}
           onDrop={onDrop}
-          className={docsDrag.over ? `rounded-2xl ${docsDrag.ring}` : undefined}
+          className={`rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 ${docsDrag.over ? docsDrag.ring : ""}`}
         >
           {docsDrag.over && <p className="mb-2 text-center text-sm font-bold text-[var(--color-text)]">{docsDrag.say}: PDFs and whole folders</p>}
           {activeOrgId && (
@@ -537,8 +561,8 @@ export default function KnowledgeLibraryPage() {
               isController={isController} onChanged={() => void refresh()} />
           )}
           <div className="flex items-center justify-between mb-2">
-            <button onClick={() => setDocsOpen((v) => !v)}
-              className="flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors">
+            <button onClick={() => setDocsOpen((v) => !v)} aria-expanded={docsOpen}
+              className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors">
               {docsOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
               Documents ({readyDocs}/{docs.length} indexed{indexingDocs > 0 ? ` · ${indexingDocs} in progress` : ""})
             </button>
@@ -646,7 +670,7 @@ export default function KnowledgeLibraryPage() {
           )}
 
           {!docsOpen && docs.length > 0 ? null : docs.length === 0 && !uploadState ? (
-            <div className="rounded-xl border border-dashed border-[var(--color-border)] p-8 text-center text-xs text-[var(--color-text-muted)]">
+            <div className="rounded-xl border border-dashed border-[var(--color-border-strong)] p-8 text-center text-[13px] text-[var(--color-text-muted)]">
               <FileText className="w-6 h-6 mx-auto mb-2 opacity-50" />
               {isController ? "Drag PDFs or whole folders here to build the shelf." : "No documents yet. Admin or Doc Control can add PDFs."}
             </div>
@@ -677,7 +701,7 @@ export default function KnowledgeLibraryPage() {
                 <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
                 <input id="kdoc-search" value={docQuery} onChange={(e) => { setDocQuery(e.target.value); setDocLimit(200); }}
                   placeholder={`Search ${docs.length.toLocaleString()} documents: "EP 5-2-3", "piping specs"…`}
-                  className="w-full h-8 pl-8 pr-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-border-strong)]" />
+                  className="w-full h-9 pl-8 pr-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[13px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-border-strong)]" />
               </div>
               <div className="flex items-center gap-1 flex-wrap">
                 {([
@@ -703,9 +727,9 @@ export default function KnowledgeLibraryPage() {
                 No document matches{docQuery ? ` "${docQuery}"` : ""}{docFilter !== "all" ? " in this filter" : ""}.
               </div>
             )}
-            <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
+            <ul className="border-y border-[var(--color-border)] divide-y divide-[var(--color-border)] -mx-4 sm:-mx-5">
               {shownDocs.slice(0, docLimit).map((doc) => (
-                <li key={doc.id} className={`px-3.5 py-2.5 flex items-center gap-3 ${selected.has(doc.id) ? "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]" : "bg-[var(--color-surface)]"}`}>
+                <li key={doc.id} className={`px-4 sm:px-5 py-2.5 flex items-center gap-3 ${selected.has(doc.id) ? "bg-[var(--color-surface-2)]" : ""}`}>
                   {isController && (
                     <input type="checkbox" className="accent-[var(--color-text)] shrink-0" aria-label={`Select ${doc.name}`}
                       disabled={!!doc.sourceDocumentId} checked={selected.has(doc.id)}
@@ -714,7 +738,7 @@ export default function KnowledgeLibraryPage() {
                   )}
                   <FileText className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
                   <div className="min-w-0 flex-1">
-                    <div className="text-xs font-bold text-[var(--color-text)] truncate flex items-center gap-1.5">
+                    <div className="text-[13.5px] font-semibold text-[var(--color-text)] truncate flex items-center gap-1.5">
                       <span className="truncate">{doc.name}</span>
                       {doc.sourceDocumentId && (
                         <span className="shrink-0 text-[11px] font-black px-1 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)]"
@@ -723,7 +747,7 @@ export default function KnowledgeLibraryPage() {
                         </span>
                       )}
                     </div>
-                    <div className="text-[11px] text-[var(--color-text-muted)]">
+                    <div className="text-[12px] text-[var(--color-text-muted)]">
                       {/* Pages actually READ, against the file's page count — "28 pages
                           indexed" used to show the file's total even when reading
                           had stopped part-way. */}
@@ -765,23 +789,24 @@ export default function KnowledgeLibraryPage() {
             </ul>
             {shownDocs.length > docLimit && (
               <button onClick={() => setDocLimit((n) => n + 500)}
-                className="mt-1.5 w-full h-8 rounded-lg border border-[var(--color-border)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
-                Showing {docLimit.toLocaleString()} of {shownDocs.length.toLocaleString()}. Show more
+                className="mt-2 w-full h-9 text-left text-[13px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">
+                {docLimit.toLocaleString()} of {shownDocs.length.toLocaleString()} shown. Show {Math.min(500, shownDocs.length - docLimit).toLocaleString()} more
               </button>
             )}
             </>
           )}
-          {activeOrgId && library.aiFeatures?.drawingIntel === true && (
-            <DrawingIntelPanel orgId={activeOrgId} libraryId={libraryId}
-              isController={isController} refreshKey={readyDocs}
-              onRebuilt={() => void refresh()} />
-          )}
-          {activeOrgId && (
-            <SemanticIndexPanel orgId={activeOrgId} libraryId={libraryId} isController={isController} />
-          )}
         </div>
 
       </div>
+
+      {activeOrgId && library.aiFeatures?.drawingIntel === true && (
+        <DrawingIntelPanel orgId={activeOrgId} libraryId={libraryId}
+          isController={isController} refreshKey={readyDocs}
+          onRebuilt={() => void refresh()} />
+      )}
+      {activeOrgId && (
+        <SemanticIndexPanel orgId={activeOrgId} libraryId={libraryId} isController={isController} />
+      )}
 
       {viewer && (
         <CitedPageViewer
@@ -808,6 +833,7 @@ export default function KnowledgeLibraryPage() {
           onSaved={() => void refresh()}
         />
       )}
+      </PageBody>
     </PageShell>
   );
 }
@@ -855,14 +881,11 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
     router.push(`/assistant?${params.toString()}`);
   };
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] p-5 mb-6 bg-[var(--color-surface-2)]">
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 bg-[var(--color-text)]">
-          <Sparkles className="w-4 h-4 text-[var(--color-surface)]" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-black text-[var(--color-text)]">Ask this library</div>
-          <div className="text-[11px] text-[var(--color-text-muted)]">
+    <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
+      <div className="flex items-start gap-x-3 gap-y-1 flex-wrap">
+        <div className="min-w-0 flex-1 basis-[16rem]">
+          <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5" aria-hidden /> Ask this library</h2>
+          <div className="mt-1 text-[13px] text-[var(--color-text-muted)]">
             Answers come only from the indexed documents, cited to the page.
             {instructionCount > 0 && (
               <Link href="/admin/ai-instructions" className="ml-1.5 font-bold text-[var(--color-accent)] dark:text-[var(--color-text)] hover:underline">
@@ -872,30 +895,30 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
           </div>
         </div>
         <Link href={askHref}
-          className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-xs font-black hover:bg-[var(--color-surface-2)] transition-colors">
+          className="inline-flex items-center gap-1.5 h-9 -ml-3 sm:ml-0 px-3 rounded-lg text-[var(--color-accent)] text-[13px] font-bold hover:bg-[var(--color-surface-2)] transition-colors">
           <MessageSquare className="w-4 h-4" /> All conversations <ArrowRight className="w-3.5 h-3.5" />
         </Link>
       </div>
       {/* Ask right here — the question opens in the chat already running,
           instead of a door you have to walk through first. */}
-      <form onSubmit={ask} className="mt-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] focus-within:border-[var(--color-border-strong)]">
+      <form onSubmit={ask} className="mt-3 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-canvas)] focus-within:border-[var(--color-text-muted)]">
         <textarea id="library-ask" value={q} onChange={(e) => setQ(e.target.value)} disabled={readyDocs === 0} rows={2}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } }}
           placeholder={readyDocs === 0 ? "Asking unlocks when the first document is indexed" : "Ask this library, e.g. \"What piping spec should I use for 150 class sour gas?\""}
-          className="w-full resize-none bg-transparent px-4 pt-3 pb-1 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none disabled:opacity-60" />
+          className="w-full resize-none bg-transparent px-4 pt-3 pb-1 text-[15px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none disabled:opacity-60" />
         <div className="px-4 pb-1"><SkillHint skills={skills} picked={picked} question={q} answerMode={mode} /></div>
-        <div className="flex items-center gap-1.5 px-2 pb-2">
+        <div className="flex flex-wrap items-center gap-1.5 px-2 pb-2">
           <SourcesMenu scope="library" libraryId={libraryId} libraries={[]} fixedLibrary={libraryName} webOn={web} onToggleWeb={() => setWeb((v) => !v)} />
           <AnswerMenu answerMode={mode} onAnswerMode={setMode} skills={skills} picked={picked} onPick={setPicked} question={q} />
           <span className="flex-1" />
           <button type="submit" disabled={readyDocs === 0 || !q.trim()}
-            className="inline-flex items-center gap-1.5 h-8 px-3.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-40 transition-colors">
+            className="shrink-0 ml-auto inline-flex items-center gap-1.5 h-10 px-4 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-extrabold hover:bg-[var(--color-accent-hover)] shadow-[0_10px_22px_-12px_var(--color-accent)] disabled:opacity-40 disabled:shadow-none transition-colors">
             Ask <ArrowRight className="w-3.5 h-3.5" />
           </button>
         </div>
       </form>
       {readyDocs === 0 && (
-        <p className="mt-3 text-[11px] text-amber-700 dark:text-amber-400 font-bold">
+        <p className="mt-3 text-[13px] text-amber-700 dark:text-amber-400 font-semibold">
           {docsTotal > 0
             ? "Documents are indexing below. Asking unlocks as soon as the first one finishes."
             : "Nothing indexed yet. Link a source or add PDFs below first."}
@@ -906,20 +929,20 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
       )}
       {recent && recent.length > 0 && (
         <div className="mt-4">
-          <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1.5 flex items-center gap-1.5">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mb-1 flex items-center gap-1.5">
             <History className="w-3 h-3" /> Recent conversations
           </div>
-          <ul className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+          <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)] -mx-4 sm:-mx-5">
             {recent.map((t) => (
               <li key={t.id}>
                 <Link href={`/assistant?thread=${t.id}&library=${libraryId}`}
-                  className="flex items-center gap-2.5 px-3.5 py-2 hover:bg-[var(--color-surface-2)] transition-colors group">
+                  className="flex items-center gap-2.5 px-4 sm:px-5 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors group">
                   {t.scope === "internet" ? <Globe className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
                     : t.scope === "tools" ? <Bot className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
                     : <MessageSquare className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />}
                   <span className="min-w-0 flex-1">
-                    <span className="block text-xs font-bold text-[var(--color-text)] truncate">{t.title || "Untitled"}</span>
-                    <span className="block text-[11px] text-[var(--color-text-muted)]">
+                    <span className="block text-[13.5px] font-semibold text-[var(--color-text)] truncate">{t.title || "Untitled"}</span>
+                    <span className="block text-[12px] text-[var(--color-text-muted)]">
                       {(t.createdByName ?? "Someone").split("@")[0]} · {new Date(t.lastMessageAt).toLocaleString()}{t.settledAt ? " · settled" : ""}
                     </span>
                   </span>

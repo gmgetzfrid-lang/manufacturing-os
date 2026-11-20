@@ -96,20 +96,20 @@ export default function VerifyTicketPage() {
 
   return (
     <div className={`min-h-dvh flex flex-col items-center justify-center p-6 transition-colors duration-500 ${
-      loading || error || !ui ? "bg-slate-900" : ui.bg
+      loading || error || !ui ? "bg-[var(--color-ink)]" : ui.bg
     }`}>
       <div className="w-full max-w-sm text-center">
         {loading ? (
           <div className="text-white/90">
             <Loader2 className="w-14 h-14 mx-auto animate-spin mb-4" />
-            <div className="text-sm font-bold tracking-widest uppercase">Checking revision…</div>
+            <div className="text-[11px] font-bold tracking-[0.16em] uppercase">Checking revision…</div>
           </div>
         ) : error ? (
           <div className="text-white/90">
             <ShieldQuestion className="w-16 h-16 mx-auto mb-4 opacity-80" />
-            <h1 className="text-2xl font-black mb-2">Can&apos;t verify this code</h1>
-            <p className="text-sm opacity-80">{error}</p>
-            <p className="text-xs opacity-60 mt-4">
+            <h1 className="text-[34px] leading-[1.05] tracking-[-0.02em] font-black mb-3">Can&apos;t verify this code.</h1>
+            <p className="text-[14px] opacity-80">{error}</p>
+            <p className="text-[13px] opacity-70 mt-4">
               If this QR came from an issued deliverable, contact the requester before using the copy.
             </p>
             <button
@@ -129,34 +129,34 @@ export default function VerifyTicketPage() {
             ) : (
               <AlertTriangle className="w-24 h-24 mx-auto text-white mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
             )}
-            <h1 className="text-3xl font-black text-white leading-tight mb-1">{ui.headline}</h1>
-            <p className="text-white/90 text-sm font-bold mb-6">{ui.sub(result)}</p>
+            <h1 className="text-[40px] font-black text-white leading-[1.03] tracking-[-0.03em] mb-3">{ui.headline}</h1>
+            <p className="text-white/90 text-[15px] font-semibold mb-6">{ui.sub(result)}</p>
 
             {/* The facts card */}
-            <div className="bg-white/95 rounded-2xl shadow-2xl p-5 text-left space-y-3">
+            <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl p-5 text-left space-y-3">
               <div>
-                <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">Drafting ticket</div>
-                <div className="text-sm font-bold text-slate-900">{result.ticketNumber ?? "-"}</div>
-                {result.title && <div className="text-xs text-slate-500 mt-0.5">{result.title}</div>}
-                {result.unit && <div className="text-[11px] text-slate-400 mt-0.5">Unit {result.unit}</div>}
+                <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Drafting ticket</div>
+                <div className="text-[15px] font-bold text-[var(--color-text)] font-mono">{result.ticketNumber ?? "-"}</div>
+                {result.title && <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{result.title}</div>}
+                {result.unit && <div className="text-[12px] text-[var(--color-text-muted)] mt-0.5">Unit {result.unit}</div>}
               </div>
-              <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-100">
+              <div className="grid grid-cols-2 gap-3 pt-3 border-t border-[var(--color-border)]">
                 <div>
-                  <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">This copy</div>
-                  <div className={`text-lg font-black ${result.verdict === "current" ? "text-emerald-600" : result.verdict === "superseded" ? "text-red-600" : "text-amber-600"}`}>
+                  <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">This copy</div>
+                  <div className={`text-[15px] font-black ${result.verdict === "current" ? "text-emerald-700" : result.verdict === "superseded" ? "text-red-700" : "text-amber-700"}`}>
                     Rev {result.printedRev ?? "?"}
                   </div>
                 </div>
                 <div>
-                  <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">
+                  <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
                     {result.inReview ? "In review now" : "Latest issue"}
                   </div>
-                  <div className="text-lg font-black text-slate-900">Rev {result.currentRev ?? "?"}</div>
-                  <div className="text-[11px] text-slate-400">activity {fmt(result.lastActivityAt)}</div>
+                  <div className="text-[15px] font-black text-[var(--color-text)]">Rev {result.currentRev ?? "?"}</div>
+                  <div className="text-[12px] text-[var(--color-text-muted)]">activity {fmt(result.lastActivityAt)}</div>
                 </div>
               </div>
               {result.verdict !== "current" && (
-                <div className="pt-2 border-t border-slate-100 text-xs text-slate-600 leading-relaxed">
+                <div className="pt-3 border-t border-[var(--color-border)] text-[13px] text-[var(--color-text)] leading-relaxed">
                   {result.verdict === "superseded"
                     ? "Get the current issued deliverable from the ticket requester before performing any work from this copy. Mark it “SUPERSEDED” or destroy it."
                     : "Check with the ticket requester or project manager before relying on this copy."}
@@ -164,7 +164,7 @@ export default function VerifyTicketPage() {
               )}
             </div>
 
-            <div className="mt-5 text-[11px] text-white/60">
+            <div className="mt-5 text-[12px] text-white/70">
               Checked {new Date(result.checkedAt).toLocaleString()} · Drafting portal
             </div>
             <button

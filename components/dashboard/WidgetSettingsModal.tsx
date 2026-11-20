@@ -105,14 +105,14 @@ export default function WidgetSettingsModal({ widget, onClose, onSave }: Props) 
 
   return (
     <div role="dialog" aria-modal="true" aria-label={`${meta.title} settings`} className="fixed inset-0 z-[210] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden max-h-[85vh] flex flex-col">
+      <div className="absolute inset-0 bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)]" onClick={onClose} />
+      <div className="relative w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden max-h-[85vh] flex flex-col">
         <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]">
           <div className="flex items-center gap-2 min-w-0">
-            <Settings2 className="w-5 h-5 text-[var(--color-text-muted)] shrink-0" />
             <div className="min-w-0">
-              <h2 className="text-base font-black text-[var(--color-text)] truncate">{meta.title} settings</h2>
-              <p className="text-xs text-[var(--color-text-muted)]">Only this widget changes.</p>
+              <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Settings2 className="w-3.5 h-3.5" /> Widget settings</div>
+              <h2 className="mt-1 text-[24px] leading-tight font-black tracking-[-0.02em] text-[var(--color-text)] truncate">{meta.title}.</h2>
+              <p className="mt-0.5 text-[13px] text-[var(--color-text-muted)]">Only this widget changes.</p>
             </div>
           </div>
           <button onClick={onClose} aria-label="Close" className="p-2 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-5 h-5" /></button>

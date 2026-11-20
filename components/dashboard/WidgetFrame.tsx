@@ -108,15 +108,12 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings,
 
   const iconBtn = "p-2 sm:p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors";
 
+  // The card's name is a small all-caps label (its description rides along
+  // as a tooltip); the tools sit quietly on the right.
   const header = (isExpanded: boolean) => (
-    <div className="flex items-center gap-3 shrink-0">
-      <span className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-[var(--color-surface-2)] text-[var(--color-text-muted)] shrink-0">
-        <Icon className="w-[18px] h-[18px]" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <h3 className="text-[15px] font-black text-[var(--color-text)] tracking-tight truncate">{title}</h3>
-        <p className="text-[11px] text-[var(--color-text-muted)] truncate">{meta.description}</p>
-      </div>
+    <div className="flex items-center gap-2 shrink-0 min-h-8">
+      <Icon className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" aria-hidden />
+      <h3 title={meta.description} className="min-w-0 flex-1 truncate text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{title}</h3>
       {!editing && (
         <div className="shrink-0 flex items-center gap-0.5 opacity-70 group-hover/widget:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
           <button type="button" onClick={refresh} className={iconBtn} aria-label="Refresh"
@@ -132,7 +129,7 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings,
             </button>
           )}
           <Link href={meta.href} title={meta.cta}
-            className="ml-0.5 inline-flex items-center gap-1 pl-2 pr-1.5 py-2 sm:py-1.5 rounded-lg text-[11px] font-bold text-[var(--color-text-muted)] border border-transparent hover:border-[var(--color-border)] hover:text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] transition-all">
+            className="ml-0.5 inline-flex items-center gap-0.5 pl-2 pr-1 py-2 sm:py-1.5 rounded-lg text-[12.5px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] hover:bg-[var(--color-surface-2)] transition-colors">
             Open
             <ChevronRight className="w-3.5 h-3.5 transition-transform group-hover/widget:translate-x-0.5" />
           </Link>
@@ -154,13 +151,13 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings,
   return (
     <WidgetContextProvider value={ctx}>
       <div
-        className={`group/widget relative flex flex-col h-full rounded-2xl border overflow-hidden transition-all duration-300 bg-[var(--color-surface)] ${
+        className={`group/widget relative flex flex-col h-full rounded-2xl overflow-hidden transition-all duration-300 bg-[var(--color-surface)] ${
           editing
-            ? "border-dashed border-[var(--color-border-strong)] shadow-sm"
-            // View mode: no hard border — the card FLOATS on the canvas. No
-            // hover translate: cards jumping as the wheel sweeps across them
-            // read as a scroll glitch.
-            : "border-[var(--color-border)]"
+            ? "border border-dashed border-[var(--color-border-strong)] shadow-sm"
+            // View mode: no outline. The card floats on the paper on a soft
+            // shadow. No hover translate: cards jumping as the wheel sweeps
+            // across them read as a scroll glitch.
+            : "shadow-[var(--shadow-card)]"
         }`}
       >
 
@@ -180,14 +177,14 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings,
           </>
         )}
 
-        <div className={`relative flex-1 min-h-0 flex flex-col p-5 ${editing ? "pl-7 pr-16" : ""}`}>
+        <div className={`relative flex-1 min-h-0 flex flex-col p-4 sm:p-5 ${editing ? "pl-7 pr-16" : ""}`}>
           {header(false)}
           {!expanded && errorLine}
           {/* While expanded, the full-size copy is the live one — the tile
               doesn't fetch the same data twice. */}
           {expanded ? (
             <button type="button" onClick={() => setExpanded(false)}
-              className="mt-3 flex-1 min-h-0 grid place-items-center rounded-xl border border-dashed border-[var(--color-border)] text-[12px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent)]">
+              className="mt-3 flex-1 min-h-0 grid place-items-center rounded-xl bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
               Open in the expanded view. Tap to bring it back here
             </button>
           ) : (
@@ -201,9 +198,9 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings,
       {expanded && typeof document !== "undefined" && createPortal(
         <WidgetContextProvider value={expandedCtx}>
           <div className="fixed inset-0 z-[200] flex items-stretch justify-center p-2 sm:p-6 lg:p-10">
-            <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={() => setExpanded(false)} />
-            <div role="dialog" aria-label={title}
-              className="group/widget relative w-full max-w-6xl flex flex-col rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl overflow-hidden">
+            <div className="absolute inset-0 bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)]" onClick={() => setExpanded(false)} />
+            <div role="dialog" aria-modal="true" aria-label={title}
+              className="group/widget relative w-full max-w-6xl flex flex-col rounded-2xl bg-[var(--color-surface)] shadow-2xl overflow-hidden">
               <div className="relative flex-1 min-h-0 flex flex-col p-5 sm:p-6">
                 {header(true)}
                 {errorLine}

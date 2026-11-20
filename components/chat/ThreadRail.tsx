@@ -55,7 +55,7 @@ export default function ThreadRail(p: RailProps) {
   const settled = filtered.filter((t) => !!t.settledAt);
 
   return (
-    <div className="h-full flex flex-col bg-[var(--color-surface)] border-r border-[var(--color-border)]">
+    <div className="h-full flex flex-col bg-[var(--color-surface)]">
       <div className="px-3 pt-3 pb-2 space-y-2 shrink-0">
         <div className="flex items-center gap-1.5">
           <div className="relative flex-1 min-w-0">
@@ -63,11 +63,11 @@ export default function ThreadRail(p: RailProps) {
             <input
               value={q} onChange={(e) => setQ(e.target.value)}
               placeholder="Search conversations"
-              className="w-full h-8 pl-8 pr-2 text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]"
+              className="w-full h-8 pl-8 pr-2 text-[13px] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]"
             />
           </div>
           <button onClick={p.onNew} title="New conversation" aria-label="New conversation"
-            className="shrink-0 h-8 w-8 inline-flex items-center justify-center rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] transition-colors">
+            className="shrink-0 h-8 w-8 inline-flex items-center justify-center rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 transition-opacity">
             <Plus className="w-4 h-4" />
           </button>
           {p.onClose && (
@@ -105,7 +105,7 @@ export default function ThreadRail(p: RailProps) {
         ) : p.loading && p.threads.length === 0 ? (
           <LoadingBlock what="conversations" rows={4} className="mx-1 mt-1" />
         ) : filtered.length === 0 ? (
-          <p className="px-2 py-6 text-center text-[11px] text-[var(--color-text-muted)]">
+          <p className="px-2 py-6 text-center text-[13px] text-[var(--color-text-muted)]">
             {p.threads.length === 0
               ? "No conversations yet. Ask the first question."
               : "Nothing matches."}
@@ -125,7 +125,7 @@ export default function ThreadRail(p: RailProps) {
             {settled.length > 0 && (
               <div className="mt-2">
                 <button onClick={() => setSettledOpen((v) => !v)}
-                  className="w-full flex items-center gap-1 px-2 py-1 text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]">
+                  className="w-full flex items-center gap-1 px-2 py-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] hover:text-[var(--color-text-muted)]">
                   {settledOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
                   Settled <span className="font-bold normal-case tracking-normal">({settled.length})</span>
                 </button>
@@ -142,7 +142,7 @@ export default function ThreadRail(p: RailProps) {
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="mt-2">
-      <div className="px-2 py-1 text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">{label}</div>
+      <div className="px-2 py-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{label}</div>
       <div className="space-y-0.5">{children}</div>
     </div>
   );

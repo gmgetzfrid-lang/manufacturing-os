@@ -11,7 +11,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Briefcase, AlertOctagon, FileSignature, Lock, Bell, AlertTriangle, MessageSquare, Clock, Flag, ChevronRight, Calendar, Send, XCircle, Zap, ShieldCheck } from "lucide-react";
+import { Briefcase, AlertOctagon, FileSignature, Lock, Bell, AlertTriangle, MessageSquare, Clock, Flag, ChevronRight, Calendar, Send, XCircle, ShieldCheck, RefreshCw, Download } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
 import { useTicketNotifications } from "@/hooks/useTicketNotifications";
@@ -20,6 +20,8 @@ import { computeNudges } from "@/lib/nudges";
 import { useToast } from "@/components/providers/ToastProvider";
 import ViewTabs, { HOME_VIEWS } from "@/components/navigation/ViewTabs";
 import LoadingBlock from "@/components/ui/LoadingBlock";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card as Panel, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
 import { badgeText } from "@/lib/badge";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
@@ -137,9 +139,14 @@ export default function InboxPage() {
 
   if (loading && !data) {
     return (
-      <div className="min-h-full bg-[var(--color-canvas)]">
-        <div className="max-w-6xl mx-auto p-6"><LoadingBlock what="what needs you" rows={6} /></div>
-      </div>
+      <PageShell width="work">
+        <PageHero kicker="Home · Inbox" title="Inbox">
+          <ViewTabs tabs={HOME_VIEWS} variant="dark" />
+        </PageHero>
+        <PageBody>
+          <Panel><LoadingBlock what="what needs you" rows={6} className="border-0 p-0" /></Panel>
+        </PageBody>
+      </PageShell>
     );
   }
 
@@ -150,28 +157,50 @@ export default function InboxPage() {
       + data.markupRequestsToMe.length + data.milestonesUpcoming.length + data.transmittalsAwaitingAck.length
       + data.acknowledgmentsPendingOnMe.length + data.reviewsPendingOnMe.length + data.accessRecertsDue.length : 0);
 
+  // The rest of your desk, in words: every bucket that has something in it.
+  const desk = data ? ([
+    [data.myCheckouts.length, "checkout", "checkouts"],
+    [data.markupRequestsToMe.length, "markup request", "markup requests"],
+    [data.reviewsPendingOnMe.length, "sign-off", "sign-offs"],
+    [data.reviewCyclesDueOnMe.length, "periodic review", "periodic reviews"],
+    [data.acknowledgmentsPendingOnMe.length + data.distributionAcksPendingOnMe.length, "acknowledgment", "acknowledgments"],
+    [data.accessRecertsDue.length, "access recertification", "access recertifications"],
+    [data.myOpenHolds.length, "hold", "holds"],
+    [data.transmittalsAwaitingAck.length, "transmittal awaiting receipt", "transmittals awaiting receipt"],
+    [data.milestonesUpcoming.length, "milestone this week", "milestones this week"],
+  ] as Array<[number, string, string]>).filter(([n]) => n > 0).map(([n, one, many]) => `${n} ${n === 1 ? one : many}`) : [];
+  const lead = attentionItems.find((i) => i.actionRequired) ?? attentionItems[0];
+  const answer = actionRequiredCount > 0
+    ? `${actionRequiredCount} ${actionRequiredCount === 1 ? "thing needs" : "things need"} you.`
+    : attentionCount > 0 ? `${attentionCount} new ${attentionCount === 1 ? "update" : "updates"}.` : "Nothing needs you right now.";
+
   return (
-    <div className="min-h-full bg-[var(--color-canvas)] pb-24">
-      <div className="max-w-6xl mx-auto p-6">
-        <ViewTabs title="Home" tabs={HOME_VIEWS} />
+    <PageShell width="work">
+      <PageHero
+        kicker="Home · Inbox"
+        title={answer}
+        sub={error
+          ? <span className="text-amber-300">Your desk didn&apos;t load: {error}</span>
+          : desk.length > 0 ? <>Also on your desk: {desk.join(", ")}.</> : data ? "Nothing else on your desk." : null}
+        tools={
+          <>
+            <button type="button" onClick={() => void refresh()} disabled={loading || refreshing} className={heroQuiet} aria-label="Refresh">
+              <RefreshCw className={`w-4 h-4 ${loading || refreshing ? "animate-spin" : ""}`} /><span className="max-sm:hidden">{loading || refreshing ? "Refreshing…" : "Refresh"}</span>
+            </button>
+            {!!data && total > 0 && (
+              <button type="button" onClick={() => exportInboxCsv(data, userEmail ?? undefined)} className={heroQuiet} aria-label="Export" title="Download your desk as a spreadsheet (CSV)">
+                <Download className="w-4 h-4" /><span className="max-sm:hidden">Export</span>
+              </button>
+            )}
+          </>
+        }
+        primary={lead ? <Link href={lead.link} onClick={() => { if (lead.notificationId) void markRead(lead.notificationId); }} className={heroPrimary}>Open it</Link> : undefined}
+      >
+        <ViewTabs tabs={HOME_VIEWS} variant="dark" />
+      </PageHero>
 
-        {/* What needs you, first. (Home has the overview; this page is the list.) */}
-        <div className="flex flex-wrap items-center gap-2 mb-4">
-          <h1 className="text-xl font-black text-[var(--color-text)] mr-auto">
-            {actionRequiredCount > 0 ? `${actionRequiredCount} need${actionRequiredCount === 1 ? "s" : ""} you` : attentionCount > 0 ? `${attentionCount} new` : "Nothing needs you"}
-          </h1>
-          <button type="button" onClick={() => void refresh()} disabled={loading || refreshing} className="h-9 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">{loading || refreshing ? "Refreshing…" : "Refresh"}</button>
-          {!!data && total > 0 && <button type="button" onClick={() => exportInboxCsv(data, userEmail ?? undefined)} className="h-9 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Export</button>}
-        </div>
-
-        {error && (
-          <div role="alert" className="mb-4 border-l-2 border-red-500 pl-3 text-xs font-semibold text-red-700 dark:text-red-400 flex items-start gap-2">
-            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
-          </div>
-        )}
-
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+      <PageBody>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Left rail (2/3): the brief + the rich attention feed. */}
           <div className="lg:col-span-2 space-y-4">
             {/* Rich, filterable, actionable attention feed. */}
@@ -185,37 +214,33 @@ export default function InboxPage() {
               markingAll={markingAll}
             />
 
+          </div>
+
+          {/* Right rail (1/3): what to do next + my desk. */}
+          <div className="space-y-4">
             {/* Proactive nudges — what to DO, derived from the snapshot. */}
             {data && (() => {
               const nudges = computeNudges(data);
               if (nudges.length === 0) return null;
               return (
-                <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-                  <div className="flex items-center gap-1.5 mb-2">
-                    <Zap className="w-4 h-4 text-[var(--color-text-muted)]" />
-                    <span className="text-sm font-black text-[var(--color-text)]">Suggested actions</span>
-                  </div>
-                  <ul className="space-y-1.5">
+                <Panel label="Suggested actions">
+                  <ul className="space-y-2">
                     {nudges.map((n) => (
-                      <li key={n.id} className="text-[12.5px] text-[var(--color-text)] flex items-start gap-2">
+                      <li key={n.id} className="text-[13.5px] text-[var(--color-text)] flex items-start gap-2">
                         <span className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${n.severity === "high" ? "bg-rose-500" : "bg-amber-500"}`} />
                         <span className="flex-1">{n.message}</span>
                         {n.actionLabel && n.href && (
-                          <Link href={n.href} className="font-bold text-[var(--color-accent)] hover:underline inline-flex items-center gap-0.5 shrink-0">
+                          <Link href={n.href} className="font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] inline-flex items-center gap-0.5 shrink-0">
                             {n.actionLabel} <ChevronRight className="w-3 h-3" />
                           </Link>
                         )}
                       </li>
                     ))}
                   </ul>
-                </div>
+                </Panel>
               );
             })()}
 
-          </div>
-
-          {/* Right rail (1/3): my desk + quick launch pad. */}
-          <div className="space-y-4">
             {activeOrgId && uid && (
               <MyDeskPanel orgId={activeOrgId} uid={uid} userEmail={userEmail} />
             )}
@@ -442,8 +467,8 @@ export default function InboxPage() {
             )}
           </div>
         )}
-      </div>
-    </div>
+      </PageBody>
+    </PageShell>
   );
 }
 
@@ -456,16 +481,12 @@ interface CardProps {
 }
 function Card({ icon: Icon, title, count, children }: CardProps) {
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-      <div className="flex items-center justify-between mb-2">
-        <h2 className="text-sm font-black text-[var(--color-text)] inline-flex items-center gap-1.5">
-          <Icon className="w-4 h-4 text-[var(--color-text-muted)]" />
-          {title}
-        </h2>
-        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[11px] font-black text-[var(--color-text)] tabular-nums">{badgeText(count)}</span>
-      </div>
-      {children}
-    </div>
+    <Panel
+      label={<span className="inline-flex items-center gap-1.5"><Icon className="w-3.5 h-3.5" />{title}</span>}
+      action={<span className="text-[12px] font-bold text-[var(--color-text-muted)] tabular-nums">{badgeText(count)}</span>}
+    >
+      <div className="text-[13.5px] [&_li]:text-[13.5px] [&_p]:text-[13px]">{children}</div>
+    </Panel>
   );
 }
 
@@ -478,18 +499,27 @@ interface TicketListItem {
 }
 function TicketList({ tickets }: { tickets: TicketListItem[] }) {
   return (
-    <ul className="space-y-1.5">
+    <ul className="divide-y divide-[var(--color-border)] -my-1">
       {tickets.slice(0, 6).map((t, i) => (
-        <li key={t.id ?? `t-${i}`} className="text-xs flex items-center gap-2">
-          <span className="font-mono text-[var(--color-text-muted)]">{t.ticketId ?? "-"}</span>
-          <Link href={`/requests/${t.id ?? ""}`} className="text-[var(--color-text)] hover:underline font-bold truncate flex-1">
-            {t.title ?? "(untitled)"}
+        <li key={t.id ?? `t-${i}`}>
+          <Link href={`/requests/${t.id ?? ""}`} className="flex items-center gap-3 py-2.5 hover:bg-[var(--color-surface-2)] -mx-2 px-2 rounded-lg">
+            <span className="font-mono text-[12px] text-[var(--color-text-muted)] shrink-0">{t.ticketId ?? "-"}</span>
+            <span className="text-[var(--color-text)] font-semibold truncate flex-1">{t.title ?? "(untitled)"}</span>
+            <span className="max-sm:hidden text-[12px] text-[var(--color-text-muted)] shrink-0">{statusWords(t.status)}</span>
+            <span className="text-[12px] text-[var(--color-text-muted)] shrink-0 tabular-nums"><Clock className="inline w-3 h-3 mr-0.5 -mt-0.5" />{formatAgo(typeof t.lastModified === "string" ? t.lastModified : undefined)}</span>
           </Link>
-          <span className="text-[11px] font-bold uppercase text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{t.status ?? "-"}</span>
-          <span className="text-[11px] text-[var(--color-text-muted)]"><Clock className="inline w-2.5 h-2.5 mr-0.5" />{formatAgo(typeof t.lastModified === "string" ? t.lastModified : undefined)}</span>
         </li>
       ))}
+      {tickets.length > 6 && (
+        <li className="pt-2.5"><Link href="/requests" className="text-[13px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">Show {tickets.length - 6} more</Link></li>
+      )}
     </ul>
   );
+}
+
+/** "PENDING_IFC" → "Pending IFC". */
+function statusWords(status?: string): string {
+  if (!status) return "-";
+  return status.split("_").map((w, i) => (["IFC", "ENG"].includes(w) ? w : i === 0 ? w.charAt(0) + w.slice(1).toLowerCase() : w.toLowerCase())).join(" ");
 }
 

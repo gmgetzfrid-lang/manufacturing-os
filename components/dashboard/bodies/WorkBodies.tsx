@@ -518,9 +518,9 @@ export function AdminUsersBody() {
   return (
     <div className={FILL}>
       <div className="flex items-end justify-between gap-2 shrink-0">
-        <div className="flex items-end gap-2">
-          <span className="text-2xl font-black leading-none text-[var(--color-text)] tabular-nums">{active.length}</span>
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] pb-0.5">active members</span>
+        <div className="flex items-baseline gap-1.5">
+          <span className="text-[14px] font-bold text-[var(--color-text)] tabular-nums">{active.length}</span>
+          <span className="text-[13px] text-[var(--color-text-muted)]">active members</span>
         </div>
         {pending.length > 0 && (
           <Link href="/admin/users" className="text-[11px] font-bold text-amber-700 dark:text-amber-400 hover:underline">{pending.length} pending →</Link>

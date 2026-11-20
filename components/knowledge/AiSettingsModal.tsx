@@ -195,7 +195,7 @@ export function KeyEditor({ orgId, current, onChanged }: {
   };
 
   return (
-    <div className="rounded-xl border border-[var(--color-border)] p-4 space-y-3">
+    <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 space-y-3">
       <div className="flex items-center justify-between gap-2">
         <div className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)]">
           Your API key (only you use it, only you pay for it)
@@ -302,7 +302,7 @@ export function JobModelsEditor({ orgId, current, jobModels, ready, jobUse, onCh
   };
 
   return (
-    <div className="rounded-xl border border-[var(--color-border)] p-4 space-y-3">
+    <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 space-y-3">
       <div className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
         <Sparkles className="w-3.5 h-3.5" /> Model for each job
       </div>
@@ -469,7 +469,7 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
   };
 
   return (
-    <div className="rounded-xl border border-[var(--color-border)] p-4 space-y-3">
+    <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 space-y-3">
       <div className="flex items-center justify-between gap-2">
         <div className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
           <Sparkles className="w-3.5 h-3.5" /> Meaning-based search (optional)
@@ -575,7 +575,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
   if (failed) return <p className="text-[11px] text-[var(--color-text-muted)]">Couldn&apos;t load this month&apos;s AI spend.</p>;
   if (!usage) {
     return (
-      <div className="rounded-xl border border-[var(--color-border)] px-3.5 py-3 text-center text-[11px] text-[var(--color-text-muted)]">
+      <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] px-4 py-3 text-center text-[13px] text-[var(--color-text-muted)]">
         <Loader2 className="w-4 h-4 animate-spin inline mr-1.5" /> Loading this month&apos;s AI spend…
       </div>
     );
@@ -629,7 +629,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
   };
 
   return (
-    <div className="rounded-xl border border-[var(--color-border)] px-3.5 py-3 space-y-3">
+    <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 space-y-3">
       <div className="flex items-center justify-between gap-2">
         <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
           <Gauge className="w-3.5 h-3.5" /> Your AI usage - {usage.monthLabel}
