@@ -24,6 +24,7 @@ import type { ParamSpec } from "@/lib/orchestrator/protocol";
 import { tracePath, traceNeighbourhood, normalizeTag, type LineEdge } from "@/lib/pidTrace";
 import { orIlike } from "@/lib/orFilter";
 import { fetchAllRows } from "@/lib/fetchAllRows";
+import { pickEquipment } from "@/lib/equipmentIdentity";
 import { pastJobsForQuestion } from "@/lib/findingsAsk";
 
 export interface ToolContext {
@@ -206,11 +207,14 @@ const equipmentMentions: ToolDef = {
     + "Use to answer 'what do we have on E-101'.",
   params: [{ name: "tag", type: "string", required: true, description: "Equipment tag, e.g. E-101." }],
   async run(args, ctx) {
-    const norm = normalizeTag(String(args.tag));
+    // By its ID first ("X-31 (2030.31)", "2030.31"), then its tag; copies of
+    // one piece count once (lib/equipmentIdentity).
     const { data: assets } = await supabaseAdmin
-      .from("assets").select("id, tag").eq("org_id", ctx.orgId).eq("archived", false).limit(3000);
-    const match = (assets ?? []).find((a) => normalizeTag((a as { tag: string }).tag) === norm);
-    if (!match) return { data: { tag: args.tag, found: false, note: "No such equipment in the registry." } };
+      .from("assets").select("id, tag, code, unit_code, origin, created_at").eq("org_id", ctx.orgId).eq("archived", false).limit(3000);
+    const rows = (assets ?? []) as Array<{ id: string; tag: string; code: string | null; unit_code: string | null; origin: string | null; created_at: string | null }>;
+    const pick = pickEquipment(rows.map((a) => ({ id: a.id, tag: a.tag, code: a.code, unitCode: a.unit_code, origin: a.origin, createdAt: a.created_at })), { label: String(args.tag) });
+    const match = pick.asset;
+    if (!match) return { data: { tag: args.tag, found: false, note: pick.why === "ambiguous" ? `${String(args.tag)} names equipment on ${pick.units.length > 1 ? `${pick.units.length} units` : "one unit more than once"}; give its ID.` : "No such equipment in the registry." } };
 
     const { data } = await supabaseAdmin
       .from("entity_mentions")

@@ -28,6 +28,7 @@ export default function ViewTabs({
   tabs,
   variant = "light",
   right,
+  hrefs,
 }: {
   /** The tool name shown to the left of the views, e.g. "Documents". */
   title?: string;
@@ -35,16 +36,21 @@ export default function ViewTabs({
   variant?: "light" | "dark";
   /** Optional right-aligned content (e.g. a scope toggle). */
   right?: React.ReactNode;
+  /** Where a tab goes from this page, by its usual href: the library page
+   *  sends Graph to the folder you are in, the graph sends Table back to
+   *  the folder it shows. */
+  hrefs?: Partial<Record<string, string>>;
 }) {
   const pathname = usePathname() ?? "";
   const router = useRouter();
   // The Graph opens on the library and folder you were in, not the whole
-  // estate (it has a way back up to everything). The folder is read from
-  // the address at the moment of the tap.
+  // estate (it has a way back up to everything). A page that knows where
+  // it is says so (`hrefs`); otherwise the folder is read from the address
+  // at the moment of the tap.
   const libMatch = /^\/documents\/([0-9a-f-]{36})/.exec(pathname);
-  const hrefFor = (href: string) => href === "/documents/graph" && libMatch ? `/documents/graph?focus=${encodeURIComponent(`lib:${libMatch[1]}`)}` : href;
+  const hrefFor = (href: string) => hrefs?.[href] ?? (href === "/documents/graph" && libMatch ? `/documents/graph?focus=${encodeURIComponent(`lib:${libMatch[1]}`)}` : href);
   const openGraphHere = (e: React.MouseEvent, href: string) => {
-    if (href !== "/documents/graph" || !libMatch || e.metaKey || e.ctrlKey || e.shiftKey) return;
+    if (hrefs?.[href] || href !== "/documents/graph" || !libMatch || e.metaKey || e.ctrlKey || e.shiftKey) return;
     const folderId = new URLSearchParams(window.location.search).get("folderId");
     if (!folderId) return;
     e.preventDefault();

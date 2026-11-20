@@ -27,6 +27,7 @@ import { useFind } from "@/components/find/useFind";
 import FindPanel, { findMapState } from "@/components/find/FindPanel";
 import FindMap from "@/components/find/FindMap";
 import { folderForUnit } from "@/lib/findEverywhere";
+import { withParams } from "@/lib/docsPlace";
 import RouteLoader from "@/components/ui/RouteLoader";
 import NodeCover from "@/components/documents/NodeCover";
 import CustomizeNodeModal, { type CustomizeValue } from "@/components/documents/CustomizeNodeModal";
@@ -89,10 +90,45 @@ export default function DocumentsHomePage() {
     })).then((pairs) => { if (alive) setLibCounts(new Map(pairs)); }).catch(() => undefined);
     return () => { alive = false; };
   }, [activeOrgId, libIdsKey]);
+  // The map under the list: each library and its top folders, named as in
+  // the libraries' own lists. Hidden folders stay hidden from who can't see them.
+  const [topFolders, setTopFolders] = useState<Map<string, Array<{ id: string; name: string }>>>(new Map());
+  const controllerHere = isControllerRole(activeRole);
+  useEffect(() => {
+    if (!activeOrgId || !libIdsKey) return;
+    let alive = true;
+    let q = supabase.from("collections").select("id,name,library_id,parent_id,deleted_at,visibility")
+      .eq("org_id", activeOrgId).is("parent_id", null);
+    if (!controllerHere) q = q.eq("visibility", "normal");
+    void q.then(({ data }) => {
+      if (!alive || !data) return;
+      const m = new Map<string, Array<{ id: string; name: string }>>();
+      for (const r of data as Array<{ id: string; name: string | null; library_id: string; deleted_at?: string | null }>) {
+        if (r.deleted_at) continue;
+        m.set(r.library_id, [...(m.get(r.library_id) ?? []), { id: r.id, name: r.name ?? "Folder" }]);
+      }
+      setTopFolders(m);
+    });
+    return () => { alive = false; };
+  }, [activeOrgId, libIdsKey, controllerHere]);
+  const mapLibraries = useMemo(
+    () => libraries.map((l) => ({ id: l._id, name: l.name, folders: topFolders.get(l._id) ?? [] })),
+    [libraries, topFolders],
+  );
   // A /d/<number> short link that found no exact match lands here with ?q=
   // pre-filling the search, so the user sees the nearest hits immediately.
   const [search, setSearch] = useState(() =>
     typeof window === "undefined" ? "" : (new URLSearchParams(window.location.search).get("q") ?? ""));
+  // The search is kept in the address as it is typed (the entry is
+  // rewritten, never a step per letter): opening a result and coming back
+  // lands on the same search, its results kept (components/find/useFind).
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      const next = withParams(window.location.search, { q: search.trim() ? search : null });
+      if (next !== window.location.search) window.history.replaceState(null, "", `${window.location.pathname}${next}`);
+    }, 350);
+    return () => window.clearTimeout(t);
+  }, [search]);
   const [orgName, setOrgName] = useState<string | null>(null);
   const [menuOpenForLibId, setMenuOpenForLibId] = useState<string | null>(null);
   const [deletingLibId, setDeletingLibId] = useState<string | null>(null);
@@ -452,8 +488,10 @@ export default function DocumentsHomePage() {
           </section>
         )}
 
-        <Card label={<span className="inline-flex items-center gap-2.5 text-[var(--color-heading)]"><span className="ui-icon-tile is-sm is-solid" aria-hidden><MapIcon className="w-4 h-4" /></span>Map <HelpTooltip>Tap a unit to open its drawings, a piece of equipment to see its documents, a document to open it here.</HelpTooltip></span>} className="min-w-0">
+        <Card label={<span className="inline-flex items-center gap-2.5 text-[var(--color-heading)]"><span className="ui-icon-tile is-sm is-solid" aria-hidden><MapIcon className="w-4 h-4" /></span>Map <HelpTooltip>Tap a library or a folder to open it. Whole site shows the units and their equipment.</HelpTooltip></span>} className="min-w-0">
           <FindMap orgId={activeOrgId} unit={searching ? ms.unit : null}
+            libraries={mapLibraries}
+            onPlace={(lib, folder) => router.push(folder ? `/documents/${lib}?folderId=${folder}` : `/documents/${lib}`)}
             assetId={searching ? ms.assetId : null} docs={searching ? ms.docs : null} candidates={searching ? ms.candidates : undefined}
             onPickAsset={(id, tag) => {
               if (searching && finder.quick?.equipment.some((e) => e.id === id)) finder.pick(id);

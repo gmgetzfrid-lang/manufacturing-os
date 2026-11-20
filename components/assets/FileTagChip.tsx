@@ -13,15 +13,17 @@ import dynamic from "next/dynamic";
 // the viewer loads only when a chip is actually opened.
 const FileReferenceModal = dynamic(() => import("./FileReferenceModal"), { ssr: false });
 
-export default function FileTagChip({ tag, type = "Linked drawings", orgId, userId, canManage = false }: {
+export default function FileTagChip({ tag, type = "Linked drawings", orgId, userId, canManage = false, unitCode }: {
   tag: string;
   type?: string;
   orgId?: string;
   userId?: string;
   canManage?: boolean;
+  /** The unit it's on, when known (a tag repeats from unit to unit). */
+  unitCode?: string | null;
 }) {
   const [open, setOpen] = useState(false);
-  const { fileCount } = useAssetFilesByTag(orgId, tag);
+  const { fileCount } = useAssetFilesByTag(orgId, tag, unitCode);
   const interactive = !!orgId;
   const hasFiles = fileCount > 0;
 
@@ -53,7 +55,7 @@ export default function FileTagChip({ tag, type = "Linked drawings", orgId, user
       </button>
 
       {open && orgId && (
-        <FileReferenceModal tag={tag} type={type} orgId={orgId} userId={userId} canManage={canManage} onClose={() => setOpen(false)} />
+        <FileReferenceModal tag={tag} type={type} orgId={orgId} userId={userId} canManage={canManage} unitCode={unitCode} onClose={() => setOpen(false)} />
       )}
     </>
   );

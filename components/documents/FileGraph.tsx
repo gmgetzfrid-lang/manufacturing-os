@@ -92,6 +92,9 @@ interface Props {
   onSatellite?: (s: FileGraphSatellite) => void;
   /** Symbolic links: [document id, folder id] pairs ("also filed under"). */
   filedLinks?: Array<[string, string]>;
+  /** Name every file, not only when zoomed in (a small folder's map, read
+   *  beside its list): a name that would sit on another is still left out. */
+  labelAll?: boolean;
   className?: string;
 }
 
@@ -104,7 +107,7 @@ const isContainer = (k: FileNodeKind) => k !== "file" && k !== "extfile";
 interface Camera { x: number; y: number; scale: number }
 
 const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
-  { visible, collapsed, upNode, sameBytes, lit, ranks, activeId = null, selectedId, onSelect, onDrill, onUp, onOpen, satellites = [], onSatellite, filedLinks = [], className = "" }, ref,
+  { visible, collapsed, upNode, sameBytes, lit, ranks, activeId = null, selectedId, onSelect, onDrill, onUp, onOpen, satellites = [], onSatellite, filedLinks = [], labelAll = false, className = "" }, ref,
 ) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const { images, hostRef } = useIconImages();
@@ -127,6 +130,7 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
   /** Satellite positions, recomputed each frame from the files they link to. */
   const satPos = useRef<Map<string, Placed>>(new Map());
   const upRef = useRef(upNode); useEffect(() => { upRef.current = upNode; }, [upNode]);
+  const labelAllRef = useRef(labelAll); useEffect(() => { labelAllRef.current = labelAll; }, [labelAll]);
 
   const byId = useMemo(() => new Map(visible.map((n) => [n.id, n])), [visible]);
   const visibleRef = useRef(visible); useEffect(() => { visibleRef.current = visible; }, [visible]);
@@ -156,12 +160,17 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
     const b = layoutBounds(pos, 60);
     // Names are drawn centred under their dots: keep the widest ones on screen.
     const labelOf = new Map(visibleRef.current.map((n) => [n.id, n.label]));
+    // Names drawn at a fixed size on screen (labelAll) need room on screen,
+    // whatever the zoom: keep a margin for the longest instead.
+    let screenHalf = 0;
     for (const [id, p] of pos) {
       const half = Math.min(110, (labelOf.get(id)?.length ?? 0) * 3.4) + 12;
+      if (labelAllRef.current) { screenHalf = Math.max(screenHalf, Math.min(28, labelOf.get(id)?.length ?? 0) * 3.4 + 6); continue; }
       b.minX = Math.min(b.minX, p.x - half); b.maxX = Math.max(b.maxX, p.x + half);
     }
     if (up) b.minY = Math.min(b.minY, up.y - 50);
-    const w = canvas.clientWidth, h = canvas.clientHeight;
+    screenHalf = Math.min(screenHalf, canvas.clientWidth * 0.22);
+    const w = Math.max(80, canvas.clientWidth - 2 * screenHalf), h = Math.max(80, canvas.clientHeight - (screenHalf ? 36 : 0));
     const scale = Math.min(2.5, Math.max(0.08, Math.min(w / (b.maxX - b.minX), h / (b.maxY - b.minY))));
     camTarget.current = { scale, x: -((b.minX + b.maxX) / 2) * scale, y: -((b.minY + b.maxY) / 2) * scale };
   }
@@ -502,7 +511,7 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
         }
         if (!hush) placed.push([p.x - r - 2, p.y - r - 2, 2 * r + 4, 2 * r + 4]);
         // Label: queued, drawn after every node so nothing paints over it.
-        const showLabel = !hush && (isContainer(n.kind) || light || n.id === sel || n.id === hov || s > 0.75);
+        const showLabel = !hush && (labelAllRef.current || isContainer(n.kind) || light || n.id === sel || n.id === hov || s > 0.75);
         if (showLabel) labels.push({ n, p, r, light: !!light, dim, pri: n.id === sel ? 0 : n.id === hov ? 1 : active ? 2 : light ? 3 + (ranksRef.current?.get(n.id) ?? 50) / 100 : isContainer(n.kind) ? 4 : 5 });
         ctx.globalAlpha = 1;
       }
@@ -510,7 +519,9 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
       for (const { n, p, r, dim } of labels) {
         {
           const container = isContainer(n.kind);
-          const fontPx = container ? 12 : 11;
+          // A small map read beside its list keeps its names readable however
+          // far it is zoomed out (one that would then overlap is left out).
+          const fontPx = labelAllRef.current ? Math.max(container ? 12 : 11, (container ? 13 : 12) / s) : container ? 12 : 11;
           ctx.font = `${container ? 700 : 500} ${fontPx}px Barlow, system-ui, sans-serif`;
           const label = n.label.length > 28 ? n.label.slice(0, 26) + "…" : n.label;
           const tw = ctx.measureText(label).width;

@@ -27,6 +27,7 @@ import { loadCodebookAdmin } from "@/lib/codebookServer";
 import { parseDrawingNumber } from "@/lib/codebook";
 import { sweepRows, autoReady, decodeId, looksLikeId, drawingNumberTags, withIds, type SweepRow, type RegistryAsset, type RowChoice } from "@/lib/equipmentSweep";
 import { idKey, nameKey } from "@/lib/equipmentPick";
+import { readerMatch } from "@/lib/equipmentIdentity";
 
 /** One tag on a drawing, lined up with the registry by its ID
  *  (lib/equipmentSweep). */
@@ -221,6 +222,7 @@ export async function unlinkForDocument(admin: SupabaseClient, input: { orgId: s
     const next = list.filter((t) => !keys.has(nameKey(t)));
     if (next.length !== list.length) await admin.from("documents").update({ metadata: { ...md, [key]: next } }).eq("id", documentId).eq("org_id", orgId);
   }
+  await noteReaderAdded(admin, orgId, documentId, { drop: input.tags }).catch(() => undefined);
   const { data: edges } = await admin.from("estate_edges").select("id, b").eq("org_id", orgId).eq("a", `doc:${documentId}`).eq("type", "tagged_to").in("origin", ["vision", "bridge", "resolver"]).limit(1000);
   const ids = ((edges ?? []) as Array<{ id: string; b: string }>).map((e) => e.b.replace(/^asset:/, ""));
   let removed = 0;
@@ -234,17 +236,39 @@ export async function unlinkForDocument(admin: SupabaseClient, input: { orgId: s
   return { removed };
 }
 
-/** Every piece of equipment in the org, with its ID and unit. */
+/** Every piece of equipment in the org, with its ID and unit, how it was
+ *  added and its photo count (which of two copies of one piece is the one). */
 async function loadRegistry(admin: SupabaseClient, orgId: string): Promise<RegistryAsset[]> {
   const out: RegistryAsset[] = [];
   for (let from = 0; from < 50_000; from += 1000) {
-    const { data, error } = await admin.from("assets").select("id, tag, code, unit_code, description").eq("org_id", orgId).order("id").range(from, from + 999);
-    if (error) break;
-    const rows = (data ?? []) as Array<{ id: string; tag: string; code: string | null; unit_code: string | null; description: string | null }>;
-    out.push(...rows.map((a) => ({ id: a.id, tag: a.tag, code: a.code, unitCode: a.unit_code, description: a.description })));
+    const res = await admin.from("assets").select("id, tag, code, unit_code, description, origin, created_at").eq("org_id", orgId).order("id").range(from, from + 999);
+    if (res.error) break;
+    const rows = (res.data ?? []) as Array<{ id: string; tag: string; code: string | null; unit_code: string | null; description: string | null; origin?: string | null; created_at?: string | null }>;
+    out.push(...rows.map((a) => ({ id: a.id, tag: a.tag, code: a.code, unitCode: a.unit_code, description: a.description, origin: a.origin ?? null, createdAt: a.created_at ?? null })));
     if (rows.length < 1000) break;
   }
+  const photos = new Map<string, number>();
+  for (let from = 0; from < 100_000; from += 1000) {
+    const { data, error } = await admin.from("asset_photos").select("asset_id").eq("org_id", orgId).order("id").range(from, from + 999);
+    if (error) break;
+    for (const r of (data ?? []) as Array<{ asset_id: string }>) photos.set(r.asset_id, (photos.get(r.asset_id) ?? 0) + 1);
+    if ((data ?? []).length < 1000) break;
+  }
+  for (const a of out) a.photos = photos.get(a.id) ?? 0;
   return out;
+}
+
+/** What the reader itself wrote into a drawing's equipment column (not
+ *  what was there already), so Start over can take exactly that off.
+ *  Kept only once migration 20261121 is in; a no-op before. */
+export async function noteReaderAdded(admin: SupabaseClient, orgId: string, documentId: string, change: { add?: string[]; drop?: string[] }): Promise<void> {
+  const { data, error } = await admin.from("document_equipment_suggestions").select("reader_added").eq("org_id", orgId).eq("document_id", documentId).maybeSingle();
+  if (error || !data) return;
+  const cur = (Array.isArray((data as { reader_added?: unknown }).reader_added) ? (data as { reader_added: unknown[] }).reader_added.map(String) : []);
+  const drop = new Set((change.drop ?? []).map((t) => assetNorm(t)));
+  const next = [...new Set([...cur.filter((t) => !drop.has(assetNorm(t))), ...(change.add ?? [])])];
+  if (JSON.stringify(next) === JSON.stringify(cur)) return;
+  await admin.from("document_equipment_suggestions").update({ reader_added: next }).eq("org_id", orgId).eq("document_id", documentId).then(() => undefined, () => undefined);
 }
 
 /** Machine-drawn links from a drawing to equipment that has the same name
@@ -385,6 +409,8 @@ export async function applyForDocument(admin: SupabaseClient, input: {
       // Matched: fill in what the registry is missing (never overwrite).
       const { data: cur } = await admin.from("assets").select("id, tag, code, unit_code, description, type_id").eq("id", s.assetId).maybeSingle();
       const a = cur as { id: string; tag: string; code: string | null; unit_code: string | null; description: string | null; type_id: string | null } | null;
+      // Gone since the sheet was read (merged or removed): looked up again below.
+      if (!a) { s.assetId = null; s.match = null; }
       if (a) {
         const patch: Record<string, unknown> = {};
         // No ID yet, or one guessed from the tag (2010.7): the sheet's goes on,
@@ -402,8 +428,36 @@ export async function applyForDocument(admin: SupabaseClient, input: {
         if (s.name && (!a.description || (choice?.overwrite && a.description !== s.name))) patch.description = s.name;
         if (!a.type_id && s.typeLabel && typeIds.get(s.typeLabel)) patch.type_id = typeIds.get(s.typeLabel);
         if (Object.keys(patch).length) { await admin.from("assets").update(patch).eq("id", a.id).then(() => undefined, () => undefined); updatedAssets++; }
+        landedRows.push(s);
+        continue;
       }
+    }
+    // What the registry holds now (the sheet was read earlier): by the ID,
+    // then the tag in the unit. Never a second record for either.
+    ids = ids ?? withIds(await loadRegistry(admin, orgId));
+    const now = readerMatch(ids, { tag: s.tag, code: s.code, unitCode: s.unitCode });
+    if (now.kind === "same-id" || (now.kind === "same-tag" && !now.fillId)) {
+      s.assetId = now.asset.id; s.match = now.kind === "same-id" ? "id" : "name";
       landedRows.push(s);
+      continue;
+    }
+    if (now.kind === "same-tag" && now.fillId && s.code) {
+      // The tag is listed in the unit with no ID: the sheet's ID goes on it.
+      const { data: taken } = await admin.from("assets").select("id").eq("org_id", orgId).eq("code", s.code).neq("id", now.asset.id).limit(1);
+      if (!(taken as unknown[] | null)?.length) {
+        const { error } = await admin.from("assets").update({ code: s.code }).eq("id", now.asset.id).eq("org_id", orgId).is("code", null);
+        if (!error) { updatedAssets++; now.asset.code = s.code; }
+      }
+      s.assetId = now.asset.id; s.match = "name";
+      landedRows.push(s);
+      continue;
+    }
+    if (now.kind === "other-id") {
+      if (reviewed) failed.push({ tag: s.tag, why: `${s.unitCode ? `Unit ${s.unitCode}` : "The list"} already has ${s.tag} as ${now.asset.code}. Use this sheet's ID on it, or add it by hand in Operating areas.` });
+      continue;
+    }
+    if (now.kind === "unsure") {
+      if (reviewed) failed.push({ tag: s.tag, why: `${s.unitCode ? `Unit ${s.unitCode}` : "The list"} has more than one ${s.tag}. Enter this one's ID.` });
       continue;
     }
     // New: only with an ID and a unit, and only when the library adds equipment.
@@ -440,7 +494,11 @@ export async function applyForDocument(admin: SupabaseClient, input: {
         : error.message });
       continue;
     }
-    if (created) { s.assetId = String(created.id); createdAssets++; landedRows.push(s); }
+    if (created) {
+      s.assetId = String(created.id); createdAssets++; landedRows.push(s);
+      // Known to the rest of this drawing's rows at once.
+      ids.push({ id: s.assetId, tag: s.tag, code: s.code, unitCode: s.unitCode, origin: "drawing", photos: 0, createdAt: new Date().toISOString() });
+    }
   }
 
   // The drawing links to exactly the equipment its IDs name.
@@ -477,6 +535,7 @@ export async function applyForDocument(admin: SupabaseClient, input: {
     applied_at: new Date().toISOString(),
     applied_by: input.userId,
   }).eq("org_id", orgId).eq("document_id", documentId);
+  if (targetKey && additions.length > 0) await noteReaderAdded(admin, orgId, documentId, { add: additions }).catch(() => undefined);
 
   await admin.from("audit_logs").insert({
     action: "EQUIPMENT_BRIDGE_APPLIED",

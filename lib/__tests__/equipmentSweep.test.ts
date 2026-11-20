@@ -46,12 +46,14 @@ describe("lining up with the registry by ID", () => {
     expect(rows.find((x) => x.tag === "V-7")).toMatchObject({ assetId: "t-v7", match: "id", listedAs: null });
     expect(rows.find((x) => x.tag === "E-12")).toMatchObject({ assetId: "t-x", match: "id", listedAs: "V-99" });
   });
-  it("the same name in the unit with no ID yet is this equipment; with another ID it's another piece", () => {
+  it("the same name in the unit with no ID yet is this equipment; with another ID a person decides", () => {
     const reg: RegistryAsset[] = [{ id: "t-e12", tag: "E-12", code: null, unitCode: "55" }, { id: "t-e16", tag: "E-16", code: "5530.99", unitCode: "55" }];
     const rows = sweepRows({ readings: [{ tag: "E-12", page: 1, raw: "E-12 (5530.25) A" }, { tag: "E-16", page: 1, raw: "E-16 (5530.09) B" }], registry: reg, book, drawingUnit: null });
     expect(rows[0]).toMatchObject({ tag: "E-12", assetId: "t-e12", match: "name" });
     expect(rows[1]).toMatchObject({ tag: "E-16", assetId: null });
-    expect(rows[1].problem).toBeNull();
+    // Never a second E-16 in unit 55: a person puts the sheet's ID on it, or adds one by hand.
+    expect(rows[1].problem).toMatch(/already has E-16 as 5530\.99/);
+    expect(autoReady(rows[1])).toBe(false);
     // What the sheet's ID can replace, if a person says to overwrite.
     expect(rows[1].clash).toEqual({ assetId: "t-e16", code: "5530.99" });
     expect(rows[0].clash).toBeNull();
@@ -82,10 +84,11 @@ describe("a re-run fixes what the old import guessed", () => {
     const [r] = sweepRows({ readings: [{ tag: "V-7", page: 1, raw: "V-7 (2010.19) CRUDE TOWER" }], registry: crude, book, drawingUnit: "20" });
     expect(r).toMatchObject({ assetId: "c-v7", match: "name", fixCode: "2010.7", problem: null, code: "2010.19", codeFrom: "sheet" });
   });
-  it("a different ID on the same name is different equipment: added beside it, never blocked", () => {
+  it("a different ID on a tag the unit already has is never added beside it on its own", () => {
     const [r] = sweepRows({ readings: [{ tag: "V-7", page: 1, raw: "V-7 (2010.19) CRUDE TOWER" }], registry: [{ id: "c-v7", tag: "V-7", code: "2010.25", unitCode: "20" }], book, drawingUnit: "20" });
-    expect(r).toMatchObject({ assetId: null, assetStatus: "new", problem: null, fixCode: null, clash: { assetId: "c-v7", code: "2010.25" } });
-    expect(autoReady(r)).toBe(true);
+    expect(r).toMatchObject({ assetId: null, assetStatus: "new", fixCode: null, clash: { assetId: "c-v7", code: "2010.25" } });
+    expect(r.problem).toBe("Crude Unit already has V-7 as 2010.25. Use this sheet's ID on it, or add it by hand in Operating areas.");
+    expect(autoReady(r)).toBe(false);
   });
 });
 
@@ -94,10 +97,26 @@ describe("old registry rows", () => {
     const reg: RegistryAsset[] = [{ id: "x31a", tag: "X-31 (2030.31)", code: null, unitCode: "20" }, { id: "x31b", tag: "X-31", code: null, unitCode: "20" }];
     const [byId] = sweepRows({ readings: [{ tag: "X-31", page: 1, raw: "X-31 (2030.31) CHARGE PUMP" }], registry: reg, book, drawingUnit: "20" });
     expect(byId).toMatchObject({ assetId: "x31a", match: "id", problem: null });
-    // No ID on the sheet and two of that name in the unit: the ID decides, so it asks.
-    const [asks] = sweepRows({ readings: [{ tag: "X-31", page: 1, raw: null }], registry: reg, book, drawingUnit: "20" });
+    // No ID on the sheet: the two are one piece (the copy has no ID of its
+    // own), so the one with the ID is it.
+    const [one] = sweepRows({ readings: [{ tag: "X-31", page: 1, raw: null }], registry: reg, book, drawingUnit: "20" });
+    expect(one).toMatchObject({ assetId: "x31a", match: "name", problem: null, code: "2030.31", codeFrom: "registry" });
+  });
+  it("two IDs for one tag in the unit and none on the sheet: it asks", () => {
+    const reg: RegistryAsset[] = [{ id: "v5a", tag: "V-5", code: "5510.09", unitCode: "55" }, { id: "v5b", tag: "V-5", code: "5510.19", unitCode: "55" }];
+    const [asks] = sweepRows({ readings: [{ tag: "V-5", page: 1, raw: null }], registry: reg, book, drawingUnit: "55" });
     expect(asks.assetId).toBeNull();
-    expect(asks.problem).toMatch(/has 2 called X-31 \(2030\.31, no ID\)\. Enter this one's ID\./);
+    expect(asks.problem).toMatch(/has 2 called V-5 \(5510\.09, 5510\.19\)\. Enter this one's ID\./);
+  });
+  it("the manual X-31 with its ID wins over the reader's copy without one", () => {
+    const reg: RegistryAsset[] = [
+      { id: "copy", tag: "X-31", code: null, unitCode: "20", origin: "drawing", photos: 0, createdAt: "2026-10-22" },
+      { id: "mine", tag: "X-31", code: "2030.31", unitCode: "20", origin: "manual", photos: 3, createdAt: "2026-05-28" },
+    ];
+    const [plain] = sweepRows({ readings: [{ tag: "X-31", page: 1, raw: "X-31 CHARGE PUMP" }], registry: reg, book, drawingUnit: "20" });
+    expect(plain).toMatchObject({ assetId: "mine", match: "name", problem: null });
+    const [printed] = sweepRows({ readings: [{ tag: "X-31", page: 1, raw: "X-31 (2030.31) CHARGE PUMP" }], registry: reg, book, drawingUnit: "20" });
+    expect(printed).toMatchObject({ assetId: "mine", match: "id" });
   });
 });
 

@@ -15,6 +15,7 @@
 
 import { readCallout, decodeId } from "@/lib/equipmentSweep";
 import { idKey } from "@/lib/equipmentPick";
+import { onePerPiece, pieces, lookupOrder } from "@/lib/equipmentIdentity";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadCodebook, parseDrawingNumber } from "@/lib/codebook";
 import { canonicalForm } from "@/lib/fileFinder/tagForms";
@@ -69,7 +70,7 @@ export async function loadResolveContext(admin: SupabaseClient, orgId: string): 
     loadCodebook(orgId, admin),
     admin.from("finder_aliases").select("*").eq("org_id", orgId),
     admin.from("projects").select("id, name").eq("org_id", orgId).limit(2000),
-    admin.from("assets").select("id, tag, code, unit_code").eq("org_id", orgId).limit(20000),
+    admin.from("assets").select("id, tag, code, unit_code, origin, created_at").eq("org_id", orgId).limit(20000),
     admin.from("collections").select("*").eq("org_id", orgId),
     // Every applied folder link, paged: a single read stops at 1,000 rows without saying so.
     fetchAllRows<{ a: string; b: string; type: string; origin: string | null }>((from, to) => admin.from("estate_edges").select("a, b, type, origin").eq("org_id", orgId).eq("status", "applied")
@@ -80,11 +81,27 @@ export async function loadResolveContext(admin: SupabaseClient, orgId: string): 
   const assets = new Map<string, { id: string; tag: string }>();
   const assetsByCode = new Map<string, { id: string; tag: string }>();
   const assetsByName = new Map<string, Array<{ id: string; tag: string; unitCode: string | null }>>();
-  for (const a of (assetsRes.data as Array<{ id: string; tag: string; code: string | null; unit_code: string | null }> | null) ?? []) {
-    assets.set(canonicalForm(a.tag), a);
-    if (a.code && idKey(a.code)) assetsByCode.set(idKey(a.code), a);
+  // The ID is who it is: copies of one piece (the same ID, or the same tag
+  // in a unit) count once, the one with the ID. A tag on two pieces names
+  // neither by itself (lib/equipmentIdentity).
+  const rows = ((assetsRes.data as Array<{ id: string; tag: string; code: string | null; unit_code: string | null; origin?: string | null; created_at?: string | null }> | null) ?? [])
+    .map((a) => ({ id: a.id, tag: a.tag, code: a.code, unitCode: a.unit_code, origin: a.origin ?? null, createdAt: a.created_at ?? null }));
+  const named = new Map<string, typeof rows>();
+  for (const a of rows) {
     const k = canonicalForm(a.tag.replace(/\s*\(.*$/, ""));
-    assetsByName.set(k, [...(assetsByName.get(k) ?? []), { id: a.id, tag: a.tag, unitCode: a.unit_code }]);
+    named.set(k, [...(named.get(k) ?? []), a]);
+    const full = canonicalForm(a.tag);
+    if (full !== k) named.set(full, [...(named.get(full) ?? []), a]);
+  }
+  for (const [k, list] of named) {
+    const one = onePerPiece(list);
+    if (one.length === 1) assets.set(k, { id: one[0].id, tag: one[0].tag });
+    assetsByName.set(k, one.map((a) => ({ id: a.id, tag: a.tag, unitCode: a.unitCode })));
+  }
+  for (const p of pieces(rows)) {
+    if (!p.code) continue;
+    const best = [...p.records].sort(lookupOrder)[0];
+    assetsByCode.set(p.code, { id: best.id, tag: best.tag });
   }
   const folders = new Map<string, { id: string; libraryId: string; parentId: string | null; name: string }>();
   for (const c of (foldersRes.data as Record<string, unknown>[] | null) ?? []) {

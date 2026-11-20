@@ -37,6 +37,11 @@ interface Props {
   fileNames?: Record<string, string>;
   /** What is above the given tree's root (the folder above), and going there. */
   rootUp?: { label: string; onUp: () => void } | null;
+  /** Levels a small box opens under its root at once (default 1). */
+  depth?: number;
+  /** Extra classes for the crumbs row (a box with a switch at its top
+   *  right moves its crumbs down a row when narrow). */
+  crumbsClassName?: string;
 }
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
@@ -61,7 +66,7 @@ function typeOf(t: TreeNode): { kind: FileGraphNode["kind"]; type: FileTypeInfo 
   }
 }
 
-export default function EstateMap({ nodes, edges, query, selectedId, highlightIds, flyTo, onSelect, onOpen, enter, compact, tree: given, fileNames, rootUp }: Props) {
+export default function EstateMap({ nodes, edges, query, selectedId, highlightIds, flyTo, onSelect, onOpen, enter, compact, tree: given, fileNames, rootUp, depth: openDepth = 1, crumbsClassName = "" }: Props) {
   const ref = useRef<FileGraphHandle | null>(null);
   const [focusRaw, setFocusId] = useState<string | null>(null);
   const [pickedTree, setPickedTree] = useState<string | null>(null);
@@ -85,6 +90,7 @@ export default function EstateMap({ nodes, edges, query, selectedId, highlightId
         ...(given ? { hint: isDoc ? (kids ? `Click to open · ${kids} piece${kids === 1 ? "" : "s"} of equipment on it` : "Click to open")
           : n.kind === "asset" ? "Click for every document it is on"
           : n.kind === "folder" ? (n.parentId ? "Click to open this folder" : "The folder you are in")
+          : n.kind === "library" ? "Click to open this library"
           : n.kind === "group" && !kids ? "Open the folder for the rest"
           : undefined } : {}),
       };
@@ -117,7 +123,10 @@ export default function EstateMap({ nodes, edges, query, selectedId, highlightId
     let frontier = roots, count = roots.length, first = true, depth = 0;
     // A small box opens one level at a time so every label can be read.
     // At the top only the units; inside one, one level: every label readable.
-    while (frontier.length && depth < (compact ? (focusId ? 1 : 0) : MAX_DEPTH)) {
+    // The given tree's root opens as many levels as asked (libraries and
+    // their top folders); anywhere below it, one.
+    const levels = compact ? (focusId ? (focusId === soleRoot ? openDepth : 1) : 0) : MAX_DEPTH;
+    while (frontier.length && depth < levels) {
       depth++;
       // At the top, open each operating area one level (its equipment types)
       // but keep big groups ("Not placed yet", Projects) closed with a
@@ -148,7 +157,7 @@ export default function EstateMap({ nodes, edges, query, selectedId, highlightId
       : { id: "__all__", kind: "library" as const, label: "Whole estate", parentId: null, childCount: 0, type: CONTAINER_TYPES.estate };
     return { visible: [...vis.values()], collapsed, upNode };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tree, treeById, children, focusId, lit, compact, soleRoot, rootUp?.label]);
+  }, [tree, treeById, children, focusId, lit, compact, soleRoot, rootUp?.label, openDepth]);
 
   // Other ties of the picked thing only: a document's second piece of
   // equipment, its project. Never a web over the whole view.
@@ -217,10 +226,10 @@ export default function EstateMap({ nodes, edges, query, selectedId, highlightId
         onSelect={(id) => { setPickedTree(id); onSelect(id ? graphOf(id) ?? null : null); }}
         onDrill={(id) => { const n = graphOf(id); if (n) { setPickedTree(id); onSelect(n); } if ((children.get(id) ?? []).length) setFocusId(id); }}
         onUp={up}
-        onOpen={(id) => { const n = graphOf(id); if (n) onOpen(n); }} filedLinks={filedLinks} />
+        onOpen={(id) => { const n = graphOf(id); if (n) onOpen(n); }} filedLinks={filedLinks} labelAll={!!given} />
       </div>
       <div className={compact
-        ? "absolute top-2 left-2 right-2 flex items-center gap-1 text-[13px] pointer-events-auto overflow-x-auto no-scrollbar whitespace-nowrap"
+        ? `absolute top-2 left-2 right-2 flex items-center gap-1 text-[13px] pointer-events-auto overflow-x-auto no-scrollbar whitespace-nowrap ${crumbsClassName}`
         : "absolute top-2 left-1/2 -translate-x-1/2 flex items-center gap-1 text-[13px] pointer-events-auto max-w-[70%] flex-wrap justify-center"}>
         {soleRoot
           ? (rootUp ? <button onClick={rootUp.onUp} title="Up a folder" className="shrink-0 rounded-md border px-2 py-1 font-semibold bg-[var(--color-surface)]/90 border-[var(--color-border)]">↑ {rootUp.label}</button> : null)

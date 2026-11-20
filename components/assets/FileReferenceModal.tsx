@@ -52,12 +52,14 @@ async function resolveCurrentVersionUrl(doc: { id: string; current_version_id?: 
   return ((await res.json()).url as string) ?? null;
 }
 
-export default function FileReferenceModal({ tag, type, orgId, userId, canManage = false, onClose }: {
+export default function FileReferenceModal({ tag, type, orgId, userId, canManage = false, unitCode, onClose }: {
   tag: string;
   type?: string;
   orgId: string;
   userId?: string;
   canManage?: boolean;
+  /** The unit it's on, when known. */
+  unitCode?: string | null;
   onClose: () => void;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -85,7 +87,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
     setLoading(true);
     setLoadError(null);
     try {
-      const a = await getAssetByTag(orgId, tag);
+      const a = await getAssetByTag(orgId, tag, unitCode);
       setAsset(a);
       if (a) {
         const fs = await listAssetFiles(a.id);
@@ -101,7 +103,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
     } finally {
       setLoading(false);
     }
-  }, [orgId, tag]);
+  }, [orgId, tag, unitCode]);
   useEffect(() => { void loadFiles(); }, [loadFiles]);
 
   const activeFile = files.find((f) => f.id === activeId) ?? null;
@@ -146,7 +148,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
     if (!userId) return;
     // Files go on equipment that's in the list; adding equipment is an
     // admin's job (Operating areas), never a side effect of linking a file.
-    const a = asset ?? await getAssetByTag(orgId, tag);
+    const a = asset ?? await getAssetByTag(orgId, tag, unitCode);
     if (!a) { await appAlert({ message: `${tag} isn't in the equipment list yet. An admin adds it in Operating areas, under its unit; then files can be linked to it.`, tone: "default" }); return; }
     try {
       await linkAssetFile({ orgId, assetId: a.id, documentId: docId, createdBy: userId });

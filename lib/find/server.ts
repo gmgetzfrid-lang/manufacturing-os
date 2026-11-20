@@ -45,7 +45,7 @@ function aliasFromRow(r: Record<string, unknown>): FinderAlias {
   };
 }
 
-interface AssetLite { id: string; tag: string; description: string | null; unit_code: string | null; type_id: string | null; code: string | null }
+interface AssetLite { id: string; tag: string; description: string | null; unit_code: string | null; type_id: string | null; code: string | null; origin?: string | null; created_at?: string | null }
 
 function inScope(e: IndexEntry, scope: FindRequest["scope"]): boolean {
   if (!scope) return true;
@@ -66,7 +66,7 @@ export async function findEstate(admin: SupabaseClient, principal: KnowledgePrin
   const [data, aliasesRes, assetsRes, projectsRes] = await Promise.all([
     loadFinderData(orgId, principal.role as Role, principal.isController, admin),
     admin.from("finder_aliases").select("*").eq("org_id", orgId),
-    admin.from("assets").select("id, tag, description, unit_code, type_id, code").eq("org_id", orgId).eq("archived", false).limit(20000),
+    admin.from("assets").select("id, tag, description, unit_code, type_id, code, origin, created_at").eq("org_id", orgId).eq("archived", false).limit(20000),
     admin.from("projects").select("id, name, status").eq("org_id", orgId).limit(2000),
   ]);
   const aliases = ((aliasesRes.data as Record<string, unknown>[] | null) ?? []).map(aliasFromRow);

@@ -14,7 +14,7 @@
 
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Search, X, Loader2, Waypoints, HardDrive, Sparkles, Plus, Trash2,
   ExternalLink, ChevronRight, ChevronLeft, Info, AlertTriangle, Tag, Minus, Maximize2, Crosshair, Link2, Eye, Activity, Globe, Cpu, Factory, ImageIcon, FolderKanban, RefreshCw,
@@ -89,6 +89,8 @@ const CHIP_STYLE: Record<QueryChip["kind"], string> = {
 };
 
 const LIT_CAP = 150;
+/** The unit gathered on the map (Unit view): not a folder, not drillable. */
+const UNIT_ROOT = "__unit__";
 const AUTO_EXPAND_TOP = 25;
 /** How many nodes a drilled-in view fans out before deeper folders close. */
 const AUTO_NODES = 90;
@@ -115,6 +117,14 @@ function GraphPageInner() {
   const [parsed, setParsed] = useState<ParsedQuery | null>(null);
   /** The container the view is rooted at; null = the whole estate. */
   const [focusId, setFocusId] = useState<string | null>(params.get("focus"));
+  /** Where the graph was opened from (the folder or library you were in):
+   *  "This folder" goes back to it. Kept in the address with the focus. */
+  const [home] = useState<string | null>(() => params.get("home") ?? params.get("focus"));
+  /** Opened from a library's Graph tab: Back returns to it as it was. */
+  const [cameBack] = useState(() => params.get("back") === "1");
+  const router = useRouter();
+  /** Showing every folder of the home folder's unit, across libraries. */
+  const [unitView, setUnitView] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   /** Which result the map is honed in on. */
   const [activeIdx, setActiveIdx] = useState(0);
@@ -223,11 +233,20 @@ function GraphPageInner() {
     const unitLabel = (code?: string) => { const u = data.units.find((x) => x.code === code); return u ? ` · ${u.label}` : ""; };
     const unitBadge = (code?: string) => { if (!code) return undefined; const u = data.units.find((x) => x.code === code); return u ? `${u.label}` : `unit ${code}`; };
     for (const f of data.folders.values()) out.push({ id: `folder:${f.id}`, kind: "folder", label: f.name, parentId: folderParent(f), childCount: counts.get(`folder:${f.id}`) ?? 0, type: f.unitCode ? { ...CONTAINER_TYPES.folder, label: `Folder${unitLabel(f.unitCode)}` } : CONTAINER_TYPES.folder, badge: unitBadge(f.unitCode), equipment: eq(`folder:${f.id}`) });
+    // A file is named as its folder's list names it: its number, with the
+    // sheet when the number repeats in that folder; else its title or name.
+    const numberCount = new Map<string, number>();
+    for (const e of data.entries) if (e.number) { const k = `${e.folderId ?? e.libraryId}|${e.number}`; numberCount.set(k, (numberCount.get(k) ?? 0) + 1); }
+    const listLabel = (e: (typeof data.entries)[number]) => {
+      if (!e.number) return e.title || e.name;
+      const repeats = (numberCount.get(`${e.folderId ?? e.libraryId}|${e.number}`) ?? 0) > 1;
+      return repeats && e.sheet != null ? `${e.number} · Sh ${e.sheet}` : e.number;
+    };
     for (const e of data.entries) {
       // A file's own unit link is worth a badge only when its folder does not already say so.
       const parentUnit = e.folderId ? data.folders.get(e.folderId)?.unitCode : undefined;
       const own = e.unitCodes.find((c) => c !== parentUnit);
-      out.push({ id: e.id, kind: "file", label: e.name, parentId: e.folderId && data.folders.has(e.folderId) ? `folder:${e.folderId}` : `lib:${e.libraryId}`, childCount: 0, type: fileTypeOf(e.name), badge: unitBadge(own), equipment: eq(e.id) });
+      out.push({ id: e.id, kind: "file", label: listLabel(e), parentId: e.folderId && data.folders.has(e.folderId) ? `folder:${e.folderId}` : `lib:${e.libraryId}`, childCount: 0, type: fileTypeOf(e.name), badge: unitBadge(own), equipment: eq(e.id) });
     }
     for (const l of listings) {
       const drive = `drive:${l.id}`;
@@ -318,10 +337,44 @@ function GraphPageInner() {
     for (const n of nodes) if (n.parentId) { const arr = m.get(n.parentId) ?? []; arr.push(n); m.set(n.parentId, arr); }
     return m;
   }, [nodes]);
+  // The unit of the folder the graph was opened from: the nearest folder
+  // up its chain that is marked with a unit.
+  const homeUnit = useMemo(() => {
+    if (!data || !home?.startsWith("folder:")) return null;
+    let f = data.folders.get(home.slice(7));
+    const seen = new Set<string>();
+    while (f && !seen.has(f.id)) { if (f.unitCode) return f.unitCode; seen.add(f.id); f = f.parentId ? data.folders.get(f.parentId) : undefined; }
+    return null;
+  }, [data, home]);
+  // Every folder of that unit, in every library: the outermost ones, open.
+  const unitFolderIds = useMemo(() => {
+    if (!unitView || !homeUnit || !data) return null;
+    const ids = [...data.folders.values()].filter((f) => f.unitCode === homeUnit).map((f) => `folder:${f.id}`);
+    const set = new Set(ids);
+    return ids.filter((id) => !ancestorsOf(id).some((a) => set.has(a)));
+  }, [unitView, homeUnit, data, ancestorsOf]);
   const { visible, collapsed, upNode } = useMemo(() => {
     const vis = new Map<string, FileGraphNode>();
     const roots = focusId && nodeById.has(focusId) ? [nodeById.get(focusId)!] : nodes.filter((n) => !n.parentId);
-    for (const r of roots) vis.set(r.id, r);
+    if (unitFolderIds && !focusId) {
+      // The unit's folders, wherever they are filed, gathered round the
+      // unit (each says which library it is in), and what is directly
+      // inside each while it stays readable.
+      vis.set(UNIT_ROOT, { id: UNIT_ROOT, kind: "library", label: `Unit ${homeUnit}`, parentId: null, childCount: unitFolderIds.length, type: CONTAINER_TYPES.unit });
+      const libName = new Map((data?.libraries ?? []).map((l) => [`lib:${l.id}`, l.name]));
+      let budget = AUTO_NODES - unitFolderIds.length;
+      for (const id of unitFolderIds) {
+        const n = nodeById.get(id); if (!n) continue;
+        const lib = ancestorsOf(id).find((a) => a.startsWith("lib:"));
+        vis.set(id, { ...n, parentId: UNIT_ROOT, badge: (lib && libName.get(lib)) || n.badge });
+      }
+      for (const id of unitFolderIds) {
+        const kids = childrenOf.get(id) ?? [];
+        if (kids.length > budget) continue;
+        budget -= kids.length;
+        for (const k of kids) vis.set(k.id, k);
+      }
+    } else for (const r of roots) vis.set(r.id, r);
     if (focusId) {
       let frontier = roots, count = roots.length, first = true;
       while (frontier.length) {
@@ -346,14 +399,14 @@ function GraphPageInner() {
     }
     const collapsed = new Set<string>();
     for (const n of vis.values()) {
-      if (n.kind === "file" || n.kind === "extfile") continue;
+      if (n.kind === "file" || n.kind === "extfile" || n.id === UNIT_ROOT) continue;
       const kids = childrenOf.get(n.id) ?? [];
       if (kids.some((k) => !vis.has(k.id))) collapsed.add(n.id);
     }
     const focusNode = focusId ? nodeById.get(focusId) : null;
     const upNode = focusNode ? (focusNode.parentId ? nodeById.get(focusNode.parentId) ?? null : { id: "__all__", kind: "library" as const, label: "Whole estate", parentId: null, childCount: 0, type: { ...CONTAINER_TYPES.library, color: "#475569" } }) : null;
     return { visible: [...vis.values()], collapsed, upNode };
-  }, [nodes, nodeById, childrenOf, focusId, hits, activeIdx, ancestorsOf]);
+  }, [nodes, nodeById, childrenOf, focusId, hits, activeIdx, ancestorsOf, unitFolderIds, homeUnit, data]);
 
   // Entities the search resolved, drawn beside the files they relate to.
   const satellites = useMemo<FileGraphSatellite[]>(() => {
@@ -425,9 +478,10 @@ function GraphPageInner() {
     const sp = new URLSearchParams(window.location.search);
     if (parsed?.raw) sp.set("q", parsed.raw); else sp.delete("q");
     if (focusId) sp.set("focus", focusId); else sp.delete("focus");
+    if (home) sp.set("home", home);
     const next = `${window.location.pathname}${sp.toString() ? `?${sp}` : ""}`;
     if (next !== `${window.location.pathname}${window.location.search}`) window.history.replaceState(window.history.state, "", next);
-  }, [parsed, focusId]);
+  }, [parsed, focusId, home]);
 
   const crumbs = useMemo(() => {
     if (!focusId) return [];
@@ -461,7 +515,10 @@ function GraphPageInner() {
     const usedAliasIds = new Set(parsed.chips.filter((c) => c.via === "alias" && c.aliasId).map((c) => c.aliasId!));
     for (const id of usedAliasIds) void bumpFinderAlias(activeOrgId, id, "hit");
   };
-  const drill = useCallback((id: string | null) => { setFocusId(id); setSelectedId(null); }, []);
+  const drill = useCallback((id: string | null) => {
+    if (id === UNIT_ROOT) return; // the unit itself: already all in view
+    setFocusId(id); setSelectedId(null); setUnitView(false);
+  }, []);
   const up = useCallback(() => {
     const cur = focusId ? nodeById.get(focusId) : null;
     drill(cur?.parentId ?? null);
@@ -604,10 +661,35 @@ function GraphPageInner() {
     { label: "Links", value: data.edges.length.toLocaleString() },
   ] : undefined;
 
+  // Where the graph was opened from, and the Table tab's way back to the
+  // folder the graph is showing now (as a list).
+  const homeLabel = (home && nodeById.get(home)?.label) || "the library";
+  const listHrefOf = (id: string | null): string | null => {
+    if (!id || !data) return null;
+    if (id.startsWith("lib:")) return `/documents/${id.slice(4)}`;
+    if (id.startsWith("folder:")) { const f = data.folders.get(id.slice(7)); return f ? `/documents/${f.libraryId}?folderId=${f.id}` : null; }
+    return null;
+  };
+  const tableHref = listHrefOf(focusId) ?? listHrefOf(home);
+  // The switch at the map's top right: the folder you came from, its unit,
+  // or the whole site. None is lit once you have gone somewhere else.
+  const scopes: Array<{ key: "here" | "unit" | "site"; label: string; title: string }> = [
+    ...(home && nodeById.has(home) ? [{ key: "here" as const, label: home.startsWith("lib:") ? "This library" : "This folder", title: `What is in ${homeLabel}` }] : []),
+    ...(homeUnit ? [{ key: "unit" as const, label: `Unit ${homeUnit}`, title: `Every folder of unit ${homeUnit}, in every library` }] : []),
+    { key: "site" as const, label: "Whole site", title: "Every library" },
+  ];
+  const scopeNow = unitView ? "unit" : focusId && focusId === home ? "here" : !focusId ? "site" : null;
+  const pickScope = (k: "here" | "unit" | "site") => {
+    if (k === "here") drill(home);
+    else if (k === "site") drill(null);
+    else { drill(null); setUnitView(true); }
+  };
+
   return (
     <div className="flex flex-col lg:h-[calc(100vh-56px)] px-3 sm:px-4 lg:px-6 pt-4 pb-4">
-      <PageHero size="md" overlap={false} className="!mb-4 !pb-6" kicker="Document control" title={mapAnswer} sub={mapSub} facts={mapFacts}>
-        <ViewTabs tabs={DOCUMENT_VIEWS} />
+      <PageHero size="md" overlap={false} className="!mb-4 !pb-6" kicker="Document control" title={mapAnswer} sub={mapSub} facts={mapFacts}
+        back={cameBack ? { onClick: () => router.back(), label: `Back to ${homeLabel}` } : undefined}>
+        <ViewTabs tabs={DOCUMENT_VIEWS} hrefs={tableHref ? { "/documents": tableHref } : undefined} />
         {error && (
           <div role="alert" className="mt-3 text-[14px] flex items-center gap-2 text-[var(--color-text)]">
             <AlertTriangle className={`w-4 h-4 shrink-0 ${data ? "text-[var(--state-held)]" : "text-[var(--state-overdue)]"}`} /> <span className="flex-1">{error}</span>
@@ -722,9 +804,17 @@ function GraphPageInner() {
               <span className="grid place-items-center w-7 h-7 rounded-md bg-[var(--color-surface)]/95 border border-[var(--color-border)]">
                 <HelpTooltip placement="bottom">Click a folder to explore it, a file for details. Double-click to open. Arrow keys step through results; Esc goes up.</HelpTooltip>
               </span>
-              <button onClick={() => drill(null)} className={`rounded-md border px-2 py-1 inline-flex items-center gap-1 font-semibold ${focusId ? "bg-[var(--color-surface)]/90 border-[var(--color-border)]" : "bg-[var(--color-surface)] border-[var(--color-text-muted)] ring-1 ring-[var(--color-text-muted)]"}`}>
+              <button onClick={() => drill(null)} className={`rounded-md border px-2 py-1 inline-flex items-center gap-1 font-semibold whitespace-nowrap ${focusId || unitView ? "bg-[var(--color-surface)]/90 border-[var(--color-border)]" : "bg-[var(--color-surface)] border-[var(--color-text-muted)] ring-1 ring-[var(--color-text-muted)]"}`}>
                 <Waypoints className="w-3.5 h-3.5" /> Whole estate
               </button>
+              {unitView && homeUnit && !focusId && (
+                <>
+                  <ChevronRight className="w-3 h-3 opacity-50" />
+                  <span className="rounded-md border px-2 py-1 inline-flex items-center gap-1 font-semibold whitespace-nowrap bg-[var(--color-surface)] border-[var(--color-text)] ring-1 ring-[var(--color-text)]">
+                    <Factory className="w-3.5 h-3.5" /> Unit {homeUnit}
+                  </span>
+                </>
+              )}
               {crumbs.map((c, i) => (
                 <React.Fragment key={c.id}>
                   <ChevronRight className="w-3 h-3 opacity-50" />
@@ -753,6 +843,19 @@ function GraphPageInner() {
               )}
             </div>
             <div className="flex items-center gap-1 flex-wrap justify-end min-w-0 max-w-full pointer-events-auto">
+              {scopes.length > 1 && (
+                <div role="radiogroup" aria-label="What the graph shows" data-graph-scope
+                  className="basis-full sm:basis-auto order-first sm:order-none flex justify-end">
+                  <span className="inline-flex items-center gap-0.5 p-0.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-sm">
+                    {scopes.map((o) => (
+                      <button key={o.key} type="button" role="radio" aria-checked={scopeNow === o.key} onClick={() => pickScope(o.key)} title={o.title}
+                        className={`h-8 px-2.5 rounded text-[13px] font-semibold whitespace-nowrap transition-colors ${scopeNow === o.key ? "bg-[var(--color-main)] text-white" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+                        {o.label}
+                      </button>
+                    ))}
+                  </span>
+                </div>
+              )}
               {controller && <ConnectButton running={connect.running || connect.planLoading} disabled={data?.estateMissing} onClick={() => { setShowConnect(true); void connect.openPreview(); }} />}
               {controller && (
                 <button onClick={runResolver} disabled={resolving || data?.estateMissing} title={data?.estateMissing ? "Apply migration 20261020 first" : "Link every folder and file to its unit, project and equipment from names and ancestry"}
@@ -769,10 +872,12 @@ function GraphPageInner() {
               <button onClick={() => graphRef.current?.fit()} className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1"><Maximize2 className="w-3 h-3" /> Fit</button>
               <Link href={globalGraphHref(selectedId ?? focusId ?? "")} title="The same node on the Intelligence graph - equipment, units, projects and documents in one web"
                 className={`rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1 ${selectedId || focusId ? "" : "opacity-50 pointer-events-none"}`}><Globe className="w-3 h-3" /> Global view</Link>
-              <span className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1">
-                {data ? `${data.libraries.length} libraries, ${data.folders.size} folders, ${data.entries.length} files` : "…"}
-                {listingEntries.length > 0 && ` · ${listingEntries.length} on drives`}
-              </span>
+              {!focusId && !unitView && (
+                <span className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1">
+                  {data ? `${data.libraries.length} libraries, ${data.folders.size} folders, ${data.entries.length} files` : "…"}
+                  {listingEntries.length > 0 && ` · ${listingEntries.length} on drives`}
+                </span>
+              )}
             </div>
           </div>
           <div className="absolute bottom-3 left-3 right-3 flex flex-wrap gap-1.5 text-[13px]">

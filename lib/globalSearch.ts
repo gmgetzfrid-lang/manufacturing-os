@@ -12,6 +12,8 @@ import { searchDocuments, searchAssets, searchTickets } from "@/lib/search";
 import { supabase } from "@/lib/supabase";
 import { findUnits } from "@/lib/findEverywhere";
 import { tagKey } from "@/lib/findCore";
+import { onePerPiece, parseEquipmentLabel } from "@/lib/equipmentIdentity";
+import { idKey, plainName } from "@/lib/equipmentPick";
 
 export type GlobalHitKind = "document" | "ticket" | "project" | "asset" | "note" | "transmittal";
 
@@ -76,9 +78,14 @@ export async function globalSearch({ orgId, query, perKindLimit = 5 }: GlobalSea
     // Names are never unique; say the unit, the ID and what it is, and open
     // the search with that one picked (its documents, the map, a preview).
     const units = new Map((await findUnits(orgId)).map((u) => [u.code, u.label]));
-    const rows = results[2].value as Array<{ id: string; tag: string; description: string | null; unit_code?: string | null; code?: string | null }>;
-    const key = tagKey(q);
-    rows.sort((x, y) => Number(tagKey(y.tag) === key) - Number(tagKey(x.tag) === key));
+    type Row = { id: string; tag: string; description: string | null; unit_code?: string | null; code?: string | null; origin?: string | null; created_at?: string | null };
+    // The ID is who it is: two copies of one piece (the same ID, or the same
+    // tag in a unit) show once, the one with its ID.
+    const rows = onePerPiece((results[2].value as Row[]).map((a) => ({ ...a, unitCode: a.unit_code ?? null, createdAt: a.created_at ?? null })));
+    const label = parseEquipmentLabel(q);
+    const key = tagKey(label.tag ?? q);
+    const rank = (a: Row) => (label.code && idKey(a.code) === idKey(label.code) ? 2 : 0) + (tagKey(plainName(a.tag)) === key ? 1 : 0);
+    rows.sort((x, y) => rank(y) - rank(x));
     for (const a of rows) {
       const unit = a.unit_code ? `${a.unit_code} ${units.get(a.unit_code) ?? ""}`.trim() : "No unit set";
       hits.push({
@@ -86,7 +93,8 @@ export async function globalSearch({ orgId, query, perKindLimit = 5 }: GlobalSea
         kind: "asset",
         title: a.code && !a.tag.includes(a.code) ? `${a.tag} · ${a.code}` : a.tag,
         subtitle: [unit, a.description].filter(Boolean).join(", "),
-        href: `/search?q=${encodeURIComponent(a.tag)}&pick=${encodeURIComponent(String(a.id))}`,
+        // Opened by its ID when it has one: the tag repeats, the ID doesn't.
+        href: `/search?q=${encodeURIComponent(a.code || plainName(a.tag))}&pick=${encodeURIComponent(String(a.id))}`,
       });
     }
   }

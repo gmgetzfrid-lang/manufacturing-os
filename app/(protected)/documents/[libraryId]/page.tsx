@@ -1,7 +1,7 @@
 "use client";
 
 import { nudgeKnowledgeSources } from "@/lib/knowledge";
-import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
@@ -146,8 +146,12 @@ import AlsoFiledHere from "@/components/documents/AlsoFiledHere";
 import { useFind } from "@/components/find/useFind";
 import FindPanel from "@/components/find/FindPanel";
 import FindMap, { type MapFolder } from "@/components/find/FindMap";
+import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
+import { versionToShow, versionIfKnown, prefetchDoc, prefetchDocFile } from "@/lib/docOpen";
+import { withParams, readPlace, writePlace, steppedThroughHistory } from "@/lib/docsPlace";
+import { warmViewer } from "@/components/viewers/warmViewer";
 import DocInPlace from "@/components/documents/DocInPlace";
-import { docRecordFromRow, DOC_LIST_COLUMNS, versionFromRow } from "@/lib/docRecord";
+import { docRecordFromRow, DOC_LIST_COLUMNS } from "@/lib/docRecord";
 import { folderUnit, folderForUnit } from "@/lib/findEverywhere";
 import type {
   AccessControl,
@@ -269,6 +273,13 @@ const tagKey = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, "");
 /** Every tag-like word in a row's text, in its plain form. */
 const tagTokens = (hay: string) => new Set(hay.split(/[\s,;:"'()[\]{}/]+/).filter(Boolean).map(tagKey));
 
+// Kept across visits in this tab (module scope outlives the page): coming
+// back to a library - from a document, the graph, another page, Back -
+// paints its folders and the folder's files at once, then refreshes.
+const FOLDERS_SEEN = new Map<string, LibraryCollection[]>();
+const FOLDER_DOCS_SEEN = new Map<string, DocumentRecord[]>();
+const docsKeyOf = (libraryId: string, folderId: string | null, archived: boolean) => `${libraryId}|${folderId ?? "root"}|${archived}`;
+
 export default function LibraryExplorerPage() {
   const params = useParams();
   const router = useRouter();
@@ -279,8 +290,15 @@ export default function LibraryExplorerPage() {
   const libraryId = params.libraryId as string;
 
   const [library, setLibrary] = useState<LibraryConfig | null>(null);
-  const [folders, setFolders] = useState<LibraryCollection[]>([]);
-  const [documents, setDocuments] = useState<DocumentRecord[]>([]);
+  const [folders, setFolders] = useState<LibraryCollection[]>(() => FOLDERS_SEEN.get(libraryId) ?? []);
+  const [documents, setDocuments] = useState<DocumentRecord[]>(() => FOLDER_DOCS_SEEN.get(docsKeyOf(libraryId, searchParams.get("folderId"), false)) ?? []);
+  // Which folder's files `documents` holds right now. Opening another folder
+  // keeps the last list until the new one lands; the map (and anything
+  // else that must agree with the list) shows only the folder's own files.
+  const [documentsKey, setDocumentsKey] = useState<string | null>(() => {
+    const k = docsKeyOf(libraryId, searchParams.get("folderId"), false);
+    return FOLDER_DOCS_SEEN.has(k) ? k : null;
+  });
   // Default false — only flip true while a real fetch is in flight, so a
   // transient null activeOrgId (e.g. on refresh before RoleContext resolves)
   // doesn't leave the page wedged on "Loading library...".
@@ -317,7 +335,8 @@ export default function LibraryExplorerPage() {
   // loop); uploads then save each revision through /api/documents/attach-version.
   const versionsViaServerRef = useRef(false);
 
-  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
+  // From the address at once, so the first list read is the right folder's.
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(() => searchParams.get("folderId"));
   // The convention watchdog: after an upload or a new folder, what looks
   // like it belongs elsewhere. Non-blocking; link-not-move.
   const [watchdog, setWatchdog] = useState<HomeSuggestion[]>([]);
@@ -349,7 +368,9 @@ export default function LibraryExplorerPage() {
       setWatchdog((prev) => prev.filter((p) => p.targetId !== sug.targetId));
     } finally { setWatchdogBusy(null); }
   };
-  const [search, setSearch] = useState("");
+  // The filter over the list. It is in the address (?filter=), so Back,
+  // Forward and a refresh bring it back with the folder it was typed in.
+  const [search, setSearch] = useState(() => searchParams.get("filter") ?? "");
   // One search for everything (tags, IDs, drawing numbers, words inside the
   // documents). It stays on this page. ?find= opens it from the top search
   // bar's "Show on map".
@@ -492,8 +513,10 @@ export default function LibraryExplorerPage() {
   };
 
   const handleSort = (key: string) => {
-    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else { setSortKey(key); setSortDir("asc"); }
+    const dir: "asc" | "desc" = sortKey === key ? (sortDir === "asc" ? "desc" : "asc") : "asc";
+    setSortKey(key); setSortDir(dir);
+    // Kept for this folder: coming back to it, the list is sorted the same.
+    writePlace(libraryId, currentFolderId ?? null, { sort: { key, dir } });
   };
 
   // The drop area answers back like every other drop box (useFileDrag): it
@@ -713,8 +736,39 @@ export default function LibraryExplorerPage() {
   };
 
   const handleRowDoubleClick = (docRecord: DocumentRecord) => {
+    // The viewer opens from the file the preview is fetching: one download.
+    prefetchDocFile(docRecord);
     setSelectedDoc(docRecord);
     setShowFullScreen(true);
+  };
+
+  // Opening fast: a row the pointer rests on has its version and signed
+  // link fetched; a row pressed (not ctrl/shift) has its file on the way
+  // before the click lands. Rows, cards and phone rows all carry their id.
+  const documentsRef = useRef<DocumentRecord[]>([]);
+  useEffect(() => { documentsRef.current = documents; }, [documents]);
+  const docRestTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const docRestId = useRef<string | null>(null);
+  const restOff = () => {
+    if (docRestTimer.current) clearTimeout(docRestTimer.current);
+    docRestTimer.current = null; docRestId.current = null;
+  };
+  const docUnder = (t: EventTarget | null): DocumentRecord | null => {
+    const el = (t as HTMLElement | null)?.closest?.("[data-doc-item], [data-doc-open]");
+    const id = el?.getAttribute("data-doc-item") ?? el?.getAttribute("data-doc-open");
+    return id ? documentsRef.current.find((d) => d.id === id) ?? null : null;
+  };
+  const onDocsPointerOver = (e: React.MouseEvent) => {
+    const d = docUnder(e.target);
+    if (!d || d.id === docRestId.current) return;
+    restOff();
+    docRestId.current = d.id ?? null;
+    docRestTimer.current = setTimeout(() => { docRestTimer.current = null; prefetchDoc(d); warmViewer(); }, 120);
+  };
+  const onDocsPointerDown = (e: React.PointerEvent) => {
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    const d = docUnder(e.target);
+    if (d) prefetchDocFile(d);
   };
 
   const handleRowContextMenu = (docRecord: DocumentRecord, e: React.MouseEvent) => {
@@ -1250,6 +1304,8 @@ export default function LibraryExplorerPage() {
   // Tracks the folder we've already applied the saved default to, so an
   // in-session manual re-sort isn't clobbered when the effect re-runs.
   const sortAppliedFolderRef = useRef<string | null>(null);
+  // The folder whose sort was put back from where you left it (docsPlace).
+  const placeSortRef = useRef<string | null>(null);
 
   // Staging area — persists across folder navigation
   const [stagedDocs, setStagedDocs] = useState<DocumentRecord[]>([]);
@@ -1525,19 +1581,65 @@ export default function LibraryExplorerPage() {
   // Back made the writer push the old folder straight back, the reader
   // followed, and the two flipped the list between folders forever.
   const writerFolderRef = useRef<string | null>(null);
+  // The same for the full-size viewer: opening it is a step in history, so
+  // the browser's Back closes it (and does not leave the folder); its own
+  // close button steps back over that step.
+  const writerFsRef = useRef(false);
+  const fsPushedRef = useRef(false);
+  // And for the picked document: Back to an entry with none picked drops
+  // the pick (it used to be written straight back over the entry).
+  const writerDocRef = useRef<string | null>(null);
+  const lastUrlDoc = useRef<string | null>(searchParams.get("doc"));
+  // What the filter and search boxes last read from or wrote to the address.
+  const urlText = useRef({ filter: searchParams.get("filter") ?? "", find: searchParams.get("find") ?? "" });
+  // The address moved on the viewer (Back closed it, Forward opened it).
+  const lastUrlFs = useRef(searchParams.get("fs") === "1");
+  const selectedDocIdRef = useRef<string | null>(null);
+  useEffect(() => { selectedDocIdRef.current = selectedDoc?.id ?? null; }, [selectedDoc?.id]);
   useEffect(() => {
+    const urlDoc = searchParams.get("doc");
+    if (urlDoc !== lastUrlDoc.current) {
+      lastUrlDoc.current = urlDoc;
+      if (!urlDoc && selectedDocIdRef.current && !deepLinkPending.current) setSelectedDoc(null);
+    }
+    const urlFs = searchParams.get("fs") === "1";
+    if (urlFs === lastUrlFs.current) return;
+    lastUrlFs.current = urlFs;
+    if (!urlFs) { fsPushedRef.current = false; setShowFullScreen(false); }
+    else if (searchParams.get("doc") && searchParams.get("doc") === selectedDocIdRef.current) setShowFullScreen(true);
+  }, [searchParams]);
+  useEffect(() => {
+    const stateFs = !!selectedDoc?.id && showFullScreen;
+    const stateDoc = selectedDoc?.id ?? null;
     if (!urlSyncMounted.current) {
       urlSyncMounted.current = true;
       writerFolderRef.current = currentFolderId ?? null;
+      writerFsRef.current = stateFs;
+      writerDocRef.current = stateDoc;
       return;
     }
     if (deepLinkPending.current) return; // a deep link is still resolving — leave the URL alone
     const urlFolder = searchParams.get("folderId") ?? null;
     const action = folderUrlAction(writerFolderRef.current, currentFolderId ?? null, urlFolder);
     writerFolderRef.current = currentFolderId ?? null;
+    const fsMoved = writerFsRef.current !== stateFs;
+    writerFsRef.current = stateFs;
+    const docMoved = writerDocRef.current !== stateDoc;
+    writerDocRef.current = stateDoc;
     // The address bar moved first (Back / Forward, or our own push still
     // landing) — not ours to overwrite; the reader brings state along.
     if (action === "leave") return;
+    const urlFs = searchParams.get("fs") === "1";
+    if (!fsMoved && urlFs !== stateFs && action !== "push") return;
+    // Back or Forward changed the picked document: the reader follows.
+    if (!docMoved && !fsMoved && !showMultiView && (searchParams.get("doc") ?? null) !== stateDoc && action !== "push") return;
+    // Closed with its own button after opening it took a step: take the
+    // step back, so a later Back leaves the folder instead of reopening it.
+    if (fsMoved && !stateFs && urlFs && fsPushedRef.current) {
+      fsPushedRef.current = false;
+      window.history.back();
+      return;
+    }
     const sp = new URLSearchParams(searchParams.toString());
     sp.delete("doc"); sp.delete("fs"); sp.delete("book");
     if (selectedDoc?.id) {
@@ -1548,15 +1650,61 @@ export default function LibraryExplorerPage() {
     }
     const folderChanged = action === "push";
     if (currentFolderId) sp.set("folderId", currentFolderId); else sp.delete("folderId");
+    // A filter belongs to the folder it was typed in: a new folder starts
+    // without one, and Back brings it back with its folder.
+    if (folderChanged) sp.delete("filter");
     const next = sp.toString();
-    if (next !== searchParams.toString()) {
-      // Entering or leaving a folder is a step in history (Back undoes it);
-      // opening a document in place just rewrites the current entry.
+    if (next !== window.location.search.replace(/^\?/, "")) {
+      // Entering or leaving a folder is a step in history (Back undoes it),
+      // and so is opening the full-size viewer (Back closes it); picking a
+      // document just rewrites the current entry. Written straight to the
+      // history (Next keeps useSearchParams in step), so a folder change
+      // never waits on a server round trip.
       const url = next ? `${pathname}?${next}` : pathname;
-      if (folderChanged) router.push(url, { scroll: false });
-      else router.replace(url, { scroll: false });
+      const opensViewer = fsMoved && stateFs && !urlFs;
+      if (opensViewer) {
+        // The step under the viewer is this document picked, so closing it
+        // (either way) leaves the same document picked.
+        const under = new URLSearchParams(next); under.delete("fs");
+        const underQs = under.toString();
+        window.history.replaceState(null, "", underQs ? `${pathname}?${underQs}` : pathname);
+        window.history.pushState(null, "", url);
+        fsPushedRef.current = true;
+        lastUrlFs.current = true;
+      } else if (folderChanged) {
+        window.history.pushState(null, "", url);
+        fsPushedRef.current = false;
+        urlText.current.filter = "";
+        setSearch("");
+      } else if (action === "sync" && !fsMoved) {
+        // Picking a document: the entry is rewritten without telling the
+        // router, so the click is not followed by a second render of the
+        // whole page (Back, Forward and the next sync read the address).
+        window.history.replaceState(window.history.state, "", url);
+        lastUrlDoc.current = stateDoc;
+      } else window.history.replaceState(null, "", url);
     }
-  }, [selectedDoc, showFullScreen, showMultiView, openBookId, currentFolderId, searchParams, router, pathname]);
+  }, [selectedDoc, showFullScreen, showMultiView, openBookId, currentFolderId, searchParams, pathname]);
+
+  // The filter over the list and the search, kept in the address as they
+  // are typed (rewriting the entry, never a new step per letter). `urlText`
+  // is what was last read from or written to the address: a change there
+  // that it does not know (Back, Forward, a link) is put into the boxes.
+  useEffect(() => {
+    const f = searchParams.get("filter") ?? "", g = searchParams.get("find") ?? "";
+    if (f !== urlText.current.filter) { urlText.current.filter = f; setSearch(f); }
+    if (g !== urlText.current.find) { urlText.current.find = g; setFind(g); }
+  }, [searchParams]);
+  useEffect(() => {
+    const filter = search.trim() ? search : "", findText = find.trim() ? find : "";
+    if (filter === urlText.current.filter && findText === urlText.current.find) return;
+    const t = window.setTimeout(() => {
+      urlText.current = { filter, find: findText };
+      const next = withParams(window.location.search, { filter, find: findText });
+      if (next !== window.location.search) window.history.replaceState(null, "", `${window.location.pathname}${next}`);
+    }, 350);
+    return () => window.clearTimeout(t);
+  }, [search, find]);
 
   // Note: ⌘K is owned by the single global command palette (mounted in the
   // protected layout). This library-scoped palette — folder/sheet quick-jump +
@@ -1685,9 +1833,11 @@ export default function LibraryExplorerPage() {
   useEffect(() => {
     if (!libraryId || !activeOrgId) return;
 
+    const seen = FOLDERS_SEEN.get(libraryId);
+    if (seen) setFolders(seen);
     const unsub = listenLibraryFolders(
       libraryId,
-      (list) => setFolders(list),
+      (list) => { FOLDERS_SEEN.set(libraryId, list); setFolders(list); },
       { 
         orgId: activeOrgId, 
         onError: (msg) => setError(`Folder Error: ${msg}`),
@@ -1703,7 +1853,7 @@ export default function LibraryExplorerPage() {
   // Per-folder document cache (library|folder|archived → rows) for instant
   // stale-while-revalidate folder switching. A ref, so it survives re-renders
   // without itself triggering one.
-  const folderDocsCache = useRef<Map<string, DocumentRecord[]>>(new Map());
+  const folderDocsCache = useRef<Map<string, DocumentRecord[]>>(FOLDER_DOCS_SEEN);
 
   // Realtime doc changes bump this; the fetch effect below re-runs on it.
   // The channel lives in its OWN effect keyed only on libraryId — it used to
@@ -1772,14 +1922,14 @@ export default function LibraryExplorerPage() {
     // Stale-while-revalidate: if this folder was loaded before, paint its last
     // docs INSTANTLY and refresh in the background instead of a spinner on every
     // switch. Keyed by library so folders never bleed across libraries.
-    const cacheKey = `${libraryId}|${currentFolderId ?? "root"}|${showArchivedDocs}`;
+    const cacheKey = docsKeyOf(libraryId, currentFolderId ?? null, showArchivedDocs);
     const cached = folderDocsCache.current.get(cacheKey);
     // Repainting the cache on a same-folder refresh flashed back rows that
     // had just been deleted or moved, then removed them again.
     const switching = lastDocsKeyRef.current !== cacheKey;
     lastDocsKeyRef.current = cacheKey;
     if (switching) {
-      if (cached) { setDocuments(cached); setLoadingDocs(false); }
+      if (cached) { setDocuments(cached); setDocumentsKey(cacheKey); setLoadingDocs(false); }
       else { setLoadingDocs(true); }
     }
 
@@ -1806,7 +1956,7 @@ export default function LibraryExplorerPage() {
           const { data, error: qErr } = await q;
           if (!alive) return;
           if (qErr) {
-            if (from === 0) { setError(qErr.message); if (switching) setDocuments([]); }
+            if (from === 0) { setError(qErr.message); if (switching) { setDocuments([]); setDocumentsKey(cacheKey); } }
             else setError(`Loaded the first ${all.length.toLocaleString()} documents; the rest failed: ${qErr.message}`);
             break;
           }
@@ -1818,6 +1968,7 @@ export default function LibraryExplorerPage() {
           if (switching || !morePagesLikely) {
             folderDocsCache.current.set(cacheKey, all);
             setDocuments(all);
+            setDocumentsKey(cacheKey);
           }
           setDocStreamProgress(morePagesLikely && from + PAGE < HARD_CAP ? all.length : null);
           setDocFetchHitCap(morePagesLikely && from + PAGE >= HARD_CAP);
@@ -2013,59 +2164,73 @@ export default function LibraryExplorerPage() {
   // large libraries — React keeps the input snappy and re-runs the
   // filter pass against the deferred (slightly stale) value.
   const deferredSearch = useDeferredValue(search);
-  const filteredDocs = useMemo(() => {
-    const q = deferredSearch.trim().toLowerCase();
-    return documents.filter((docRecord) => {
-      const canRead = canWithAclChain({
-        principal,
-        action: "read",
-        aclChain: buildDocChain(docRecord),
-        defaultAllow: true,
-      });
-      if (!canRead) return false;
-      if (!q) return true;
-      // Search across every field a person might recognize a sheet by — not
-      // just the number/title/name, but the sheet number, rev, status and the
-      // values of any custom column (equipment tag, unit, area, etc.).
+  // What each row can be found by, worked out once per list (not once per
+  // letter typed): the filter then only compares strings, so it keeps up
+  // with typing on a folder of thousands.
+  const readableDocs = useMemo(() => documents.filter((docRecord) => canWithAclChain({
+    principal,
+    action: "read",
+    aclChain: buildDocChain(docRecord),
+    defaultAllow: true,
+  })), [documents, principal, buildDocChain]);
+  const docFinder = useMemo(() => {
+    const m = new Map<DocumentRecord, { hay: string; toks: string[]; tags: Set<string> | null }>();
+    for (const docRecord of readableDocs) {
+      // Every field a person might recognize a sheet by: the number, title,
+      // name, sheet, rev, status and the values of any custom column
+      // (equipment tag, unit, area, etc.).
       const metaValues = docRecord.metadata
         ? Object.values(docRecord.metadata)
             .map((v) => (v == null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v)))
             .join(" ")
         : "";
       const hay = `${safeString(docRecord.documentNumber)} ${safeString(docRecord.title)} ${safeString(docRecord.name)} ${docRecord.sheetNumber ?? ""} ${safeString(docRecord.rev)} ${safeString(docRecord.status)} ${metaValues}`.toLowerCase();
+      m.set(docRecord, { hay, toks: hay.split(/\s+/).map((tok) => tok.replace(/[^a-z0-9]+/g, "")).filter(Boolean), tags: null });
+    }
+    return m;
+  }, [readableDocs]);
+  const filteredDocs = useMemo(() => {
+    const q = deferredSearch.trim().toLowerCase();
+    if (!q) return readableDocs;
+    const tagQ = isTagQuery(q);
+    const qNorm = q.replace(/[^a-z0-9]+/g, "");
+    return readableDocs.filter((docRecord) => {
+      const f = docFinder.get(docRecord);
+      if (!f) return false;
       // An equipment tag ("x-31", "X31", "2030.31") finds that equipment
       // only: X-31, not X-310 or X-31A.
-      if (isTagQuery(q)) return tagTokens(hay).has(tagKey(q));
-      if (hay.includes(q)) return true;
+      if (tagQ) { f.tags ??= tagTokens(f.hay); return f.tags.has(tagKey(q)); }
+      if (f.hay.includes(q)) return true;
       // Identity-tolerant pass: "e22" should find "E-22" (and "203022" find
       // "2030.22") — compare token-by-token with punctuation squashed out of
       // both sides. Short queries only, so a sentence doesn't match
       // everything; per-token so fields never bleed into each other.
-      const qNorm = q.replace(/[^a-z0-9]+/g, "");
-      if (qNorm.length >= 2 && qNorm.length <= 12) {
-        return hay.split(/\s+/).some((tok) => tok.replace(/[^a-z0-9]+/g, "").includes(qNorm));
-      }
+      if (qNorm.length >= 2 && qNorm.length <= 12) return f.toks.some((tok) => tok.includes(qNorm));
       return false;
     });
-  }, [documents, principal, deferredSearch, buildDocChain]);
+  }, [readableDocs, docFinder, deferredSearch]);
 
-  // The map under the folders shows where the list is: this folder (or the
-  // top of the library), with the subfolders and files this person can see.
+  // The map shows where the list is: this folder (or the top of the
+  // library), with the same subfolders and files the list shows, named as
+  // the list names them. While another folder's files are still on screen
+  // (this one's are loading), the map shows only this folder's subfolders.
+  const docsAreHere = documentsKey === docsKeyOf(libraryId, currentFolderId ?? null, showArchivedDocs);
   const mapFolder = useMemo<MapFolder>(() => {
     const cur = currentFolderId ? folders.find((f) => f.id === currentFolderId) ?? null : null;
     const parent = cur?.parentId ? folders.find((f) => f.id === cur.parentId) ?? null : null;
     return {
       id: currentFolderId ?? null,
       name: cur?.name ?? library?.name ?? "Library",
+      loading: !docsAreHere,
       subfolders: filteredFolders.map((f) => ({ id: f.id!, name: f.name })),
-      docs: filteredDocs.filter((d) => !!d.id).map((d) => ({
+      docs: (docsAreHere ? filteredDocs : []).filter((d) => !!d.id).map((d) => ({
         id: d.id!, number: d.documentNumber || null, title: d.title || null, name: d.name || null,
         sheet: (() => { const v = (d.metadata as Record<string, unknown> | undefined)?.sheet ?? d.sheetNumber; return v == null || v === "" ? null : String(v); })(),
         href: "",
       })),
       up: currentFolderId ? { id: parent?.id ?? null, name: parent?.name ?? library?.name ?? "Library" } : null,
     };
-  }, [currentFolderId, folders, filteredFolders, filteredDocs, library?.name]);
+  }, [currentFolderId, folders, filteredFolders, filteredDocs, library?.name, docsAreHere]);
 
 
   const sortedDocs = useMemo(() => {
@@ -2193,7 +2358,10 @@ export default function LibraryExplorerPage() {
       setViewDefaults({ hasUserRow: res.hasUserRow, hasOrgRow: res.hasOrgRow });
       if (sortAppliedFolderRef.current !== folderKey) {
         sortAppliedFolderRef.current = folderKey;
-        if (res.sort?.key) { setSortKey(res.sort.key); setSortDir(res.sort.dir === "asc" ? "asc" : "desc"); }
+        // A sort picked in this folder earlier (lib/docsPlace) wins over
+        // the saved default; the layout and density still apply.
+        if (placeSortRef.current === folderKey) { /* kept */ }
+        else if (res.sort?.key) { setSortKey(res.sort.key); setSortDir(res.sort.dir === "asc" ? "asc" : "desc"); }
         else { setSortKey("updatedAt"); setSortDir("desc"); }
         setDocLayout(res.view?.layout ?? "details");
         if (res.view?.density) setDensity(res.view.density);
@@ -2202,51 +2370,119 @@ export default function LibraryExplorerPage() {
     return () => { alive = false; };
   }, [activeOrgId, uid, libraryId, currentFolderId]);
 
+  // ── Coming back to where you were ─────────────────────────────────────
+  // Per folder, for this tab: the sort picked there, how far down the list
+  // was scrolled and the row you were on (lib/docsPlace). Coming back to a
+  // folder - by Back or Forward, or to this page from a document, the graph
+  // or anywhere else - puts them back once its list is on screen. Opening
+  // a folder anew starts at its top.
+  const mainScrollRef = useRef<HTMLDivElement | null>(null);
+  const restoreRef = useRef<{ folder: string | null; top: number; row: string | null } | null>(null);
+  // The place last handled (undefined: none yet). Handling the same place
+  // again (a re-render, a development double run) changes nothing.
+  const placeHandledRef = useRef<string | undefined>(undefined);
+  useLayoutEffect(() => {
+    const folder = currentFolderId ?? null;
+    const placeId = `${libraryId}|${folder ?? "root"}`;
+    if (placeHandledRef.current === placeId) return;
+    const firstVisit = placeHandledRef.current === undefined;
+    placeHandledRef.current = placeId;
+    const place = readPlace(libraryId, folder);
+    // The saved view default must not override a sort picked here.
+    placeSortRef.current = place?.sort ? `${libraryId}::${folder ?? "root"}` : null;
+    if (place?.sort) {
+      setSortKey(place.sort.key);
+      setSortDir(place.sort.dir);
+    }
+    const cameBack = steppedThroughHistory() || (firstVisit && !!place?.at && Date.now() - place.at < 30 * 60_000);
+    if (cameBack && place && (place.top || place.row)) restoreRef.current = { folder, top: place.top ?? 0, row: place.row ?? null };
+    else {
+      restoreRef.current = null;
+      if (!firstVisit) mainScrollRef.current?.scrollTo({ top: 0 });
+    }
+  }, [libraryId, currentFolderId]);
+  // Put the place back once this folder's list is on screen.
+  const listHereKey = docsKeyOf(libraryId, currentFolderId ?? null, showArchivedDocs);
+  const listHere = documentsKey === listHereKey && !!library;
   useEffect(() => {
-    if (!selectedDoc?.id) {
+    const r = restoreRef.current;
+    if (!r || r.folder !== (currentFolderId ?? null) || !listHere) return;
+    const apply = () => {
+      const el = mainScrollRef.current;
+      if (!el) return;
+      const row = r.row ? document.querySelector<HTMLElement>(`[data-doc-item="${r.row}"]`) : null;
+      if (r.top) el.scrollTop = r.top;
+      else if (row) row.scrollIntoView({ block: "center" });
+    };
+    if (r.row && documentsRef.current.some((d) => d.id === r.row)) setSelFocusId(r.row);
+    const raf = requestAnimationFrame(apply);
+    // What loads above the list a moment later (collections, favorites)
+    // pushes it down: settle once more, unless you have scrolled since.
+    const el = mainScrollRef.current;
+    let moved = false;
+    const onMove = () => { moved = true; };
+    el?.addEventListener("wheel", onMove, { passive: true, once: true });
+    el?.addEventListener("touchmove", onMove, { passive: true, once: true });
+    // Done once this has run (an effect run again before then starts over).
+    const late = window.setTimeout(() => { if (!moved) apply(); if (restoreRef.current === r) restoreRef.current = null; }, 500);
+    return () => { cancelAnimationFrame(raf); window.clearTimeout(late); el?.removeEventListener("wheel", onMove); el?.removeEventListener("touchmove", onMove); };
+  }, [listHere, currentFolderId]);
+  // Remember the scroll as it moves (not while a restore is pending, when
+  // a short list still loading would clamp it), and the row you're on.
+  useEffect(() => {
+    const el = mainScrollRef.current;
+    if (!el) return;
+    const folder = currentFolderId ?? null;
+    let t: number | null = null;
+    const onScroll = () => {
+      if (t != null) return;
+      t = window.setTimeout(() => {
+        t = null;
+        if (restoreRef.current) return;
+        writePlace(libraryId, folder, { top: Math.round(el.scrollTop) });
+      }, 200);
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => { el.removeEventListener("scroll", onScroll); if (t != null) window.clearTimeout(t); };
+  }, [libraryId, currentFolderId, !!library]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A folder with files on screen: the full-size viewer's code is fetched
+  // while the browser is idle, so the first drawing opened does not wait.
+  const hasDocsHere = listHere && documents.length > 0;
+  useEffect(() => { if (hasDocsHere) warmViewer(); }, [hasDocsHere]);
+  const rowHere = selectedDoc?.id ?? selFocusId;
+  useEffect(() => {
+    if (!rowHere || !listHere || !documentsRef.current.some((d) => d.id === rowHere)) return;
+    writePlace(libraryId, currentFolderId ?? null, { row: rowHere });
+    // The row you move to with the keys is on its way before you open it.
+    prefetchDoc(documentsRef.current.find((d) => d.id === rowHere));
+  }, [rowHere, listHere, libraryId, currentFolderId]);
+
+  // The version the picked document opens on. From the open cache
+  // (lib/docOpen): pointing at the row usually fetched it already, so the
+  // preview starts at once; a list refresh never refetches it, and another
+  // document's version never shows under this one while it loads.
+  const selDocId = selectedDoc?.id ?? null;
+  const selDocVersionId = selectedDoc?.currentVersionId ?? null;
+  useEffect(() => {
+    if (!selDocId) {
       setSelectedVersion(null);
       return;
     }
-
+    const ref = { id: selDocId, currentVersionId: selDocVersionId };
+    const known = versionIfKnown(ref);
+    // Never another document's version under this one; a known version is
+    // put in after the panel has painted (the title first, then the preview).
+    setSelectedVersion((prev) => (prev && prev.recordId === selDocId ? prev : null));
+    if (known !== undefined) React.startTransition(() => setSelectedVersion(known));
+    // The full-size viewer's code is fetched now, before it is asked for.
+    warmViewer();
+    if (known !== undefined) return;
     let alive = true;
-
-
-    const loadVersion = async () => {
-      if (!selectedDoc.id) return;
-      try {
-        if (selectedDoc.currentVersionId) {
-          const { data } = await supabase
-            .from("document_versions")
-            .select("*")
-            .eq("id", selectedDoc.currentVersionId)
-            .single();
-          if (alive && data) {
-            setSelectedVersion(versionFromRow(data as Record<string, unknown>));
-            return;
-          }
-        }
-
-        const { data } = await supabase
-          .from("document_versions")
-          .select("*")
-          .eq("record_id", selectedDoc.id)
-          .or("review_state.is.null,review_state.eq.approved")
-          .order("created_at", { ascending: false })
-          .limit(1);
-        if (!alive) return;
-        setSelectedVersion(data && data.length > 0 ? versionFromRow(data[0] as Record<string, unknown>) : null);
-      } catch (e) {
-        console.error(e);
-        if (alive) setSelectedVersion(null);
-      }
-    };
-
-    loadVersion();
-
-    return () => {
-      alive = false;
-    };
-  }, [selectedDoc]);
+    versionToShow(ref)
+      .then((v) => { if (alive) setSelectedVersion(v); })
+      .catch((e) => { console.error(e); if (alive) setSelectedVersion(null); });
+    return () => { alive = false; };
+  }, [selDocId, selDocVersionId]);
 
   useEffect(() => {
     if (!selectedDoc?.id || !activeOrgId) {
@@ -4107,7 +4343,7 @@ export default function LibraryExplorerPage() {
         />
 
         {/* MAIN AREA: the band with the answer, then cards over its edge */}
-        <div className={`flex-1 min-w-0 overflow-auto px-3 sm:px-4 pt-3 sm:pt-4 ${stagedDocs.length > 0 ? "pb-28" : "pb-24 sm:pb-10"}`}>
+        <div ref={mainScrollRef} className={`flex-1 min-w-0 overflow-auto px-3 sm:px-4 pt-3 sm:pt-4 ${stagedDocs.length > 0 ? "pb-28" : "pb-24 sm:pb-10"}`}>
           <div className="max-w-[1920px] mx-auto">
 
             <PageHero
@@ -4146,6 +4382,11 @@ export default function LibraryExplorerPage() {
               tools={libTools}
               primary={uploadPrimary}
             >
+              {/* Table | Graph | ...: the Graph opens on this folder. */}
+              <ViewTabs tabs={DOCUMENT_VIEWS} hrefs={{
+                "/documents": `${pathname}${searchParams.toString() ? `?${searchParams.toString()}` : ""}`,
+                "/documents/graph": `/documents/graph?focus=${encodeURIComponent(currentFolderId ? `folder:${currentFolderId}` : `lib:${libraryId}`)}&back=1`,
+              }} />
               {/* Search everything: results stay on this page. */}
               <form className="relative" role="search" onSubmit={(e) => e.preventDefault()}>
                 <Search className={bandInputIcon} />
@@ -4200,6 +4441,7 @@ export default function LibraryExplorerPage() {
                 }
               >
                 <FindPanel orgId={activeOrgId} f={finder} unit={folderUnitCode}
+                  folder={mapFolder} onFolder={(id) => { setFind(""); setCurrentFolderId(id); }}
                   onSearchAsset={searchAsset} onUnit={(code) => void openUnitFolder(code)}
                   onOpenFolder={(fo) => {
                     setFind("");
@@ -4363,11 +4605,12 @@ export default function LibraryExplorerPage() {
             )}
 
 
-              {/* THE MAP: the unit this folder is in, its equipment by type,
-                  and each one's documents. Opened from the list's toolbar. */}
+              {/* THE MAP: this folder, the same folders and files as the list
+                  beside it. Zooms out to its unit or the whole site from its
+                  top right. Opened from the list's toolbar. */}
               {activeOrgId && mapOpen && (
                 <Card
-                  label={<>Map <span className="font-sans text-[14px] font-normal text-[var(--color-text-muted)]">{mapFolder.name}, its files and the equipment on each</span></>}
+                  label={<>Map <span className="font-sans text-[14px] font-normal text-[var(--color-text-muted)]">{mapFolder.name}: its folders and files</span></>}
                   action={
                     <button type="button" onClick={() => setMapOpen(() => false)} className={heroQuiet}>
                       <X className="w-4 h-4" /> Hide map
@@ -4581,7 +4824,7 @@ export default function LibraryExplorerPage() {
                   {activeOrgId && (
                     <button type="button" onClick={() => setMapOpen((v) => !v)} aria-expanded={mapOpen}
                       className={`${heroQuiet} ${mapOpen ? "!bg-[var(--color-surface-2)]" : ""}`}
-                      title={`Map: ${mapFolder.name}, its files and the equipment on each`}>
+                      title={`Map: ${mapFolder.name}, its folders and files`}>
                       <MapIcon className="w-4 h-4" />
                       <span className="max-sm:hidden">{mapOpen ? "Hide map" : "Map"}</span>
                     </button>
@@ -4606,6 +4849,9 @@ export default function LibraryExplorerPage() {
               className="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] overflow-hidden flex flex-col min-h-[320px] relative focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-strong)]"
               tabIndex={0}
               onKeyDown={handleExplorerKeyDown}
+              onMouseOver={onDocsPointerOver}
+              onMouseLeave={restOff}
+              onPointerDownCapture={onDocsPointerDown}
               aria-label="Documents"
             >
               <div className="flex-1 flex flex-col">
@@ -4667,6 +4913,7 @@ export default function LibraryExplorerPage() {
                           {isOpen && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--color-main)]" />}
                           <button
                             onClick={() => setSelectedDoc(doc)}
+                            data-doc-open={doc.id}
                             className={`w-full text-left px-4 pt-3 ${tags.length ? "pb-1.5" : "pb-3"} active:bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] block`}
                           >
                             <span className="flex items-center gap-3">

@@ -23,6 +23,7 @@ import {
   type AssetType,
 } from "@/lib/assets";
 import SignedImg from "./SignedImg";
+import { equipmentLabel } from "@/lib/equipmentPick";
 
 interface AssetPhotoPopoverProps {
   asset: Asset;
@@ -185,7 +186,7 @@ export default function AssetPhotoPopover({
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
-            <span className="text-[13px] font-semibold text-[var(--color-text)] truncate">{asset.tag}</span>
+            <span className="text-[13px] font-semibold text-[var(--color-text)] truncate">{equipmentLabel({ tag: asset.tag, code: asset.code })}</span>
             {assetType && (
               <span className="text-[13px] font-semibold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded">
                 {assetType.name}

@@ -16,7 +16,8 @@ import React, { useRef, useState } from "react";
 import {
   Settings, Zap, Droplet, Box, Activity, Camera, Tag, Loader2, Plus,
 } from "lucide-react";
-import { useAssetByTag, findAssetsByTag, getAssetByTag, listAssetPhotos, invalidateAssetCache, type Asset } from "@/lib/assets";
+import { useAssetByTag, resolveEquipment, listAssetPhotos, invalidateAssetCache, type Asset, type EquipmentLookup } from "@/lib/assets";
+import { parseEquipmentLabel } from "@/lib/equipmentIdentity";
 import AssetPhotoCarousel from "./AssetPhotoCarousel";
 import AssetPhotoUploader from "./AssetPhotoUploader";
 import AssetPhotoPopover from "./AssetPhotoPopover";
@@ -33,6 +34,24 @@ interface AssetTagChipProps {
   referenceKind?: "photos" | "files";
   /** It's the tag a search or filter asked for: ringed so it stands out. */
   hit?: boolean;
+  /** The unit it's on, when the place it's shown knows (a tag repeats from unit to unit). */
+  unitCode?: string | null;
+}
+
+/** Why a label didn't open equipment, in words. */
+function notFound(tag: string, r: EquipmentLookup): { title: string; message: string } {
+  const l = parseEquipmentLabel(tag);
+  const name = l.tag ?? tag;
+  if (r.why === "ambiguous") {
+    return r.units.length > 1
+      ? { title: `${name} is on ${r.units.length} units`, message: "Open it from its unit in Operating areas." }
+      : { title: `Unit ${r.units[0] ?? "?"} has more than one ${name}`, message: "Open it from Operating areas, by its ID." };
+  }
+  if (r.why === "other-id") {
+    const ids = [...new Set(r.candidates.map((a) => a.code).filter(Boolean))].join(", ");
+    return { title: `${tag} isn't in the equipment list`, message: `The list has ${name} as ${ids}. Admins fix IDs in Operating areas.` };
+  }
+  return { title: `${tag} isn't in the equipment list`, message: "Admins add equipment in Operating areas, under its unit." };
 }
 
 /** The equipment type's icon. The column's type word decides it when it
@@ -53,17 +72,17 @@ function getIconByType(type: string, tag = "") {
 }
 
 export default function AssetTagChip({
-  tag, type = "Equipment", orgId, userId, canManage = false, size = "compact", referenceKind = "photos", hit = false,
+  tag, type = "Equipment", orgId, userId, canManage = false, size = "compact", referenceKind = "photos", hit = false, unitCode,
 }: AssetTagChipProps) {
   // File-reference tags open linked drawings, not the photo gallery.
   if (referenceKind === "files") {
-    return <FileTagChip tag={tag} type={type} orgId={orgId} userId={userId} canManage={canManage} />;
+    return <FileTagChip tag={tag} type={type} orgId={orgId} userId={userId} canManage={canManage} unitCode={unitCode} />;
   }
-  return <PhotoTagChip tag={tag} type={type} orgId={orgId} userId={userId} canManage={canManage} size={size} hit={hit} />;
+  return <PhotoTagChip tag={tag} type={type} orgId={orgId} userId={userId} canManage={canManage} size={size} hit={hit} unitCode={unitCode} />;
 }
 
 function PhotoTagChip({
-  tag, type = "Equipment", orgId, userId, canManage = false, size = "compact", hit = false,
+  tag, type = "Equipment", orgId, userId, canManage = false, size = "compact", hit = false, unitCode,
 }: AssetTagChipProps) {
   const { showToast } = useToast();
   const [popoverOpen, setPopoverOpen] = useState(false);
@@ -73,7 +92,8 @@ function PhotoTagChip({
   const [createdAsset, setCreatedAsset] = useState<Asset | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
-  const lookup = useAssetByTag(orgId, tag);
+  // "X-31 (2030.31)" is found by its ID, 2030.31; X-31 is its second name.
+  const lookup = useAssetByTag(orgId, tag, unitCode);
   const cachedAsset = lookup.asset;
   const photoCount = lookup.photoCount;
   const asset = createdAsset || cachedAsset;
@@ -98,13 +118,9 @@ function PhotoTagChip({
     if (!orgId || !userId) return;
     setCreating(true);
     try {
-      const hits = await findAssetsByTag(orgId, tag);
-      const asset = hits.length === 1 ? hits[0] : await getAssetByTag(orgId, tag);
-      if (!asset) {
-        showToast({ type: "info", title: hits.length > 1 ? `${tag} is on ${hits.length} units` : `${tag} isn't in the equipment list`,
-          message: hits.length > 1 ? "Open it from its unit in Operating areas." : "Admins add equipment in Operating areas, under its unit." });
-        return;
-      }
+      const found = await resolveEquipment(orgId, tag, unitCode);
+      const asset = found.asset;
+      if (!asset) { showToast({ type: "info", ...notFound(tag, found) }); return; }
       setCreatedAsset(asset);
       if (!canManage) { setPopoverOpen(true); return; }
       const photos = await listAssetPhotos(asset.id);
@@ -125,15 +141,10 @@ function PhotoTagChip({
     if (!orgId) return null;
     setCreating(true);
     try {
-      const hits = await findAssetsByTag(orgId, tag);
-      const found = hits.length === 1 ? hits[0] : await getAssetByTag(orgId, tag);
-      if (!found) {
-        showToast({ type: "info", title: hits.length > 1 ? `${tag} is on ${hits.length} units` : `${tag} isn't in the equipment list`,
-          message: hits.length > 1 ? "Open it from its unit in Operating areas." : "Admins add equipment in Operating areas, under its unit." });
-        return null;
-      }
-      setCreatedAsset(found);
-      return found;
+      const r = await resolveEquipment(orgId, tag, unitCode);
+      if (!r.asset) { showToast({ type: "info", ...notFound(tag, r) }); return null; }
+      setCreatedAsset(r.asset);
+      return r.asset;
     } catch (err) {
       showToast({ type: "error", title: `Couldn't open ${tag}`, message: (err as Error).message });
       return null;

@@ -7,6 +7,7 @@ import { logFileView } from '@/lib/audit';
 import { supabase } from '@/lib/supabase';
 import { recordIntent } from '@/lib/intents';
 import BackupViewer from '@/components/archive/BackupViewer';
+import { fileBlob, fileBlobIfStarted, fileLink } from '@/lib/docOpen';
 
 interface SecureDocViewerProps {
   url: string;
@@ -93,75 +94,52 @@ export default function SecureDocViewer({
   }, [documentId, orgId, uid, userEmail, activeRole, title]);
 
   // --- 1. SECURITY: SOURCE OBFUSCATION ---
-  // Fetches the PDF as a binary blob and creates a temporary local URL.
-  // This prevents the actual Storage Bucket URL from being scraped.
+  // Shows the PDF from an in-memory copy (a temporary local URL), so the
+  // storage link is not what the frame points at. The signed link and the
+  // bytes come from the shared open cache (lib/docOpen): a file opened
+  // before, or pressed on a moment ago, shows without fetching again.
   useEffect(() => {
     let active = true;
-    const fetchSecurely = async () => {
-      setLoading(true);
+    const show = async () => {
       setError(null);
       setArchivedInfo(null);
+      // Already here: no spinner at all.
+      const ready = fileBlobIfStarted(url);
+      if (!ready) setLoading(true);
       let resolvedUrl = url;
       try {
-        // If url is a storage path (not a full URL), resolve it to a presigned URL first
         if (url && !url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('blob:')) {
-          const { data: { session } } = await supabase.auth.getSession();
-          if (session?.access_token) {
-            const res = await fetch(
-              `/api/storage/download-url?path=${encodeURIComponent(url)}&expiresIn=3600`,
-              { headers: { authorization: `Bearer ${session.access_token}` } }
-            );
-            if (res.ok) {
-              const { url: signedUrl } = await res.json();
-              resolvedUrl = signedUrl;
-            } else if (res.status === 409) {
-              // Shed to an offline space archive — prompt instead of streaming.
-              const body = await res.json().catch(() => null) as { archived?: boolean; archiveId?: string | null; root?: string | null; fileName?: string } | null;
-              if (body?.archived && active) {
-                setArchivedInfo({
-                  archiveId: body.archiveId ?? null,
-                  root: body.root ?? null,
-                  fileName: body.fileName || url.split('/').pop() || 'file',
-                });
-                setLoading(false);
-                return;
-              }
-            }
+          const r = await fileLink(url);
+          if (!active) return;
+          if (r?.kind === 'archived') {
+            setArchivedInfo({ archiveId: r.archiveId, root: r.root, fileName: r.fileName || url.split('/').pop() || 'file' });
+            setLoading(false);
+            return;
           }
+          if (r?.kind === 'url') resolvedUrl = r.url;
         }
-
-        const response = await fetch(resolvedUrl);
-        if (!response.ok) throw new Error("Failed to retrieve secure stream");
-        
-        const blob = await response.blob();
-        if (active) {
-          if (blobUrlRef.current) {
-            URL.revokeObjectURL(blobUrlRef.current);
-            blobUrlRef.current = null;
-          }
-          const objUrl = URL.createObjectURL(blob);
-          blobUrlRef.current = objUrl;
-          setBlobUrl(objUrl);
-          setLoading(false);
-        }
+        const blob = url.startsWith('blob:') ? null : await fileBlob(url, resolvedUrl);
+        if (!active) return;
+        if (blobUrlRef.current) { URL.revokeObjectURL(blobUrlRef.current); blobUrlRef.current = null; }
+        const objUrl = blob ? URL.createObjectURL(blob) : url;
+        if (blob) blobUrlRef.current = objUrl;
+        setBlobUrl(objUrl);
+        setLoading(false);
       } catch (e: unknown) {
         console.warn("Secure fetch failed, falling back to direct stream", e);
         if (active) {
-          if (blobUrlRef.current) {
-            URL.revokeObjectURL(blobUrlRef.current);
-            blobUrlRef.current = null;
-          }
+          if (blobUrlRef.current) { URL.revokeObjectURL(blobUrlRef.current); blobUrlRef.current = null; }
           setBlobUrl(resolvedUrl);
           setLoading(false);
         }
       }
     };
 
-    if (url) fetchSecurely();
-    
-    // Cleanup to prevent memory leaks
-    return () => { 
-      active = false; 
+    if (url) void show();
+
+    // The local URL is this frame's own; the bytes stay in the cache.
+    return () => {
+      active = false;
       if (blobUrlRef.current) {
         URL.revokeObjectURL(blobUrlRef.current);
         blobUrlRef.current = null;

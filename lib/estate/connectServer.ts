@@ -200,7 +200,9 @@ async function ensureBridge(admin: SupabaseClient, orgId: string, dcLibs: Array<
   }
 }
 
-async function buildRegistry(admin: SupabaseClient, orgId: string, libraryId: string, actor: string | null, deadline: number, run?: RunCtx): Promise<{ drawings: number; applied: number; assets: number; left: number }> {
+/** Every read drawing in a read library not yet matched: its tags to the
+ *  registry, applied. Bounded by `deadline`; `left` says how many wait. */
+export async function buildRegistry(admin: SupabaseClient, orgId: string, libraryId: string, actor: string | null, deadline: number, run?: RunCtx): Promise<{ drawings: number; applied: number; assets: number; left: number }> {
   const out = { drawings: 0, applied: 0, assets: 0, left: 0 };
   const mirrors = await allRows<{ id: string; source_document_id: string }>((from, to) => admin.from("knowledge_documents").select("id, source_document_id").eq("library_id", libraryId).eq("status", "ready").not("source_document_id", "is", null).order("id").range(from, to));
   if (!mirrors.length) return out;

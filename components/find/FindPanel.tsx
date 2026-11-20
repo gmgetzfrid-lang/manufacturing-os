@@ -16,8 +16,10 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { Folder, Loader2, Search, Wrench } from "lucide-react";
 import DocThumb from "@/components/documents/DocThumb";
-import FindMap from "./FindMap";
+import FindMap, { type MapFolder } from "./FindMap";
 import DocInPlace from "@/components/documents/DocInPlace";
+import { prefetchDocById } from "@/lib/docOpen";
+import { warmViewer } from "@/components/viewers/warmViewer";
 import type { FindState } from "./useFind";
 import { docHref,
   whichOneLine, equipLabel, docLabel, docMeta, otherDocs, plural,
@@ -40,6 +42,10 @@ interface Props {
   onSearchAsset?: (assetId: string, tag: string) => void;
   /** A unit tapped on the map. */
   onUnit?: (unitCode: string) => void;
+  /** The folder the search was made in: the map shows it until equipment
+   *  is picked, and a subfolder tapped on it opens. */
+  folder?: MapFolder | null;
+  onFolder?: (folderId: string | null) => void;
 }
 
 /** What the map beside a search shows: the pick and its documents, or the
@@ -94,8 +100,11 @@ const openBtn = "shrink-0 inline-flex items-center justify-center h-8 px-3 round
 /** A document found: Open shows it right here, over the page, and closing
  *  it leaves the search as it was. Folder goes to where it is filed. */
 function DocRow({ d, line, compact, onOpen }: { d: FindDoc; line?: React.ReactNode; compact?: boolean; onOpen: () => void }) {
+  // Pointed at or tabbed to: its row, version and link are fetched, so
+  // Open shows the drawing without waiting on them.
+  const warm = () => { prefetchDocById(d.id); warmViewer(); };
   return (
-    <li className="flex items-center gap-3 py-2.5 min-w-0">
+    <li className="flex items-center gap-3 py-2.5 min-w-0" onPointerEnter={warm} onFocusCapture={warm}>
       {!compact && <DocThumb documentId={d.id} width={30} />}
       <button type="button" onClick={onOpen} data-find-doc={d.id} className="min-w-0 flex-1 text-left group">
         <span className="block font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)] break-words group-hover:text-[var(--color-accent-text)]">{docLabel(d)}</span>
@@ -132,7 +141,7 @@ function EquipRow({ e, on, onPick }: { e: FindEquip; on: boolean; onPick: () => 
   );
 }
 
-export default function FindPanel({ orgId, f, unit, compact, onOpenFolder, onOpenHref, hideMap, onSearchAsset, onUnit }: Props) {
+export default function FindPanel({ orgId, f, unit, compact, onOpenFolder, onOpenHref, hideMap, onSearchAsset, onUnit, folder, onFolder }: Props) {
   const quick = f.quick;
   const picked = f.picked;
   const ask = whichOneLine(f.exact[0]?.tag ?? f.q, f.exact);
@@ -266,7 +275,7 @@ export default function FindPanel({ orgId, f, unit, compact, onOpenFolder, onOpe
             <FindMap orgId={orgId} unit={picked?.unitCode ?? unit} assetId={picked?.id ?? null} docs={pickedDocs}
               candidates={!picked && f.exact.length > 1 ? f.exact.map((e) => e.id) : undefined}
               onPickAsset={(id, tag) => { if (quick?.equipment.some((e) => e.id === id)) f.pick(id); else onSearchAsset?.(id, tag); }}
-              onUnit={onUnit}
+              onUnit={onUnit} folder={folder} onFolder={onFolder}
               className={compact ? "h-64" : "h-[22rem]"} />
           )}
         </div>

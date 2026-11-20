@@ -6,7 +6,7 @@
 // orders for it, the documents the find service ranks (names, tags read off
 // the sheets, words inside the pages), and the document being looked at.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   findQuick, findDeep, equipDetail, defaultPick, exactTagMatches, tagKey,
   type QuickFind, type DeepFind, type EquipDetail, type FindEquip, type FindDoc,
@@ -43,45 +43,97 @@ export interface FindState {
   failed: boolean;
 }
 
+// What a search found, kept for a few minutes per workspace and words: a
+// search run again (coming back to it, Back, retyping) answers at once.
+const KEEP_MS = 5 * 60_000;
+const quickSeen = new Map<string, { at: number; r: QuickFind }>();
+const deepSeen = new Map<string, { at: number; r: DeepFind }>();
+function seen<T>(m: Map<string, { at: number; r: T }>, k: string): T | null {
+  const hit = m.get(k);
+  if (!hit) return null;
+  if (Date.now() - hit.at > KEEP_MS) { m.delete(k); return null; }
+  return hit.r;
+}
+function keep<T>(m: Map<string, { at: number; r: T }>, k: string, r: T) {
+  m.set(k, { at: Date.now(), r });
+  if (m.size > 60) m.delete(m.keys().next().value as string);
+}
+
+/** How long results already on screen wait for the find service to answer
+ *  the new words too, so they change once, not twice. */
+const HOLD_MS = 700;
+
 export function useFind(orgId: string | null, query: string, contextUnit: string | null, opts: { controller?: boolean } = {}): FindState {
   const q = useDebounced(query.trim(), 250);
-  const qDeep = useDebounced(query.trim(), 600);
-  const [quick, setQuick] = useState<QuickFind | null>(null);
+  const qDeep = useDebounced(query.trim(), 400);
+  // The last answers in (raw), and the pair on screen (shown): the shown
+  // results change only when the quick and the deep answers agree on the
+  // words, or after a short wait - never shrinking and growing back while
+  // you type.
+  const [quickRaw, setQuickRaw] = useState<QuickFind | null>(null);
   const [loading, setLoading] = useState(false);
   const [pickedId, setPickedId] = useState<string | null>(null);
   const [userPicked, setUserPicked] = useState(false);
   const [detail, setDetail] = useState<EquipDetail | null>(null);
-  const [deep, setDeep] = useState<(DeepFind & { q: string }) | null>(null);
+  const [deepRaw, setDeepRaw] = useState<(DeepFind & { q: string }) | null>(null);
   const [deepLoading, setDeepLoading] = useState(false);
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [wanted, setWanted] = useState<string | null>(null);
   // A failed search is said as such, never shown as "nothing matches".
   const [quickFailed, setQuickFailed] = useState(false);
   const [deepFailed, setDeepFailed] = useState(false);
+  const scope = `${orgId}|${opts.controller ? 1 : 0}`;
 
   // ── Equipment, folders and documents by number: as you type ──────────
   useEffect(() => {
-    if (!orgId || q.length < 2) { setQuick(null); setPickedId(null); setUserPicked(false); setPreviewId(null); return; }
+    if (!orgId || q.length < 2) { setQuickRaw(null); setPickedId(null); setUserPicked(false); setPreviewId(null); setLoading(false); return; }
+    const k = `${scope}|${q}`;
+    const had = seen(quickSeen, k);
+    if (had) { setQuickRaw(had); setQuickFailed(false); setLoading(false); return; }
     let alive = true;
     setLoading(true);
     findQuick(orgId, q, { controller: opts.controller })
-      .then((r) => { if (alive) { setQuick(r); setQuickFailed(false); setUserPicked(false); setPreviewId(null); } })
-      .catch(() => { if (alive) { setQuick({ q, equipment: [], docs: {}, docOrder: [], folders: [] }); setQuickFailed(true); } })
+      .then((r) => { keep(quickSeen, k, r); if (alive) { setQuickRaw(r); setQuickFailed(false); } })
+      .catch(() => { if (alive) { setQuickRaw({ q, equipment: [], docs: {}, docOrder: [], folders: [] }); setQuickFailed(true); } })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [orgId, q, opts.controller]);
+  }, [orgId, q, opts.controller, scope]);
 
   // ── The find service: when typing stops ──────────────────────────────
   useEffect(() => {
-    if (!orgId || qDeep.length < 2) { setDeep(null); return; }
+    if (!orgId || qDeep.length < 2) { setDeepRaw(null); setDeepLoading(false); return; }
+    const k = `${orgId}|${qDeep}`;
+    const had = seen(deepSeen, k);
+    if (had) { setDeepRaw({ ...had, q: qDeep }); setDeepFailed(false); setDeepLoading(false); return; }
     let alive = true;
     setDeepLoading(true);
     findDeep(orgId, qDeep)
-      .then((r) => { if (alive) { setDeep({ ...r, q: qDeep }); setDeepFailed(false); } })
-      .catch(() => { if (alive) { setDeep({ order: [], docs: {}, q: qDeep }); setDeepFailed(true); } })
+      .then((r) => { keep(deepSeen, k, r); if (alive) { setDeepRaw({ ...r, q: qDeep }); setDeepFailed(false); } })
+      .catch(() => { if (alive) { setDeepRaw({ order: [], docs: {}, q: qDeep }); setDeepFailed(true); } })
       .finally(() => { if (alive) setDeepLoading(false); });
     return () => { alive = false; };
   }, [orgId, qDeep]);
+
+  // ── What is on screen ────────────────────────────────────────────────
+  const [shown, setShown] = useState<{ quick: QuickFind | null; deep: (DeepFind & { q: string }) | null }>({ quick: null, deep: null });
+  const shownRef = useRef(shown);
+  useEffect(() => { shownRef.current = shown; }, [shown]);
+  useEffect(() => {
+    if (!quickRaw) { setShown({ quick: null, deep: null }); return; }
+    const deepFor = deepRaw && deepRaw.q === quickRaw.q ? deepRaw : null;
+    const on = shownRef.current;
+    // Nothing on screen yet, the deep answer is in, or these are the same
+    // words: show now.
+    if (deepFor || !on.quick || on.quick.q === quickRaw.q) { setShown({ quick: quickRaw, deep: deepFor ?? (on.deep && on.deep.q === quickRaw.q ? on.deep : null) }); return; }
+    const t = window.setTimeout(() => setShown({ quick: quickRaw, deep: null }), HOLD_MS);
+    return () => window.clearTimeout(t);
+  }, [quickRaw, deepRaw]);
+  const quick = shown.quick;
+  const liveDeep = shown.deep;
+
+  // New words on screen: what was picked for the old ones is dropped.
+  const shownQ = quick?.q ?? "";
+  useEffect(() => { setUserPicked(false); setPreviewId(null); }, [shownQ]);
 
   // ── Which one: the person's pick, else the folder's unit ─────────────
   const exact = useMemo(() => (quick ? exactTagMatches(quick.q, quick.equipment) : []), [quick]);
@@ -98,7 +150,6 @@ export function useFind(orgId: string | null, query: string, contextUnit: string
   const pickedByFolder = !!picked && !userPicked && exact.length > 1;
 
   // Quick and deep finds of the same document become one, with both whys.
-  const liveDeep = deep && deep.q === q ? deep : null;
   const docs = useMemo(() => {
     const out: Record<string, FindDoc> = { ...(liveDeep?.docs ?? {}) };
     for (const [id, d] of Object.entries(quick?.docs ?? {})) out[id] = out[id] ? { ...out[id], ...d, rels: out[id].rels, hit: out[id].hit } : d;
@@ -142,10 +193,10 @@ export function useFind(orgId: string | null, query: string, contextUnit: string
   const preview = previewId ? docs[previewId] ?? null : null;
 
   return {
-    q, loading: loading || q !== query.trim(), quick, exact, picked, pickedDocIds, pickedByFolder,
+    q, loading: loading || q !== query.trim() || (q.length >= 2 && shownQ !== q), quick, exact, picked, pickedDocIds, pickedByFolder,
     pick: (id) => { setUserPicked(true); setPickedId(id); setPreviewId(null); },
     pickWhenFound: (id) => setWanted(id),
-    detail, docOrder, deepLoading: deepLoading || qDeep !== query.trim(),
+    detail, docOrder, deepLoading: deepLoading || qDeep !== query.trim() || (qDeep.length >= 2 && liveDeep?.q !== qDeep && !deepFailed),
     preview, setPreview: setPreviewId, docs,
     failed: q.length >= 2 && (quickFailed || deepFailed),
   };

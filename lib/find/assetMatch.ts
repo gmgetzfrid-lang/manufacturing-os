@@ -10,8 +10,21 @@
 
 import { canonicalForm, splitCanonical } from "@/lib/fileFinder/tagForms";
 import { isClose } from "@/lib/fileFinder/fuzzy";
+import { idKey } from "@/lib/equipmentPick";
+import { looksLikeId, pieces, lookupOrder } from "@/lib/equipmentIdentity";
 
-export interface MatchableAsset { id: string; tag: string; code?: string | null; unit_code?: string | null }
+export interface MatchableAsset { id: string; tag: string; code?: string | null; unit_code?: string | null; origin?: string | null; created_at?: string | null }
+
+/** Copies of one piece (the same ID, or the same tag in a unit) count
+ *  once: the one with an ID, then the one a person added. Order kept. */
+function onePerPieceInOrder<A extends MatchableAsset>(list: AssetMatch<A>[]): AssetMatch<A>[] {
+  if (list.length < 2) return list;
+  const recs = list.map((m) => ({ id: m.asset.id, tag: m.asset.tag, code: m.asset.code ?? null, unitCode: m.asset.unit_code ?? null, origin: m.asset.origin ?? null, createdAt: m.asset.created_at ?? null }));
+  const best = new Set(pieces(recs).map((p) => [...p.records].sort(lookupOrder)[0].id));
+  return list.filter((m) => best.has(m.asset.id));
+}
+/** An ID's key for matching: 2010.07 and 2010.7 are one. */
+const codeForm = (raw: string) => canonicalForm(looksLikeId(raw) ? idKey(raw) : raw);
 export type AssetMatchTier = "exact" | "prefix" | "code" | "suffix" | "close";
 export interface AssetMatch<A> { asset: A; via: string; tier: AssetMatchTier }
 
@@ -49,13 +62,13 @@ export function buildAssetIndex<A extends MatchableAsset>(assets: A[], unitCodes
     push(exact, c, a);
     const b = bareTag(c, unitCodes).bare;
     push(bare, b, a);
-    if (a.code) push(code, canonicalForm(a.code), a);
+    if (a.code) push(code, codeForm(a.code), a);
     const parts = splitCanonical(b);
     if (parts) push(noSuffix, parts.prefix + parts.digits, a);
   }
   const uniq = (l: A[]) => [...new Map(l.map((a) => [a.id, a])).values()];
 
-  const find = (raw: string): AssetMatch<A>[] => {
+  const findAll = (raw: string): AssetMatch<A>[] => {
     const canon = canonicalForm(raw);
     if (!canon) return [];
     const out: AssetMatch<A>[] = [];
@@ -69,7 +82,7 @@ export function buildAssetIndex<A extends MatchableAsset>(assets: A[], unitCodes
     // The same tag with the unit prefix added or dropped on either side.
     take(bare.get(q.bare), q.unit ? `ignoring the unit prefix ${q.unit}` : "the registry carries a unit prefix", "prefix");
     if (out.length) return out;
-    take(code.get(canon), "by site code", "code");
+    take(code.get(codeForm(raw.trim())) ?? code.get(canon), "by site code", "code");
     if (out.length) return out;
     // The train letter left off: P-101 names P-101A and P-101B.
     const parts = splitCanonical(q.bare);
@@ -84,6 +97,7 @@ export function buildAssetIndex<A extends MatchableAsset>(assets: A[], unitCodes
     if (bestA) out.push({ asset: bestA, via: `close to ${raw} (${bestD} off)`, tier: "close" });
     return out;
   };
+  const find = (raw: string): AssetMatch<A>[] => onePerPieceInOrder(findAll(raw));
   return { find, best: (c) => find(c)[0] ?? null, byId: (id) => byId.get(id) };
 }
 

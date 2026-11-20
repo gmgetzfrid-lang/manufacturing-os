@@ -53,7 +53,7 @@ import { useEscapeClose } from "@/hooks/useEscapeClose";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { vDim, vPanel, vKicker, vTitle, vIcon, vTool, vQuiet, vGroup, vPrimary, vClose, vNote } from "@/components/viewers/viewerChrome";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
-import { supabase } from "@/lib/supabase";
+import { fileBlobIfStarted, fileLink } from "@/lib/docOpen";
 import { bakeMarkupIntoPdf } from "@/lib/markupExport";
 import { stashDraft } from "@/lib/draftHandoff";
 import {
@@ -177,39 +177,27 @@ export default function FullScreenViewer({
   // shows the provide-the-zip prompt (in-memory viewer) instead of a dead PDF.
   const [archivedInfo, setArchivedInfo] = useState<{ archiveId: string | null; root: string | null; fileName: string } | null>(null);
 
-  // Resolve a storage path (e.g. "orgs/.../foo.pdf") to a presigned URL.
-  // If `url` is already an http(s)/blob URL, use it directly.
-  const resolveToHttpUrl = async (raw: string, signal: AbortSignal): Promise<string> => {
-    if (raw.startsWith("http://") || raw.startsWith("https://") || raw.startsWith("blob:")) {
-      return raw;
+  // Resolve a storage path (e.g. "orgs/.../foo.pdf") to a presigned URL,
+  // from the shared cache (lib/storage): a file opened before, or pointed
+  // at a moment ago, does not wait on the server again. If `url` is already
+  // an http(s)/blob URL it is used as it is.
+  const resolveToHttpUrl = async (raw: string): Promise<string> => {
+    if (raw.startsWith("http://") || raw.startsWith("https://") || raw.startsWith("blob:")) return raw;
+    const r = await fileLink(raw);
+    if (r?.kind === "archived") {
+      throw Object.assign(new Error("File archived offline"), {
+        archivedInfo: { archiveId: r.archiveId, root: r.root, fileName: r.fileName || raw.split("/").pop() || "file" },
+      });
     }
-    const { data: { session } } = await supabase.auth.getSession();
-    const token = session?.access_token;
-    if (!token) throw new Error("Not authenticated");
-    const res = await fetch(
-      `/api/storage/download-url?path=${encodeURIComponent(raw)}&expiresIn=3600`,
-      { headers: { authorization: `Bearer ${token}` }, signal }
-    );
-    if (!res.ok) {
-      // 409 = shed to an offline archive; surface identity for the prompt.
-      if (res.status === 409) {
-        const body = await res.json().catch(() => null) as { archived?: boolean; archiveId?: string | null; root?: string | null; fileName?: string } | null;
-        if (body?.archived) {
-          throw Object.assign(new Error("File archived offline"), {
-            archivedInfo: {
-              archiveId: body.archiveId ?? null,
-              root: body.root ?? null,
-              fileName: body.fileName || raw.split("/").pop() || "file",
-            },
-          });
-        }
-      }
-      throw new Error(`Could not resolve storage path (HTTP ${res.status})`);
-    }
-    const { url: signed } = await res.json();
-    if (!signed) throw new Error("Storage backend returned no URL");
-    return signed;
+    if (!r) throw new Error("Could not get a link to the file. Check you are signed in, then try again.");
+    return r.url;
   };
+  // The file's bytes, when the preview (or a press on its row) already
+  // fetched them: the drawing opens from memory, nothing downloads twice.
+  const [fileData, setFileData] = useState<Uint8Array | null>(null);
+  // react-pdf reloads when `file` changes identity, and pdf.js takes the
+  // buffer it is given: one copy, made once.
+  const fileSource = React.useMemo(() => (fileData ? { data: fileData.slice() } : null), [fileData]);
 
   // Ambient intent capture: opening the viewer records a VIEW intent (kind
   // 'view' decays in hours; it never triggers overlap advisories — only
@@ -237,14 +225,26 @@ export default function FullScreenViewer({
     setResolvedUrl(null);
     setArchivedInfo(null);
 
-    // Resolve the URL ONLY. The page renders by streaming from this URL (pdfjs
-    // paints page 1 from a range request — instant), instead of the old path
-    // that downloaded the ENTIRE PDF into memory before the first page appeared.
-    // Raw bytes are fetched lazily (ensureBytes) only when markups are exported.
+    // The bytes are already here or on their way (the preview fetched them):
+    // open from those. Otherwise resolve the URL ONLY and let pdfjs stream
+    // page 1 from a range request instead of downloading the whole PDF
+    // before the first page appears. Raw bytes are then fetched lazily
+    // (ensureBytes) only when markups are exported.
+    setFileData(null);
     (async () => {
       try {
-        const httpUrl = await resolveToHttpUrl(url, ctl.signal);
-        if (!cancelled) setResolvedUrl(httpUrl);
+        const started = fileBlobIfStarted(url);
+        const link = resolveToHttpUrl(url);
+        link.catch(() => undefined); // awaited below; never an unhandled rejection meanwhile
+        if (started) {
+          const blob = await started.catch(() => null);
+          if (blob && !cancelled) {
+            const bytes = new Uint8Array(await blob.arrayBuffer());
+            if (!cancelled) { setPdfBytes(bytes); setFileData(bytes); }
+          }
+        }
+        const httpUrl = await link;
+        if (!cancelled && !ctl.signal.aborted) setResolvedUrl(httpUrl);
       } catch (e) {
         const shed = (e as { archivedInfo?: { archiveId: string | null; root: string | null; fileName: string } }).archivedInfo;
         if (!cancelled && shed) {
@@ -1519,7 +1519,7 @@ export default function FullScreenViewer({
                   <div className="relative z-0" style={{ pointerEvents: "none", userSelect: "none" }}>
                     {resolvedUrl && (
                       <Document options={PDF_DOC_OPTIONS}
-                        file={resolvedUrl}
+                        file={fileSource ?? resolvedUrl}
                         onLoadSuccess={({ numPages }) => setNumPages(numPages)}
                         onLoadError={(err) => setFetchError(err.message || "PDF parse failed")}
                         loading={null}

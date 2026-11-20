@@ -12,7 +12,8 @@
 // (lib/reviewFiles picPlace).
 
 import { picPlace, type DeckFit, type SlidePicture, type SlideSpec } from "@/lib/reviewFiles";
-import { normalizeTag } from "@/lib/assets";
+import { normalizeTag, tagNormForms } from "@/lib/assets";
+import { parseEquipmentLabel, pickEquipment, type IdentityRecord } from "@/lib/equipmentIdentity";
 
 /** A picture chosen for a slide, as saved with the review. */
 export interface SlidePicChoice { path: string; caption: string; tag?: string }
@@ -113,38 +114,77 @@ export function readyPic(path: string, caption: string, url: () => Promise<strin
   return p.then((r) => (r.caption === caption ? r : { ...r, caption }));
 }
 
-/** The equipment photos for these tags in the workspace, best first per
- *  tag. When a tag names equipment on more than one unit, the project's
- *  unit is the one meant. */
-export async function loadEquipmentPhotos(orgId: string, tags: string[], unitCode: string | null, window: { from: number | null; to: number | null }): Promise<Map<string, PhotoOption[]>> {
-  const norms = [...new Set(tags.map(normalizeTag).filter(Boolean))].slice(0, 200);
-  if (!norms.length) return new Map();
+type Row = { id: string; tag: string; code: string | null; unit_code: string | null; origin: string | null; archived: boolean; created_at: string | null };
+
+/** The registry rows these labels could mean: by ID, and by tag. */
+async function equipmentRows(orgId: string, labels: string[]): Promise<Row[]> {
   const { supabase } = await import("@/lib/supabase");
-  const { data: assets, error } = await supabase.from("assets").select("id, tag, tag_normalized, unit_code, archived").eq("org_id", orgId).in("tag_normalized", norms);
-  if (error) throw new Error(error.message);
-  const byTag = new Map<string, Array<{ id: string; tag: string; unit_code: string | null }>>();
-  for (const a of (assets ?? []) as Array<{ id: string; tag: string; tag_normalized: string; unit_code: string | null; archived: boolean }>) {
-    if (a.archived) continue;
-    byTag.set(a.tag_normalized, [...(byTag.get(a.tag_normalized) ?? []), a]);
+  const parsed = labels.map(parseEquipmentLabel);
+  const norms = [...new Set(parsed.flatMap((l) => (l.tag ? tagNormForms(l.tag) : [])))].slice(0, 600);
+  const heads = [...new Set(parsed.flatMap((l) => (l.code ? [l.code.split(/[.-]/)[0]] : [])))].slice(0, 40);
+  const cols = "id, tag, code, unit_code, origin, archived, created_at";
+  const reads = [
+    norms.length ? supabase.from("assets").select(cols).eq("org_id", orgId).in("tag_normalized", norms).limit(1000) : null,
+    heads.length ? supabase.from("assets").select(cols).eq("org_id", orgId).or(heads.map((h) => `code.ilike."${h}%"`).join(",")).limit(1000) : null,
+  ].filter((r) => r !== null);
+  const out = new Map<string, Row>();
+  for (const { data, error } of await Promise.all(reads)) {
+    if (error) throw new Error(error.message);
+    for (const a of (data ?? []) as Row[]) out.set(a.id, a);
   }
-  const chosen = new Map<string, { id: string; tag: string }>();
-  for (const list of byTag.values()) {
-    const pick = list.length === 1 ? list[0] : list.find((a) => unitCode && a.unit_code === unitCode);
-    if (pick) chosen.set(pick.id, pick);
-  }
-  if (!chosen.size) return new Map();
-  const { data: photos, error: e2 } = await supabase.from("asset_photos").select("id, asset_id, file_url, captured_at, uploaded_at, status, caption").in("asset_id", [...chosen.keys()]).limit(1000);
-  if (e2) throw new Error(e2.message);
-  const rows = ((photos ?? []) as Array<{ id: string; asset_id: string; file_url: string; captured_at: string | null; uploaded_at: string | null; status: string | null; caption: string | null }>)
-    .map((p) => ({ ...p, tag: chosen.get(p.asset_id)!.tag }));
-  return rankPhotos(rows, window);
+  return [...out.values()];
 }
 
-/** The equipment a tag names, for filing a new photo under it. */
-export async function equipmentFor(orgId: string, tag: string, unitCode: string | null): Promise<{ id: string; tag: string } | null> {
+const record = (a: Row, photos: Map<string, number>): IdentityRecord & { row: Row } => ({
+  id: a.id, tag: a.tag, code: a.code, unitCode: a.unit_code, origin: a.origin, archived: a.archived, createdAt: a.created_at, photos: photos.get(a.id) ?? 0, row: a,
+});
+
+/** The equipment photos for these tags in the workspace, best first per
+ *  tag. "X-31 (2030.31)" is found by its ID; a tag on more than one unit is
+ *  the project's unit's; copies of one piece count once, the one with an
+ *  ID, then the one with photos (lib/equipmentIdentity). Keyed by the
+ *  tag's plain form, as the slides name it. */
+export async function loadEquipmentPhotos(orgId: string, tags: string[], unitCode: string | null, window: { from: number | null; to: number | null }): Promise<Map<string, PhotoOption[]>> {
+  const wanted = [...new Set(tags.map((t) => t.trim()).filter(Boolean))].slice(0, 200);
+  if (!wanted.length) return new Map();
   const { supabase } = await import("@/lib/supabase");
-  const { data, error } = await supabase.from("assets").select("id, tag, unit_code").eq("org_id", orgId).eq("tag_normalized", normalizeTag(tag)).eq("archived", false).limit(10);
-  if (error) throw new Error(error.message);
-  const list = (data ?? []) as Array<{ id: string; tag: string; unit_code: string | null }>;
-  return list.length === 1 ? list[0] : list.find((a) => unitCode && a.unit_code === unitCode) ?? null;
+  const rows = (await equipmentRows(orgId, wanted)).filter((a) => !a.archived);
+  if (!rows.length) return new Map();
+  const { data: photos, error: e2 } = await supabase.from("asset_photos").select("id, asset_id, file_url, captured_at, uploaded_at, status, caption").in("asset_id", rows.map((a) => a.id)).limit(1000);
+  if (e2) throw new Error(e2.message);
+  const list = (photos ?? []) as Array<{ id: string; asset_id: string; file_url: string; captured_at: string | null; uploaded_at: string | null; status: string | null; caption: string | null }>;
+  const counts = new Map<string, number>();
+  for (const p of list) counts.set(p.asset_id, (counts.get(p.asset_id) ?? 0) + 1);
+  const recs = rows.map((a) => record(a, counts));
+  // Each label's equipment, under the name the slide uses.
+  const out: Array<(typeof list)[number] & { tag: string }> = [];
+  const seen = new Set<string>();
+  for (const label of wanted) {
+    // The project's unit's; else the one piece of that name anywhere.
+    let pick = pickEquipment(recs, { label, unitCode });
+    if (!pick.asset && unitCode) pick = pickEquipment(recs, { label });
+    if (!pick.asset) continue;
+    const name = parseEquipmentLabel(label).tag ?? pick.asset.tag;
+    if (seen.has(`${normalizeTag(name)}|${pick.asset.id}`)) continue;
+    seen.add(`${normalizeTag(name)}|${pick.asset.id}`);
+    for (const p of list) if (p.asset_id === pick.asset.id) out.push({ ...p, tag: name });
+  }
+  return rankPhotos(out, window);
+}
+
+/** The equipment a tag names, for filing a new photo under it (by its ID
+ *  first, then the tag in the project's unit). */
+export async function equipmentFor(orgId: string, tag: string, unitCode: string | null): Promise<{ id: string; tag: string } | null> {
+  const rows = (await equipmentRows(orgId, [tag])).filter((a) => !a.archived);
+  if (!rows.length) return null;
+  let counts = new Map<string, number>();
+  if (rows.length > 1) {
+    const { supabase } = await import("@/lib/supabase");
+    const { data } = await supabase.from("asset_photos").select("asset_id").in("asset_id", rows.map((a) => a.id)).limit(1000);
+    counts = new Map<string, number>();
+    for (const p of (data ?? []) as Array<{ asset_id: string }>) counts.set(p.asset_id, (counts.get(p.asset_id) ?? 0) + 1);
+  }
+  const recs = rows.map((a) => record(a, counts));
+  const pick = pickEquipment(recs, { label: tag, unitCode }).asset ?? (unitCode ? pickEquipment(recs, { label: tag }).asset : null);
+  return pick ? { id: pick.id, tag: pick.tag } : null;
 }

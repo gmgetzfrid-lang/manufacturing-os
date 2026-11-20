@@ -8,7 +8,8 @@
 // asset rows by normalized tag.
 
 import { supabase } from "@/lib/supabase";
-import { sameEquipmentId } from "@/lib/equipmentPick";
+import { nameKey, sameEquipmentId } from "@/lib/equipmentPick";
+import { parseEquipmentLabel, pickEquipment, onePerPiece, idOf, labelKey, type PickWhy } from "@/lib/equipmentIdentity";
 import type { WhiteboardState } from "@/types/schema";
 
 export interface AssetType {
@@ -145,28 +146,85 @@ export async function getAsset(id: string): Promise<Asset | null> {
   return (data as Asset | null) ?? null;
 }
 
-/** The equipment a tag names. A name like V-7 repeats from unit to unit:
- *  with `unitCode`, that unit's; without it, the one only if there's one
- *  (two V-7s and no unit to tell them apart is no answer, not a guess). An ID
- *  (2010.07) finds its one piece. */
-export async function getAssetByTag(orgId: string, tag: string, unitCode?: string | null): Promise<Asset | null> {
-  const hits = await findAssetsByTag(orgId, tag);
-  const inUnit = unitCode ? hits.filter((a) => a.unit_code === unitCode) : hits;
-  if (inUnit.length === 1) return inUnit[0];
-  if (hits.length > 0) return null;
-  return aliasHit(orgId, tag);
+/** The ways a tag can be stored in tag_normalized: "C-2" is also kept as
+ *  "c02" or "c002" (leading zeros don't make another name). */
+export function tagNormForms(tag: string): string[] {
+  const k = nameKey(tag);
+  const out = new Set<string>([normalizeTag(tag.replace(/\s*\(.*$/, "")), k]);
+  const m = k.match(/^([a-z]*)(\d+)(.*)$/);
+  if (m) for (const pad of ["0", "00"]) out.add(`${m[1]}${pad}${m[2]}${m[3]}`);
+  return [...out].filter(Boolean);
 }
 
-/** Every piece of equipment a name or ID could be. */
+/** The registry rows a label could mean: by its ID (and an ID kept in an
+ *  old name), and by its tag. */
+async function candidatesFor(orgId: string, label: { tag: string | null; code: string | null }): Promise<Asset[]> {
+  const reads: Array<PromiseLike<{ data: unknown; error: { message: string } | null }>> = [];
+  if (label.code) {
+    const head = label.code.split(/[.-]/)[0];
+    // Quoted: a parenthesis is syntax inside .or() (lib/orFilter).
+    reads.push(supabase.from("assets").select("*").eq("org_id", orgId).or(`code.ilike."${head}%",tag.ilike."%(${head}%"`).limit(100));
+  }
+  if (label.tag) reads.push(supabase.from("assets").select("*").eq("org_id", orgId).in("tag_normalized", tagNormForms(label.tag)).limit(50));
+  const out = new Map<string, Asset>();
+  for (const { data, error } of await Promise.all(reads)) {
+    if (error) throw new Error(error.message);
+    for (const a of (data as Asset[] | null) ?? []) out.set(a.id, a);
+  }
+  return [...out.values()];
+}
+
+const asRecord = (a: Asset, photos?: Map<string, number>) => ({
+  id: a.id, tag: a.tag, code: a.code ?? null, unitCode: a.unit_code ?? null, origin: a.origin ?? null,
+  archived: a.archived, createdAt: a.created_at, photos: photos?.get(a.id) ?? 0, asset: a,
+});
+
+export interface EquipmentLookup {
+  asset: Asset | null;
+  why: PickWhy | "alias";
+  /** What it could have been (for saying why it wasn't found). */
+  candidates: Asset[];
+  units: Array<string | null>;
+}
+
+/** The equipment a label means: "X-31 (2030.31)", "2030.31", "X-31". The
+ *  ID decides first; then the tag, inside `unitCode` when given (else the
+ *  ID's unit). Copies of one piece count once: the one with an ID, then the
+ *  one with photos. Two pieces and nothing to tell them apart is no
+ *  answer, never a guess (lib/equipmentIdentity). */
+export async function resolveEquipment(orgId: string, label: string, unitCode?: string | null): Promise<EquipmentLookup> {
+  const want = parseEquipmentLabel(label);
+  if (!want.tag && !want.code) return { asset: null, why: "none", candidates: [], units: [] };
+  const rows = await candidatesFor(orgId, want);
+  // Photos only break a tie between copies of one piece.
+  const photos = rows.length > 1 ? await getPhotoCounts(orgId, rows.map((a) => a.id)).catch(() => new Map<string, number>()) : undefined;
+  const pick = pickEquipment(rows.map((a) => asRecord(a, photos)), { ...want, unitCode: unitCode ?? null });
+  if (pick.asset) return { asset: pick.asset.asset, why: pick.why, candidates: pick.candidates.map((c) => c.asset), units: pick.units };
+  if (pick.why === "none") {
+    const viaAlias = await aliasHit(orgId, label) ?? (want.tag && want.tag !== label.trim() ? await aliasHit(orgId, want.tag) : null);
+    if (viaAlias) return { asset: viaAlias, why: "alias", candidates: [viaAlias], units: [viaAlias.unit_code ?? null] };
+  }
+  return { asset: null, why: pick.why, candidates: pick.candidates.map((c) => c.asset), units: pick.units };
+}
+
+/** The equipment a label names, or null (see resolveEquipment). */
+export async function getAssetByTag(orgId: string, tag: string, unitCode?: string | null): Promise<Asset | null> {
+  return (await resolveEquipment(orgId, tag, unitCode)).asset;
+}
+
+/** Every piece of equipment a label could be: one record per piece (two
+ *  copies of X-31 in unit 20 are one), by its ID when it has one. */
 export async function findAssetsByTag(orgId: string, tag: string): Promise<Asset[]> {
-  const t = tag.trim();
-  const isCode = /^\d+\.\w+$/.test(t);
-  const { data, error } = isCode
-    ? await supabase.from("assets").select("*").eq("org_id", orgId).not("code", "is", null).ilike("code", `${t.split(".")[0]}.%`).limit(50)
-    : await supabase.from("assets").select("*").eq("org_id", orgId).eq("tag_normalized", normalizeTag(t)).limit(20);
-  if (error) throw new Error(error.message);
-  const rows = (data as Asset[] | null) ?? [];
-  return isCode ? rows.filter((a) => sameEquipmentId(a.code, t)) : rows;
+  const want = parseEquipmentLabel(tag);
+  if (!want.tag && !want.code) return [];
+  const rows = await candidatesFor(orgId, want);
+  const recs = rows.map((a) => asRecord(a));
+  if (want.code) {
+    const byId = recs.filter((r) => sameEquipmentId(idOf(r), want.code));
+    if (byId.length) return onePerPiece(byId).map((r) => r.asset);
+  }
+  const named = want.tag ? recs.filter((r) => nameKey(r.tag) === nameKey(want.tag)) : [];
+  return onePerPiece(named).map((r) => r.asset);
 }
 
 /** Two IDs are one when they differ only in leading zeros after the point
@@ -491,7 +549,7 @@ import { orIlike } from "@/lib/orFilter";
 
 const photoCountCache = new Map<string, number>();
 const fileCountCache = new Map<string, number>();         // assetId -> linked-file count
-const lookupCache = new Map<string, Asset | null>();      // normalizedTag -> asset
+const lookupCache = new Map<string, Asset | null>();      // lookupKey -> asset
 // Per-key subscriptions: resolving one tag re-renders only the chips bound to
 // THAT tag, not every chip mounted on the page. The old global Set turned a
 // tag-heavy folder's post-load settling into an O(n^2) re-render storm — each of
@@ -509,10 +567,14 @@ function subscribeKey(key: string, fn: () => void): () => void {
 function notifyKey(key: string) { keySubscribers.get(key)?.forEach((fn) => fn()); }
 function notifyAllKeys() { keySubscribers.forEach((set) => set.forEach((fn) => fn())); }
 
-export function useAssetByTag(orgId: string | null | undefined, tag: string): { asset: Asset | null; photoCount: number; loading: boolean } {
+/** The cache key for a label: its ID when it has one ("X-31 (2030.31)" and
+ *  "2030.31" share one), else its tag in the unit. */
+const lookupKey = (orgId: string, tag: string, unitCode?: string | null) => `${orgId}::${labelKey(tag, unitCode)}`;
+
+export function useAssetByTag(orgId: string | null | undefined, tag: string, unitCode?: string | null): { asset: Asset | null; photoCount: number; loading: boolean } {
   const [, force] = useState(0);
   const [loading, setLoading] = useState(false);
-  const key = orgId && tag ? `${orgId}::${normalizeTag(tag)}` : null;
+  const key = orgId && tag ? lookupKey(orgId, tag, unitCode) : null;
 
   const reload = useCallback(() => force((x) => x + 1), []);
 
@@ -528,7 +590,7 @@ export function useAssetByTag(orgId: string | null | undefined, tag: string): { 
     let alive = true;
     (async () => {
       try {
-        const a = await getAssetByTag(orgId, tag);
+        const a = await getAssetByTag(orgId, tag, unitCode);
         lookupCache.set(key, a);
         if (a) {
           const counts = await getPhotoCounts(orgId, [a.id]);
@@ -541,7 +603,7 @@ export function useAssetByTag(orgId: string | null | undefined, tag: string): { 
       }
     })();
     return () => { alive = false; };
-  }, [key, orgId, tag]);
+  }, [key, orgId, tag, unitCode]);
 
   const asset = key ? (lookupCache.get(key) ?? null) : null;
   const photoCount = asset ? (photoCountCache.get(asset.id) || 0) : 0;
@@ -550,10 +612,10 @@ export function useAssetByTag(orgId: string | null | undefined, tag: string): { 
 
 /** Like useAssetByTag, but resolves the count of LINKED DRAWINGS for a tag
  *  (for file-reference columns). Shares the asset lookup cache. */
-export function useAssetFilesByTag(orgId: string | null | undefined, tag: string): { asset: Asset | null; fileCount: number; loading: boolean } {
+export function useAssetFilesByTag(orgId: string | null | undefined, tag: string, unitCode?: string | null): { asset: Asset | null; fileCount: number; loading: boolean } {
   const [, force] = useState(0);
   const [loading, setLoading] = useState(false);
-  const key = orgId && tag ? `${orgId}::${normalizeTag(tag)}` : null;
+  const key = orgId && tag ? lookupKey(orgId, tag, unitCode) : null;
 
   const reload = useCallback(() => force((x) => x + 1), []);
 
@@ -571,7 +633,7 @@ export function useAssetFilesByTag(orgId: string | null | undefined, tag: string
     let alive = true;
     (async () => {
       try {
-        const a = cached ?? await getAssetByTag(orgId, tag);
+        const a = cached ?? await getAssetByTag(orgId, tag, unitCode);
         lookupCache.set(key, a);
         if (a) {
           const counts = await getFileCounts(orgId, [a.id]);
@@ -584,7 +646,7 @@ export function useAssetFilesByTag(orgId: string | null | undefined, tag: string
       }
     })();
     return () => { alive = false; };
-  }, [key, orgId, tag]);
+  }, [key, orgId, tag, unitCode]);
 
   const asset = key ? (lookupCache.get(key) ?? null) : null;
   const fileCount = asset ? (fileCountCache.get(asset.id) || 0) : 0;

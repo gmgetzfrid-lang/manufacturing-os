@@ -18,6 +18,7 @@ import {
   type AssetType,
 } from "@/lib/assets";
 import SignedImg from "./SignedImg";
+import { equipmentLabel } from "@/lib/equipmentPick";
 
 interface AssetPhotoCarouselProps {
   isOpen: boolean;
@@ -136,7 +137,7 @@ export default function AssetPhotoCarousel({
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[15px] font-semibold text-white truncate">{asset.tag}</span>
+              <span className="text-[15px] font-semibold text-white truncate">{equipmentLabel({ tag: asset.tag, code: asset.code })}</span>
               {assetType && (
                 <span className="text-[13px] font-semibold bg-white/15 text-white/90 px-1.5 py-0.5 rounded">
                   {assetType.name}

@@ -18,6 +18,7 @@ import { uploadToPath } from "@/lib/storage";
 import { tryUpload } from "@/lib/uploadRetry";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import FileThumb from "@/components/ui/FileThumb";
+import { equipmentLabel } from "@/lib/equipmentPick";
 
 interface PendingPhoto {
   id: string;
@@ -181,7 +182,7 @@ export default function AssetPhotoUploader({
             <div className="p-2 bg-[var(--color-surface-2)] rounded-lg shrink-0"><Camera className="w-4 h-4 text-[var(--color-text)]" /></div>
             <div className="min-w-0">
               <div className="text-sm font-semibold text-[var(--color-text)] truncate">
-                Photos for <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)] text-[13px] font-bold align-middle ml-0.5">{asset.tag}</span>
+                Photos for <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)] text-[13px] font-bold align-middle ml-0.5">{equipmentLabel({ tag: asset.tag, code: asset.code })}</span>
               </div>
               <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5 leading-snug">
                 These go on the equipment, not in a library folder. They show wherever this tag appears.

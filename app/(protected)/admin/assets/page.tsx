@@ -16,7 +16,7 @@ import {
   Image as ImageIcon, AlertTriangle,
   Lock, X, Save, Edit3, Trash2, Factory,
   FileText, Upload, QrCode, BookMarked,
-  FolderOpen, Link2, ArrowLeft, Waypoints, ChevronDown, BookMarked as BookMarkedIcon,
+  FolderOpen, Link2, ArrowLeft, Waypoints, ChevronDown, BookMarked as BookMarkedIcon, RotateCcw,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
@@ -38,6 +38,7 @@ import { AreaKnowledgePanel } from "@/components/assets/AreaKnowledgePanel";
 import DocumentLinkPicker from "@/components/documents/DocumentLinkPicker";
 import AssetPhotoUploader from "@/components/assets/AssetPhotoUploader";
 import AssetCsvImportModal from "@/components/assets/AssetCsvImportModal";
+import EquipmentStartOver from "@/components/assets/EquipmentStartOver";
 import WatchButton from "@/components/ui/WatchButton";
 import Link from "next/link";
 import { getDocumentsForAssetHydrated, type AssetDocumentRow } from "@/lib/operationalGraph";
@@ -118,6 +119,8 @@ function AssetsPageInner() {
   const [carouselOpenFor, setCarouselOpenFor] = useState<Asset | null>(null);
   const [uploaderOpenFor, setUploaderOpenFor] = useState<Asset | null>(null);
   const [csvOpen, setCsvOpen] = useState(false);
+  // Start over from the drawings: an admin clears what the reader added.
+  const [startOverOpen, setStartOverOpen] = useState(() => searchParams.get("startOver") === "1");
 
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
@@ -610,6 +613,19 @@ function AssetsPageInner() {
             onDone={() => { invalidateAssetCache(); void refresh(); }} />
         )}
 
+        {/* Start over: an admin clears what the drawing reader added (what
+            people added stays), then reads the drawings again. */}
+        {canEditEquipment && !unitFilter && !loading && (
+          <Section label="Start over from the drawings">
+            <div className={`${sheet} px-4 sm:px-5 py-4 flex items-center justify-between gap-3 flex-wrap`}>
+              <p className="text-[14px] text-[var(--color-text-muted)] max-w-[62ch]">Clears what the drawing reader added and reads the drawings again. What people added stays.</p>
+              <button type="button" className={btnDanger} onClick={() => setStartOverOpen(true)}>
+                <RotateCcw className="w-4 h-4" /> Start over
+              </button>
+            </div>
+          </Section>
+        )}
+
         {/* No codebook units yet: show admins the path instead of a silently
             flat registry. The unit-first view lights up the moment units exist. */}
         {book.units.length === 0 && isAdmin && !loading && (
@@ -697,6 +713,11 @@ function AssetsPageInner() {
           onClose={() => setUploaderOpenFor(null)}
           onUploaded={() => { void refresh(); }}
         />
+      )}
+
+      {startOverOpen && canEditEquipment && (
+        <EquipmentStartOver orgId={activeOrgId} onClose={() => setStartOverOpen(false)}
+          onChanged={() => { invalidateAssetCache(); void refresh(); }} />
       )}
 
       {csvOpen && uid && (

@@ -20,6 +20,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { normalizeTag } from "@/lib/assets";
+import { onePerPiece } from "@/lib/equipmentIdentity";
 import { generateTicketNumber } from "@/lib/ticketNumber";
 import { resolveTicketRecipients } from "@/lib/ticketRouting";
 import { emit } from "@/lib/notify/dispatch";
@@ -110,11 +111,13 @@ export async function scanTransitionImpact(
     if (out.tags.length) {
       const { data: assets } = await supabase
         .from("assets")
-        .select("id, tag, tag_normalized")
+        .select("id, tag, tag_normalized, code, unit_code, origin, created_at")
         .eq("org_id", orgId)
         .eq("archived", false)
         .in("tag_normalized", out.tags.map((t) => normalizeTag(t)));
-      out.matchedAssets = (((assets ?? []) as Array<{ id: string; tag: string }>))
+      // Two copies of one piece (the same ID, or the same tag in a unit) count once.
+      const rows = ((assets ?? []) as Array<{ id: string; tag: string; code: string | null; unit_code: string | null; origin: string | null; created_at: string | null }>);
+      out.matchedAssets = onePerPiece(rows.map((a) => ({ id: a.id, tag: a.tag, code: a.code, unitCode: a.unit_code, origin: a.origin, createdAt: a.created_at })))
         .map((a) => ({ id: a.id, tag: a.tag }));
     }
   } catch { /* slice empty */ }

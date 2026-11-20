@@ -23,6 +23,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { governedAiCall, GovernedCallError } from "@/lib/ai/governedCall";
 import { extractJsonBlock } from "@/lib/orchestrator/protocol";
 import { normalizeTag } from "@/lib/codebook";
+import { onePerPiece } from "@/lib/equipmentIdentity";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -123,10 +124,13 @@ export async function POST(req: NextRequest) {
 
   // 3. Registry equipment the answer names by tag.
   const { data: assetRows } = await supabaseAdmin
-    .from("assets").select("id, tag, description")
+    .from("assets").select("id, tag, description, code, unit_code, origin, created_at")
     .eq("org_id", orgId).eq("archived", false).limit(4000);
   let an = 0;
-  for (const a of (assetRows as Array<{ id: string; tag: string; description: string | null }>) ?? []) {
+  // Two copies of one piece (the same ID, or the same tag in a unit) count once.
+  const assetList = onePerPiece(((assetRows as Array<{ id: string; tag: string; description: string | null; code: string | null; unit_code: string | null; origin: string | null; created_at: string | null }>) ?? [])
+    .map((a) => ({ ...a, unitCode: a.unit_code, createdAt: a.created_at })));
+  for (const a of assetList) {
     const key = squash(normalizeTag(a.tag));
     if (key.length >= 3 && answerSquash.includes(key)) {
       an += 1;

@@ -18,6 +18,7 @@ import { findEstate } from "@/lib/find/client";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { loadCodebook } from "@/lib/codebook";
 import type { GraphNode, GraphEdge } from "@/lib/orgGraph";
+import { onePerPiece, parseEquipmentLabel } from "@/lib/equipmentIdentity";
 import {
   equipScore, rankEquip, tagKey, unitOfChain, unitFromFolderName, equipLabel,
   type FindDoc, type FindEquip, type FindFolder, type FindUnit, type FindWorkOrder,
@@ -115,17 +116,22 @@ export async function findQuick(orgId: string, q: string, opts: { controller?: b
   const key = tagKey(t);
   const words = safe.split(/\s+/).filter((w) => w.length >= 3).sort((a, b) => b.length - a.length);
 
+  // "X-31 (2030.31)" is the equipment numbered 2030.31; X-31 is its second name.
+  const label = parseEquipmentLabel(t);
+  const both = !!(label.code && label.tag);
   const ors = [
     norm.length >= 2 ? `tag_normalized.ilike.%${norm}%` : null,
     key && key !== norm ? `tag_normalized.ilike.%${key}%` : null,
     safe ? `code.ilike.${safe}%` : null,
     words[0] ? `description.ilike.%${words[0]}%` : null,
+    both ? `code.ilike."${label.code}%"` : null,
+    both && tagKey(label.tag ?? "") ? `tag_normalized.ilike.%${tagKey(label.tag ?? "")}%` : null,
   ].filter(Boolean).join(",");
 
   const [units, types, assetsRes, docRows, folderRes] = await Promise.all([
     findUnits(orgId),
     typeNames(orgId),
-    ors ? supabase.from("assets").select("id, tag, code, unit_code, description, type_id").eq("org_id", orgId).eq("archived", false).or(ors).limit(80)
+    ors ? supabase.from("assets").select("id, tag, code, unit_code, description, type_id, origin, created_at").eq("org_id", orgId).eq("archived", false).or(ors).limit(80)
       : Promise.resolve({ data: [] as unknown[] }),
     searchDocuments({ orgId, query: t, limit: 25 }).catch(() => []),
     safe.length >= 2
@@ -134,13 +140,17 @@ export async function findQuick(orgId: string, q: string, opts: { controller?: b
   ]);
 
   const unitLabel = new Map(units.map((u) => [u.code, u.label]));
-  const scored = ((assetsRes.data ?? []) as Array<{ id: string; tag: string; code: string | null; unit_code: string | null; description: string | null; type_id: string | null }>)
+  const rows = ((assetsRes.data ?? []) as Array<{ id: string; tag: string; code: string | null; unit_code: string | null; description: string | null; type_id: string | null; origin?: string | null; created_at?: string | null }>);
+  // Copies of one piece (the same ID, or the same tag in a unit) show once:
+  // the one with its ID.
+  const one = new Set(onePerPiece(rows.map((a) => ({ id: a.id, tag: a.tag, code: a.code, unitCode: a.unit_code, origin: a.origin ?? null, createdAt: a.created_at ?? null }))).map((a) => a.id));
+  const scored = rows.filter((a) => one.has(a.id))
     .map((a): FindEquip => {
       const e: FindEquip = {
         id: a.id, tag: a.tag, code: a.code, unitCode: a.unit_code, unitLabel: a.unit_code ? unitLabel.get(a.unit_code) ?? null : null,
         description: a.description, typeName: a.type_id ? types.get(a.type_id) ?? null : null, docIds: [], score: 0,
       };
-      e.score = equipScore(t, e);
+      e.score = both ? Math.max(equipScore(label.code!, e), equipScore(label.tag!, e) - 10) : equipScore(t, e);
       return e;
     })
     .filter((e) => e.score > 0);

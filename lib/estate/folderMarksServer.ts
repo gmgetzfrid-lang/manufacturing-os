@@ -15,6 +15,7 @@ import { originRank } from "./ids";
 import { unitFromName } from "./resolver";
 import { canonicalForm } from "@/lib/fileFinder/tagForms";
 import { equipmentFromFolderName, eqtypeId, planStructure, type FolderMarkState, type LevelMeaning, type MarkKind, type PlanRow } from "./folderMarks";
+import { onePerPiece } from "@/lib/equipmentIdentity";
 
 export type FolderMark =
   | { kind: "area"; unitCode: string }
@@ -131,11 +132,13 @@ async function findOrCreateAsset(admin: SupabaseClient, orgId: string, tag: stri
   const norm = assetNorm(tag);
   // A name repeats from unit to unit (the ID is what's unique): the one in
   // the folder's unit, or one with no unit yet; never another unit's.
-  const { data: hits } = await admin.from("assets").select("id, description, unit_code").eq("org_id", orgId).eq("tag_normalized", norm).limit(20);
-  const all = (hits ?? []) as Array<{ id: string; description: string | null; unit_code: string | null }>;
+  const { data: hits } = await admin.from("assets").select("id, tag, code, description, unit_code, origin, created_at").eq("org_id", orgId).eq("tag_normalized", norm).limit(20);
+  const all = (hits ?? []) as Array<{ id: string; tag: string; code: string | null; description: string | null; unit_code: string | null; origin: string | null; created_at: string | null }>;
   const fit = unitCode ? all.filter((a) => a.unit_code === unitCode || !a.unit_code) : all;
-  if (!unitCode && fit.length > 1) throw new Error(`More than one piece of equipment is named ${tag}. Mark this folder's unit first.`);
-  const hit = fit.find((a) => a.unit_code === unitCode) ?? fit[0] ?? null;
+  // Copies of one piece count once, the one with its ID (lib/equipmentIdentity).
+  const one = onePerPiece(fit.map((a) => ({ ...a, unitCode: a.unit_code, createdAt: a.created_at })));
+  if (!unitCode && one.length > 1) throw new Error(`More than one piece of equipment is named ${tag}. Mark this folder's unit first.`);
+  const hit = one.find((a) => a.unit_code === unitCode) ?? one[0] ?? null;
   if (hit) {
     const h = hit as { id: string; description: string | null };
     if (name && !h.description) await admin.from("assets").update({ description: name }).eq("id", h.id);

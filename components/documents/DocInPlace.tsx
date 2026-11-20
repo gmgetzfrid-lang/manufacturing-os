@@ -3,14 +3,16 @@
 // DocInPlace - a document opened right where you are: from the map, from a
 // search result, from anywhere that is not its own folder. The full-size
 // viewer is laid over the page; closing it leaves the page exactly as it
-// was (the search, the folder, the map all still there). Nothing navigates.
+// was (the search, the folder, the map all still there). Nothing navigates:
+// opening it takes one step in the browser's history on the same address,
+// so Back closes it instead of leaving the page.
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import dynamic from "next/dynamic";
 import { Loader2 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
-import { loadDocForViewing } from "@/lib/docRecord";
+import { docForViewing } from "@/lib/docOpen";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 
 const FullScreenViewer = dynamic(() => import("@/components/viewers/FullScreenViewer"), { ssr: false });
@@ -21,9 +23,29 @@ export default function DocInPlace({ docId, onClose }: { docId: string; onClose:
   const { uid, userEmail, activeRole, activeOrgId } = useRole();
   const [got, setGot] = useState<Got | null>(null);
 
+  // Back closes it: a step on the same address (the router is not told, so
+  // nothing under it re-renders), popped by Back or by closing it here.
+  const closeRef = useRef(onClose);
+  useEffect(() => { closeRef.current = onClose; }, [onClose]);
+  const step = useRef<{ pushed: boolean; leaving: number | null }>({ pushed: false, leaving: null });
+  useEffect(() => {
+    const st = step.current;
+    // Mounted again straight away (React checking effects in development):
+    // the step taken is still the one.
+    if (st.leaving != null) { window.clearTimeout(st.leaving); st.leaving = null; }
+    else if (!st.pushed) { window.history.pushState(window.history.state, "", window.location.href); st.pushed = true; }
+    const onPop = () => { if (!st.pushed) return; st.pushed = false; closeRef.current(); };
+    window.addEventListener("popstate", onPop);
+    return () => {
+      window.removeEventListener("popstate", onPop);
+      // Closed here (not by Back): take the step back off.
+      if (st.pushed) st.leaving = window.setTimeout(() => { st.leaving = null; if (st.pushed) { st.pushed = false; window.history.back(); } }, 0);
+    };
+  }, []);
+
   useEffect(() => {
     let alive = true;
-    void loadDocForViewing(docId)
+    void docForViewing(docId)
       .then((r) => { if (alive) setGot({ id: docId, doc: r?.doc ?? null, version: r?.version ?? null }); })
       .catch(() => { if (alive) setGot({ id: docId, doc: null, version: null }); });
     return () => { alive = false; };
