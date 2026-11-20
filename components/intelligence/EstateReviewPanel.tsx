@@ -99,14 +99,14 @@ export default function EstateReviewPanel() {
   };
 
   return (
-    <section className="mb-6 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm overflow-hidden">
-      <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between gap-3">
+    <section className="mb-6 rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden">
+      <div className="px-4 py-3 border-b border-[var(--color-border)] flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="text-sm font-black inline-flex items-center gap-2"><Link2 className="w-4 h-4 text-[var(--color-text-muted)]" /> Links waiting for you</div>
           <div className="text-xs text-[var(--color-text-muted)]">Only what is proven links by itself: a unit&apos;s number and name together (&ldquo;20 - Crude&rdquo;), a drawing number, a folder under a linked folder. A name on its own is asked here. <b>Belongs to</b>: it is that unit&apos;s own. <b>Applies to</b>: a standard or reference that covers it.</div>
         </div>
         {canDecide && (
-          <button onClick={run} disabled={running} title="Work the links out again. Links made earlier that are no longer proven come back here; a person's links are never touched." className="shrink-0 inline-flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
+          <button onClick={run} disabled={running} title="Work the links out again. Links made earlier that are no longer proven come back here; a person's links are never touched." className="shrink-0 inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-60">
             {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} {running ? "Checking…" : "Check the links again"}
           </button>
         )}
