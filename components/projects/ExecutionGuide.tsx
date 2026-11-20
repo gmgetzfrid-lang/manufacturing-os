@@ -9,7 +9,8 @@
 // an interaction, it gets a line here too — this is the contract that
 // keeps the field user from being lost.
 
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
+import { useEscapeClose } from "@/hooks/useEscapeClose";
 import {
   HelpCircle, X as XIcon, GripVertical, ChevronRight, ChevronLeft,
   CalendarRange, ListTree, CalendarDays,
@@ -17,21 +18,24 @@ import {
 
 // One home for the guide: the ? button. (The first-run "New here?" banner
 // that also opened it is gone: one way in, and no banner over the work.)
-export default function ExecutionGuide() {
-  const [open, setOpen] = useState(false);
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
+export default function ExecutionGuide({ open: openProp, onOpenChange, buttonClass = "" }: {
+  /** Open it from somewhere else (a More menu on a phone). */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /** Extra classes for the ? button (e.g. hide it on a phone). */
+  buttonClass?: string;
+} = {}) {
+  const [openSelf, setOpenSelf] = useState(false);
+  const open = openProp ?? openSelf;
+  const setOpen = (v: boolean) => { setOpenSelf(v); onOpenChange?.(v); };
+  useEscapeClose(() => setOpen(false), open);
 
   return (
     <>
-      {/* Toolbar trigger: always present. */}
+      {/* Toolbar trigger. */}
       <button
         onClick={() => setOpen(true)}
-        className="inline-flex items-center justify-center w-9 h-9 rounded-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
+        className={`inline-flex items-center justify-center w-9 h-9 rounded-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors ${buttonClass}`}
         title="How this view works" aria-label="How this view works"
       >
         <HelpCircle className="w-4 h-4" />
@@ -40,8 +44,8 @@ export default function ExecutionGuide() {
       {/* Cheat-sheet panel. */}
       {open && (
         <div role="dialog" aria-modal="true" aria-label="How this view works" className="fixed inset-0 z-[300] flex items-start sm:items-center justify-center overflow-y-auto p-4" onClick={() => setOpen(false)}>
-          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-in fade-in" />
-          <div className="relative w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl ring-1 ring-slate-900/10 overflow-hidden max-h-[85vh] flex flex-col animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
+          <div className="absolute inset-0 bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in" />
+          <div className="relative w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden max-h-[85vh] flex flex-col animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
             <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-2">
               <HelpCircle className="w-5 h-5 text-[var(--color-text-muted)]" />
               <h2 className="text-[15px] font-bold text-[var(--color-text)]">How this view works</h2>

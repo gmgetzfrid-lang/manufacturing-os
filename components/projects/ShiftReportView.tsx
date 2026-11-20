@@ -25,6 +25,7 @@
 // mid-row), so a turnover fits on one or two sheets instead of leaving half
 // pages blank.
 
+import { useEscapeClose } from "@/hooks/useEscapeClose";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { badgeText } from "@/lib/badge";
 import { createPortal } from "react-dom";
@@ -1417,11 +1418,8 @@ function RowEditor({ id, milestones, progress, planNow, tz, times, shift, canEdi
   onUpdate: (id: string, u: StepUpdate) => Promise<boolean>; onClose: () => void;
   onFixTimes?: (id: string, t: { start?: number | null; finish?: number | null }) => Promise<boolean>;
 }) {
-  useEffect(() => {
-    const k = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", k);
-    return () => window.removeEventListener("keydown", k);
-  }, [onClose]);
+  // Escape closes this sheet, not the screen under it.
+  useEscapeClose(onClose);
   const step = milestones.find((m) => m.id === id);
   if (!step) return null;
   const parent = step.parentId ? milestones.find((m) => m.id === step.parentId) : undefined;
@@ -1429,15 +1427,11 @@ function RowEditor({ id, milestones, progress, planNow, tz, times, shift, canEdi
   const others = parent ? milestones.filter((m) => m.parentId === parent.id && m.id !== id && m.id && !parents.has(m.id)) : [];
   const label = `${shift.kind === "day" ? "Day shift" : "Night shift"} ${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })}`;
   return (
-    <div className="fixed inset-0 z-[180] bg-black/50 print:hidden" onClick={onClose}>
-      <div role="dialog" aria-label={`Update ${step.name}`} onClick={(e) => e.stopPropagation()}
-        className="absolute left-1/2 top-16 -translate-x-1/2 w-[440px] max-w-[94vw] max-h-[82dvh] overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-xl max-sm:left-0 max-sm:right-0 max-sm:top-auto max-sm:bottom-0 max-sm:translate-x-0 max-sm:w-full max-sm:max-w-none max-sm:rounded-b-none max-sm:max-h-[88dvh]">
-        <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] pl-3 pr-1.5 py-1">
-          <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Update from the report</span>
-          <button type="button" onClick={onClose} aria-label="Close" className="w-7 h-7 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
-        </div>
+    <div className="fixed inset-0 z-[180] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] print:hidden" onClick={onClose}>
+      <div role="dialog" aria-modal="true" aria-label={`Update ${step.name}`} onClick={(e) => e.stopPropagation()}
+        className="absolute left-1/2 top-16 -translate-x-1/2 w-[440px] max-w-[94vw] max-h-[82dvh] overflow-y-auto rounded-2xl bg-[var(--color-surface)] text-[var(--color-text)] shadow-[var(--shadow-card)] max-sm:left-0 max-sm:right-0 max-sm:top-auto max-sm:bottom-0 max-sm:translate-x-0 max-sm:w-full max-sm:max-w-none max-sm:rounded-b-none max-sm:max-h-[88dvh]">
         <CalendarQuickView key={id} task={parent ?? step} onDay={[step]} others={others} dayKey={shift.dayKey} band={shift.kind} dayLabel={label}
-          tz={tz} times={times} progress={progress} planNow={planNow} canEdit={canEdit} onUpdate={onUpdate} onFixTimes={onFixTimes} marks={marks} />
+          tz={tz} times={times} progress={progress} planNow={planNow} canEdit={canEdit} onUpdate={onUpdate} onFixTimes={onFixTimes} marks={marks} onClose={onClose} />
       </div>
     </div>
   );

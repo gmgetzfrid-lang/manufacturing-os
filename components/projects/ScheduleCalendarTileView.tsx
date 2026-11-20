@@ -953,7 +953,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
         return (
           // A popover by the card on a wide screen; on a phone a sheet from
           // the bottom, with the calendar dimmed behind it.
-          <div className="fixed inset-0 z-[160] max-sm:bg-slate-900/50" onClick={() => setSubPopover(null)}>
+          <div className="fixed inset-0 z-[160] max-sm:bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)]" onClick={() => setSubPopover(null)}>
             <div
               ref={subRef}
               className="absolute w-[420px] max-w-[94vw] max-h-[80dvh] overflow-y-auto bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg animate-in fade-in zoom-in-95 duration-150 max-sm:!left-0 max-sm:!right-0 max-sm:!top-auto max-sm:bottom-0 max-sm:!w-full max-sm:!max-w-none max-sm:rounded-b-none max-sm:max-h-[88dvh]"
@@ -968,6 +968,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                 onUpdate={onUpdateStep} onFixTimes={onFixTimes}
                 onOpenDetail={(m) => { onOpenDetail(m); setSubPopover(null); }}
                 onMoveDays={canEdit ? onMoveDays : undefined}
+                onClose={() => setSubPopover(null)}
               />
             </div>
           </div>

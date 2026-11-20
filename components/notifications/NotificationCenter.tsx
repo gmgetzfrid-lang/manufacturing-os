@@ -122,7 +122,9 @@ function CenterPanel({
       {/* Panel */}
       <aside
         role="dialog"
-        aria-modal="true"
+        aria-modal={isOpen ? "true" : undefined}
+        aria-hidden={isOpen ? undefined : true}
+        inert={!isOpen}
         aria-label="Notification center"
         className={`fixed top-0 sm:top-3.5 right-0 sm:right-3.5 bottom-0 z-[241] w-[480px] max-w-[94vw] bg-[var(--color-surface)] rounded-l-[20px] sm:rounded-[20px] sm:rounded-b-none shadow-[-30px_0_60px_-30px_rgb(0_0_0/0.6)] flex flex-col transition-transform duration-500 ${
           isOpen ? "translate-x-0" : "translate-x-[110%]"

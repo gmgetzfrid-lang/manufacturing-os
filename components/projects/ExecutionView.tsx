@@ -31,6 +31,7 @@ import {
   FolderPlus, CalendarRange, X as XIcon, CheckSquare, Square,
   ZoomIn, ZoomOut, ListTree, Crosshair, Info, Zap, Eye, ListOrdered, Link2, Replace,
   Trash2,
+  HelpCircle,
 } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import type { CancelledJob } from "@/lib/cancelledJobs";
@@ -182,6 +183,7 @@ export default function ExecutionView({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   // Bulk change: replace a name everywhere, or set a value on the selection.
   const [bulkMode, setBulkMode] = useState<"replace" | "set" | null>(null);
+  const [guideOpen, setGuideOpen] = useState(false);
   const [groupOpen, setGroupOpen] = useState(false);
   const [durationFor, setDurationFor] = useState<Milestone | null>(null);
   // zoomFactor: null = auto-fit to the available width. A number is a
@@ -1315,6 +1317,16 @@ export default function ExecutionView({
             </button>
           ))}
         </div>
+        {/* On a phone the less-used tools go under More, so the toolbar is
+            two rows: which view and More, then the critical path and
+            Update by note. */}
+        <span className="ml-auto sm:hidden">
+          <MoreMenu iconOnly label="More tools" items={[
+            ...(canEdit ? [{ icon: <Replace className="w-4 h-4" />, label: "Change on many", onClick: () => setBulkMode("replace") }] : []),
+            { icon: <HelpCircle className="w-4 h-4" />, label: "How this view works", onClick: () => setGuideOpen(true) },
+          ]} />
+        </span>
+        <span className="basis-full h-0 sm:hidden" aria-hidden />
         {layout === "timeline" && (
           <button
             onClick={() => setShowCritical((v) => !v)}
@@ -1327,11 +1339,11 @@ export default function ExecutionView({
         )}
         <span className="ml-auto" />
         {tools}
-        <ExecutionGuide />
+        <ExecutionGuide open={guideOpen} onOpenChange={setGuideOpen} buttonClass="max-sm:hidden" />
         {canEdit && (
           <button onClick={() => setBulkMode("replace")}
             title="Swap a contractor, crew, company or location on every task at once"
-            className={QUIET}>
+            className={`${QUIET} max-sm:hidden`}>
             <Replace className="w-3.5 h-3.5" /> Change on many
           </button>
         )}
