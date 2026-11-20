@@ -670,6 +670,12 @@ export async function forceReleaseDocument(input: {
         kind: "checkout_released",
         title: "Your checkout was force-released",
         body: `${input.actorName} force-released the checkout${input.reason ? `: "${input.reason}"` : ""}. Your session has ended - any unpublished work on your machine is now based on a released lock, so coordinate before publishing.`,
+        // Opens the document itself, not a list.
+        link: await (async () => {
+          const { data: d } = await supabase.from("documents").select("library_id").eq("id", input.documentId).maybeSingle();
+          const lib = (d as { library_id?: string } | null)?.library_id;
+          return lib ? `/documents/${lib}?doc=${input.documentId}` : undefined;
+        })(),
         resource: { type: "document", id: input.documentId },
         actorUserId: input.actorUserId,
         actorName: input.actorName,

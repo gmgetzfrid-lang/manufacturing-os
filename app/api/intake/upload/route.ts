@@ -352,7 +352,7 @@ export async function POST(req: NextRequest) {
     kind: autoNow ? "doc_superseded" : "review_requested",
     title: intakeTitle,
     body: intakeBody,
-    link: `/projects/${projectId}`,
+    link: `/projects/${projectId}?tab=intake`,
     resource_type: "document", resource_id: documentId,
     actor_name: company,
     metadata: { intake: true, versionId },

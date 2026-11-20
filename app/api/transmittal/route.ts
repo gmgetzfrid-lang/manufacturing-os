@@ -151,7 +151,7 @@ export async function POST(req: NextRequest) {
       kind: "ack_complete",
       title: `Transmittal ${t.number} acknowledged`,
       body: `${name} confirmed receipt through the portal.`,
-      link: "/transmittals",
+      link: `/transmittals?t=${String(t.id)}`,
       resource_type: "transmittal", resource_id: String(t.id),
       actor_name: name,
     }).then(() => undefined, () => undefined);

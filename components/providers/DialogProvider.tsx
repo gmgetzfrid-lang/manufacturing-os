@@ -13,7 +13,7 @@
 // native dialog so callers never hang.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, HelpCircle, Info } from "lucide-react";
+import { AlertTriangle, HelpCircle, Info, X } from "lucide-react";
 import { Modal, ModalFooter } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 
@@ -106,9 +106,13 @@ export function DialogHost() {
           e.preventDefault();
           settle(current.kind === "prompt" ? (inputRef.current?.value ?? "") : true);
         }}
-        className="p-5"
+        className="relative p-5"
       >
-        <div className="flex items-start gap-3">
+        <button type="button" onClick={cancel} aria-label="Close"
+          className="absolute top-3 right-3 p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+          <X className="w-4 h-4" />
+        </button>
+        <div className="flex items-start gap-3 pr-6">
           <div
             className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
               danger ? "bg-rose-50 text-rose-600 dark:bg-rose-500/15" : "bg-[var(--color-surface-2)] text-[var(--color-text)]"

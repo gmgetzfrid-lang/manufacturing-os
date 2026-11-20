@@ -207,6 +207,12 @@ export async function resolveBranch(input: {
       kind: "branch_resolved",
       title: `Branch ${input.resolution === "merged" ? "merged" : "withdrawn"}`,
       body: `${input.actorName} resolved the open branch: "${input.note.trim()}"`,
+      // Opens the document itself, not a list.
+      link: await (async () => {
+        const { data: d } = await supabase.from("documents").select("library_id").eq("id", branch.documentId).maybeSingle();
+        const lib = (d as { library_id?: string } | null)?.library_id;
+        return lib ? `/documents/${lib}?doc=${branch.documentId}` : undefined;
+      })(),
       resource: { type: "document", id: branch.documentId },
       actorUserId: input.actorUserId,
       actorName: input.actorName,

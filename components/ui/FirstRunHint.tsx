@@ -49,20 +49,19 @@ export default function FirstRunHint({ storageKey, children, tone = "info" }: Fi
 
   if (stored || dismissed) return null;
 
-  const toneClass = tone === "warning"
-    ? "bg-amber-50 border-amber-200 text-amber-900"
-    : "bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text)]";
-
+  // A quiet line in the content, not a box that reads like an ad.
   return (
-    <div className={`flex items-start gap-2 border rounded-lg px-3 py-2 text-xs ${toneClass}`}>
-      <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 opacity-70" />
+    <div className={`flex items-start gap-2 py-1 text-[12.5px] ${tone === "warning" ? "text-amber-800 dark:text-amber-300" : "text-[var(--color-text-muted)]"}`}>
+      <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
       <div className="flex-1">{children}</div>
       <button
+        type="button"
         onClick={dismiss}
-        title="Dismiss - won't show again"
-        className="p-0.5 rounded hover:bg-black/5 opacity-70 hover:opacity-100"
+        aria-label="Close"
+        title="Close - won't show again"
+        className="p-1 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
       >
-        <X className="w-3 h-3" />
+        <X className="w-3.5 h-3.5" />
       </button>
     </div>
   );

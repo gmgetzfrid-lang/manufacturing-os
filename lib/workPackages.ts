@@ -279,7 +279,7 @@ export async function notifyPackagesOfRevUp(input: {
         kind: "doc_superseded",
         title: `Work package "${p.name}" went stale`,
         body: `${input.docLabel} advanced to Rev ${input.newRev} - the package still pins the older revision. Review the change, then refresh the pack (or swap the print set) before execution.`,
-        link: `/packages`,
+        link: `/packages?pkg=${p.id}`,
         resource: { type: "document", id: input.documentId },
         actorUserId: input.actorUserId,
         actorName: input.actorName,

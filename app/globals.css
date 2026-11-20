@@ -176,8 +176,9 @@ body {
 }
 /* Faint accent wash for page headers / hero strips — gives flat zones a
    touch of luster without color-flooding. Sits behind content. */
+/* Page headers sit on plain paper: no tinted wash (ink and paper, one tap color). */
 @utility header-wash {
-  background-image: linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 6%, transparent), transparent 72%);
+  background-image: none;
 }
 
 /* ── Dark-mode bridge ───────────────────────────────────────────

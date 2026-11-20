@@ -33,7 +33,7 @@ export default function PresenceIndicator({
       className="inline-flex items-center gap-1.5"
       title={`${others.length} other${others.length === 1 ? "" : "s"} here: ${others.map((u) => u.name).join(", ")}`}
     >
-      <Eye className="w-3 h-3 text-emerald-600" />
+      <Eye className="w-3 h-3 text-[var(--color-text-muted)]" />
       <div className="flex -space-x-1.5">
         {shown.map((u) => (
           <UserAvatar
@@ -42,12 +42,12 @@ export default function PresenceIndicator({
             name={u.name}
             size={20}
             title={u.name}
-            className="ring-2 ring-white shadow-sm"
+            className="ring-2 ring-[var(--color-surface)]"
           />
         ))}
       </div>
       {extra > 0 && (
-        <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-1.5">
+        <span className="text-[11px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-full px-1.5">
           +{extra}
         </span>
       )}

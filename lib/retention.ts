@@ -223,6 +223,7 @@ async function notifyHold(orgId: string, docIds: string[], kind: "legal_hold_pla
       orgId, userId: uid, kind,
       title: `Legal hold ${verb}${matter ? `: ${matter}` : ""}`,
       body: `A legal hold was ${verb} on ${docIds.length} record${docIds.length === 1 ? "" : "s"}.${verb === "placed" ? " Held records can't be deleted or disposed." : ""}`,
+      link: "/register?filter=legal_hold",
       actorUserId: actorId ?? undefined, actorName: actorName ?? undefined,
     })
   ));
