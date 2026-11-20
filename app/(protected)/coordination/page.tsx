@@ -30,7 +30,7 @@ import React, { Suspense, useCallback, useEffect, useMemo, useState } from "reac
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
-  Network, Loader2, RefreshCw, Lock, AlertOctagon, Map as MapIcon, ChevronRight,
+  Network, RefreshCw, Lock, AlertOctagon, Map as MapIcon, ChevronRight,
   ShieldCheck, AlertTriangle, Users, Boxes, Clock, MailPlus, ArrowDownRight, ArrowUpRight,
   Radar, Info, Tag, Layers, LayoutGrid,
 } from "lucide-react";
@@ -44,6 +44,7 @@ import { analyzeCheckoutCoordination, type CoordinationAnalysis } from "@/lib/co
 import { listPlotPlans } from "@/lib/plotPlans";
 import { MiniBars } from "@/components/ui/Sparkline";
 import ViewTabs, { HOME_VIEWS } from "@/components/navigation/ViewTabs";
+import LoadingBlock from "@/components/ui/LoadingBlock";
 import type { WhiteboardState, PlotPlan, CheckoutSession } from "@/types/schema";
 
 interface Snapshot {
@@ -53,6 +54,8 @@ interface Snapshot {
   holds: HoldMetrics;
   openRequests: number;
   plotPlans: PlotPlan[];
+  /** Sources that couldn't be read: their panels say so, not "nothing". */
+  failed: string[];
 }
 
 type CoordView = "collisions" | "flow";
@@ -61,7 +64,7 @@ type CoordView = "collisions" | "flow";
 // default export is that thin wrapper.
 export default function CoordinationPage() {
   return (
-    <Suspense fallback={null}>
+    <Suspense fallback={<div className="p-6 max-w-7xl mx-auto"><LoadingBlock what="the coordination board" /></div>}>
       <CoordinationInner />
     </Suspense>
   );
@@ -94,27 +97,28 @@ function CoordinationInner() {
     // instead of blanking the whole page.
     const zeroStates = { pending: 0, drafting: 0, executing: 0, completed: 0, blocked: 0 } as Record<WhiteboardState, number>;
     let migrationMissing = false;
+    const failed: string[] = [];
 
     // All five sources are independent — fetched in PARALLEL so the page's
     // wall-clock cost is the slowest single query, not the sum of all of them
     // (sequential awaits here used to stack ~5 round trips back to back).
     const [states, holds, checkouts, plotPlans, reqCount] = await Promise.all([
       getStateCounts({ orgId: activeOrgId }).catch(() => { migrationMissing = true; return zeroStates; }),
-      getHoldMetrics(activeOrgId).catch(() => ({ activeCount: 0, activeByReason: [], longestActiveDays: 0, avgClosedDurationDays: 0, openedLast7Days: 0, releasedLast7Days: 0 } as HoldMetrics)),
-      listAllActiveCheckouts(activeOrgId).catch(() => [] as CheckoutSession[]),
+      getHoldMetrics(activeOrgId).catch(() => { failed.push("holds"); return { activeCount: 0, activeByReason: [], longestActiveDays: 0, avgClosedDurationDays: 0, openedLast7Days: 0, releasedLast7Days: 0 } as HoldMetrics; }),
+      listAllActiveCheckouts(activeOrgId).catch(() => { failed.push("checkouts"); return [] as CheckoutSession[]; }),
       listPlotPlans(activeOrgId).catch(() => { migrationMissing = true; return [] as PlotPlan[]; }),
       supabase.from("tickets").select("id", { count: "exact", head: true })
         .eq("org_id", activeOrgId)
         .not("status", "in", '("CLOSED","CANCELED")')
-        .then(({ count }) => count ?? 0, () => 0),
+        .then(({ count, error }) => { if (error) failed.push("requests"); return count ?? 0; }, () => { failed.push("requests"); return 0; }),
     ]);
     let coordination: CoordinationAnalysis = {
       overlaps: [], activeCheckouts: checkouts.length, documents: 0,
       assetLinkedDocuments: 0, scopedDocuments: 0, comparableDocuments: 0,
     };
-    try { coordination = await analyzeCheckoutCoordination({ activeCheckouts: checkouts }); } catch { /* non-fatal */ }
+    try { coordination = await analyzeCheckoutCoordination({ activeCheckouts: checkouts }); } catch { failed.push("the collision check"); }
 
-    setSnap({ states, holds, checkouts, coordination, openRequests: reqCount, plotPlans });
+    setSnap({ states, holds, checkouts, coordination, openRequests: reqCount, plotPlans, failed });
     setSetupNeeded(migrationMissing);
     setRefreshedAt(Date.now());
     setLoading(false);
@@ -137,15 +141,15 @@ function CoordinationInner() {
   }, [snap?.checkouts]);
 
   if (loading && !snap) {
-    return <div className="min-h-full bg-[var(--color-canvas)] flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-muted)]" /></div>;
+    return <div className="min-h-full bg-[var(--color-canvas)] p-6"><div className="max-w-7xl mx-auto"><LoadingBlock what="the coordination board" rows={6} /></div></div>;
   }
   if (!snap) {
     return (
       <div className="min-h-full bg-[var(--color-canvas)] flex flex-col items-center justify-center text-center p-6">
         <Network className="w-10 h-10 text-[var(--color-text-muted)] mb-3" />
         <h1 className="text-lg font-black text-[var(--color-text)]">Coordination</h1>
-        <p className="text-sm text-[var(--color-text-muted)] mt-2 max-w-sm">Couldn&apos;t load the operational picture. Try refresh - if this persists, the database migrations may not be applied yet.</p>
-        <button onClick={() => void load()} className="mt-4 px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-bold">Refresh</button>
+        <p className="text-sm text-[var(--color-text-muted)] mt-2 max-w-sm">Couldn&apos;t load the board. If it keeps failing, the database updates may not be applied yet.</p>
+        <button onClick={() => void load()} className="mt-4 px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-bold hover:bg-[var(--color-accent-hover)]">Try again</button>
       </div>
     );
   }
@@ -153,7 +157,14 @@ function CoordinationInner() {
   const totalEquip = WHITEBOARD_STATES.reduce((s, k) => s + snap.states[k], 0);
   const blocked = snap.states.blocked;
   const lockCount = snap.checkouts.length;
-  const isEmpty = totalEquip === 0 && lockCount === 0 && snap.holds.activeCount === 0 && snap.openRequests === 0 && snap.plotPlans.length === 0;
+  const isEmpty = totalEquip === 0 && lockCount === 0 && snap.holds.activeCount === 0 && snap.openRequests === 0 && snap.plotPlans.length === 0 && snap.failed.length === 0;
+  const collisions = snap.coordination.overlaps.length;
+  // The one line that matters: collisions first, then what's blocked.
+  const headline = collisions
+    ? `${collisions} place${collisions === 1 ? "" : "s"} where two people are working the same scope right now.`
+    : snap.holds.activeCount
+      ? `No scope collisions. ${snap.holds.activeCount} hold${snap.holds.activeCount === 1 ? " is" : "s are"} blocking work.`
+      : lockCount ? `No scope collisions across ${lockCount} active checkout${lockCount === 1 ? "" : "s"}, and nothing blocked.` : "No active work to compare right now.";
 
   return (
     <div className="min-h-full bg-[var(--color-canvas)] text-[var(--color-text)] p-6">
@@ -164,12 +175,12 @@ function CoordinationInner() {
             <h1 className="text-2xl font-black text-[var(--color-text)] flex items-center gap-3">
               <Network className="w-7 h-7 text-[var(--color-text-muted)]" /> Coordination
             </h1>
-            <p className="text-sm text-[var(--color-text-muted)] mt-1">Where work overlaps, what&apos;s blocking it, and how the floor is tracking - org-wide and live.</p>
+            <p className={`text-sm mt-1 ${collisions ? "font-bold text-amber-800 dark:text-amber-300" : "text-[var(--color-text-muted)]"}`}>{view === "collisions" ? headline : "Every controlled document by where it is in its life."}</p>
           </div>
           {view === "collisions" && (
             <button onClick={() => void load()} className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
-              {refreshedAt ? `Updated ${new Date(refreshedAt).toLocaleTimeString()}` : "Refresh"}
+              {refreshedAt ? `Updated ${new Date(refreshedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : "Refresh"}
             </button>
           )}
         </div>
@@ -183,6 +194,7 @@ function CoordinationInner() {
             <button
               key={t.key}
               onClick={() => switchView(t.key)}
+              aria-pressed={view === t.key}
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
                 view === t.key
                   ? "bg-[var(--color-text)] text-[var(--color-surface)]"
@@ -209,16 +221,22 @@ function CoordinationInner() {
         </div>
 
         {setupNeeded && (
-          <div className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-800 dark:text-amber-200">
-            <span className="font-black">Not set up yet.</span> Equipment state and plot plans aren&apos;t enabled for this workspace. Ask your Admin to finish setup (Admin → Settings → Database updates).
+          <p className="mb-4 border-l-2 border-amber-500 pl-3 text-sm text-amber-800 dark:text-amber-200">
+            <span className="font-black">Not set up yet.</span> Equipment state and plot plans aren&apos;t turned on for this workspace. Ask your Admin to finish setup (Admin › Settings › Database updates).
+          </p>
+        )}
+
+        {snap.failed.length > 0 && (
+          <div role="alert" className="mb-4 border-l-2 border-rose-500 pl-3 text-sm text-rose-700 dark:text-rose-300 flex flex-wrap items-center gap-x-3">
+            <span>Couldn&apos;t load {snap.failed.join(", ")}. The numbers for {snap.failed.length === 1 ? "it" : "them"} below may be missing.</span>
+            <button onClick={() => void load()} className="text-xs font-bold text-[var(--color-accent)] hover:underline">Try again</button>
           </div>
         )}
 
         {isEmpty && !setupNeeded && (
-          <div className="mb-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
-            <h2 className="text-base font-black text-[var(--color-text)] mb-2">What you&apos;re looking at</h2>
-            <p className="text-sm text-[var(--color-text-muted)] leading-relaxed mb-4">
-              Coordination is the shared, org-wide board: it watches every active checkout and flags when two crews are working scope that overlaps (the same asset, unit, or system), alongside what&apos;s blocked and how equipment is tracking. It&apos;s quiet right now because there&apos;s no active work. To see it come alive:
+          <div className="mb-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+            <p className="text-sm text-[var(--color-text-muted)] mb-3">
+              Quiet because there&apos;s no active work. It fills in once documents are checked out against tagged equipment.
             </p>
             <div className="flex flex-wrap gap-2">
               <Link href="/admin/assets" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)] text-xs font-bold hover:bg-[var(--color-border-strong)]">Register equipment</Link>
@@ -234,9 +252,9 @@ function CoordinationInner() {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
           {/* Equipment state distribution */}
-          <Panel title="Equipment state" icon={Boxes} accent="text-[var(--color-text-muted)] dark:text-[var(--color-text)]" span={2}>
+          <Panel title="Equipment state" icon={Boxes} accent="text-[var(--color-text-muted)]" span={2}>
             {totalEquip === 0 ? (
-              <div className="text-xs text-[var(--color-text-muted)]">No equipment tracked yet - <Link href="/admin/assets" className="text-[var(--color-accent)] dark:text-[var(--color-text)] font-bold">register assets</Link> to see the turnaround distribution.</div>
+              <div className="text-xs text-[var(--color-text-muted)]">No equipment tracked yet. <Link href="/admin/assets" className="text-[var(--color-accent)] font-bold hover:underline">Register assets</Link> to see how it&apos;s tracking.</div>
             ) : (
               <>
                 <div className="flex items-end gap-4 mb-3">
@@ -286,20 +304,21 @@ function CoordinationInner() {
                 ))}
               </div>
             )}
-            {snap.holds.activeCount === 0 && (
+            {snap.holds.activeCount === 0 && !snap.failed.includes("holds") && (
               <div className="mt-3 text-xs text-emerald-600 dark:text-emerald-400 font-bold">Nothing blocked right now</div>
             )}
+            {snap.failed.includes("holds") && <div className="mt-3 text-xs text-rose-700 dark:text-rose-300 font-bold">Couldn&apos;t read the holds</div>}
           </Panel>
 
           {/* Plot plans */}
-          <Panel title="Spatial boards" icon={MapIcon} accent="text-[var(--color-text-muted)] dark:text-[var(--color-text)]" span={3}>
+          <Panel title="Spatial boards" icon={MapIcon} accent="text-[var(--color-text-muted)]" span={3}>
             {snap.plotPlans.length === 0 ? (
-              <div className="text-xs text-[var(--color-text-muted)]">No plot plans yet - <Link href="/plot-plans" className="text-[var(--color-accent)] dark:text-[var(--color-text)] font-bold">create one</Link> to navigate equipment spatially.</div>
+              <div className="text-xs text-[var(--color-text-muted)]">No plot plans yet. <Link href="/plot-plans" className="text-[var(--color-accent)] font-bold hover:underline">Create one</Link> to find equipment on a map.</div>
             ) : (
               <div className="flex flex-wrap gap-2">
                 {snap.plotPlans.slice(0, 8).map((p) => (
                   <Link key={p.id} href={`/plot-plans/${p.id}`} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-xs font-bold text-[var(--color-text)] hover:border-[var(--color-border-strong)]">
-                    <MapIcon className="w-3.5 h-3.5 text-[var(--color-text-muted)] dark:text-[var(--color-text)]" /> {p.name} <span className="text-[var(--color-text-muted)]">{p.markers.length}</span>
+                    <MapIcon className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {p.name} <span className="text-[var(--color-text-muted)]">{p.markers.length}</span>
                   </Link>
                 ))}
               </div>
@@ -341,14 +360,10 @@ function CoordinationRadar({
       <div className="flex items-center gap-2">
         <Radar className="w-5 h-5 text-[var(--color-text-muted)]" />
         <span className="text-base font-black text-[var(--color-text)]">Collision radar</span>
-        <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
-          <span className="relative flex h-1.5 w-1.5"><span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-[var(--color-text-muted)]" /></span>
-          live
-        </span>
+        <span className="ml-auto text-[11px] font-bold text-[var(--color-text-muted)]">Updates every 45 seconds</span>
       </div>
       <p className="text-xs text-[var(--color-text-muted)] mt-1.5 leading-relaxed">
-        Flags when two people have <span className="text-[var(--color-text)] font-semibold">different documents</span> checked out that touch the
-        <span className="text-[var(--color-text)] font-semibold"> same equipment tag, unit, or system</span> - so duplicate or conflicting revisions get caught before they land. This is the one thing your personal inbox can&apos;t tell you.
+        Two people with different documents checked out on the same equipment tag, unit or system.
       </p>
       {/* Coverage readout — proof of what it actually examined. */}
       <div className="mt-3 flex flex-wrap gap-1.5">
@@ -369,7 +384,7 @@ function CoordinationRadar({
         <div className="px-5 pb-2 flex items-center gap-2">
           <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
           <span className="text-sm font-black text-amber-800 dark:text-amber-200">{overlaps.length} active collision{overlaps.length === 1 ? "" : "s"}</span>
-          <span className="ml-auto text-[11px] text-amber-800 dark:text-amber-200/70 hidden sm:inline">Coordinate before conflicting revisions land</span>
+          <span className="ml-auto text-[11px] text-amber-800 dark:text-amber-200 hidden sm:inline">Talk before conflicting revisions land</span>
         </div>
         <div className="border-t border-amber-500/20 divide-y divide-amber-500/10">
           {overlaps.slice(0, 8).map((o, i) => {
@@ -379,8 +394,11 @@ function CoordinationRadar({
             const scope = o.kind === "asset"
               ? { tag: o.assetTag, kind: "Asset" }
               : { tag: o.scopeName, kind: o.level === "system" ? "System" : o.level === "unit" ? "Unit" : "Plant" };
+            // Straight to a document in the collision; the list when none can be named.
+            const first = o.checkoutIds.map((id) => sessionById.get(id)).find((x) => x?.libraryId && x.documentId);
+            const href = first ? `/documents/${first.libraryId}?doc=${first.documentId}` : "/checkouts";
             return (
-              <Link key={i} href="/checkouts" className="flex items-center gap-3 px-5 py-3 hover:bg-amber-500/[0.06] transition-colors">
+              <Link key={i} href={href} className="flex items-center gap-3 px-5 py-3 hover:bg-amber-500/[0.06] transition-colors">
                 <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-bold text-[var(--color-text)] truncate">
@@ -401,7 +419,7 @@ function CoordinationRadar({
         </div>
         {overlaps.length > 8 && (
           <div className="px-5 py-2 border-t border-amber-500/10">
-            <Link href="/checkouts" className="text-xs font-bold text-amber-700 dark:text-amber-300 hover:text-amber-800 dark:text-amber-200">View all {overlaps.length} collisions →</Link>
+            <Link href="/checkouts" className="text-xs font-bold text-[var(--color-accent)] hover:underline">See all {overlaps.length} collisions</Link>
           </div>
         )}
       </div>
@@ -418,7 +436,7 @@ function CoordinationRadar({
             <ShieldCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
           </div>
           <div>
-            <div className="text-sm font-black text-[var(--color-text)]">All clear - no scope collisions</div>
+            <div className="text-sm font-black text-[var(--color-text)]">All clear: no scope collisions</div>
             <div className="text-xs text-[var(--color-text-muted)] mt-0.5">
               Compared {comparableDocuments} scope-linked document{comparableDocuments === 1 ? "" : "s"} across {activeCheckouts} active checkout{activeCheckouts === 1 ? "" : "s"}. No two crews are working overlapping asset, unit, or system scope.
             </div>
@@ -436,21 +454,21 @@ function CoordinationRadar({
       <div className="px-5 pb-4 pt-1 border-t border-[var(--color-border)]">
         <div className="flex items-start gap-3">
           <div className="w-10 h-10 rounded-xl bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] flex items-center justify-center shrink-0 mt-0.5">
-            <Info className="w-5 h-5 text-[var(--color-text-muted)] dark:text-[var(--color-text)]" />
+            <Info className="w-5 h-5 text-[var(--color-text-muted)]" />
           </div>
           <div className="min-w-0">
-            <div className="text-sm font-black text-[var(--color-text)]">Radar is standing by - nothing to compare yet</div>
+            <div className="text-sm font-black text-[var(--color-text)]">Nothing to compare yet</div>
             <div className="text-xs text-[var(--color-text-muted)] mt-1 leading-relaxed">
               {documents === 0
-                ? "No documents are checked out, so there's nothing to compare. Collisions appear once two checked-out documents share an equipment tag, unit, or system."
-                : <>Of the {documents} checked-out document{documents === 1 ? "" : "s"}, only <span className="text-[var(--color-text)] font-bold">{comparableDocuments}</span> {comparableDocuments === 1 ? "is" : "are"} linked to an asset or a unit/system - the detector needs at least two comparable documents. Link documents to equipment tags or set their unit/system to light this up.</>}
+                ? "No documents are checked out."
+                : <>Of the {documents} checked-out document{documents === 1 ? "" : "s"}, only <span className="text-[var(--color-text)] font-bold">{comparableDocuments}</span> {comparableDocuments === 1 ? "is" : "are"} tied to equipment or a unit or system. It needs at least two.</>}
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               <Link href="/documents" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)] text-xs font-bold hover:bg-[var(--color-border-strong)]">
-                <Tag className="w-3.5 h-3.5 text-[var(--color-text-muted)] dark:text-[var(--color-text)]" /> Tag documents to equipment
+                <Tag className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Tag documents to equipment
               </Link>
               <Link href="/admin/assets" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)] text-xs font-bold hover:bg-[var(--color-border-strong)]">
-                <Boxes className="w-3.5 h-3.5 text-[var(--color-text-muted)] dark:text-[var(--color-text)]" /> Equipment registry
+                <Boxes className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Equipment registry
               </Link>
             </div>
           </div>
@@ -462,9 +480,9 @@ function CoordinationRadar({
 
 function Coverage({ icon: Icon, label, value, highlight }: { icon: React.ComponentType<{ className?: string }>; label: string; value: number; highlight?: boolean }) {
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] font-bold ${highlight ? "bg-[var(--color-surface-2)] border-[var(--color-border-strong)] text-[var(--color-text-muted)]" : "bg-black/[0.03] dark:bg-[var(--color-surface)]/[0.03] border-black/10 dark:border-white/10 text-[var(--color-text-muted)]"}`}>
-      <Icon className={`w-3 h-3 ${highlight ? "text-[var(--color-text-muted)]" : "text-[var(--color-text-muted)]"}`} />
-      <span className={highlight ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}>{value}</span> {label}
+    <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] font-bold text-[var(--color-text-muted)] ${highlight ? "bg-[var(--color-surface-2)] border-[var(--color-border-strong)]" : "bg-[var(--color-surface)] border-[var(--color-border)]"}`}>
+      <Icon className="w-3 h-3" />
+      <span className="text-[var(--color-text)]">{value}</span> {label}
     </span>
   );
 }
@@ -481,7 +499,7 @@ function Panel({
 }) {
   const spanCls = span === 3 ? "lg:col-span-3" : span === 2 ? "lg:col-span-2" : "";
   const body = (
-    <div className={`rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] p-5 h-full ${href ? "hover:border-[var(--color-border)] transition-colors" : ""}`}>
+    <div className={`rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] p-5 h-full ${href ? "hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] transition-colors" : ""}`}>
       <div className="flex items-center gap-2 mb-3">
         <Icon className={`w-4 h-4 ${accent}`} />
         <span className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)]">{title}</span>

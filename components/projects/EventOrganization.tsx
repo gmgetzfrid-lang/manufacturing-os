@@ -1,6 +1,6 @@
 "use client";
 
-// EventOrganization - the roles this event requires and who fills each
+// EventOrganization: the roles this event requires and who fills each
 // (lib/eventOrganization). It starts from the roles a turnaround is run
 // with; change the list to your own, tick the ones that are required, and
 // name a person for each. The post-event review reads it.
@@ -32,7 +32,7 @@ export default function EventOrganization({ projectId, canManage, actor, people 
     return () => { live = false; };
   }, [projectId]);
   const st = useMemo(() => orgStanding(roles), [roles]);
-  if (!roles) return <div className="py-6 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-text-muted)]" /></div>;
+  if (!roles) return <div className="py-6 flex items-center justify-center gap-2 text-[12.5px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Loading the event organization…</div>;
 
   const change = (id: string, patch: Partial<OrgRole>) => { setRoles((rs) => (rs ?? []).map((r) => (r.id === id ? { ...r, ...patch } : r))); setDirty(true); };
   const add = () => { setRoles((rs) => [...(rs ?? []), { id: `r${Date.now()}`, role: "", does: "", person: "", required: true }]); setDirty(true); };
@@ -50,13 +50,13 @@ export default function EventOrganization({ projectId, canManage, actor, people 
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-start gap-x-3 gap-y-1 flex-wrap">
         <div className="min-w-0 flex-1 basis-64">
           <b className="block text-[14.5px] text-[var(--color-text)]">Event organization</b>
-          <span className="text-[12.5px] text-[var(--color-text-muted)]">The roles this event requires and who fills each. Change the list to your own. The post-event review reads it.</span>
+          <span className="text-[12.5px] text-[var(--color-text-muted)]">The roles this event requires and who fills each.</span>
         </div>
         <span className={`text-[11.5px] font-black px-2 py-1 rounded-full whitespace-nowrap ${!recorded ? "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300" : all ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300" : "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300"}`}>
           {!recorded ? "Not recorded yet" : `${st.filled} of ${st.required} required roles named`}
         </span>
       </div>
-      {err && <div role="alert" className="mx-4 mt-3 rounded-xl border border-rose-300 bg-rose-50 dark:bg-rose-950/30 px-3 py-2 text-[12.5px] font-semibold text-rose-800 dark:text-rose-300">{err}</div>}
+      {err && <div role="alert" className="mx-4 mt-3 border-l-2 border-rose-500 pl-3 py-1 text-[12.5px] font-semibold text-rose-800 dark:text-rose-300">{err}</div>}
       {recorded && !editing ? (
         <>
           <ul className="px-4 py-2 divide-y divide-[var(--color-border)]">
@@ -89,7 +89,7 @@ export default function EventOrganization({ projectId, canManage, actor, people 
       <div className="px-4 pb-3.5 flex items-center gap-2 flex-wrap">
         {canManage && <button type="button" onClick={add} className={btn}><Plus className="w-4 h-4" /> Add a role</button>}
         {canManage && <button type="button" disabled={busy || (!dirty && recorded)} onClick={() => void save()} className={pri}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} {recorded ? "Save changes" : "Save as this event's organization"}</button>}
-        {recorded && <button type="button" onClick={() => { setEditing(false); setDirty(false); void loadOrg(projectId).then((r) => { if (r) setRoles(r); }); }} className={btn}>Cancel</button>}
+        {recorded && <button type="button" onClick={() => { setEditing(false); setDirty(false); void loadOrg(projectId).then((r) => { if (r) setRoles(r); }).catch((e) => setErr((e as Error).message)); }} className={btn}>Cancel</button>}
         <span className="text-[12px] text-[var(--color-text-muted)]">{!recorded ? "This is the starting list. Nothing counts until you save it." : st.missing.length ? `Not named: ${st.missing.join(", ")}.` : "Every required role has a name."}</span>
       </div>
       </>)}

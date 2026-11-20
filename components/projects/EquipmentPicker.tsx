@@ -1,6 +1,6 @@
 "use client";
 
-// EquipmentPicker - the equipment a work order is on, picked from the
+// EquipmentPicker: the equipment a work order is on, picked from the
 // project's unit. Set on the work order (the task); its steps take it from
 // there. On a work order card and in the step panel (which sets its work
 // order).
@@ -290,7 +290,7 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
           )}
           {units.length === 1 && <p className="text-[12px] text-[var(--color-text-muted)]">On {unitLabel(adding.unit)}.</p>}
           {check.kind === "same_name" && (
-            <div className="rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-[12.5px] text-amber-900 dark:text-amber-200 space-y-2">
+            <div className="border-l-2 border-amber-500 pl-3 py-1 text-[12.5px] text-amber-900 dark:text-amber-200 space-y-2">
               <p><b>{equipmentLabel(check.asset)} is already on {unitLabel(check.asset.unitCode)}</b>. If it&apos;s that one, link it. With a different ID it&apos;s a different piece: Add makes it its own.</p>
               <button type="button" disabled={!!busy} onClick={() => void link(check.asset)} className={quiet}><Check className="w-4 h-4" /> Link {plainName(check.asset.tag)}</button>
             </div>
@@ -322,7 +322,7 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
           From {units.map(unitName).join(" and ")}{current ? <> · now <b className="text-[var(--color-text)]">{(() => { const a = current.assetId ? registry.find((x) => x.id === current.assetId) : undefined; return a ? linkedLabel(a, current.tag) : `${current.tag}${current.assetId ? "" : " (not linked)"}`; })()}</b></> : null}
         </p>
         {ask && (
-          <div className="rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-[12.5px] text-amber-900 dark:text-amber-200 space-y-2">
+          <div className="border-l-2 border-amber-500 pl-3 py-1 text-[12.5px] text-amber-900 dark:text-amber-200 space-y-2">
             <p><b>{ask.tag}</b> asked for{ask.byName ? ` by ${ask.byName}` : ""}{ask.at ? ` on ${new Date(ask.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}` : ""}: not in the unit&apos;s list yet.</p>
             <div className="flex flex-wrap gap-2">
               {isAdmin && !registry.some((a) => a.unitCode != null && unitCodes.includes(a.unitCode) && nameKey(a.tag) === nameKey(ask.tag)) && <button type="button" onClick={() => startAdd(ask.tag)} className={btn}><Plus className="w-4 h-4" /> Add {ask.tag}</button>}
@@ -343,12 +343,12 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
               {busy === idHit.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4 text-[var(--color-text-muted)]" />}
             </button>
             {twoAnswers && guessHit && (
-              <p className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2.5 text-[12.5px] text-amber-900 dark:text-amber-200" data-two-answers>
+              <p className="border-l-2 border-amber-500 pl-3 py-1 text-[12.5px] text-amber-900 dark:text-amber-200" data-two-answers>
                 The work order&apos;s name says <b>{equipmentLabel(guessHit)}</b>. Its equipment number <b className="font-mono">{fromSchedule}</b> is <b>{equipmentLabel(idHit)}</b>. One of the two is wrong on the work order: pick the one it is on.
               </p>
             )}
             {idNameDiffers && !twoAnswers && (
-              <div className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2.5 space-y-1.5 text-[12.5px] text-amber-900 dark:text-amber-200">
+              <div className="border-l-2 border-amber-500 pl-3 py-1 space-y-1.5 text-[12.5px] text-amber-900 dark:text-amber-200">
                 <p>The work order&apos;s equipment number is <b className="font-mono">{fromSchedule}</b>. The equipment list has that number as <b>{plainName(idHit.tag)}</b>; this work order calls it <b>{guess}</b>.</p>
                 {drawn.length > 0 && (
                   <ul className="space-y-0.5">

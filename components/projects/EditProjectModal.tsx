@@ -112,6 +112,13 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
     return () => clearTimeout(t);
   }, [sowQuery, project.orgId]);
 
+  // Escape closes, like the X (not mid-save).
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => { if (e.key === "Escape" && !busy) onClose(); };
+    window.addEventListener("keydown", on);
+    return () => window.removeEventListener("keydown", on);
+  }, [busy, onClose]);
+
   const addGoal = () => { if (goalDraft.trim()) { setGoals((g) => [...g, goalDraft.trim()]); setGoalDraft(""); } };
 
   const save = async () => {
@@ -150,13 +157,13 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
   };
 
   return (
-    <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[120] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Edit project">
       <div className="absolute inset-0 bg-black/45 backdrop-blur-[2px] animate-in fade-in" onClick={onClose} />
       <div className="relative w-full max-w-lg max-h-[85dvh] overflow-y-auto bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-2xl animate-in fade-in zoom-in-95 duration-150">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-2">
           <Pencil className="w-4 h-4 text-[var(--color-text-muted)]" />
           <span className="text-sm font-black text-[var(--color-text)]">Edit project</span>
-          <button onClick={onClose} className="ml-auto p-1 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+          <button onClick={onClose} aria-label="Close" className="ml-auto p-1 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
         <div className="p-5 space-y-3">
           <label className="block">
@@ -209,7 +216,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
                   <div className="flex items-center gap-2">
                     <input value={goalDraft} onChange={(e) => setGoalDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addGoal(); } }}
                       placeholder="Add a goal, e.g. Zero recordables" className="flex-1 h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm" />
-                    <button type="button" onClick={addGoal} aria-label="Add goal" className="h-9 w-9 inline-flex items-center justify-center rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)]"><Plus className="w-4 h-4" /></button>
+                    <button type="button" onClick={addGoal} aria-label="Add goal" className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><Plus className="w-4 h-4" /></button>
                   </div>
                 </div>
               </div>
@@ -244,11 +251,14 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
                         ))}
                       </ul>
                     )}
-                    <div className="mt-1 text-[11px] text-[var(--color-text-faint)]">From document control - upload it there first if it isn&apos;t in yet.</div>
+                    <div className="mt-1 text-[11px] text-[var(--color-text-faint)]">From document control. Upload it there first if it isn&apos;t in yet.</div>
                   </div>
                 )}
               </div>
             </>
+          )}
+          {wizardLoaded === "loading" && (
+            <div role="status" className="text-[12px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading purpose, goals and the Summary of Work…</div>
           )}
           {wizardLoaded === "missing" && (
             <div className="text-[11px] text-[var(--color-text-faint)]">Purpose, goals, success criteria, job size and the Summary of Work need the database update 20261013_project_controls_program.sql.</div>
@@ -257,14 +267,14 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
             <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Plant timezone</span>
             <TimeZoneSelect value={timezone} onChange={setTimezone} className="mt-1" />
             <div className="mt-1 text-[11px] text-[var(--color-text-faint)]">
-              Every schedule date, calendar day and shift is shown and entered in this zone, for everyone on the project.
-              {originalTz === DEFAULT_SCHEDULE_TZ && !tzChanged && " Currently UTC - pick the plant's zone so evening work lands on the right day."}
+              Everyone on the project sees and enters dates, days and shifts in this zone.
+              {originalTz === DEFAULT_SCHEDULE_TZ && !tzChanged && " Currently UTC: pick the plant's zone so evening work lands on the right day."}
             </div>
             {tzChanged && (
-              <label className="mt-2 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
+              <label className="mt-2 flex items-start gap-2 border-l-2 border-amber-500 pl-3 py-1 text-[11px] text-amber-900 dark:text-amber-200">
                 <input type="checkbox" checked={keepWallClock} onChange={(e) => setKeepWallClock(e.target.checked)} className="mt-0.5" />
                 <span>
-                  <b>Keep the schedule&apos;s times as written</b> - a task at 8:00 ({tzLabel(originalTz)}) becomes 8:00 ({tzLabel(timezone)}).
+                  <b>Keep the schedule&apos;s times as written:</b> a task at 8:00 ({tzLabel(originalTz)}) becomes 8:00 ({tzLabel(timezone)}).
                   Untick to keep the exact instants instead, so the clock readings shift by the zone difference.
                 </span>
               </label>
@@ -280,6 +290,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
                 <button
                   key={v}
                   onClick={() => setVisibility(v)}
+                  aria-pressed={visibility === v}
                   className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${visibility === v
                     ? "bg-[var(--color-text)] text-[var(--color-surface)] shadow-sm"
                     : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}
@@ -292,7 +303,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
               <div className="mt-1 text-[11px] text-[var(--color-text-faint)]">Only members, the owner, and Document Control can see private projects.</div>
             )}
           </div>
-          {error && <div className="rounded-lg border border-rose-500/40 bg-rose-500/[0.07] px-3 py-2 text-xs font-bold text-rose-700 dark:text-rose-300">{error}</div>}
+          {error && <div role="alert" className="border-l-2 border-rose-500 pl-3 py-1 text-xs font-bold text-rose-700 dark:text-rose-300">{error}</div>}
         </div>
         <div className="px-5 py-3.5 border-t border-[var(--color-border)] flex items-center justify-end gap-2">
           <button onClick={onClose} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>

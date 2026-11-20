@@ -19,12 +19,15 @@
 // a read quote can be voided, and a posted invoice can be moved to the
 // budget line it belongs on.
 
-import { PreviewButton, fileOfDoc } from "@/components/projects/cost/FilePreview";
+import { PreviewButton, fileOfDoc, fileSize } from "@/components/projects/cost/FilePreview";
+import { useFileDrag } from "@/hooks/useFileDrag";
+import { tryUpload } from "@/lib/uploadRetry";
+import FileThumb from "@/components/ui/FileThumb";
 import React, { useMemo, useState } from "react";
 import {
   FileText, UploadCloud, Loader2, Sparkles, Trophy, Link2, Copy, AlertTriangle,
   CheckCircle2, ScanSearch, Ban, Receipt, ChevronDown, ChevronRight, Wand2, Copy as CopyIcon,
-  Pencil, RotateCcw, ArrowRightLeft,
+  Pencil, RotateCcw, ArrowRightLeft, X,
 } from "lucide-react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
@@ -122,9 +125,6 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <ScanSearch className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-sm font-bold text-[var(--color-text)]">Quotes &amp; bid tabulation</span>
-        <span className="text-[11px] text-[var(--color-text-muted)]">
-          Drop vendor quote PDFs - the system reads them and compares price, manpower, and scope.
-        </span>
         {canManage && (
           <button onClick={() => setShowLinks((v) => !v)}
             className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
@@ -147,8 +147,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
           <FileText className="w-7 h-7 mx-auto text-[var(--color-text-faint)] mb-2" />
           <div className="text-sm font-bold text-[var(--color-text)]">No quotes yet</div>
           <div className="text-xs text-[var(--color-text-muted)] mt-1 max-w-lg mx-auto">
-            Upload the PDFs vendors sent you (same RFQ group name = compared side by side), or send
-            contractors a quote link and their submissions land here on their own.
+            Upload the quotes vendors sent you. Quotes with the same RFQ group are compared side by side.
           </div>
         </div>
       ) : (
@@ -240,7 +239,7 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
           {ready.map((r) => (
             <li key={r.doc.id}>
               <span className="font-bold text-[var(--color-text)]">{r.doc.vendorName ?? "Vendor"}</span>
-              {r.doc.docNumber ? ` ${r.doc.docNumber}` : ""} - {fmtMoney(r.doc.totalAmount ?? 0)} → {accountName(r.suggestion!.accountId)}
+              {r.doc.docNumber ? ` ${r.doc.docNumber}` : ""}: {fmtMoney(r.doc.totalAmount ?? 0)} → {accountName(r.suggestion!.accountId)}
             </li>
           ))}
         </ul>
@@ -253,7 +252,7 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
       if (!res.ok) failed++;
     }
     setBatch(null);
-    if (failed) setErr(`${failed} invoice${failed === 1 ? "" : "s"} couldn't post - someone may have acted on them already. Refreshed.`);
+    if (failed) setErr(`${failed} invoice${failed === 1 ? "" : "s"} couldn't post. Someone may have acted on them already. Refreshed.`);
     onChanged();
   };
 
@@ -262,7 +261,6 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
       <div className="px-4 py-2.5 flex items-center gap-2 flex-wrap">
         <Receipt className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-sm font-bold text-[var(--color-text)]">Invoices</span>
-        <span className="text-[11px] text-[var(--color-text-muted)]">Drop them in - each is read, matched to its vendor&apos;s budget line, and checked for duplicates. You confirm before money posts.</span>
         {canManage && ready.length > 0 && (
           <button onClick={() => void postReady()} disabled={!!batch}
             className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors"
@@ -325,7 +323,7 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
                     <span className="text-[11px] text-[var(--color-text-muted)]">on {accounts.find((a) => a.id === onLine)?.name ?? "a budget line"}</span>
                   )}
                   {canManage && doc.status === "posted" && moving !== doc.id && accounts.length > 1 && (
-                    <button onClick={() => setMoving(doc.id)} title="Posted to the wrong budget line? Move it - the old entry stays on the record, struck through."
+                    <button onClick={() => setMoving(doc.id)} title="Posted to the wrong budget line? Move it. The old entry stays on the record, struck through."
                       className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                       <ArrowRightLeft className="w-3 h-3" /> Move to line
                     </button>
@@ -377,50 +375,96 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
   );
 }
 
-/** Many invoices at once: upload each, then read it straight away. */
+/** Many invoices at once: upload each, then read it straight away. Each
+ *  file has its own line and its own Try again; one failing never stops
+ *  the rest. */
+type InvoiceJob = { key: string; file: File; state: "waiting" | "uploading" | "reading" | "done" | "failed"; error?: string; docId?: string };
 function InvoiceDrop({ orgId, projectId, actor, onDone, setErr }: {
   orgId: string; projectId: string; actor: Actor;
   onDone: () => void; setErr: (m: string | null) => void;
 }) {
-  const [progress, setProgress] = useState<string | null>(null);
-  const [over, setOver] = useState(false);
+  const [jobs, setJobs] = useState<InvoiceJob[]>([]);
   const input = React.useRef<HTMLInputElement>(null);
+  const working = jobs.some((j) => j.state === "waiting" || j.state === "uploading" || j.state === "reading");
+  const patch = (key: string, p: Partial<InvoiceJob>) => setJobs((js) => js.map((j) => (j.key === key ? { ...j, ...p } : j)));
+
+  // Upload once, then read. Try again after a read failure only reads
+  // again: the invoice is never uploaded twice.
+  const one = async (job: InvoiceJob) => {
+    let docId = job.docId;
+    try {
+      await tryUpload(job.file.name, async () => {
+        let id = docId;
+        if (!id) {
+          patch(job.key, { state: "uploading", error: undefined });
+          const up = await uploadCostDoc({ orgId, projectId, kind: "invoice", file: job.file, actor });
+          if (!up.ok || !up.doc) throw new Error(up.error ?? "It didn't upload.");
+          id = up.doc.id;
+          docId = id;
+          patch(job.key, { docId: id });
+        }
+        patch(job.key, { state: "reading", error: undefined });
+        try { await readCostDoc(orgId, projectId, id); }
+        catch (e) { throw new Error(`Uploaded, but not read: ${(e as Error).message}`); }
+        patch(job.key, { state: "done" });
+      }, { onRetried: () => { patch(job.key, { state: "done", error: undefined }); onDone(); } });
+    } catch (e) {
+      patch(job.key, { state: "failed", error: (e as Error).message, docId });
+    }
+  };
 
   const run = async (files: File[]) => {
     if (files.length === 0) return;
     setErr(null);
-    const problems: string[] = [];
-    for (const [i, file] of files.entries()) {
-      setProgress(`${files.length > 1 ? `${i + 1} of ${files.length}: ` : ""}uploading ${file.name}…`);
-      const up = await uploadCostDoc({ orgId, projectId, kind: "invoice", file, actor });
-      if (!up.ok || !up.doc) { problems.push(`${file.name}: ${up.error ?? "upload failed"}`); continue; }
-      setProgress(`${files.length > 1 ? `${i + 1} of ${files.length}: ` : ""}reading ${file.name}…`);
-      try { await readCostDoc(orgId, projectId, up.doc.id); }
-      catch (e) { problems.push(`${file.name}: uploaded, but not read - ${(e as Error).message}`); }
-    }
-    setProgress(null);
-    if (problems.length) setErr(problems.join(" · "));
+    const add: InvoiceJob[] = files.map((file, i) => ({ key: `${Date.now()}-${i}-${file.name}`, file, state: "waiting" }));
+    setJobs((js) => [...js.filter((j) => j.state !== "done"), ...add]);
+    for (const j of add) await one(j);
     onDone();
   };
+  const retry = async (j: InvoiceJob) => { await one(j); onDone(); };
+  const drag = useFileDrag((fs) => { void run(fs); }, working);
+  const doneCount = jobs.filter((j) => j.state === "done").length;
 
   return (
-    <div className="px-4 pb-2.5">
+    <div className="px-4 pb-2.5 space-y-1.5">
       <div
-        onDragOver={(e) => { e.preventDefault(); setOver(true); }}
-        onDragLeave={() => setOver(false)}
-        onDrop={(e) => { e.preventDefault(); setOver(false); if (!progress) void run([...(e.dataTransfer.files ?? [])]); }}
-        onClick={() => !progress && input.current?.click()}
+        {...drag.bind}
+        onClick={() => !working && input.current?.click()}
         role="button" tabIndex={0}
-        onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && !progress) input.current?.click(); }}
+        onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && !working) input.current?.click(); }}
         className={`rounded-lg border border-dashed px-3 py-2 flex items-center gap-2 text-xs cursor-pointer transition-colors ${
-          over ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]/60" : "border-[var(--color-border-strong)] hover:border-[var(--color-accent-ring)] bg-[var(--color-surface-2)]/30"}`}>
-        {progress ? <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-muted)]" /> : <UploadCloud className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />}
-        <span className="text-[var(--color-text-muted)] truncate">
-          {progress ?? "Drop invoices here (PDF or photo - several at once is fine), or click to choose"}
+          drag.over ? `border-[var(--color-accent)] ${drag.ring}` : "border-[var(--color-border-strong)] hover:border-[var(--color-accent-ring)] bg-[var(--color-surface-2)]/30"}`}>
+        {working ? <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-muted)]" /> : <UploadCloud className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />}
+        <span className={`truncate ${drag.over ? "font-bold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+          {drag.over ? drag.say : working ? "Uploading and reading…" : "Drop invoices here (PDF or photo, several at once is fine), or click to choose"}
         </span>
         <input ref={input} type="file" multiple accept={INVOICE_ACCEPT} className="hidden"
           onChange={(e) => { void run([...(e.target.files ?? [])]); e.target.value = ""; }} />
       </div>
+      {jobs.length > 0 && (
+        <ul className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+          {jobs.map((j) => (
+            <li key={j.key} className="px-2.5 py-1.5 flex items-center gap-2 text-xs">
+              <FileThumb file={j.file} size={28} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-bold text-[var(--color-text)]">{j.file.name} <span className="font-normal text-[var(--color-text-muted)]">· {fileSize(j.file.size)}</span></span>
+                <span className={`block truncate text-[11px] ${j.state === "failed" ? "font-semibold text-rose-700 dark:text-rose-300" : j.state === "done" ? "text-emerald-700 dark:text-emerald-300" : "text-[var(--color-text-muted)]"}`}>
+                  {j.state === "waiting" ? "Waiting…" : j.state === "uploading" ? "Uploading…" : j.state === "reading" ? "Reading…" : j.state === "done" ? "Read" : j.error}
+                </span>
+              </span>
+              {(j.state === "uploading" || j.state === "reading") && <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-muted)] shrink-0" />}
+              {j.state === "done" && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
+              {j.state === "failed" && (
+                <>
+                  <button type="button" onClick={() => void retry(j)} className="shrink-0 h-7 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Try again</button>
+                  <button type="button" onClick={() => setJobs((js) => js.filter((x) => x.key !== j.key))} aria-label={`Remove ${j.file.name} from the list`} className="shrink-0 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
+                </>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {!working && doneCount > 0 && <div className="text-[11px] text-[var(--color-text-muted)]">{doneCount} read. Check each below before it posts.</div>}
     </div>
   );
 }
@@ -658,8 +702,8 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
                   <span className="font-bold text-[var(--color-text)]">{d.vendorName ?? d.fileName ?? "Bid"}</span>
                   <PreviewButton file={fileOfDoc(d)} />
                   <span className="font-black tabular-nums text-[var(--color-text)]">{fmtMoney(d.totalAmount ?? 0)}</span>
-                  <span className="text-[11px] text-[var(--color-text-muted)]" title="The AI couldn't read line detail from this file - it competes on price only, with no manpower or coverage score.">
-                    typed total - price only
+                  <span className="text-[11px] text-[var(--color-text-muted)]" title="The AI couldn't read line detail from this file. It competes on price only, with no manpower or coverage score.">
+                    typed total, price only
                   </span>
                   <StatusChip status={d.status} />
                   {canManage && !awarded && d.status === "parsed" && (
@@ -680,7 +724,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
           {econ.length > 1 && (
             <div className="text-[11px] text-[var(--color-text-muted)]">
               Value score = {Math.round(DEFAULT_WEIGHTS.price * 100)}% price + {Math.round(DEFAULT_WEIGHTS.manpower * 100)}% manpower-for-the-money + {Math.round(DEFAULT_WEIGHTS.coverage * 100)}% scope coverage, each measured against this field.
-              The cheapest bid doesn&apos;t automatically win - exclusions and silent gaps are why. You make the call.
+              The cheapest bid doesn&apos;t automatically win: exclusions and silent gaps are why. You make the call.
             </div>
           )}
         </div>
@@ -707,8 +751,8 @@ function StatusChip({ status }: { status: CostDocument["status"] }) {
 function ReadButton({ busy, onClick }: { busy: boolean; onClick: () => void }) {
   return (
     <button onClick={onClick} disabled={busy}
-      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors"
-      title="AI reads the printed pages into numbers - on your own AI key. You review before anything posts.">
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] text-[11px] font-black hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
+      title="Reads the printed pages into numbers, on your own AI key. You check them before anything posts.">
       {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Read
     </button>
   );
@@ -722,7 +766,7 @@ function PostControls({ accounts, busy, onPost, label, suggested }: {
 }) {
   const [accountId, setAccountId] = useState(suggested?.accountId ?? (accounts.length === 1 ? accounts[0].id : ""));
   if (accounts.length === 0) {
-    return <span className="text-[11px] text-[var(--color-text-muted)]" title="Create a budget line first - money always posts somewhere.">needs a budget line</span>;
+    return <span className="text-[11px] text-[var(--color-text-muted)]" title="Create a budget line first: money always posts somewhere.">needs a budget line</span>;
   }
   return (
     <span className="inline-flex items-center gap-1">
@@ -732,7 +776,7 @@ function PostControls({ accounts, busy, onPost, label, suggested }: {
         {accounts.map((a) => <option key={a.id} value={a.id}>{a.code ? `${a.code} ` : ""}{a.name}</option>)}
       </select>
       <button onClick={() => accountId && void onPost(accountId)} disabled={busy || !accountId}
-        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
+        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[11px] font-black disabled:opacity-50 transition-colors">
         {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />} {label}
       </button>
       {suggested && accountId === suggested.accountId && (
@@ -841,35 +885,44 @@ function UploadRow({ orgId, projectId, actor, kind, existingGroups, onDone, setE
   const [group, setGroup] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+  const drag = useFileDrag((fs) => { setFile(fs[0]); setFailed(null); }, saving);
 
   const submit = async () => {
     if (!file) { setErr("Choose the PDF first."); return; }
-    setSaving(true); setErr(null);
-    const res = await uploadCostDoc({
-      orgId, projectId, kind, file,
-      vendorName: vendor || null,
-      rfqGroup: kind === "quote" ? (group || null) : null,
-      actor,
-    });
-    setSaving(false);
-    if (!res.ok) { setErr(res.error ?? "Upload failed."); return; }
-    setVendor(""); setGroup(""); setFile(null);
-    onDone();
+    setSaving(true); setErr(null); setFailed(null);
+    const cleared = () => { setVendor(""); setGroup(""); setFile(null); setFailed(null); onDone(); };
+    try {
+      // Safe to repeat: a failed upload leaves no record behind.
+      await tryUpload(file.name, async () => {
+        const res = await uploadCostDoc({
+          orgId, projectId, kind, file,
+          vendorName: vendor || null,
+          rfqGroup: kind === "quote" ? (group || null) : null,
+          actor,
+        });
+        if (!res.ok) throw new Error(res.error ?? "Upload failed.");
+      }, { onRetried: cleared });
+      cleared();
+    } catch (e) { setFailed((e as Error).message); }
+    finally { setSaving(false); }
   };
 
   return (
-    <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]/30 flex items-center gap-2 flex-wrap">
-      <label className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-[var(--color-border-strong)] px-2.5 py-1.5 cursor-pointer hover:border-[var(--color-accent-ring)] text-xs">
-        <UploadCloud className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-        <span className="text-[var(--color-text-muted)] max-w-48 truncate">{file ? file.name : `${kind === "quote" ? "Quote" : "Invoice"} PDF or photo…`}</span>
+    <div {...drag.bind} className={`px-4 py-2.5 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]/30 flex items-center gap-2 flex-wrap ${drag.ring}`}>
+      <label className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-[var(--color-border-strong)] px-2.5 py-1.5 cursor-pointer hover:border-[var(--color-accent-ring)] text-xs min-w-0">
+        {file ? <FileThumb file={file} size={24} /> : <UploadCloud className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />}
+        <span className={`max-w-56 truncate ${drag.over ? "font-bold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+          {drag.over ? drag.say : file ? <><span className="text-[var(--color-text)] font-bold">{file.name}</span> · {fileSize(file.size)}</> : `${kind === "quote" ? "Quote" : "Invoice"} PDF or photo: drop or choose…`}
+        </span>
         <input type="file" accept={INVOICE_ACCEPT} className="hidden"
-          onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+          onChange={(e) => { setFile(e.target.files?.[0] ?? null); setFailed(null); e.target.value = ""; }} />
       </label>
       <input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Vendor (or let the AI read it)"
         className="h-8 w-52 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
       {kind === "quote" && (
         <>
-          <input value={group} onChange={(e) => setGroup(e.target.value)} placeholder="RFQ group - the scope being bid" list="rfq-groups"
+          <input value={group} onChange={(e) => setGroup(e.target.value)} placeholder="RFQ group: the scope being bid" list="rfq-groups"
             className="h-8 w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs"
             title="Quotes sharing a group name tabulate side by side." />
           <datalist id="rfq-groups">
@@ -878,9 +931,10 @@ function UploadRow({ orgId, projectId, actor, kind, existingGroups, onDone, setE
         </>
       )}
       <button onClick={() => void submit()} disabled={saving || !file}
-        className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
-        {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <UploadCloud className="w-3 h-3" />} Upload
+        className={`h-8 inline-flex items-center gap-1 px-3 rounded-lg text-[11px] font-black disabled:opacity-50 transition-colors ${file ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>
+        {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <UploadCloud className="w-3 h-3" />} {failed ? "Try again" : "Upload"}
       </button>
+      {failed && <span role="alert" className="basis-full text-[11px] font-semibold text-rose-700 dark:text-rose-300">{file?.name}: {failed}</span>}
     </div>
   );
 }
@@ -945,7 +999,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
   const copy = async (l: QuoteLink) => {
     const url = `${window.location.origin}/submit/${l.token}`;
     try { await navigator.clipboard.writeText(url); setCopied(l.id); setTimeout(() => setCopied(null), 1500); }
-    catch { setErr("Couldn't copy - your browser blocked clipboard access."); }
+    catch { setErr("Couldn't copy: your browser blocked clipboard access."); }
   };
 
   // Starter RFQ: a real .docx assembled from the project's own data — the
@@ -983,8 +1037,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
   return (
     <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] space-y-2">
       <div className="text-[11px] text-[var(--color-text-muted)]">
-        Send a contractor their own tokened link - no account needed. Their quote PDF lands here, the
-        system reads it, and it joins the tabulation on its own.
+        A contractor&apos;s own link, no account needed. Their quote lands here and joins the comparison.
       </div>
       <div className="flex items-center gap-2 flex-wrap">
         <input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Company name"
@@ -1008,7 +1061,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
               <span className="text-[11px] text-[var(--color-text-faint)]">{l.submissionCount} submission{l.submissionCount === 1 ? "" : "s"}</span>
               <span className="ml-auto flex items-center gap-1">
                 <button onClick={() => void makeRfq(l)}
-                  title="Download a ready-to-send Request For Quote (.docx) built from this project's scope, purpose, and turnover requirements - with this company's submission link inside."
+                  title="Download a ready-to-send Request For Quote (.docx) built from this project's scope, purpose and turnover requirements, with this company's submission link inside."
                   className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
                   <FileText className="w-3 h-3" /> RFQ (.docx)
                 </button>

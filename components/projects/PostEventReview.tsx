@@ -53,6 +53,9 @@ import { closeNeeds, type NeedGo } from "@/lib/closeNeeds";
 import { requestSetup } from "@/lib/scheduleSetup";
 import CloseNeeds from "@/components/projects/CloseNeeds";
 import { appAlert } from "@/components/providers/DialogProvider";
+import LoadingBlock from "@/components/ui/LoadingBlock";
+import MoreMenu from "@/components/ui/MoreMenu";
+import { useDraft, clearDraft } from "@/hooks/useDraft";
 
 const btn = "inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
 const dark = "inline-flex items-center gap-1.5 h-9 px-3 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[12.5px] font-black whitespace-nowrap disabled:opacity-50";
@@ -107,6 +110,9 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
   const [infoFor, setInfoFor] = useState<string | null>(null);
   const [infoText, setInfoText] = useState("");
   const [answers, setAnswers] = useState<Record<string, Answer>>({});
+  // Answers being typed come back after a reload, per phase.
+  useDraft<Record<string, Answer>>(`review-answers:${projectId}:${scope}`, answers, setAnswers,
+    (v) => !Object.values(v ?? {}).some((a) => a?.cause || a?.known || a?.note?.trim()));
   const [tick, setTick] = useState(0);
   const [viewing, setViewing] = useState(false);
   // A file that is made, where the browser wants a tap to hand it over.
@@ -267,11 +273,12 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
     catch (e) { setErr((e as Error).message); }
     finally { setBusy(null); }
   };
-  const addInfo = (f: Finding) => { const t = infoText.trim(); if (!t) return; void act(`info:${f.key}`, (s) => { const it = { ...s.items[f.key] }; it.info = [...(it.info ?? []), t]; s.items[f.key] = it; }, (next) => { setInfoFor(null); setInfoText(""); const g = refind(next, f.key); return g && (f.status === "kept" || f.source === "person") ? lesson(g, true) : undefined; }); };
+  const addInfo = (f: Finding) => { const t = infoText.trim(); if (!t) return; void act(`info:${f.key}`, (s) => { const it = { ...s.items[f.key] }; it.info = [...(it.info ?? []), t]; s.items[f.key] = it; }, (next) => { clearDraft(`review-info:${projectId}:${f.key}`); setInfoFor(null); setInfoText(""); const g = refind(next, f.key); return g && (f.status === "kept" || f.source === "person") ? lesson(g, true) : undefined; }); };
   const dropInfo = (f: Finding, i: number) => void act(`info:${f.key}`, (s) => { const it = { ...s.items[f.key] }; it.info = (it.info ?? []).filter((_, n) => n !== i); s.items[f.key] = it; });
   const addFinding = (e: FindingEdit, category: CategoryId) => {
     const id = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : String(Date.now());
     void act("add", (s) => { s.added.push({ ...e, id, category, at: Date.now(), by: who }); }, async () => {
+      clearDraft(`review-add:${projectId}:${scope}`);
       setAdding(false);
       const c = areaOf(category);
       await lesson({ key: `added:${id}`, category, source: "person", rating: e.rating ?? "opportunity", title: e.title ?? "Finding", observation: e.observation ?? "", evidence: [], practice: "", gap: e.gap ?? "", next: e.next ?? "", year: e.year ?? "", owner: e.owner ?? "", due: e.due ?? "", cost: e.cost ?? "", done: false, auto: false, applies: "all", effect: e.effect ?? "", moved: null, proof: "", why: e.effect ?? "", hours: null, ask: e.ask ?? e.next ?? "", because: e.because ?? e.effect ?? "", info: [], status: "kept", edited: false, stale: false, drafted: { title: e.title ?? c.name, observation: e.observation ?? "", rating: e.rating ?? "opportunity" }, by: who, at: Date.now() }, true);
@@ -297,7 +304,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
   };
   const saveHeld = async () => { if (held && (await saveFile(held.data, held.name, held.mime))) setHeld(null); };
 
-  if (!review) return <div className="py-16 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-text-muted)]" /></div>;
+  if (!review) return <LoadingBlock what="the review" />;
   const m = review.metrics;
   const pt = pointOf(review, phase?.name ?? projectName, tz);
   const bk = bookOf(review, phase?.name ?? projectName, tz, scoreIn);
@@ -353,19 +360,24 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="min-w-0 flex-1 basis-72">
           <h2 className="text-[19px] font-black text-[var(--color-text)]">Post-event review{phase ? ` · ${phase.name}` : ""}</h2>
-          <p className="text-[13px] text-[var(--color-text-muted)]">Built from the findings written on the job. The records give the numbers and suggest findings; a suggestion goes on the slides only when you accept it.{!m.done && m.steps ? ` ${m.steps - m.stepsDone} of ${m.steps} activities are not done yet, so these numbers are to date.` : ""}</p>
+          <p className="text-[13px] text-[var(--color-text-muted)]">A suggested finding goes on the slides only when you accept it.{!m.done && m.steps ? ` ${m.steps - m.stepsDone} of ${m.steps} activities are not done yet, so these numbers are to date.` : ""}</p>
         </div>
         <div className="flex gap-1.5 flex-wrap">
-          <button type="button" onClick={reanalyze} disabled={!!busy} className={btn}><RefreshCw className="w-4 h-4" /> Re-analyze</button>
           <button type="button" onClick={() => setViewing(true)} disabled={!m.steps} className={dark}><Presentation className="w-4 h-4" /> View slides</button>
-          <button type="button" onClick={() => void download("slides")} disabled={!!busy || !m.steps} className={btn}>{busy === "slides" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} PowerPoint</button>
-          <button type="button" onClick={() => void download("word")} disabled={!!busy || !m.steps} className={btn}>{busy === "word" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Word report</button>
+          <MoreMenu items={[
+            { icon: <RefreshCw className="w-4 h-4" />, label: "Re-analyze", onClick: () => { if (!busy) reanalyze(); } },
+            ...(m.steps ? [
+              { icon: <Download className="w-4 h-4" />, label: "Download PowerPoint", onClick: () => { if (!busy) void download("slides"); }, line: true },
+              { icon: <Download className="w-4 h-4" />, label: "Download Word report", onClick: () => { if (!busy) void download("word"); } },
+            ] : []),
+          ]} />
         </div>
       </div>
+      {(busy === "slides" || busy === "word") && <p role="status" className="text-[12.5px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1.5" />Making the {busy === "word" ? "Word report" : "PowerPoint"}…</p>}
 
-      {err && <div role="alert" className="rounded-xl border border-rose-300 bg-rose-50 dark:bg-rose-950/30 px-3 py-2 text-[12.5px] font-semibold text-rose-800 dark:text-rose-300">{err}</div>}
-      {msg && <div role="status" className="rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-[12.5px] font-semibold text-amber-900 dark:text-amber-200">{msg}</div>}
-      {held && !viewing && <div role="status" className="rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 flex items-center gap-2 flex-wrap text-[12.5px] font-semibold text-amber-900 dark:text-amber-200" data-file-ready><span className="min-w-0 flex-1 basis-40">The file is ready.</span><button type="button" onClick={() => void saveHeld()} className={pri}><Download className="w-4 h-4" /> Save file</button></div>}
+      {err && <div role="alert" className="border-l-2 border-rose-500 pl-3 py-1 text-[12.5px] font-semibold text-rose-800 dark:text-rose-300">{err}</div>}
+      {msg && <div role="status" className="border-l-2 border-amber-500 pl-3 py-1 text-[12.5px] font-semibold text-amber-900 dark:text-amber-200">{msg}</div>}
+      {held && !viewing && <div role="status" className="border-l-2 border-[var(--color-border-strong)] pl-3 py-1 flex items-center gap-2 flex-wrap text-[12.5px] font-semibold text-[var(--color-text)]" data-file-ready><span className="min-w-0 flex-1 basis-40">The file is ready.</span><button type="button" onClick={() => void saveHeld()} className={pri}><Download className="w-4 h-4" /> Save file</button></div>}
       {viewing && <ReviewSlides slides={deckSlides(review, fileOpts())} name={`${phase?.name ?? projectName} post-event review`} onClose={() => setViewing(false)} onDownload={() => void download("slides")} downloading={busy === "slides"} ready={held ? { name: held.name, onSave: () => void saveHeld() } : null} />}
 
       {carried.map(({ phase: p, actions }) => (
@@ -421,7 +433,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
             )}
           </div>
           {pt.pending.length > 0 && (
-            <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-3 py-2.5 flex items-center gap-2 flex-wrap" data-review-pending>
+            <div className="mt-4 border-l-2 border-amber-500 pl-3 py-1 flex items-center gap-2 flex-wrap" data-review-pending>
               <span className="min-w-0 flex-1 basis-56 text-[13px] text-amber-900 dark:text-amber-200"><b>{pt.pending.length === 1 ? "1 finding needs your call" : `${pt.pending.length} findings need your call`}</b> before {pt.pending.length === 1 ? "it goes" : "they go"} on the slide.</span>
               <button type="button" onClick={showPending} className={dark}>Show {pt.pending.length === 1 ? "it" : "them"}</button>
             </div>
@@ -446,7 +458,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
             </div>
             <p className="text-[11.5px] text-[var(--color-text-muted)]">{RATING_MEANS}</p>
 
-            {adding && <div className="rounded-2xl border-2 border-[var(--color-border-strong)] bg-[var(--color-surface)] p-4"><FindingForm title="Add a finding" pickCategory busy={busy === "add"} onCancel={() => setAdding(false)} onSave={(e, c) => addFinding(e, c ?? "materials")} /></div>}
+            {adding && <div className="rounded-2xl border-2 border-[var(--color-border-strong)] bg-[var(--color-surface)] p-4"><FindingForm title="Add a finding" draftKey={`review-add:${projectId}:${scope}`} pickCategory busy={busy === "add"} onCancel={() => setAdding(false)} onSave={(e, c) => addFinding(e, c ?? "materials")} /></div>}
 
             {shown.length === 0 && <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-6 text-center text-[13px] text-[var(--color-text-muted)]">Nothing here.</div>}
             {shown.map((f) => {
@@ -495,13 +507,14 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
                       {!closes && f.next && <><dt className={`${label} pt-0.5`}>Do differently</dt><dd>{f.next}</dd></>}
                     </dl>
                     {f.stale && (
-                      <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-[12.5px] text-amber-900 dark:text-amber-200">
+                      <div className="mt-2 border-l-2 border-amber-500 pl-3 py-1 text-[12.5px] text-amber-900 dark:text-amber-200">
                         <b>The records have changed since this was {f.edited ? "changed" : "kept"}.</b> They now say:<ul className="list-disc pl-4 mt-1">{f.drafted.observation.split("\n").filter(Boolean).map((l, i) => <li key={i}>{l}</li>)}</ul>
                         {canManage && <div className="mt-1.5 flex gap-1.5 flex-wrap"><button type="button" disabled={!!busy} onClick={() => takeDraft(f)} className={btn}>Use the new draft</button><button type="button" disabled={!!busy} onClick={() => keep(f)} className={btn}>Keep mine as it is</button></div>}
                       </div>
                     )}
                     {infoFor === f.key && (
                       <div className="mt-2 flex gap-1.5 flex-wrap">
+                        <KeepDraft key={f.key} draftKey={`review-info:${projectId}:${f.key}`} value={infoText} set={setInfoText} />
                         <textarea autoFocus rows={2} value={infoText} onChange={(e) => setInfoText(e.target.value)} placeholder="What the records don't say (one or two lines)" className={`${field} flex-1 basis-60`} />
                         <button type="button" disabled={!infoText.trim() || !!busy} onClick={() => addInfo(f)} className={pri}>Add</button>
                         <button type="button" onClick={() => { setInfoFor(null); setInfoText(""); }} className={btn}>Cancel</button>
@@ -515,8 +528,10 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
                           {f.status === "kept" ? <button type="button" disabled={!!busy} onClick={() => unkeep(f)} className={btn}><Check className="w-4 h-4 text-emerald-600" /> {closes ? (f.auto ? "On the slide (cost the finish) · take off" : "On the slide · undo") : "Kept · undo"}</button>
                             : <button type="button" disabled={!!busy} onClick={() => keep(f)} className={dark}>{busy === `keep:${f.key}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} {closes ? "Accept for the slide" : "Keep"}</button>}
                           <button type="button" disabled={!!busy} onClick={() => { setEditing(f.key); setAdding(false); }} className={btn}><Pencil className="w-4 h-4" /> Edit</button>
-                          <button type="button" disabled={!!busy} onClick={() => { setInfoFor(f.key); setInfoText(""); }} className={btn}><Plus className="w-4 h-4" /> Add information</button>
-                          <button type="button" disabled={!!busy} onClick={() => discard(f)} className={btn}><Trash2 className="w-4 h-4" /> Discard</button>
+                          <MoreMenu label="More" items={[
+                            { icon: <Plus className="w-4 h-4" />, label: "Add information", onClick: () => { if (!busy) { setInfoFor(f.key); setInfoText(""); } } },
+                            { icon: <Trash2 className="w-4 h-4" />, label: "Discard", tone: "bad", onClick: () => { if (!busy) discard(f); } },
+                          ]} />
                         </>}
                       </div>
                     )}
@@ -528,14 +543,14 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
 
           <aside className="space-y-3">
             {review.questions.length > 0 ? (
-              <div className="rounded-2xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 p-3.5" data-review-questions>
-                <h3 className="text-[14px] font-black text-amber-900 dark:text-amber-200">Fill in what the records don&rsquo;t say ({review.questions.length})</h3>
+              <div className="rounded-2xl border border-[var(--color-border)] border-l-2 border-l-amber-500 bg-[var(--color-surface)] p-3.5" data-review-questions>
+                <h3 className="text-[14px] font-black text-[var(--color-text)]">Fill in what the records don&rsquo;t say ({review.questions.length})</h3>
                 <div className="mt-2 space-y-2">
                   {review.questions.map((q) => {
                     const a = answers[q.key] ?? {};
                     const set = (patch: Answer) => setAnswers((s) => ({ ...s, [q.key]: { ...s[q.key], ...patch } }));
                     return (
-                      <div key={q.key} className="rounded-xl border border-amber-200 dark:border-amber-800 bg-[var(--color-surface)] p-2.5 text-[12.5px]">
+                      <div key={q.key} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-2.5 text-[12.5px]">
                         <b className="block text-[var(--color-text)]">{q.ask}</b>
                         {canManage && <div className="mt-1.5 space-y-1.5">
                           {q.answer === "cause" && (
@@ -558,19 +573,19 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
                 {canManage && <button type="button" disabled={!filled.length || !!busy} onClick={saveAnswers} className={`${pri} w-full mt-2.5`}>{busy === "answers" ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Save {filled.length || ""} answer{filled.length === 1 ? "" : "s"} and re-analyze</button>}
               </div>
             ) : (
-              <div className="rounded-2xl border border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30 dark:border-emerald-800 p-3.5 text-[12.5px] text-emerald-900 dark:text-emerald-200"><b>No open questions.</b> Every stuck shift has a reason{review.answeredCount ? ` (${review.answeredCount} answered here)` : ""}.</div>
+              <div className="border-l-2 border-emerald-500 pl-3 py-1 text-[12.5px] text-emerald-900 dark:text-emerald-200"><b>No open questions.</b> Every stuck shift has a reason{review.answeredCount ? ` (${review.answeredCount} answered here)` : ""}.</div>
             )}
-            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3.5 text-[12.5px] text-[var(--color-text-muted)]">
-              <b className="block text-[13px] text-[var(--color-text)]">How a finding is drafted</b>
-              Every number is counted from what was entered; nothing is assumed. Each finding lists the records behind it. Re-analyze reads the records again with your answers. What you kept or changed is never overwritten, and kept findings go to the lessons register for the next job.
+            <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3.5 text-[12.5px] text-[var(--color-text-muted)]">
+              <summary className="cursor-pointer text-[13px] font-bold text-[var(--color-text)]">How a finding is drafted</summary>
+              <p className="mt-1">Every number is counted from what was entered. Each finding lists the records behind it. What you kept or changed is never overwritten, and kept findings go to the lessons register.</p>
               <div className="mt-2 flex gap-1.5 flex-wrap"><button type="button" onClick={() => onTab("reports:asbuilt")} className={btn}><FileText className="w-4 h-4" /> As-built schedule</button></div>
-            </div>
+            </details>
           </aside>
         </div>
 
         <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4" data-review-measures>
           <h3 className="text-[14px] font-black text-[var(--color-text)]">Targets for the next event</h3>
-          <p className="text-[12.5px] text-[var(--color-text-muted)]">Set the tolerance for each measure here. Tap a suggestion or type your own, then Save. Nothing is judged against a target until you set it.</p>
+          <p className="text-[12.5px] text-[var(--color-text-muted)]">Nothing is judged against a target until you set it.</p>
           <div className="mt-2 space-y-2">
             {review.measures.map((x) => {
               const cur = (targets ?? saved?.targets ?? {})[x.key] ?? "";
@@ -765,13 +780,23 @@ function ActionLine({ a, kind, busy, canManage, onPlan, onDone }: { a: Action; k
   );
 }
 
-function FindingForm({ title, init, pickCategory, busy, onSave, onCancel }: {
+/** Autosaves a shared text field while its editor is open. */
+function KeepDraft({ draftKey, value, set }: { draftKey: string; value: string; set: (v: string) => void }) {
+  useDraft<string>(draftKey, value, set, (v) => !v.trim());
+  return null;
+}
+
+function FindingForm({ title, init, pickCategory, busy, onSave, onCancel, draftKey = null }: {
   title: string; init?: Finding; pickCategory?: boolean; busy: boolean;
+  /** A new finding's draft, kept on this device (none when changing one). */
+  draftKey?: string | null;
   onSave: (e: FindingEdit, category?: CategoryId) => void; onCancel: () => void;
 }) {
   const [category, setCategory] = useState<CategoryId>(init ? AREA_CATEGORY[areaOf(init.category).id] : "materials");
   const [e, setE] = useState<FindingEdit>({ title: init?.title ?? "", observation: init?.observation ?? "", practice: init?.practice ?? "", gap: init?.gap ?? "", next: init?.next ?? "", year: init?.year ?? "", owner: init?.owner ?? "", due: init?.due ?? "", cost: init?.cost ?? "", effect: init?.effect ?? "", why: init?.why ?? "", ask: init?.ask ?? "", because: init?.because ?? "", rating: init?.rating ?? "opportunity" });
   const set = (k: keyof FindingEdit, v: string) => setE((x) => ({ ...x, [k]: v }));
+  const draft = useDraft<FindingEdit>(draftKey, e, (v) => setE((x) => ({ ...x, ...v })),
+    (v) => !Object.entries(v ?? {}).some(([k, t]) => k !== "rating" && typeof t === "string" && t.trim()));
   const Area = ({ k, name, hint, rows = 2 }: { k: "observation" | "gap" | "next" | "year" | "why"; name: string; hint: string; rows?: number }) => (
     <label className="block"><span className={label}>{name}</span><textarea rows={rows} value={e[k] ?? ""} onChange={(ev) => set(k, ev.target.value)} placeholder={hint} className={`${field} mt-0.5`} /></label>
   );
@@ -779,6 +804,7 @@ function FindingForm({ title, init, pickCategory, busy, onSave, onCancel }: {
   return (
     <div className="space-y-2.5">
       <b className="block text-[14px] text-[var(--color-text)]">{title}</b>
+      {draft.restored && <p className="text-[12px] text-[var(--color-text-muted)]">What you were writing is back.</p>}
       <div className="grid gap-2.5 sm:grid-cols-2">
         {pickCategory && <label className="block"><span className={label}>Area</span><select value={category} onChange={(ev) => setCategory(ev.target.value as CategoryId)} className={`${field} mt-0.5`}>{AREAS.map((a) => <option key={a.id} value={AREA_CATEGORY[a.id]}>{a.name}</option>)}</select></label>}
         <label className="block"><span className={label}>Rating</span><select value={e.rating} onChange={(ev) => setE((x) => ({ ...x, rating: ev.target.value as Rating }))} className={`${field} mt-0.5`}>{(["gap", "opportunity", "strength"] as Rating[]).map((r) => <option key={r} value={r}>{RATING_WORD[r]}</option>)}</select></label>

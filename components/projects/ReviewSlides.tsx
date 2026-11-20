@@ -100,9 +100,9 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
         </div>
       )}
       {ready && !full && (
-        <div role="status" className="flex items-center gap-2 flex-wrap px-3 sm:px-5 py-2 bg-amber-400 text-slate-950 text-[13px] font-bold">
+        <div role="status" className="flex items-center gap-2 flex-wrap px-3 sm:px-5 py-2 border-b border-white/10 text-[13px] font-bold text-white">
           <span className="min-w-0 flex-1">The file is ready.</span>
-          <button type="button" onClick={ready.onSave} className="h-9 px-3 rounded-lg bg-slate-950 text-white font-black">Save file</button>
+          <button type="button" onClick={ready.onSave} className="h-9 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] font-black hover:bg-[var(--color-accent-hover)]">Save file</button>
         </div>
       )}
       <div ref={stage} className="relative flex-1 min-h-0 overflow-hidden"
@@ -129,7 +129,7 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
           <div className="w-full sm:max-w-2xl max-h-[86%] overflow-y-auto rounded-t-2xl sm:rounded-2xl px-5 py-5" style={{ background: C.bg, color: C.ink }}>
             <div className="flex items-start gap-3">
               <h3 className="min-w-0 flex-1 text-[18px] font-black leading-tight">{T(more.title)}</h3>
-              <button type="button" onClick={() => setMore(null)} className="shrink-0 h-9 px-3 rounded-lg text-[13px] font-black" style={{ background: C.band }}>Close</button>
+              <button type="button" onClick={() => setMore(null)} aria-label="Close" className="shrink-0 w-9 h-9 rounded-lg inline-flex items-center justify-center" style={{ background: C.band }}><X className="w-5 h-5" /></button>
             </div>
             {more.sections.map((sec, i) => (
               <div key={i} className="mt-4">

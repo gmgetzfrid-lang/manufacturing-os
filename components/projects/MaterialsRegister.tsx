@@ -1,6 +1,6 @@
 "use client";
 
-// MaterialsRegister - every material and off-site repair an event needs, in
+// MaterialsRegister: every material and off-site repair an event needs, in
 // one list: its specification, an owner, a status, a need-by date and any
 // question holding it up (lib/materials). A specification with something
 // missing can't be marked ready to order, and a question nobody has
@@ -16,9 +16,11 @@ import {
   QUESTION_LIMIT_H, STATUSES, STATUS_WORD, ageWord, arrived, attention, blankMaterial, deleteMaterial, late, listMaterials, questionAgeH, questionOpen,
   saveMaterial, specIncomplete, statusAllowed, summarize, type Material, type MaterialFields, type MaterialStatus,
 } from "@/lib/materials";
+import LoadingBlock from "@/components/ui/LoadingBlock";
+import { appConfirm } from "@/components/providers/DialogProvider";
+import { useDraft, clearDraft } from "@/hooks/useDraft";
 
 const btn = "inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
-const dark = "inline-flex items-center gap-1.5 h-9 px-3 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[12.5px] font-black whitespace-nowrap disabled:opacity-50";
 const pri = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-black whitespace-nowrap disabled:opacity-50";
 const field = "w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[13px] text-[var(--color-text)]";
 const label = "text-[12px] font-semibold text-[var(--color-text-muted)]";
@@ -71,19 +73,23 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
   const save = async () => {
     if (!open) return;
     setBusy(true); setErr(null);
-    try { await saveMaterial({ id: open.row?.id, orgId, projectId, fields: open.fields, was: open.row, actor: { id: actor.uid, name: actor.email } }); setOpen(null); load(); }
+    try {
+      await saveMaterial({ id: open.row?.id, orgId, projectId, fields: open.fields, was: open.row, actor: { id: actor.uid, name: actor.email } });
+      if (!open.row) clearDraft(`material:${projectId}`);
+      setOpen(null); load();
+    }
     catch (e) { setErr((e as Error).message); }
     finally { setBusy(false); }
   };
   const remove = async () => {
-    if (!open?.row || !window.confirm(`Remove "${open.row.item}" from the register?`)) return;
+    if (!open?.row || !(await appConfirm({ message: `Remove "${open.row.item}" from the register?`, tone: "danger", confirmLabel: "Remove" }))) return;
     setBusy(true); setErr(null);
     try { await deleteMaterial(open.row.id, projectId); setOpen(null); load(); }
     catch (e) { setErr((e as Error).message); }
     finally { setBusy(false); }
   };
 
-  if (!rows) return <div className="py-16 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-text-muted)]" /></div>;
+  if (!rows) return <LoadingBlock what="the materials register" />;
 
   const Pill = ({ id, children }: { id: Filter; children: React.ReactNode }) => (
     <button type="button" onClick={() => setFilter(id)} aria-pressed={filter === id} className={`h-8 px-3 rounded-full border text-[12.5px] font-extrabold whitespace-nowrap ${filter === id ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)]"}`}>{children}</button>
@@ -109,11 +115,11 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="min-w-0 flex-1 basis-72">
           <h2 className="text-[19px] font-black text-[var(--color-text)]">Materials register</h2>
-          <p className="text-[13px] text-[var(--color-text-muted)]">Every material and off-site repair for the event: specification, owner, status, need-by date. Open it at scope freeze, check it at every gate, and keep it current through the event.</p>
+          <p className="text-[13px] text-[var(--color-text-muted)]">{sum.lines === 0 ? "Nothing on it yet. Open it at scope freeze." : sum.needAttention ? `${sum.needAttention} line${sum.needAttention === 1 ? " needs" : "s need"} someone.` : "Every line is on track."}</p>
         </div>
-        {canManage && <button type="button" onClick={() => setOpen({ row: null, fields: blankMaterial(phaseId) })} className={dark}><Plus className="w-4 h-4" /> Add item</button>}
+        {canManage && <button type="button" onClick={() => setOpen({ row: null, fields: blankMaterial(phaseId) })} className={pri}><Plus className="w-4 h-4" /> Add item</button>}
       </div>
-      {err && <div role="alert" className="rounded-xl border border-rose-300 bg-rose-50 dark:bg-rose-950/30 px-3 py-2 text-[12.5px] font-semibold text-rose-800 dark:text-rose-300">{err}</div>}
+      {err && <div role="alert" className="border-l-2 border-rose-500 pl-3 py-1 text-[12.5px] font-semibold text-rose-800 dark:text-rose-300">{err}</div>}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
         <Kpi name="Lines" value={sum.lines} detail={`${sum.materials} material${sum.materials === 1 ? "" : "s"} · ${sum.offsite} off-site repair${sum.offsite === 1 ? "" : "s"}`} />
@@ -177,7 +183,11 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
       {open && (
         <Modal onClose={() => !busy && setOpen(null)} size="lg">
           <ModalHeader title={open.row ? open.row.item : "Add an item"} subtitle={open.row ? `Last changed${open.row.updatedByName ? ` by ${open.row.updatedByName}` : ""}` : "A material to order, or an item sent out for repair"} onClose={() => !busy && setOpen(null)} />
-          <ModalBody><MaterialForm f={open.fields} set={(patch) => setOpen((o) => (o ? { ...o, fields: { ...o.fields, ...patch } } : o))} phases={phases} workOrders={workOrders} /></ModalBody>
+          <ModalBody>
+            {/* A new line being written comes back if the window closes or the page reloads. */}
+            {!open.row && <MaterialDraft draftKey={`material:${projectId}`} fields={open.fields} set={(v) => setOpen((o) => (o ? { ...o, fields: v } : o))} />}
+            <MaterialForm f={open.fields} set={(patch) => setOpen((o) => (o ? { ...o, fields: { ...o.fields, ...patch } } : o))} phases={phases} workOrders={workOrders} />
+          </ModalBody>
           <ModalFooter>
             {open.row && <button type="button" disabled={busy} onClick={() => void remove()} className={`${btn} mr-auto`}><Trash2 className="w-4 h-4" /> Remove</button>}
             <button type="button" disabled={busy} onClick={() => setOpen(null)} className={btn}>Cancel</button>
@@ -187,6 +197,11 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
       )}
     </div>
   );
+}
+
+function MaterialDraft({ draftKey, fields, set }: { draftKey: string; fields: MaterialFields; set: (v: MaterialFields) => void }) {
+  useDraft<MaterialFields>(draftKey, fields, set, (v) => !v.item?.trim() && !v.spec?.trim() && !v.note?.trim() && !v.question?.trim());
+  return null;
 }
 
 function MaterialForm({ f, set, phases, workOrders }: { f: MaterialFields; set: (patch: Partial<MaterialFields>) => void; phases: ProjectPhase[]; workOrders: string[] }) {

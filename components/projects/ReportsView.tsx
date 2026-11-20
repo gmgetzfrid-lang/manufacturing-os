@@ -11,7 +11,7 @@
 
 import { openFindingsReview } from "@/components/projects/Findings";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ClipboardPen, Download, FileText, Loader2, Mail, Maximize2, Minimize2, Minus, Plus, Presentation, Printer, SlidersHorizontal, X, Lightbulb } from "lucide-react";
+import { ChevronLeft, ClipboardPen, Download, FileText, Loader2, Mail, Maximize2, Minus, Plus, Presentation, Printer, SlidersHorizontal, X, Lightbulb } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import type { CancelledJob } from "@/lib/cancelledJobs";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
@@ -223,7 +223,7 @@ export default function ReportsView(p: Props) {
   }, [loadJob, live, tz, times, cover, shift, word, days.from, days.to]);
   const dayLabel = (d: string) => fmtInTz(shiftWindow(d, "day", tz, times).start, tz, { month: "short", day: "numeric" });
   const timeTitle = cover === "shift" ? `Time log - ${shift.kind === "day" ? "Day shift" : "Night shift"} ${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })}`
-    : cover === "range" ? `Time log - ${dayLabel(days.from)} to ${dayLabel(days.to)}` : "Time log - whole project to date";
+    : cover === "range" ? `Time log, ${dayLabel(days.from)} to ${dayLabel(days.to)}` : "Time log, whole project to date";
 
   // ── Work orders ──
   const orders = useMemo(() => groupWorkOrders(p.milestones, p.childrenByParent, p.progress, tz, times, now), [p.milestones, p.childrenByParent, p.progress, tz, times, now]);
@@ -370,7 +370,7 @@ export default function ReportsView(p: Props) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   useEffect(() => { setMsg(null); }, [sel]);
-  const blocked = "Your browser blocked the print window - allow pop-ups for this site and try again.";
+  const blocked = "Your browser blocked the print window. Allow pop-ups for this site and try again.";
   const run = async (what: "download" | "print" | "email" | "word") => {
     setMsg(null);
     // A print window is opened at the tap, so the browser doesn't take it for a pop-up.
@@ -388,7 +388,7 @@ export default function ReportsView(p: Props) {
             const extra = await howItDid().catch(() => "");
             ok = await copyRich(parts.html + extra, parts.text);
           } else ok = await copyUpdateForEmail(picked);
-          setMsg(ok ? "Copied - paste into your email." : "Your browser blocked the copy - try again.");
+          setMsg(ok ? "Copied. Paste it into your email." : "Your browser blocked the copy. Try again.");
           return;
         }
         if (what === "word") { saveFile(await updateDocx(picked), updateFileName(picked)); setMsg("Word file saved."); return; }
@@ -426,7 +426,7 @@ export default function ReportsView(p: Props) {
         remember({ report: "asbuilt", label: `${asBuiltScope} · ${what === "download" ? "Excel" : "printed"}` });
       } else if (sel === "phase") {
         const b = await phaseBody();
-        if (what === "email") { setMsg((await copyRich(b.html, b.text)) ? "Copied - paste into your email." : "Your browser blocked the copy - try again."); return; }
+        if (what === "email") { setMsg((await copyRich(b.html, b.text)) ? "Copied. Paste it into your email." : "Your browser blocked the copy. Try again."); return; }
         printHtml(phaseReportDocument(b.title, b.html), w);
         remember({ report: "phase", label: ph.phase ? ph.phases.find((x) => x.id === ph.phase)?.name ?? "Phase" : "All phases" });
       } else if (sel === "sheet" && sheet && sheetDoc) {
@@ -493,7 +493,7 @@ export default function ReportsView(p: Props) {
   const lhRow = lh && sel !== "sheet" && sel !== "timelog" && !(sel === "hourly" && format === "xlsx") ? (
     row("Letterhead", <>
       <label className="inline-flex items-center gap-2 text-[12.5px] cursor-pointer select-none">
-        <input type="checkbox" checked={useLh} onChange={(e) => setUseLh(e.target.checked)} className="w-4 h-4 accent-[var(--color-accent)]" />
+        <input type="checkbox" checked={useLh} onChange={(e) => setUseLh(e.target.checked)} className="w-4 h-4 accent-[var(--color-text)]" />
         <span className="font-semibold">{lh.name || "Company letterhead"}</span>
       </label>
     </>)
@@ -547,7 +547,7 @@ export default function ReportsView(p: Props) {
           )}
           {row("History", <>
             <label className="inline-flex items-center gap-2 text-[12.5px] cursor-pointer select-none">
-              <input type="checkbox" checked={woHistory} onChange={(e) => setWoHistory(e.target.checked)} className="w-4 h-4 accent-[var(--color-accent)]" />
+              <input type="checkbox" checked={woHistory} onChange={(e) => setWoHistory(e.target.checked)} className="w-4 h-4 accent-[var(--color-text)]" />
               Every start, % update, hold and comment, with its time
             </label>
           </>)}
@@ -666,7 +666,7 @@ export default function ReportsView(p: Props) {
               const on = r.id === sel;
               return (
                 <button key={r.id} type="button" aria-current={on ? "page" : undefined} onClick={() => { setSel(r.id); setPhoneOpen(true); }}
-                  className={`w-full text-left px-4 py-2 border-l-[3px] ${on ? "sm:border-[var(--color-accent)] sm:bg-[var(--color-surface-2)] border-transparent" : "border-transparent hover:bg-[var(--color-surface-2)]"}`}>
+                  className={`w-full text-left px-4 py-2 border-l-[3px] ${on ? "sm:border-[var(--color-text)] sm:bg-[var(--color-surface-2)] border-transparent" : "border-transparent hover:bg-[var(--color-surface-2)]"}`}>
                   <span className={`block text-[14px] font-bold ${on ? "sm:text-[var(--color-text)] text-[var(--color-text)]" : "text-[var(--color-text)]"}`}>{r.name}</span>
                   <span className="block text-[12px] text-[var(--color-text-muted)] leading-snug">{r.sub}</span>
                 </button>
@@ -688,10 +688,11 @@ export default function ReportsView(p: Props) {
         </FullView>
       )}
       {onScreen && meeting && (
-        <div className="fixed inset-0 z-[300] bg-[var(--color-bg,#f8fafc)] overflow-y-auto">
+        <div role="dialog" aria-modal="true" aria-label={meta.name} className="fixed inset-0 z-[300] bg-[var(--color-bg,#f8fafc)] overflow-y-auto">
+          <EscapeCloses onClose={() => setOnScreen(null)} />
           <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2">
             <b className="text-[14px]">{meta.name}</b>
-            <button type="button" onClick={() => setOnScreen(null)} className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-[12.5px] font-bold"><X className="w-4 h-4" /> Close</button>
+            <button type="button" onClick={() => setOnScreen(null)} aria-label="Close" className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-[12.5px] font-bold"><X className="w-4 h-4" /> Close</button>
           </div>
           <div className="max-w-[1400px] mx-auto p-3 sm:p-5">
             <ShiftReportView {...base} meetingFixed={meeting} presentOnOpen={onScreen === "present"} />
@@ -708,11 +709,11 @@ const DESCRIBE: Record<ReportId, string> = {
   timelog: "Every step and the time each thing was done, for the project file.",
   schedule: "Complete, pace and the forecast finish, with what's blocked and overdue.",
   workorders: "Each work order opened up with all its steps: plan against actual, status, % and the latest comment.",
-  asbuilt: "The job as it was really worked, shift by shift: when each activity moved, when it sat and why, when it was ready but its crew was elsewhere, and the hands against the work. Switch to Suggested for next time: this job with what it taught put in, a crew load and hands for each shift, and changes you tell it.",
+  asbuilt: "The job as it was really worked, shift by shift: when each activity moved, when it sat and why, and the hands against the work. Suggested shows it with what it taught put in.",
   kickoff: "The start of the project: the job, the first shifts, readiness and safety.",
   closeout: "The end of the project: how it went, what was added, what's open, and the Lessons & findings review for next time.",
-  phase: "How the phase picked at the top did: progress against plan day by day, the finish, the work added and its share of the budget, beside the other phases and the whole project. With All phases picked: every phase and the project.",
-  sheet: "One page for the field, for one shift: only that shift's work, by equipment. Write start, % at lunch, % at the end of the shift and done by pen, then enter it here line for line.",
+  phase: "How the phase picked at the top did against its plan, beside the other phases and the whole project.",
+  sheet: "One page for the field for one shift, by equipment. Fill it in by pen, then enter it here.",
 };
 
 /** Rows shown of a spreadsheet report (the file has them all). */
@@ -837,6 +838,18 @@ function DocView({ preview, busy, err, onFull, fill }: { preview: Preview; busy:
 
 /** The report full screen: its options beside it, as a print setup
  *  screen (above it on a phone, folded away), and what to do with it. */
+/** Escape closes the full-screen view it sits in. */
+function EscapeCloses({ onClose }: { onClose: () => void }) {
+  const ref = useRef(onClose);
+  useEffect(() => { ref.current = onClose; });
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => { if (e.key === "Escape") ref.current(); };
+    window.addEventListener("keydown", k);
+    return () => window.removeEventListener("keydown", k);
+  }, []);
+  return null;
+}
+
 function FullView({ name, onClose, actions, options, children }: { name: string; onClose: () => void; actions: React.ReactNode; options: React.ReactNode; children: React.ReactNode }) {
   const [opts, setOpts] = useState(false);
   useEffect(() => {
@@ -855,7 +868,7 @@ function FullView({ name, onClose, actions, options, children }: { name: string;
             <SlidersHorizontal className="w-4 h-4" /> Options
           </button>
         )}
-        <button type="button" onClick={onClose} className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-[12.5px] font-bold text-[var(--color-text)]"><Minimize2 className="w-4 h-4" /> Close</button>
+        <button type="button" onClick={onClose} aria-label="Close" className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-[12.5px] font-bold text-[var(--color-text)]"><X className="w-4 h-4" /> Close</button>
       </div>
       <div className="flex-1 min-h-0 flex flex-col lg:flex-row">
         <aside className={`${opts ? "block" : "hidden"} lg:block lg:w-[360px] shrink-0 max-h-[50vh] lg:max-h-none overflow-y-auto border-b lg:border-b-0 lg:border-r border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-4`}>

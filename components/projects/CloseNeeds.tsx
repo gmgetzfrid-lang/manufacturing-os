@@ -13,14 +13,15 @@ export default function CloseNeeds({ needs, onGo }: { needs: Need[]; onGo: (go: 
   const all = done === needs.length;
   const next = needs.find((n) => !n.done) ?? null;
   const [open, setOpen] = useState(false);
+  // Only the next one to put in is orange; the rest of the list is quiet.
   const go = (n: Need) => (
     <button type="button" onClick={() => onGo(n.go)}
-      className={`inline-flex items-center gap-1 h-9 px-3 rounded-lg text-[12.5px] font-bold whitespace-nowrap ${n.done ? "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)]"}`}>
+      className={`inline-flex items-center gap-1 h-9 px-3 rounded-lg text-[12.5px] font-bold whitespace-nowrap ${n.id !== next?.id ? "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"}`}>
       {n.button} <ArrowRight className="w-3.5 h-3.5" />
     </button>
   );
   return (
-    <section className={`rounded-2xl border p-4 ${all ? "border-emerald-300 dark:border-emerald-800 bg-[var(--color-surface)]" : "border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20"}`} data-close-needs>
+    <section className={`rounded-2xl border border-[var(--color-border)] border-l-2 bg-[var(--color-surface)] p-4 ${all ? "border-l-emerald-500" : "border-l-amber-500"}`} data-close-needs>
       <div className="flex items-center gap-3 flex-wrap">
         <div className="min-w-0 flex-1 basis-56">
           <b className="block text-[15px] text-[var(--color-text)]">What the review needs from you</b>
@@ -49,7 +50,7 @@ export default function CloseNeeds({ needs, onGo }: { needs: Need[]; onGo: (go: 
         <ol className="mt-3 grid lg:grid-cols-2 gap-px rounded-xl border border-[var(--color-border)] bg-[var(--color-border)] overflow-hidden">
           {needs.map((n) => (
             <li key={n.id} className="flex items-start gap-3 px-3 py-2.5 flex-wrap bg-[var(--color-surface)]" data-need={n.id} data-need-done={n.done ? "1" : "0"}>
-              <span className={`mt-0.5 w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${n.done ? "bg-emerald-600 text-white" : "bg-amber-500 text-white"}`}>
+              <span className={`mt-0.5 w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${n.done ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" : "bg-amber-500/15 text-amber-800 dark:text-amber-300"}`}>
                 {n.done ? <Check className="w-4 h-4" /> : <span className="text-[13px] font-black">!</span>}
               </span>
               <span className="min-w-0 flex-1 basis-40">

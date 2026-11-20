@@ -21,6 +21,7 @@ import { listEdgesFor } from "@/lib/estate/client";
 import { nid } from "@/lib/estate/ids";
 import { setupOrders } from "@/lib/projectEquipment";
 import { plainText } from "@/lib/plainText";
+import { useDraft } from "@/hooks/useDraft";
 import {
   APPLIES_WORD, KIND_WORD, CATEGORIES, FINDINGS_SQL, ACK_WORD,
   suggestFindings, reviewState, fieldsProblem, equipmentOf, guessKind, guessCategories, categoriesOf, topicOf, isLive, tagKey, findingLine, pastJobsFor,
@@ -39,14 +40,16 @@ export const OPEN_REVIEW_EVENT = "findings:review";
 export const openFindingsReview = () => window.dispatchEvent(new CustomEvent(OPEN_REVIEW_EVENT));
 
 const btn = "inline-flex items-center justify-center gap-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[12.5px] font-bold px-3.5 py-2 shadow-sm disabled:opacity-50";
+// A decision repeated on every row: dark, not orange.
+const dark = "inline-flex items-center justify-center gap-1.5 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[12.5px] font-bold px-3.5 py-2 disabled:opacity-50";
 const quiet = "inline-flex items-center justify-center gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[12px] font-semibold text-[var(--color-text)] px-2.5 py-1.5 disabled:opacity-50";
 const field = "w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1.5 text-[13px] text-[var(--color-text)]";
 const label = "block text-[12px] font-semibold text-[var(--color-text-muted)] mb-1";
 
 const KIND_TONE: Record<FindingFields["kind"], string> = {
-  problem: "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-900",
+  problem: "bg-rose-500/10 text-rose-700 border-rose-500/30 dark:text-rose-300",
   lesson: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)] dark:border-[var(--color-border)]",
-  material: "bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-900",
+  material: "bg-amber-500/10 text-amber-800 border-amber-500/30 dark:text-amber-300",
   missed_scope: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)] dark:border-[var(--color-border)]",
 };
 export function KindChip({ kind }: { kind: FindingFields["kind"] }) {
@@ -327,6 +330,8 @@ function FindingDialog({ orgId, projectId, projectType, milestones, canEdit, mil
     kind: "problem", appliesTo: eq ? "equipment" : "project", topic: "Other", body: "", nextTime: "",
     assetId: eq?.assetId ?? null, assetTag: eq?.tag ?? null, unitCode: null,
   }));
+  // What's typed comes back if the dialog closes or the page reloads.
+  const draft = useDraft<FindingFields>(`finding:${projectId}:${milestoneId ?? "project"}`, v, (d) => setV((x) => ({ ...x, ...d })), (d) => !d.body?.trim() && !d.nextTime?.trim());
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -342,22 +347,24 @@ function FindingDialog({ orgId, projectId, projectType, milestones, canEdit, mil
         // A person wrote it: it counts now, with no review step to pass.
         source: "manual", status: "kept", foundAt: at, actor: { id: uid ?? null, name: userEmail ?? null },
       });
+      draft.clear();
       setSaved(true);
       setTimeout(onClose, 900);
     } catch (e) {
       if (e instanceof FindingsMissing && await saveAsTeamLesson({ orgId, projectId, userId: uid ?? null, userName: userEmail ?? null, v }).catch(() => false)) {
+        draft.clear();
         setSaved(true); setNote(SAVED_AS_LESSON); setTimeout(onClose, 3500);
       } else setErr(errText(e));
     } finally { setBusy(false); }
   };
   return (
     <Modal onClose={onClose} size="md">
-      <ModalHeader icon={Lightbulb} title="New finding" subtitle={m ? `On ${m.name}` : "A problem, a lesson, a material shortfall or missed scope - for the next job"} onClose={onClose} />
+      <ModalHeader icon={Lightbulb} title="New finding" subtitle={m ? `On ${m.name}` : "A problem, a lesson, a material shortfall or missed scope, for the next job"} onClose={onClose} />
       <ModalBody>
         {!canEdit ? <div className="text-[12.5px] text-[var(--color-text-muted)]">Only the project&apos;s owner, co-owners and editors can add findings.</div> : (
           <>
             <FindingEditor value={v} onChange={setV} equipment={equipment} unitLabel={unit?.label ?? null} autoGuess jobName={m?.name ?? null} defaultTag={eq?.tag ?? null} typeWord={typeWordOf(projectType)} />
-            <p className="mt-3 text-[11.5px] text-[var(--color-text-faint)]">Saved with who and when. It goes into the post-event review as written.</p>
+            <p className="mt-3 text-[11.5px] text-[var(--color-text-faint)]">{draft.restored ? "What you were writing is back. " : ""}Saved with who and when. It goes into the post-event review as written.</p>
           </>
         )}
         {err && <div className="mt-2 text-[12px] text-rose-700 dark:text-rose-300">{err}</div>}
@@ -439,7 +446,7 @@ export function JobFindings({ orgId, projectId, milestoneIds, tag, tz }: {
 export function AddFindingButton({ milestoneId, at, compact, className = "" }: { milestoneId?: string | null; at?: number; compact?: boolean; className?: string }) {
   return (
     <button type="button" onClick={(e) => { e.stopPropagation(); newFinding({ milestoneId, at }); }}
-      title="A problem, a lesson, a material shortfall or missed scope - kept for the next job"
+      title="A problem, a lesson, a material shortfall or missed scope, kept for the next job"
       className={`inline-flex items-center gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] font-semibold text-[var(--color-text)] ${compact ? "text-[11px] px-2 py-1" : "text-[12px] px-2.5 py-1.5"} ${className}`}>
       <Plus className="w-3.5 h-3.5" /> Finding
     </button>
@@ -490,7 +497,7 @@ export function FindingsReview({ orgId, projectId, projectType: given, projectNa
   const left = r.state.toReview.length;
   return (
     <div className="space-y-3">
-      {r.missing && <div className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-[12.5px] text-amber-900 dark:text-amber-200">{missingMsg}</div>}
+      {r.missing && <p className="border-l-2 border-amber-500 pl-3 text-[12.5px] text-amber-900 dark:text-amber-200">{missingMsg}</p>}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <div className="text-[12.5px] text-[var(--color-text-muted)]">
           {left ? <><b className="text-[var(--color-text)]">{left} to review</b> · </> : <><b className="text-emerald-700 dark:text-emerald-400">All reviewed</b> · </>}
@@ -498,7 +505,7 @@ export function FindingsReview({ orgId, projectId, projectType: given, projectNa
         </div>
         {canEdit && !adding && <button type="button" onClick={() => setAdding(true)} className={`${quiet} ml-auto`}><Plus className="w-3.5 h-3.5" /> Add finding</button>}
       </div>
-      <p className="text-[12px] text-[var(--color-text-faint)]">From added scope and discoveries, comments, hold reasons, + Finding and the team&apos;s lessons. Edit any one, then keep it or drop it. Only kept ones go to the Intelligence graph, Ask and the next job&apos;s plan.</p>
+      <p className="text-[12px] text-[var(--color-text-faint)]">Only kept ones reach the next job&apos;s plan.</p>
 
       {adding && <AddRow orgId={orgId} projectId={projectId} projectType={projectType} equipment={r.equipment} unit={r.unit} actor={actor} onDone={() => setAdding(false)} onNote={setNote} />}
       {note && <div role="status" className="text-[12px] font-semibold text-emerald-700 dark:text-emerald-400">{note}</div>}
@@ -576,7 +583,7 @@ function ReviewRow({ draft, tz, canEdit, editing, busy, error, equipment, unitLa
   const applies = d.appliesTo === "equipment" ? d.assetTag ?? "Equipment" : d.appliesTo === "unit" ? (unitLabel ? `Unit (${unitLabel})` : "Unit") : APPLIES_WORD[d.appliesTo];
   const from = [d.from, d.on, Number.isFinite(d.foundAt) ? when(d.foundAt, tz) : null, d.by].filter(Boolean).join(" · ");
   return (
-    <li className={`rounded-lg border ${kept ? "border-emerald-200 dark:border-emerald-900/60" : "border-[var(--color-border)]"} bg-[var(--color-surface)] px-3 py-2.5 text-[12.5px]`}>
+    <li className={`rounded-lg border ${kept ? "border-emerald-500/30" : "border-[var(--color-border)]"} bg-[var(--color-surface)] px-3 py-2.5 text-[12.5px]`}>
       {from && <div className="text-[11px] text-[var(--color-text-faint)] break-words">{from}</div>}
       {!editing ? (
         <>
@@ -588,7 +595,7 @@ function ReviewRow({ draft, tz, canEdit, editing, busy, error, equipment, unitLa
           <div className="mt-1 text-[11.5px] text-[var(--color-text-muted)]">Applies to <b className="text-[var(--color-text)]">{applies}</b> · {d.topic}</div>
           {canEdit && (
             <div className="mt-2 flex flex-wrap gap-1.5">
-              {!kept && <button type="button" disabled={busy} onClick={() => onKeep(draft)} className={btn}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Keep</button>}
+              {!kept && <button type="button" disabled={busy} onClick={() => onKeep(draft)} className={dark}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Keep</button>}
               <button type="button" disabled={busy} onClick={onEdit} className={quiet}><Pencil className="w-3.5 h-3.5" /> Edit</button>
               {!kept && <button type="button" disabled={busy} onClick={() => onDrop(draft)} className={quiet}><X className="w-3.5 h-3.5" /> Drop</button>}
               {kept && onUndo && <button type="button" disabled={busy} onClick={onUndo} className={quiet}><RotateCcw className="w-3.5 h-3.5" /> Back to review</button>}
@@ -626,6 +633,7 @@ function AddRow({ orgId, projectId, projectType, equipment, unit, actor, onDone,
   actor: { id: string | null; name: string | null }; onDone: () => void; onNote: (t: string) => void;
 }) {
   const [v, setV] = useState<FindingFields>({ kind: "lesson", appliesTo: "all", topic: "Other", body: "", nextTime: "", assetId: null, assetTag: null, unitCode: null });
+  const draft = useDraft<FindingFields>(`finding-add:${projectId}`, v, (d) => setV((x) => ({ ...x, ...d })), (d) => !d.body?.trim() && !d.nextTime?.trim());
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const keep = async () => {
@@ -633,9 +641,9 @@ function AddRow({ orgId, projectId, projectType, equipment, unit, actor, onDone,
     const p = fieldsProblem(f);
     if (p) { setErr(p); return; }
     setBusy(true); setErr(null);
-    try { await saveFinding({ ...f, orgId, projectId, projectType, source: "manual", status: "kept", actor }); onDone(); }
+    try { await saveFinding({ ...f, orgId, projectId, projectType, source: "manual", status: "kept", actor }); draft.clear(); onDone(); }
     catch (e) {
-      if (e instanceof FindingsMissing && await saveAsTeamLesson({ orgId, projectId, userId: actor.id, userName: actor.name, v: f }).catch(() => false)) { onNote(SAVED_AS_LESSON); onDone(); }
+      if (e instanceof FindingsMissing && await saveAsTeamLesson({ orgId, projectId, userId: actor.id, userName: actor.name, v: f }).catch(() => false)) { draft.clear(); onNote(SAVED_AS_LESSON); onDone(); }
       else setErr(errText(e));
     } finally { setBusy(false); }
   };
@@ -678,7 +686,7 @@ export function FindingsGate({ orgId, projectId, onCount, onOpen }: { orgId: str
       ) : left == null ? (
         <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Reading the record…</div>
       ) : left > 0 ? (
-        <div className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
+        <div className="border-l-2 border-amber-500 pl-3 text-xs text-amber-900 dark:text-amber-200">
           <b>Finish the review first: {left} left.</b> What this job taught reaches the next one only once it&apos;s kept.
           <button type="button" onClick={onOpen} className="ml-1 font-bold underline">Open the review</button>
         </div>
@@ -789,7 +797,7 @@ export function PastJobsPanel({ orgId, projectId, projectType: given, milestones
           {(["planned", "not_relevant"] as AckStatus[]).map((s) => (
             <button key={s} type="button" aria-pressed={x.ack?.status === s} onClick={() => void answer(x, x.ack?.status === s ? null : s)}
               className={`min-h-[30px] rounded-lg border px-2.5 text-[12px] font-semibold ${x.ack?.status === s
-                ? s === "planned" ? "border-emerald-500 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300" : "border-slate-400 bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                ? s === "planned" ? "border-emerald-500 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300" : "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]"
                 : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
               {x.ack?.status === s && <Check className="inline w-3.5 h-3.5 mr-0.5 -mt-0.5" />}{ACK_WORD[s]}
             </button>

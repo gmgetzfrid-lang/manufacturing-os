@@ -152,14 +152,15 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
         {canManage && (
           <button
             onClick={() => { setAttachOpen((v) => !v); setQ(""); setResults([]); }}
-            className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] transition-colors"
+            aria-expanded={attachOpen}
+            className={`ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-black transition-colors ${attachOpen ? "border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"}`}
           >
             <Plus className="w-3 h-3" /> Attach document
           </button>
         )}
       </div>
 
-      {err && <div className="px-4 py-2 text-[11px] font-bold text-rose-700 bg-rose-500/[0.07] border-b border-rose-500/30">{err}</div>}
+      {err && <div role="alert" className="mx-4 my-2 border-l-2 border-rose-500 pl-3 text-[11px] font-bold text-rose-700 dark:text-rose-300">{err}</div>}
 
       {attachOpen && canManage && (
         <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]/40">
@@ -174,6 +175,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
             />
           </div>
           {searching && <div className="mt-1.5 text-[11px] text-[var(--color-text-faint)]">Searching…</div>}
+          {!searching && q.trim().length >= 2 && results.length === 0 && <div className="mt-1.5 text-[11px] text-[var(--color-text-faint)]">No documents match &ldquo;{q.trim()}&rdquo;.</div>}
           {results.length > 0 && (
             <ul className="mt-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)] overflow-hidden">
               {results.filter((r) => !rows.some((x) => x.docId === r.id)).map((r) => (
@@ -193,7 +195,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
       )}
 
       {loading ? (
-        <div className="px-4 py-8 flex justify-center"><Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)]" /></div>
+        <div className="px-4 py-8 flex items-center justify-center gap-2 text-xs text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Loading the project&apos;s documents…</div>
       ) : rows.length === 0 ? (
         <div className="px-4 py-8 text-center text-xs text-[var(--color-text-muted)]">
           No documents linked yet. Checking a document out under this project links it automatically{canManage ? ", or use Attach document above" : ""}.
@@ -214,7 +216,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
                   {r.lastSeenAt && <div className="text-[11px] text-[var(--color-text-faint)] mt-0.5">last activity {new Date(r.lastSeenAt).toLocaleDateString()}</div>}
                 </div>
                 {r.libraryId && (
-                  <Link href={`/documents/${r.libraryId}?doc=${r.docId}`} className="shrink-0 inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:underline">
+                  <Link href={`/documents/${r.libraryId}?doc=${r.docId}`} className="shrink-0 inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline">
                     <ExternalLink className="w-3 h-3" /> Open
                   </Link>
                 )}
@@ -223,6 +225,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
                     onClick={() => void detach(r)}
                     disabled={busy === r.linkId}
                     title={r.source === "checkout" ? "Remove (it will re-link on the next checkout under this project)" : "Remove from project"}
+                    aria-label={`Remove ${r.label} from the project`}
                     className="shrink-0 p-1 rounded text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-500/10 transition-colors disabled:opacity-40"
                   >
                     <X className="w-3.5 h-3.5" />

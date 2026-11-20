@@ -1,6 +1,6 @@
 "use client";
 
-// Costs › Contractors - one page per contractor, everything about what it
+// Costs › Contractors: one page per contractor, everything about what it
 // was hired to send and what it sent: its company and quote on the Costs
 // tab, its crews on the schedule, its staffing plan (read from its sheet
 // or typed in), its rate sheet, and every shift: the plan's heads, the
@@ -27,12 +27,40 @@ import { lineOfDoc, type CostDocument } from "@/lib/costDocs";
 import type { ProjectPhase } from "@/lib/projectPhases";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { invalidateCrewSettings } from "@/lib/useCrewSettings";
+import LoadingBlock from "@/components/ui/LoadingBlock";
+import FileThumb from "@/components/ui/FileThumb";
+import { useFileDrag } from "@/hooks/useFileDrag";
+import { tryUpload } from "@/lib/uploadRetry";
+import { fileSize } from "@/components/projects/cost/FilePreview";
 
 const btn = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
 const pri = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-black whitespace-nowrap disabled:opacity-50";
 const field = "rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 h-9 text-[13px] text-[var(--color-text)]";
 const label = "text-[12px] font-semibold text-[var(--color-text-muted)]";
 const card = "rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4";
+const errLine = "border-l-2 border-rose-500 pl-3 py-1 text-[12.5px] font-semibold text-rose-800 dark:text-rose-300";
+
+/** A sheet to read (Excel or CSV): drop it on the button or pick it. */
+function SheetPick({ label: text, cls, disabled, onFile }: { label: React.ReactNode; cls: string; disabled?: boolean; onFile: (f: File) => void }) {
+  const drag = useFileDrag((fs) => onFile(fs[0]), disabled);
+  return (
+    <label {...drag.bind} className={`${cls} cursor-pointer ${drag.ring}`}>
+      <FileUp className="w-4 h-4" /> {drag.over ? drag.say : text}
+      <input type="file" accept=".xlsx,.xls,.csv" className="sr-only" disabled={disabled} onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onFile(f); }} />
+    </label>
+  );
+}
+
+/** The sheet picked: what it is, and Try again when it couldn't be read. */
+function PickedSheet({ file, failed, onRetry }: { file: File; failed?: boolean; onRetry?: () => void }) {
+  return (
+    <div className="flex items-center gap-2 text-[12.5px]">
+      <FileThumb file={file} size={28} />
+      <span className="min-w-0 flex-1 truncate text-[var(--color-text)]">{file.name} <span className="text-[var(--color-text-muted)]">· {fileSize(file.size)}</span></span>
+      {failed && onRetry && <button type="button" onClick={onRetry} className={btn}>Try again</button>}
+    </div>
+  );
+}
 const money = (n: number | null | undefined) => (n == null ? "-" : `$${Math.round(n).toLocaleString("en-US")}`);
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 /** "Mon 10/26 day" from "2026-10-26:day". */
@@ -128,7 +156,7 @@ export default function ContractorsPanel(p: ContractorsProps) {
     }).sort((a, b) => b.c.crews.reduce((n, x) => n + (work.get(x) ?? 0), 0) - a.c.crews.reduce((n, x) => n + (work.get(x) ?? 0), 0) || a.c.company.localeCompare(b.c.company));
   }, [settings, crews, work, records, p.parties, p.docs, p.entries, p.accounts, p.tz, times, now, inScope]);
 
-  if (!settings) return <div className="py-12 flex justify-center">{err ? <span className="text-[13px] text-rose-700">{err}</span> : <Loader2 className="w-5 h-5 animate-spin text-[var(--color-text-muted)]" />}</div>;
+  if (!settings) return err ? <div role="alert" className={errLine}>Couldn&apos;t load the contractors: {err}</div> : <LoadingBlock what="contractors" />;
   const cur = open ? list.find((x) => x.c.company === open) ?? null : null;
   const setS = (f: (s: CrewSettings) => CrewSettings) => setSettings((s) => (s ? f(s) : s));
   const phasePills = p.mode === "staffing" && p.phases.length > 1 ? (
@@ -142,8 +170,8 @@ export default function ContractorsPanel(p: ContractorsProps) {
 
   if (p.mode === "staffing") return (
     <div className="space-y-3" data-staffing-setup>
-      {err && <div role="alert" className="rounded-xl border border-rose-300 bg-rose-50 dark:bg-rose-950/30 px-3 py-2 text-[12.5px] font-semibold text-rose-800 dark:text-rose-300">{err}</div>}
-      <p className="text-[13px] text-[var(--color-text-muted)]">Each contractor&apos;s staffing plan: heads by craft, day and night, by date. Upload its sheet or type it in. The shift meeting&apos;s head counts and the suggested schedule are held to it.</p>
+      {err && <div role="alert" className={errLine}>{err}</div>}
+      <p className="text-[13px] text-[var(--color-text-muted)]">{(() => { const n = list.filter((x) => !x.plan).length; return list.length ? (n ? `${plural(n, "contractor")} still without a staffing plan.` : "Every contractor has a staffing plan.") : ""; })()}</p>
       {list.length === 0 ? <p className="text-[13px] text-[var(--color-text-muted)]">No contractor crews on the schedule yet.</p> : (
         <ul className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)]">
           {list.map((x) => {
@@ -168,7 +196,7 @@ export default function ContractorsPanel(p: ContractorsProps) {
                     </span>
                   )}
                 </span>
-                <button type="button" onClick={() => { setOwnPhase(null); setOpen(x.c.company); }} className={x.plan ? btn : pri}>{x.plan ? "Open" : p.canManage ? "Put it in" : "Open"}</button>
+                <button type="button" onClick={() => { setOwnPhase(null); setOpen(x.c.company); }} className={!x.plan && p.canManage && x.c.company === list.find((y) => !y.plan)?.c.company ? pri : btn}>{x.plan ? "Open" : p.canManage ? "Put it in" : "Open"}</button>
               </li>
             );
           })}
@@ -180,10 +208,10 @@ export default function ContractorsPanel(p: ContractorsProps) {
 
   return (
     <div className="space-y-4" data-contractors>
-      {err && <div role="alert" className="rounded-xl border border-rose-300 bg-rose-50 dark:bg-rose-950/30 px-3 py-2 text-[12.5px] font-semibold text-rose-800 dark:text-rose-300">{err}</div>}
+      {err && <div role="alert" className={errLine}>{err}</div>}
       <section className={card}>
         <h3 className="text-[15px] font-black text-[var(--color-text)]">What each contractor should send, and what it sent</h3>
-        <p className="mt-0.5 text-[13px] text-[var(--color-text-muted)]">Everything about a contractor goes on its page here: its quote and budget line, its staffing plan, its rate sheet. Head counts come from the shift meeting; overtime from a crew held over.{scope ? ` Showing ${scope.name}.` : ""}</p>
+        <p className="mt-0.5 text-[13px] text-[var(--color-text-muted)]">{(() => { const n = list.filter((x) => stepsOf(x).some((st) => !st.done)).length; return list.length ? (n ? `${plural(n, "contractor")} with something still to put in.` : "Everything is in for every contractor.") : ""; })()}{scope ? ` Showing ${scope.name}.` : ""}</p>
       </section>
       {list.length === 0 ? (
         <div className={`${card} text-center text-[13px] text-[var(--color-text-muted)]`}>No contractor crews on the schedule and none on the Costs tab yet.</div>
@@ -223,7 +251,7 @@ function ContractorCard({ x, onOpen }: { x: Crew; onOpen: () => void }) {
       <span className="flex items-center gap-2">
         <HardHat className="w-4 h-4 text-[var(--color-text-muted)]" />
         <b className="min-w-0 flex-1 text-[15px] text-[var(--color-text)] truncate">{x.c.company}</b>
-        <span className={`rounded-full px-2 py-0.5 text-[11.5px] font-black ${left ? "bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200" : "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300"}`}>{left ? `${left} to put in` : "All in"}</span>
+        <span className={`rounded-full px-2 py-0.5 text-[11.5px] font-black ${left ? "bg-amber-500/15 text-amber-900 dark:text-amber-200" : "bg-emerald-500/15 text-emerald-800 dark:text-emerald-300"}`}>{left ? `${left} to put in` : "All in"}</span>
       </span>
       <span className="text-[12.5px] text-[var(--color-text-muted)]">{x.c.crews.length ? `Crews: ${x.c.crews.join(", ")}` : "No crews on the schedule"}</span>
       <ol className="space-y-1">
@@ -262,7 +290,7 @@ function ContractorPage(p: ContractorsProps & {
         <button type="button" onClick={p.onBack} className={btn}><ArrowLeft className="w-4 h-4" /> {p.mode === "staffing" ? "Staffing plans" : "Contractors"}</button>
         <h3 className="min-w-0 flex-1 text-[18px] font-black text-[var(--color-text)] truncate">{co}</h3>
       </div>
-      {err && <div role="alert" className="rounded-xl border border-rose-300 bg-rose-50 dark:bg-rose-950/30 px-3 py-2 text-[12.5px] font-semibold text-rose-800 dark:text-rose-300">{err}</div>}
+      {err && <div role="alert" className={errLine}>{err}</div>}
 
       {p.mode === "staffing" ? (
         <>
@@ -276,7 +304,7 @@ function ContractorPage(p: ContractorsProps & {
       <nav className="flex flex-wrap gap-1.5" aria-label="Sections">
         {steps.map((s, i) => (
           <button key={s.name} type="button" onClick={() => go(["money", "plan", "rates", "daily"][i])} className={`shrink-0 inline-flex items-center gap-1.5 h-8 px-3 rounded-full border text-[12.5px] font-bold ${s.done ? "border-emerald-300 text-emerald-800 dark:text-emerald-300 dark:border-emerald-800" : "border-amber-300 text-amber-900 dark:text-amber-200 dark:border-amber-800"}`}>
-            {s.done ? <Check className="w-3.5 h-3.5" /> : <span className="w-3.5 h-3.5 rounded-full bg-amber-500 text-white text-[11px] font-black flex items-center justify-center">!</span>}{s.name}
+            {s.done ? <Check className="w-3.5 h-3.5" /> : <span className="w-3.5 h-3.5 rounded-full bg-amber-500/20 text-amber-900 dark:text-amber-200 text-[11px] font-black flex items-center justify-center">!</span>}{s.name}
           </button>
         ))}
       </nav>
@@ -327,7 +355,7 @@ function Section({ id, title, done, sub, children }: { id: string; title: string
   return (
     <section className={`${card} space-y-3 scroll-mt-4`} data-section={id}>
       <div className="flex items-start gap-2">
-        <span className={`mt-0.5 w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${done ? "bg-emerald-600 text-white" : "bg-amber-500 text-white"}`}>{done ? <Check className="w-3.5 h-3.5" /> : <span className="text-[11px] font-black">!</span>}</span>
+        <span className={`mt-0.5 w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${done ? "bg-emerald-600 text-white" : "bg-amber-500/20 text-amber-900 dark:text-amber-200"}`}>{done ? <Check className="w-3.5 h-3.5" /> : <span className="text-[11px] font-black">!</span>}</span>
         <div className="min-w-0 flex-1"><h4 className="text-[15px] font-black text-[var(--color-text)]">{title}</h4>{sub && <p className="text-[12.5px] text-[var(--color-text-muted)]">{sub}</p>}</div>
       </div>
       {children}
@@ -428,6 +456,8 @@ function PlanSection(p: SectionProps) {
   const [draft, setDraft] = useState<StaffingPlan | null>(null);
   const [read, setRead] = useState<{ g: PlanGrid; file: string; keep: Record<string, boolean>; direct: Record<string, boolean> } | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  // The sheet picked, and whether it couldn't be read (Try again keeps it).
+  const [sheetFile, setSheetFile] = useState<{ file: File; failed: boolean } | null>(null);
   const plan = draft ?? saved;
   const blank = (): StaffingPlan => ({ file: "", at: new Date().toISOString(), by: p.actor.email, shifts: {}, crafts: [], byCraft: {} });
 
@@ -455,16 +485,16 @@ function PlanSection(p: SectionProps) {
   };
 
   const readFile = async (f: File) => {
-    setMsg(null);
+    setMsg(null); setSheetFile({ file: f, failed: false });
     try {
       const XLSX = await import("xlsx");
       const wb = XLSX.read(await f.arrayBuffer(), { type: "array", cellDates: true });
       const rows = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: null });
       const g = parseStaffingGrid(rows as unknown[][]);
-      if (!g) { setMsg("That doesn't look like a staffing plan: crafts down the side, dates across the top, a Day and a Night column under each date."); return; }
+      if (!g) { setSheetFile(null); setMsg("That doesn't look like a staffing plan: crafts down the side, dates across the top, a Day and a Night column under each date."); return; }
       const keep = Object.fromEntries(g.bands.map((b) => { const t = bandTarget(b, p.phases, scopeSpan(p)); return [b.name, p.scope ? t === p.scope.id || (t === "project" && p.phases.length <= 1) : t != null]; }));
       setRead({ g, file: f.name, keep, direct: Object.fromEntries(g.crafts.map((c) => [c.name, c.direct])) });
-    } catch (e) { setMsg((e as Error).message); }
+    } catch (e) { setSheetFile({ file: f, failed: true }); setMsg((e as Error).message); }
   };
   const range = p.scope ? { from: p.scope.start ?? null, to: p.scope.end ?? null } : null;
   const saveRead = () => read && p.act("plan", async () => {
@@ -473,9 +503,10 @@ function PlanSection(p: SectionProps) {
     const over = saved && span ? sourcesOf(saved).filter((x) => !(x.to < (span.from ?? "") || x.from > (span.to ?? "9999"))) : [];
     if (over.length && !(await appConfirm({ title: `Replace ${co}'s plan for ${p.scope ? p.scope.name : `${dayLabel(span!.from ?? "")} to ${dayLabel(span!.to ?? "")}`}?`, message: `What is in for those dates (${over.map((x) => x.file || "typed in").join(", ")}) is replaced by ${read.file}. Every other date stays as it is.`, confirmLabel: "Replace those dates" }))) return;
     const next = mergePlan(saved, picked, range);
-    await saveStaffingPlan(p.projectId, co, next);
-    p.setSettings((s) => ({ ...s, staffing: { ...s.staffing, [co]: next } }));
-    setRead(null); setDraft(null);
+    const kept = () => { p.setSettings((s) => ({ ...s, staffing: { ...s.staffing, [co]: next } })); setRead(null); setDraft(null); setSheetFile(null); };
+    // Saving the plan read from the sheet: Try again saves it the same way.
+    await tryUpload(read.file, () => saveStaffingPlan(p.projectId, co, next), { onRetried: kept });
+    kept();
   });
   const saveDraft = () => draft && p.act("plan", async () => {
     await saveStaffingPlan(p.projectId, co, Object.keys(draft.shifts).length ? draft : null);
@@ -498,10 +529,11 @@ function PlanSection(p: SectionProps) {
   return (
     <Section id="plan" title={p.scope ? `Staffing plan, ${p.scope.name}` : "Staffing plan"} done={!!saved && (!range || !!inPhase)} sub={saved ? sourcesOf(saved).map((x) => { const ds = Object.keys(saved.shifts).map((k) => k.split(":")[0]).filter((d) => d >= x.from && d <= x.to).sort(); return `${phaseOf(x) ? `${phaseOf(x)}: ` : ""}${x.file || "typed in"}${ds.length ? ` (${dayLabel(ds[0])} to ${dayLabel(ds[ds.length - 1])})` : ""}`; }).join(" · ") : `How many of each craft ${co} sends each day and night. Upload its sheet or type it in; each phase can have its own.`}>
       {range && saved && !inPhase && <p className="text-[12.5px] font-semibold text-amber-800 dark:text-amber-300">Nothing in for {p.scope!.name} yet. Upload {co}&apos;s sheet for it; the other phases&apos; plans stay as they are.</p>}
+      {sheetFile && <PickedSheet file={sheetFile.file} failed={sheetFile.failed} onRetry={() => void readFile(sheetFile.file)} />}
       {msg && <p className="text-[12.5px] font-semibold text-amber-800 dark:text-amber-300">{msg}</p>}
       {p.canManage && !read && (
         <div className="flex gap-1.5 flex-wrap">
-          <label className={`${saved ? btn : pri} cursor-pointer`}><FileUp className="w-4 h-4" /> {p.scope ? (inPhase ? `Read a new sheet for ${p.scope.name}` : `Upload ${p.scope.name}'s sheet`) : saved ? "Read a sheet (replaces only its dates)" : "Upload its staffing plan"}<input type="file" accept=".xlsx,.xls,.csv" className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void readFile(f); }} /></label>
+          <SheetPick cls={saved ? btn : pri} onFile={(f) => void readFile(f)} label={p.scope ? (inPhase ? `Read a new sheet for ${p.scope.name}` : `Upload ${p.scope.name}'s sheet`) : saved ? "Read a sheet (replaces only its dates)" : "Upload its staffing plan"} />
           {!plan && <button type="button" onClick={() => setDraft(blank())} className={btn}><Plus className="w-4 h-4" /> Type it in</button>}
           {saved && !draft && <button type="button" onClick={() => void download()} className={btn}><Download className="w-4 h-4" /> Download (Excel)</button>}
           {saved && !draft && (!range || inPhase) && <button type="button" disabled={!!p.busy} onClick={() => void remove()} className={btn}><Trash2 className="w-4 h-4" /> {p.scope ? `Remove ${p.scope.name}'s plan` : "Remove"}</button>}
@@ -510,7 +542,7 @@ function PlanSection(p: SectionProps) {
 
       {read && (
         <div className="rounded-xl border-2 border-[var(--color-border-strong)] p-3 space-y-3" data-plan-read>
-          <div><b className="text-[13.5px] text-[var(--color-text)]">Read: {read.file}</b><p className="text-[12.5px] text-[var(--color-text-muted)]">{plural(read.g.crafts.length, "craft")} with people, {dayLabel(read.g.from)} to {dayLabel(read.g.to)}. The sheet names the event over each run of dates: keep the ones for this project.</p></div>
+          <div><b className="text-[13.5px] text-[var(--color-text)]">Read: {read.file}</b><p className="text-[12.5px] text-[var(--color-text-muted)]">Found {plural(read.g.crafts.length, "craft")} with people, {dayLabel(read.g.from)} to {dayLabel(read.g.to)}. Keep the runs of dates for this project.</p></div>
           <ul className="grid gap-2">
             {read.g.bands.map((b) => (
               <li key={b.name} className="flex items-center gap-3 flex-wrap rounded-lg border border-[var(--color-border)] px-3 py-2" data-band={b.name}>
@@ -535,7 +567,7 @@ function PlanSection(p: SectionProps) {
           </div>
           <div className="flex gap-1.5 flex-wrap">
             <button type="button" disabled={!!p.busy || !Object.values(read.keep).some(Boolean)} onClick={() => void saveRead()} className={pri}>{p.busy === "plan" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Keep this plan</button>
-            <button type="button" onClick={() => setRead(null)} className={btn}>Cancel</button>
+            <button type="button" onClick={() => { setRead(null); setSheetFile(null); }} className={btn}>Cancel</button>
           </div>
         </div>
       )}
@@ -640,6 +672,7 @@ function RatesSection(p: SectionProps) {
   const planCrafts = useMemo(() => (x.plan?.crafts ?? []).map((c) => c.name), [x.plan]);
   const [draft, setDraft] = useState<RateSheet | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [sheetFile, setSheetFile] = useState<{ file: File; failed: boolean } | null>(null);
   const sheet: RateSheet = draft ?? saved ?? { crafts: {} };
   const crafts = [...new Set([...planCrafts, ...Object.keys(sheet.crafts)])];
   const edit = (f: (s: RateSheet) => RateSheet) => setDraft(f(JSON.parse(JSON.stringify(sheet)) as RateSheet));
@@ -655,13 +688,13 @@ function RatesSection(p: SectionProps) {
     return s;
   });
   const readFile = async (f: File) => {
-    setMsg(null);
+    setMsg(null); setSheetFile({ file: f, failed: false });
     try {
       const XLSX = await import("xlsx");
       const wb = XLSX.read(await f.arrayBuffer(), { type: "array" });
       const rows = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: null });
       const got = parseRateGrid(rows as unknown[][]);
-      if (!got) { setMsg("No rates found in that sheet: it needs a row naming Straight time (and Overtime, Double time), with crafts down the side."); return; }
+      if (!got) { setSheetFile(null); setMsg("No rates found in that sheet: it needs a row naming Straight time (and Overtime, Double time), with crafts down the side."); return; }
       edit((s) => {
         let pd: number | null = null;
         for (const r of got) {
@@ -674,12 +707,12 @@ function RatesSection(p: SectionProps) {
         return s;
       });
       setMsg(`Read ${plural(got.length, "rate")} from ${f.name}. Check them, then save.`);
-    } catch (e) { setMsg((e as Error).message); }
+    } catch (e) { setSheetFile({ file: f, failed: true }); setMsg((e as Error).message); }
   };
   const save = () => draft && p.act("rates", async () => {
-    await saveRateSheet(p.projectId, co, draft);
-    p.setSettings((s) => ({ ...s, rateSheets: { ...s.rateSheets, [co]: draft } }));
-    setDraft(null); setMsg(null);
+    const kept = () => { p.setSettings((s) => ({ ...s, rateSheets: { ...s.rateSheets, [co]: draft } })); setDraft(null); setMsg(null); setSheetFile(null); };
+    await tryUpload(draft.file || `${co} rate sheet`, () => saveRateSheet(p.projectId, co, draft), { onRetried: kept });
+    kept();
   });
   const missing = planCrafts.filter((c) => !(sheet.crafts[c]?.st > 0));
   const rule = (k: "paidHours" | "stHours" | "dtAfter" | "perDiem", name: string, ph: string, unit: string) => (
@@ -696,8 +729,9 @@ function RatesSection(p: SectionProps) {
         {rule("stHours", "Straight time for the first", String(RULES.stHours), "h")}
         {rule("dtAfter", "Double time past", String(RULES.dtAfter), "h")}
         {rule("perDiem", "Per diem a head", "0", "a day")}
-        {p.canManage && <label className={`${btn} cursor-pointer`}><FileUp className="w-4 h-4" /> Read their rate sheet<input type="file" accept=".xlsx,.xls,.csv" className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void readFile(f); }} /></label>}
+        {p.canManage && <SheetPick cls={btn} onFile={(f) => void readFile(f)} label="Read their rate sheet" />}
       </div>
+      {sheetFile && <PickedSheet file={sheetFile.file} failed={sheetFile.failed} onRetry={() => void readFile(sheetFile.file)} />}
       <p className="text-[12px] text-[var(--color-text-muted)]">California daily overtime: time and a half after {sheet.stHours ?? RULES.stHours} hours, double time after {sheet.dtAfter ?? RULES.dtAfter}. Change it if the contract says otherwise. Overtime and double time left blank are 1.5 and 2 times straight time. For a PDF rate sheet, type the rates in.</p>
       {crafts.length === 0 ? <p className="text-[12.5px] text-[var(--color-text-muted)]">Put in the staffing plan first: its crafts are the rows here.</p> : (
         <div className="rounded-xl border border-[var(--color-border)] text-[13px]" data-rate-table>

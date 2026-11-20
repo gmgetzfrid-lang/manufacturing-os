@@ -1,6 +1,6 @@
 "use client";
 
-// BudgetTable - the budget lines as a table you fully control: change any
+// BudgetTable: the budget lines as a table you fully control: change any
 // cell where it is (name, type, contractor, phase, budget), add a line on
 // the last row, pick lines and set their phase, close or delete them
 // together, group them with subtotals, and from a line's menu move its
@@ -70,6 +70,7 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
   const run = async (fn: () => Promise<{ ok: boolean; error?: string }>, ok?: string) => {
     setBusy(true); setErr(null);
     try { const r = await fn(); if (!r.ok) { setErr(r.error ?? "Not saved."); return false; } if (ok) setNotice(ok); onChanged(); return true; }
+    catch (e) { setErr((e as Error).message || "Not saved."); return false; }
     finally { setBusy(false); }
   };
   const savePatch = (a: CostAccount, patch: Parameters<typeof saveAccount>[0]["patch"]) => run(() => saveAccount({ orgId, projectId, id: a.id, patch, actor }));
@@ -138,7 +139,7 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
         </label>
         {closedCount > 0 && (
           <label className="inline-flex items-center gap-1.5 text-[12px] font-bold text-[var(--color-text)] cursor-pointer select-none">
-            <input type="checkbox" checked={showClosed} onChange={(e) => setShowClosed(e.target.checked)} className="w-4 h-4 accent-[var(--color-accent)]" /> Closed
+            <input type="checkbox" checked={showClosed} onChange={(e) => setShowClosed(e.target.checked)} className="w-4 h-4 accent-[var(--color-text)]" /> Closed
           </label>
         )}
       </div>
@@ -158,9 +159,9 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
       )}
 
       {undo && (
-        <div role="status" className="px-4 py-2 border-b border-[var(--color-border)] bg-amber-50 dark:bg-amber-950/30 flex items-center gap-2 text-[12.5px] font-bold text-amber-900 dark:text-amber-200">
+        <div role="status" className="px-4 py-2 border-b border-[var(--color-border)] flex items-center gap-2 text-[12.5px] font-bold text-[var(--color-text)]">
           {undo.name} deleted.
-          <button type="button" onClick={() => void undoDelete()} className="inline-flex items-center gap-1 h-7 px-2.5 rounded-lg border border-amber-400 bg-white/70 dark:bg-black/20"><Undo2 className="w-3.5 h-3.5" /> Undo</button>
+          <button type="button" onClick={() => void undoDelete()} className="inline-flex items-center gap-1 h-7 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"><Undo2 className="w-3.5 h-3.5" /> Undo</button>
         </div>
       )}
 
@@ -181,7 +182,7 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
         <table className="w-full border-collapse text-[12.5px] min-w-[860px]">
           <thead className="bg-[var(--color-surface-2)]">
             <tr>
-              {canManage && <th className={`${th} w-8`}><input type="checkbox" aria-label="Pick every line shown" checked={allShown} onChange={() => setSel(allShown ? new Set() : new Set(rows.map((r) => r.account.id)))} className="w-4 h-4 accent-[var(--color-accent)]" /></th>}
+              {canManage && <th className={`${th} w-8`}><input type="checkbox" aria-label="Pick every line shown" checked={allShown} onChange={() => setSel(allShown ? new Set() : new Set(rows.map((r) => r.account.id)))} className="w-4 h-4 accent-[var(--color-text)]" /></th>}
               <th className={th}>Line</th><th className={th}>Type</th><th className={th}>Contractor</th>
               {phases.length > 0 && <th className={th}>Phase</th>}
               <th className={`${th} text-right`}>Budget</th>
@@ -210,7 +211,7 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
                   return (
                     <React.Fragment key={a.id}>
                       <tr className={`border-t border-[var(--color-border)] ${closed ? "opacity-55" : ""} ${spent > a.budget && a.budget > 0 ? "bg-rose-500/[0.04]" : ""}`}>
-                        {canManage && <td className={td}><input type="checkbox" aria-label={`Pick ${a.name}`} checked={sel.has(a.id)} onChange={() => setSel((s) => { const n = new Set(s); if (n.has(a.id)) n.delete(a.id); else n.add(a.id); return n; })} className="w-4 h-4 accent-[var(--color-accent)]" /></td>}
+                        {canManage && <td className={td}><input type="checkbox" aria-label={`Pick ${a.name}`} checked={sel.has(a.id)} onChange={() => setSel((s) => { const n = new Set(s); if (n.has(a.id)) n.delete(a.id); else n.add(a.id); return n; })} className="w-4 h-4 accent-[var(--color-text)]" /></td>}
                         <td className={`${td} min-w-[200px]`}>
                           <div className="flex items-center gap-1">
                             <button type="button" onClick={() => setOpen(open === a.id ? null : a.id)} aria-label={`${open === a.id ? "Close" : "Open"} ${a.name}'s entries`} className="shrink-0 text-[var(--color-text-faint)]">{open === a.id ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}</button>
@@ -244,7 +245,7 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
                         <td className={`${td} text-right tabular-nums`}>{fmtMoney(committed, cur)}</td>
                         <td className={`${td} text-right tabular-nums ${spent > a.budget && a.budget > 0 ? "text-rose-700 dark:text-rose-400 font-bold" : ""}`}>{fmtMoney(spent, cur)}</td>
                         <td className={`${td} text-right tabular-nums ${left < 0 ? "text-rose-700 dark:text-rose-400 font-bold" : ""}`}>{fmtMoney(left, cur)}</td>
-                        <td className={td}><div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden"><div className={`h-full rounded-full ${spent > a.budget && a.budget > 0 ? "bg-rose-500" : "bg-[var(--color-surface-2)]"}`} style={{ width: `${used}%` }} /></div></td>
+                        <td className={td}><div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden"><div className={`h-full rounded-full ${spent > a.budget && a.budget > 0 ? "bg-rose-500" : "bg-[var(--color-text-muted)]"}`} style={{ width: `${used}%` }} /></div></td>
                         <td className={`${td} relative`}>
                           {canManage && (
                             <button type="button" onClick={() => setMenu(menu === a.id ? null : a.id)} aria-label={`${a.name} actions`} className="w-8 h-8 rounded-lg hover:bg-[var(--color-surface-2)] flex items-center justify-center"><MoreHorizontal className="w-4 h-4" /></button>
@@ -277,7 +278,7 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
                 <td className={td}><select value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value })} aria-label="New line type" className="h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1">{TYPES.map((t) => <option key={t} value={t}>{cap(t)}</option>)}</select></td>
                 <td className={td} />{phases.length > 0 && <td className={td} />}
                 <td className={td}><input value={draft.budget} onChange={(e) => setDraft({ ...draft, budget: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") void add(); }} inputMode="decimal" placeholder="$0" aria-label="New line budget" className="h-8 w-28 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-right" /></td>
-                <td colSpan={99} className={td}><button type="button" disabled={busy || !draft.name.trim()} onClick={() => void add()} className="inline-flex items-center gap-1 h-8 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] font-black disabled:opacity-50"><Plus className="w-4 h-4" /> Add</button></td>
+                <td colSpan={99} className={td}><button type="button" disabled={busy || !draft.name.trim()} onClick={() => void add()} className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] font-black hover:bg-[var(--color-surface-2)] disabled:opacity-50"><Plus className="w-4 h-4" /> Add</button></td>
               </tr>
             )}
           </tbody>
@@ -326,9 +327,9 @@ export function LinesChart({ rows, cur }: { rows: Array<{ name: string; budget: 
       <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
         <span className="text-sm font-bold text-[var(--color-text)]">Each budget line</span>
         <span className="flex items-center gap-3 text-[11px] text-[var(--color-text-muted)]">
-          <span className="inline-flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-slate-300 dark:bg-slate-600" /> Budget</span>
+          <span className="inline-flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-[var(--color-border-strong)]" /> Budget</span>
           <span className="inline-flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-[var(--color-text-muted)]" /> Committed</span>
-          <span className="inline-flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-[var(--color-surface-2)]" /> Spent</span>
+          <span className="inline-flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-[var(--color-text)]" /> Spent</span>
         </span>
       </div>
       <div className="space-y-2">
@@ -336,9 +337,9 @@ export function LinesChart({ rows, cur }: { rows: Array<{ name: string; budget: 
           <div key={r.name} className="grid grid-cols-[minmax(0,180px)_minmax(0,1fr)_auto] gap-2 items-center text-[12px]">
             <span className="truncate text-[var(--color-text)]" title={r.name}>{r.name}</span>
             <div className="space-y-0.5">
-              <div className="h-2 rounded-sm bg-slate-300 dark:bg-slate-600" style={{ width: `${(r.budget / max) * 100}%` }} />
+              <div className="h-2 rounded-sm bg-[var(--color-border-strong)]" style={{ width: `${(r.budget / max) * 100}%` }} />
               <div className="h-1.5 rounded-sm bg-[var(--color-text-muted)]" style={{ width: `${(r.committed / max) * 100}%` }} />
-              <div className={`h-2 rounded-sm ${r.spent > r.budget && r.budget > 0 ? "bg-rose-500" : "bg-[var(--color-surface-2)]"}`} style={{ width: `${(r.spent / max) * 100}%` }} />
+              <div className={`h-2 rounded-sm ${r.spent > r.budget && r.budget > 0 ? "bg-rose-500" : "bg-[var(--color-text)]"}`} style={{ width: `${(r.spent / max) * 100}%` }} />
             </div>
             <span className={`tabular-nums text-right ${r.spent > r.budget && r.budget > 0 ? "text-rose-700 dark:text-rose-400 font-bold" : "text-[var(--color-text-muted)]"}`}>{fmtMoney(r.spent, cur)} / {fmtMoney(r.budget, cur)}</span>
           </div>

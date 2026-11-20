@@ -8,6 +8,11 @@ import React, { useState } from "react";
 import { FileUp, Loader2, Printer, Trash2 } from "lucide-react";
 import { cleanLetterhead, layerHtml, letterheadDocument, type Letterhead } from "@/lib/letterhead";
 import { saveLetterhead, useLetterhead } from "@/lib/letterheadStore";
+import { useFileDrag } from "@/hooks/useFileDrag";
+import { tryUpload } from "@/lib/uploadRetry";
+import FileThumb from "@/components/ui/FileThumb";
+import { fileSize } from "@/components/projects/cost/FilePreview";
+import { appConfirm } from "@/components/providers/DialogProvider";
 
 const btn = "inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[12.5px] font-bold px-3.5 py-2 shadow-sm disabled:opacity-50";
 const quiet = "inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] text-[12.5px] font-semibold text-[var(--color-text)] px-3 py-2 hover:bg-[var(--color-surface-2)] disabled:opacity-50";
@@ -42,7 +47,7 @@ export function LetterheadPreview({ lh, which, width = 220 }: { lh: Letterhead; 
 
 const SAMPLE = `<div style="font-family:Inter,Arial,sans-serif;font-size:10pt;color:#0f172a">
 <div style="font-size:9pt;color:#64748b">Shift turnover</div>
-<div style="font-size:15pt;font-weight:700;margin:2pt 0 10pt">Test page - the report prints here</div>
+<div style="font-size:15pt;font-weight:700;margin:2pt 0 10pt">Test page: the report prints here</div>
 ${Array.from({ length: 70 }, (_, i) => `<div style="padding:3pt 0;border-top:1px solid #e2e8f0">${i + 1}. A line of the report, inside the letterhead's margins.</div>`).join("")}
 </div>`;
 
@@ -64,30 +69,34 @@ export function LetterheadStep({ projectId, canManage }: { projectId: string; ca
   const [busy, setBusy] = useState<"read" | "save" | "remove" | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
-  const [over, setOver] = useState(false);
+  // The file being read, and one that couldn't be, kept for Try again.
+  const [picked, setPicked] = useState<File | null>(null);
+  const [failed, setFailed] = useState<File | null>(null);
 
   const read = async (f: File | undefined) => {
     if (!f) return;
-    setBusy("read"); setErr(null); setMsg(null);
+    setBusy("read"); setErr(null); setMsg(null); setPicked(f); setFailed(null);
     try {
       const { readLetterheadFile } = await import("@/lib/letterheadBrowser");
       const got = cleanLetterhead(await readLetterheadFile(f));
       if (!got) throw new Error("That file couldn't be read as a letterhead.");
       setDraft(got);
-    } catch (e) { setErr((e as Error).message); }
-    finally { setBusy(null); }
+    } catch (e) { setErr((e as Error).message); setFailed(f); }
+    finally { setBusy(null); setPicked(null); }
   };
+  const drag = useFileDrag((fs) => { void read(fs[0]); }, !!busy || !canManage);
   const save = async () => {
     if (!draft) return;
     setBusy("save"); setErr(null);
-    try { await saveLetterhead(projectId, draft); setDraft(null); setMsg("Saved - printed reports on this project now come out on this letterhead."); }
+    const done = () => { setDraft(null); setErr(null); setMsg("Saved. Printed reports on this project now come out on this letterhead."); };
+    try { await tryUpload(`Letterhead: ${draft.name}`, () => saveLetterhead(projectId, draft), { onRetried: done }); done(); }
     catch (e) { setErr((e as Error).message); }
     finally { setBusy(null); }
   };
   const remove = async () => {
-    if (!window.confirm("Remove the letterhead? Printed reports go back to plain paper.")) return;
+    if (!(await appConfirm({ message: "Remove the letterhead? Printed reports go back to plain paper.", tone: "danger", confirmLabel: "Remove" }))) return;
     setBusy("remove"); setErr(null);
-    try { await saveLetterhead(projectId, null); setDraft(null); setMsg("Removed - reports print on plain paper."); }
+    try { await saveLetterhead(projectId, null); setDraft(null); setMsg("Removed. Reports print on plain paper."); }
     catch (e) { setErr((e as Error).message); }
     finally { setBusy(null); }
   };
@@ -108,18 +117,24 @@ export function LetterheadStep({ projectId, canManage }: { projectId: string; ca
   if (!lh) {
     return (
       <div className="space-y-2.5">
-        <label
-          onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
-          onDrop={(e) => { e.preventDefault(); setOver(false); if (canManage) void read(e.dataTransfer.files?.[0]); }}
-          className={`flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-8 text-center cursor-pointer ${over ? "border-[var(--color-accent)] bg-[var(--color-surface-2)]" : "border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]"} ${!canManage ? "pointer-events-none opacity-60" : ""}`}>
-          {busy === "read" ? <Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-muted)]" /> : <FileUp className="w-6 h-6 text-[var(--color-text-muted)]" />}
-          <span className="text-[13.5px] font-bold text-[var(--color-text)]">{busy === "read" ? "Reading the letterhead…" : "Upload your letterhead"}</span>
-          <span className="text-[12px] text-[var(--color-text-muted)] max-w-md">Word (.docx) keeps its logo, address and margins. A PDF or a picture of the page works too - the report goes in its blank part.</span>
+        <label {...drag.bind}
+          className={`flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-8 text-center cursor-pointer ${drag.over ? `border-[var(--color-accent)] ${drag.ring}` : "border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]"} ${!canManage ? "pointer-events-none opacity-60" : ""}`}>
+          {picked ? <FileThumb file={picked} size={44} /> : <FileUp className="w-6 h-6 text-[var(--color-text-muted)]" />}
+          <span className="text-[13.5px] font-bold text-[var(--color-text)]">
+            {drag.over ? drag.say : picked ? <><Loader2 className="w-4 h-4 animate-spin inline mr-1" />Reading {picked.name} · {fileSize(picked.size)}</> : "Upload your letterhead"}
+          </span>
+          <span className="text-[12px] text-[var(--color-text-muted)] max-w-md">Word (.docx) keeps its logo, address and margins. A PDF or a picture of the page works too: the report goes in its blank part.</span>
           <input type="file" accept={ACCEPT} className="sr-only" disabled={!!busy || !canManage}
             onChange={(e) => { void read(e.target.files?.[0]); e.target.value = ""; }} />
         </label>
         {!canManage && <div className="text-[12px] text-[var(--color-text-muted)]">Only the project owner or an admin can set the letterhead.</div>}
-        {err && <div className="text-[12px] text-rose-700 dark:text-rose-300">{err}</div>}
+        {err && (
+          <div role="alert" className="flex items-center gap-2 flex-wrap border-l-2 border-rose-500 pl-2 text-[12px] text-rose-700 dark:text-rose-300">
+            {failed && <FileThumb file={failed} size={28} />}
+            <span className="min-w-0 flex-1">{failed ? `${failed.name} · ${fileSize(failed.size)}: ` : ""}{err}</span>
+            {failed && <button type="button" onClick={() => void read(failed)} className={quiet}>Try again</button>}
+          </div>
+        )}
         {msg && <div className="text-[12px] text-emerald-700 dark:text-emerald-400">{msg}</div>}
       </div>
     );
@@ -139,7 +154,7 @@ export function LetterheadStep({ projectId, canManage }: { projectId: string; ca
             <span className="text-[var(--color-text-muted)]"> · {lh.kind === "docx" ? "Word" : lh.kind === "pdf" ? "PDF" : "picture"} · {lh.page.w}″ × {lh.page.h}″{draft ? " · not saved yet" : ""}</span>
           </div>
           <fieldset className="space-y-1.5" disabled={!canManage}>
-            <legend className="text-[12px] font-semibold text-[var(--color-text)]">Where the report goes - inches in from each edge</legend>
+            <legend className="text-[12px] font-semibold text-[var(--color-text)]">Where the report goes: inches in from each edge</legend>
             <div className="grid grid-cols-2 gap-2 max-w-xs">
               {(["top", "bottom", "left", "right"] as const).map((k) => (
                 <label key={k} className="flex items-center justify-between gap-2 text-[12px] text-[var(--color-text-muted)] capitalize">
@@ -158,7 +173,14 @@ export function LetterheadStep({ projectId, canManage }: { projectId: string; ca
               </label>
             ))}
           </fieldset>
-          {err && <div className="text-[12px] text-rose-700 dark:text-rose-300">{err}</div>}
+          {err && (
+            <div role="alert" className="flex items-center gap-2 flex-wrap border-l-2 border-rose-500 pl-2 text-[12px] text-rose-700 dark:text-rose-300">
+              {failed && <FileThumb file={failed} size={28} />}
+              <span className="min-w-0 flex-1">{failed ? `${failed.name} · ${fileSize(failed.size)}: ` : ""}{err}</span>
+              {failed && <button type="button" onClick={() => void read(failed)} className={quiet}>Try again</button>}
+            </div>
+          )}
+          {picked && <div className="flex items-center gap-2 text-[12px] text-[var(--color-text-muted)]"><FileThumb file={picked} size={28} /> Reading {picked.name} · {fileSize(picked.size)}…</div>}
           {msg && !draft && <div className="text-[12px] text-emerald-700 dark:text-emerald-400">{msg}</div>}
           <div className="flex flex-wrap gap-2">
             {canManage && draft && (
@@ -166,7 +188,7 @@ export function LetterheadStep({ projectId, canManage }: { projectId: string; ca
                 {busy === "save" && <Loader2 className="w-4 h-4 animate-spin" />} Save for the project
               </button>
             )}
-            <button type="button" onClick={() => { if (!printLetterheadTest(lh)) setErr("Your browser blocked the print window - allow pop-ups for this site."); }} className={quiet}>
+            <button type="button" onClick={() => { if (!printLetterheadTest(lh)) setErr("Your browser blocked the print window. Allow pop-ups for this site."); }} className={quiet}>
               <Printer className="w-4 h-4" /> Print a test page
             </button>
             {canManage && fileInput("Replace…", false)}

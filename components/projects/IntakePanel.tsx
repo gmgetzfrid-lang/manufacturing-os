@@ -20,6 +20,7 @@ import { finalizeReviewedRevision } from "@/lib/reviewControl";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import TransitionInPanel from "@/components/projects/TransitionInPanel";
 import { flagCollisionToDrafting, TransitionCandidate, TransitionImpact } from "@/lib/transitionIn";
+import LoadingBlock from "@/components/ui/LoadingBlock";
 
 interface IntakeLink {
   id: string; token: string; companyName: string; contactEmail: string | null;
@@ -61,13 +62,16 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const [{ data: lk }, { data: proj }, { data: ls }] = await Promise.all([
+      const [{ data: lk, error: lkErr }, { data: proj, error: projErr }, { data: ls }] = await Promise.all([
         supabase.from("project_intake_links")
           .select("id, token, company_name, contact_email, allow_auto_supersede, expires_at, revoked_at, submission_count, last_used_at, assigned_doc_ids")
           .eq("project_id", projectId).order("created_at", { ascending: false }),
         supabase.from("projects").select("intake_library_id, intake_collection_id").eq("id", projectId).maybeSingle(),
         supabase.from("libraries").select("id, name").eq("org_id", orgId).order("name"),
       ]);
+      // A failed read says so, instead of looking like no links.
+      if (lkErr) throw new Error(lkErr.message);
+      if (projErr) throw new Error(projErr.message);
       const linkRows = (((lk ?? []) as Array<Record<string, unknown>>)).map((r) => ({
         id: String(r.id), token: String(r.token), companyName: String(r.company_name),
         contactEmail: (r.contact_email as string | null) ?? null,
@@ -143,7 +147,8 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
     setBusy("create"); setMsg(null);
     try {
       if (!intakeLibraryId) {
-        await supabase.from("projects").update({ intake_library_id: lib }).eq("id", projectId);
+        const { error: libErr } = await supabase.from("projects").update({ intake_library_id: lib }).eq("id", projectId);
+        if (libErr) throw new Error(`Couldn't set the intake library: ${libErr.message}`);
       }
       const token = (crypto.randomUUID() + crypto.randomUUID()).replace(/-/g, "").slice(0, 40);
       const { error } = await supabase.from("project_intake_links").insert({
@@ -160,9 +165,13 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         org_id: orgId, user_id: uid, user_email: userEmail ?? null,
         details: { company: company.trim(), trusted, expires: expires || null },
       }).then(() => undefined, () => undefined);
+      const name = company.trim();
       setCompany(""); setEmail(""); setExpires(""); setTrusted(false);
       await refresh();
-      setMsg("Link created - copy it below and send it to the company.");
+      // Straight to the next step: the link is on the clipboard, ready to send.
+      let copied = false;
+      try { await navigator.clipboard.writeText(portalUrl(token)); copied = true; } catch { /* the Copy button below still works */ }
+      setMsg(copied ? `Link for ${name} created and copied. Paste it into your email to them.` : `Link for ${name} created. Copy it below and send it to them.`);
     } catch (e) { setMsg((e as Error).message); }
     finally { setBusy(null); }
   };
@@ -192,7 +201,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
     try {
       const { data, error } = await supabase.from("project_intake_links").update({ expires_at: expiresAt }).eq("id", l.id).select("id");
       if (error) throw new Error(`Couldn't extend: ${error.message}`);
-      if (!data || data.length === 0) throw new Error("Not extended - only the project's owner, a co-owner or Document Control can change its links.");
+      if (!data || data.length === 0) throw new Error("Not extended. Only the project's owner, a co-owner or Document Control can change its links.");
       await supabase.from("audit_logs").insert({
         action: "INTAKE_LINK_EXTENDED",
         resource_type: "project_intake_link", resource_id: l.id,
@@ -202,7 +211,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       setExtendOpen(null);
       await refresh();
       setMsg(expiresAt
-        ? `${l.companyName}'s link now works through ${new Date(expiresAt).toLocaleDateString()} - same link, nothing to resend.`
+        ? `${l.companyName}'s link now works through ${new Date(expiresAt).toLocaleDateString()}. Same link, nothing to resend.`
         : `${l.companyName}'s link no longer expires.`);
     } catch (e) { setMsg((e as Error).message); }
     finally { setBusy(null); }
@@ -254,7 +263,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       }).then(() => undefined, () => undefined);
       setAssignQ(""); setAssignResults([]);
       await refresh();
-      if (addedLabel) setMsg(`${addedLabel} assigned to ${l.companyName} - revisions they submit will come to review.`);
+      if (addedLabel) setMsg(`${addedLabel} assigned to ${l.companyName}. Revisions they submit come to review.`);
     } catch (e) { setMsg((e as Error).message); }
     finally { setBusy(null); }
   };
@@ -267,7 +276,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         requireRosterComplete: false,
       });
       if (!res.published) throw new Error(res.reason || "Couldn't approve");
-      setMsg(`${p.label} Rev ${p.revLabel ?? ""} approved - it is now the current revision.`);
+      setMsg(`${p.label} Rev ${p.revLabel ?? ""} approved. It is now the current revision.`);
       await refresh();
     } catch (e) { setMsg((e as Error).message); }
     finally { setBusy(null); }
@@ -291,7 +300,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         org_id: orgId, user_id: uid, user_email: userEmail ?? null,
         details: { projectId, versionId: p.pendingVersionId, revLabel: p.revLabel, company: p.company },
       }).then(() => undefined, () => undefined);
-      setMsg(`${p.label} Rev ${p.revLabel ?? ""} rejected - the record and portal now show it as not accepted.`);
+      setMsg(`${p.label} Rev ${p.revLabel ?? ""} rejected. The record and portal now show it as not accepted.`);
       await refresh();
     } catch (e) { setMsg((e as Error).message); }
     finally { setBusy(null); }
@@ -309,15 +318,15 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       actorId: uid, actorEmail: userEmail ?? null, actorRole: null,
     });
     setMsg(res.ok
-      ? `${candidate.label} flagged to drafting - ticket ${res.ticketNumber} is in the assignment queue.`
+      ? `${candidate.label} flagged to drafting. Ticket ${res.ticketNumber} is in the assignment queue.`
       : (res.error ?? "Couldn't flag the collision."));
   };
 
-  if (loading) return <div className="py-10 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-text-muted)]" /></div>;
+  if (loading) return <LoadingBlock what="intake" />;
 
   return (
     <div className="space-y-4">
-      {msg && <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-xs font-bold text-[var(--color-text)]">{msg}</div>}
+      {msg && <div role="status" className="border-l-2 border-[var(--color-border-strong)] pl-3 py-1 text-xs font-bold text-[var(--color-text)] flex items-center gap-2"><span className="min-w-0 flex-1">{msg}</span><button onClick={() => setMsg(null)} aria-label="Dismiss" className="shrink-0 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button></div>}
 
       {/* Review queue — the point of the whole system. */}
       <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
@@ -326,7 +335,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
           <span className="text-base font-bold text-[var(--color-text)]">Submissions awaiting review</span>
           <span className={`text-base font-black tabular-nums ${pending.length ? "text-amber-600" : "text-[var(--color-text-faint)]"}`}>{pending.length}</span>
         </div>
-        {pending.length === 0 && <div className="text-xs italic text-[var(--color-text-faint)]">Nothing waiting. Approved intake revisions become the single current version automatically.</div>}
+        {pending.length === 0 && <div className="text-xs italic text-[var(--color-text-faint)]">Nothing waiting for review.</div>}
         <ul className="space-y-2">
           {pending.map((p) => (
             <li key={p.docId} className="rounded-xl border border-amber-500/30 bg-amber-500/[0.05] px-3 py-2">
@@ -336,7 +345,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                 <span className="text-xs text-[var(--color-text-muted)]">Rev {p.revLabel ?? "-"} · {p.company ?? "external"}{p.submittedAt ? ` · ${new Date(p.submittedAt).toLocaleDateString()}` : ""}</span>
                 {canManage && (
                   <span className="ml-auto flex items-center gap-1.5">
-                    <button onClick={() => void approve(p)} disabled={busy === p.docId} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+                    <button onClick={() => void approve(p)} disabled={busy === p.docId} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[11px] font-black disabled:opacity-50">
                       {busy === p.docId ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Approve
                     </button>
                     <button onClick={() => void reject(p)} disabled={busy === p.docId} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-rose-500/40 text-rose-700 dark:text-rose-300 text-[11px] font-black hover:bg-rose-500/10 disabled:opacity-50">
@@ -365,7 +374,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         <div className="flex items-center gap-2 mb-2">
           <Link2 className="w-4 h-4 text-[var(--color-text-muted)]" />
           <span className="text-base font-bold text-[var(--color-text)]">Contractor submit links</span>
-          <span className="text-xs text-[var(--color-text-muted)]">no account needed - upload-only, own documents only, everything tracked</span>
+          <span className="text-xs text-[var(--color-text-muted)]">no account needed, upload only</span>
         </div>
         <ul className="space-y-1.5 mb-3">
           {links.map((l) => (
@@ -381,13 +390,13 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                   <span className="ml-auto flex items-center gap-1 flex-wrap">
                     {canManage && l.expiresAt && (
                       <button onClick={() => { setExtendOpen(extendOpen === l.id ? null : l.id); setExtendDay(dayOfIso(extendedExpiry(l.expiresAt, 7))); }}
-                        title="Give the company more time - same link, nothing to resend"
+                        title="Give the company more time. Same link, nothing to resend."
                         className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] font-bold hover:border-[var(--color-accent-ring)]">
                         <CalendarPlus className="w-3 h-3" /> Extend
                       </button>
                     )}
                     {canManage && (!l.expiresAt || Date.parse(l.expiresAt) > Date.now()) && (
-                      <button onClick={() => { void navigator.clipboard.writeText(portalUrl(l.token)); setMsg(`Copied ${l.companyName}'s link.`); }} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] font-bold hover:border-[var(--color-accent-ring)]"><Copy className="w-3 h-3" /> Copy link</button>
+                      <button onClick={() => { void navigator.clipboard.writeText(portalUrl(l.token)).then(() => setMsg(`Copied ${l.companyName}'s link.`), () => setMsg(`Couldn't copy: your browser blocked it. The link is ${portalUrl(l.token)}`)); }} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] font-bold hover:border-[var(--color-accent-ring)]"><Copy className="w-3 h-3" /> Copy link</button>
                     )}
                     {canManage && (
                       <button onClick={() => { setAssignOpen(assignOpen === l.id ? null : l.id); setAssignQ(""); setAssignResults([]); }} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] font-bold hover:border-[var(--color-accent-ring)]">
@@ -402,7 +411,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                 <div className="mt-1.5 pt-1.5 border-t border-[var(--color-border)] flex items-center gap-1.5 flex-wrap">
                   <span className="text-[11px] font-bold text-[var(--color-text-muted)]">Works through:</span>
                   <button onClick={() => void extend(l, extendedExpiry(l.expiresAt, 7))} disabled={busy === l.id}
-                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-[var(--color-text)] text-[var(--color-surface)] text-[11px] font-black disabled:opacity-50">
                     {busy === l.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <CalendarPlus className="w-3 h-3" />} 7 more days
                   </button>
                   <input type="date" value={extendDay} onChange={(e) => setExtendDay(e.target.value)} min={dayOfIso(new Date().toISOString())} aria-label="New end date"

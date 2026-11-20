@@ -69,10 +69,10 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
       ? plannedManpowerSeries({ laborHours: exAward.laborHours, scheduleStart: ex.scheduleStart, scheduleEnd: ex.scheduleEnd })
       : [];
     return (
-      <ExampleFrame note="No budget or entries yet - this is the picture a running job draws. Set a budget line below and it goes live.">
+      <ExampleFrame note="No budget or entries yet. This is the picture a running job draws. Set a budget line and it fills in.">
         <div className="space-y-4">
           <div>
-            <SectionLabel icon={<LineChartIcon className="w-3.5 h-3.5" />} text="Spend curve - planned pace vs promised vs spent" />
+            <SectionLabel icon={<LineChartIcon className="w-3.5 h-3.5" />} text="Spend curve: planned pace, promised and spent" />
             <SCurveChart points={exSeries} fmt={(n) => fmtMoney(n, "USD")} todayIso={ex.today} />
           </div>
 
@@ -102,7 +102,7 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-sm space-y-3">
       {series.length >= 2 && (
         <div>
-          <SectionLabel icon={<LineChartIcon className="w-3.5 h-3.5" />} text="Spend curve - planned pace vs promised vs spent" />
+          <SectionLabel icon={<LineChartIcon className="w-3.5 h-3.5" />} text="Spend curve: planned pace, promised and spent" />
           <SCurveChart points={series} fmt={fmt} todayIso={todayIso} />
           {!scheduleStart && (
             <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">

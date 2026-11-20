@@ -14,7 +14,7 @@
 
 import React, { useMemo, useRef, useState } from "react";
 import {
-  FileUp, Loader2, Sparkles, X, Check, AlertTriangle, CheckCircle2, Plus, Trash2, Building2,
+  FileUp, Loader2, Sparkles, X, Check, CheckCircle2, Plus, Trash2, Building2,
 } from "lucide-react";
 import { fmtMoney, type Actor, type CostAccount, type CostParty } from "@/lib/costs";
 import {
@@ -23,6 +23,10 @@ import {
 } from "@/lib/budgetDoc";
 import { readBudgetDoc, applyBudgetToProject, type BudgetReadResult } from "@/lib/budgetImport";
 import { listCompanies } from "@/lib/companies";
+import { useFileDrag } from "@/hooks/useFileDrag";
+import { tryUpload } from "@/lib/uploadRetry";
+import FileThumb from "@/components/ui/FileThumb";
+import { fileSize } from "@/components/projects/cost/FilePreview";
 
 export function BudgetDocDrop({ orgId, projectId, onRead, compact, label }: {
   orgId: string; projectId?: string | null;
@@ -30,52 +34,63 @@ export function BudgetDocDrop({ orgId, projectId, onRead, compact, label }: {
   compact?: boolean;
   label?: string;
 }) {
-  const [reading, setReading] = useState<string | null>(null);
+  const [reading, setReading] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [over, setOver] = useState(false);
+  // The file that failed, kept so Try again doesn't make them find it again.
+  const [failed, setFailed] = useState<File | null>(null);
   const input = useRef<HTMLInputElement>(null);
 
   const read = async (file: File | undefined) => {
     if (!file) return;
-    setReading(file.name); setError(null);
+    setReading(file); setError(null); setFailed(null);
     try {
-      onRead(await readBudgetDoc({ orgId, projectId, file }));
+      // The upload and the read together, so the corner card's Try again
+      // repeats both with the same file.
+      onRead(await tryUpload(file.name, () => readBudgetDoc({ orgId, projectId, file }), { onRetried: (r) => { setError(null); setFailed(null); onRead(r); } }));
     } catch (e) {
       setError((e as Error).message);
+      setFailed(file);
     } finally { setReading(null); }
   };
+  const drag = useFileDrag((fs) => { void read(fs[0]); }, !!reading);
 
   return (
     <div>
       <div
-        onDragOver={(e) => { e.preventDefault(); setOver(true); }}
-        onDragLeave={() => setOver(false)}
-        onDrop={(e) => { e.preventDefault(); setOver(false); void read(e.dataTransfer.files?.[0]); }}
+        {...drag.bind}
         onClick={() => !reading && input.current?.click()}
         role="button" tabIndex={0}
         onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && !reading) input.current?.click(); }}
         className={`rounded-xl border-2 border-dashed transition-colors cursor-pointer flex items-center gap-3 ${compact ? "px-3 py-2.5" : "px-4 py-5"} ${
-          over ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]/60" : "border-[var(--color-border-strong)] hover:border-[var(--color-accent-ring)] bg-[var(--color-surface-2)]/30"}`}
+          drag.over ? `border-[var(--color-accent)] ${drag.ring}` : "border-[var(--color-border-strong)] hover:border-[var(--color-accent-ring)] bg-[var(--color-surface-2)]/30"}`}
       >
-        <span className="p-2 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)] shrink-0">
-          {reading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileUp className="w-4 h-4" />}
-        </span>
+        {reading ? <FileThumb file={reading} size={36} /> : (
+          <span className="p-2 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)] shrink-0">
+            <FileUp className="w-4 h-4" />
+          </span>
+        )}
         <span className="min-w-0">
-          <span className="block text-xs font-black text-[var(--color-text)]">
-            {reading ? `Reading ${reading}…` : label ?? "Drop your AFE, estimate, or budget sheet"}
+          <span className="block text-xs font-black text-[var(--color-text)] truncate">
+            {drag.over ? drag.say : reading ? <><Loader2 className="w-3 h-3 animate-spin inline mr-1" />Reading {reading.name} · {fileSize(reading.size)}</> : label ?? "Drop your AFE, estimate, or budget sheet"}
           </span>
           <span className="block text-[11px] text-[var(--color-text-muted)]">
             {reading
-              ? "The AI is reading the pages - usually 20–60 seconds. Nothing is saved until you review it."
-              : "PDF (scanned is fine), photo, Excel/CSV, Word, or text - any company's form. Read on your own AI key; you review before anything is created."}
+              ? "Usually 20 to 60 seconds. Nothing is saved until you check it."
+              : "PDF (scanned is fine), photo, Excel, CSV, Word or text. You check it before anything is made."}
           </span>
         </span>
         <input ref={input} type="file" accept={BUDGET_DOC_ACCEPT} className="hidden"
           onChange={(e) => { void read(e.target.files?.[0]); e.target.value = ""; }} />
       </div>
       {error && (
-        <div className="mt-2 flex items-start gap-2 text-[11px] font-bold text-rose-700 dark:text-rose-300">
-          <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" /> {error}
+        <div className="mt-2 flex items-center gap-2 flex-wrap border-l-2 border-rose-500 pl-2 text-[11px] font-bold text-rose-700 dark:text-rose-300">
+          {failed && <FileThumb file={failed} size={24} />}
+          <span className="min-w-0 flex-1">{failed ? `${failed.name} · ${fileSize(failed.size)}: ` : ""}{error}</span>
+          {failed && (
+            <button type="button" onClick={() => void read(failed)} className="shrink-0 h-7 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+              Try again
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -146,7 +161,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
             )}
           </div>
         </div>
-        <button onClick={onClose} disabled={applying} className="p-1 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
+        <button onClick={onClose} disabled={applying} aria-label="Close" className="p-1 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
       </div>
 
       {/* Reconciliation — the three numbers that have to agree */}
@@ -193,7 +208,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
                 <tr key={l.key} className={l.include ? "" : "opacity-45"}>
                   <td className="py-1.5">
                     <input type="checkbox" checked={l.include} onChange={(e) => patch(l.key, { include: e.target.checked })}
-                      className="accent-[var(--color-accent)]" title="Include this line" />
+                      className="accent-[var(--color-text)]" title="Include this line" />
                   </td>
                   <td className="py-1.5 pr-2">
                     <input value={l.name} onChange={(e) => patch(l.key, { name: e.target.value })}
@@ -203,7 +218,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
                         {exists && <span className="font-bold text-[var(--color-text-muted)]">Already a budget line, same budget. </span>}
                         {upd && (
                           <label className="inline-flex items-center gap-1 font-bold text-amber-800 dark:text-amber-300">
-                            <input type="checkbox" checked={!keepBudgets.has(upd.name.toLowerCase())} className="accent-[var(--color-accent)]"
+                            <input type="checkbox" checked={!keepBudgets.has(upd.name.toLowerCase())} className="accent-[var(--color-text)]"
                               onChange={(e) => setKeepBudgets((k) => { const n = new Set(k); if (e.target.checked) n.delete(upd.name.toLowerCase()); else n.add(upd.name.toLowerCase()); return n; })} />
                             Change its budget {fmtMoney(upd.from, cur)} → {fmtMoney(upd.to, cur)}
                           </label>
@@ -223,7 +238,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
                       <input value={l.supplier ?? ""} onChange={(e) => patch(l.key, { supplier: e.target.value.trim() ? e.target.value : null })}
                         placeholder="-" className="w-36 h-7 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 text-[11px]" />
                       {l.supplier && !exists && (
-                        <span title={known ? `Matches ${known.name} on this project` : "New company - will be added"}
+                        <span title={known ? `Matches ${known.name} on this project` : "New company: it will be added"}
                           className={`text-[11px] font-black uppercase ${known ? "text-emerald-600" : "text-[var(--color-text-faint)]"}`}>
                           {known ? <Check className="w-3 h-3" /> : "new"}
                         </span>
@@ -253,7 +268,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
           <Building2 className="w-3 h-3" />
           Creates {plan.accountsToCreate.length} budget line{plan.accountsToCreate.length === 1 ? "" : "s"}{updating ? `, changes ${updating} budget${updating === 1 ? "" : "s"}` : ""}
           {plan.partiesToCreate.length > 0 ? ` and ${plan.partiesToCreate.length} compan${plan.partiesToCreate.length === 1 ? "y" : "ies"} (${plan.partiesToCreate.join(", ")})` : ""}.
-          {" "}No money is posted - quotes and invoices do that.
+          {" "}No money is posted: quotes and invoices do that.
         </span>
         {error && <span className="text-[11px] font-bold text-rose-700 dark:text-rose-300">{error}</span>}
         <span className="ml-auto flex items-center gap-2">
@@ -281,12 +296,9 @@ function Fact({ label, value, sub, tone }: { label: string; value: string; sub?:
 
 export function BlankPagesNote({ pages }: { pages: number[] }) {
   return (
-    <div className="mx-4 mb-2 flex items-start gap-2 rounded-lg border border-amber-500/50 bg-amber-500/[0.07] px-3 py-2 text-[11px] font-bold text-amber-800 dark:text-amber-300">
-      <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-      <span>
-        Page{pages.length === 1 ? "" : "s"} {pages.join(", ")} came through blank - usually a scanner compression the reader can&apos;t decode yet.
-        Anything only on {pages.length === 1 ? "that page" : "those pages"} was not read; check it against the paper.
-      </span>
-    </div>
+    <p className="mx-4 mb-2 border-l-2 border-amber-500 pl-2 text-[11px] font-bold text-amber-800 dark:text-amber-300">
+      Page{pages.length === 1 ? "" : "s"} {pages.join(", ")} came through blank, usually scanner compression.
+      Anything only on {pages.length === 1 ? "that page" : "those pages"} was not read: check it against the paper.
+    </p>
   );
 }

@@ -36,7 +36,10 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
   // Destination
   const [libs, setLibs] = useState<Array<{ id: string; name: string }>>([]);
   const [cols, setCols] = useState<Array<{ id: string; name: string }>>([]);
-  const [destLib, setDestLib] = useState("");
+  // The library picked last time on this project, to start with.
+  const destKey = `transition-in.dest:${projectId}`;
+  const [destLib, setDestLibState] = useState(() => { try { return localStorage.getItem(destKey) ?? ""; } catch { return ""; } });
+  const setDestLib = (v: string) => { setDestLibState(v); try { localStorage.setItem(destKey, v); } catch { /* private mode */ } };
   const [destCol, setDestCol] = useState("");
   const [renumber, setRenumber] = useState<Map<string, string>>(new Map());
 
@@ -76,9 +79,12 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
       const { data } = await supabase.from("collections")
         .select("id, name").eq("library_id", destLib).order("name");
       if (alive) setCols(((data ?? []) as Array<{ id: string; name: string }>));
+      // A remembered library that's gone: pick again.
+      if (alive && libs.length && !libs.some((l) => l.id === destLib)) setDestLib("");
     })();
     return () => { alive = false; };
-  }, [destLib]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- libs only checks a remembered pick
+  }, [destLib, libs]);
 
   const cleanCount = useMemo(
     () => candidates.filter((c) => impacts.get(c.docId)?.clean).length,
@@ -126,15 +132,16 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
     }
     setBusy(null);
     setMsg(failed.length
-      ? `Adopted ${ok} of ${clean.length} - failed: ${failed.join(", ")}`
+      ? `Adopted ${ok} of ${clean.length}. Not adopted: ${failed.join(", ")}`
       : `Adopted ${ok} clean document${ok === 1 ? "" : "s"} into the controlled register. ${flaggedCount ? `${flaggedCount} flagged sheet${flaggedCount === 1 ? "" : "s"} stayed for resolution.` : ""}`);
     await refresh();
   };
 
   if (loading && candidates.length === 0) {
-    return <div className="py-6 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-text-muted)]" /></div>;
+    return <div className="py-6 flex items-center justify-center gap-2 text-xs text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Checking the intake folder…</div>;
   }
-  if (candidates.length === 0) return null; // nothing to transition — stay out of the way
+  // Nothing to transition: stay out of the way, unless the read failed.
+  if (candidates.length === 0) return msg ? <div role="alert" className="border-l-2 border-rose-500 pl-3 text-xs font-bold text-rose-700 dark:text-rose-300">{msg}</div> : null;
 
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
@@ -143,11 +150,11 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
         <span className="text-base font-bold text-[var(--color-text)]">Transition in</span>
         <span className="text-xs text-[var(--color-text-muted)]">
           {candidates.length} sheet{candidates.length === 1 ? "" : "s"} in intake ·{" "}
-          <b className="text-emerald-600">{cleanCount} clean</b>
-          {flaggedCount > 0 && <> · <b className="text-amber-600">{flaggedCount} need review</b></>}
+          <b className="text-emerald-700 dark:text-emerald-400">{cleanCount} clean</b>
+          {flaggedCount > 0 && <> · <b className="text-amber-700 dark:text-amber-400">{flaggedCount} need review</b></>}
           {scanning && <> · scanning…</>}
         </span>
-        <button onClick={() => void refresh()} disabled={loading} title="Re-scan" className="ml-auto p-1 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
+        <button onClick={() => void refresh()} disabled={loading} title="Scan again" aria-label="Scan again" className="ml-auto p-1 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
         </button>
       </div>
@@ -196,22 +203,22 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
                   {impact && impact.overlapDocs.length > 0 && (
                     <span className="inline-flex items-center gap-0.5 text-[11px] font-bold text-amber-700 dark:text-amber-400"><Layers className="w-3 h-3" /> {impact.overlapDocs.length} overlap{impact.overlapDocs.length === 1 ? "" : "s"}</span>
                   )}
-                  {impact?.clean && <span className="text-[11px] font-bold text-emerald-600">clean</span>}
+                  {impact?.clean && <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400">clean</span>}
                 </span>
               </button>
 
               {expanded && impact && (
                 <div className="mt-2 pt-2 border-t border-[var(--color-border)] space-y-2 text-xs">
                   {impact.numberCollision && (
-                    <div className="rounded-lg border border-rose-500/40 bg-rose-500/[0.06] px-2.5 py-1.5">
+                    <div className="border-l-2 border-rose-500 pl-2.5">
                       <b className="text-rose-700 dark:text-rose-300">Number collision:</b>{" "}
                       <span className="text-[var(--color-text)]">{impact.numberCollision.label} (Rev {impact.numberCollision.rev ?? "-"}) already exists in the register.</span>{" "}
                       <span className="text-[var(--color-text-muted)]">Renumber this sheet below, or resolve which one is the source of truth before adopting.</span>
                     </div>
                   )}
                   {impact.overlapDocs.length > 0 && (
-                    <div className="rounded-lg border border-amber-500/40 bg-amber-500/[0.06] px-2.5 py-1.5 space-y-1">
-                      <div><b className="text-amber-700 dark:text-amber-400">Equipment overlap</b> <span className="text-[var(--color-text-muted)]">- existing sheets carry the same equipment and likely need a tie-in revision:</span></div>
+                    <div className="border-l-2 border-amber-500 pl-2.5 space-y-1">
+                      <div><b className="text-amber-700 dark:text-amber-400">Equipment overlap:</b> <span className="text-[var(--color-text-muted)]">existing sheets carry the same equipment and likely need a tie-in revision.</span></div>
                       <ul className="space-y-0.5">
                         {impact.overlapDocs.slice(0, 8).map((o) => (
                           <li key={o.id} className="text-[var(--color-text)]">
@@ -223,11 +230,11 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
                   )}
                   {impact.matchedAssets.length > 0 && (
                     <div className="text-[var(--color-text-muted)]">
-                      Registry equipment on this sheet: <b className="text-[var(--color-text)]">{impact.matchedAssets.map((a) => a.tag).join(", ")}</b> - linked automatically on adoption.
+                      Registry equipment on this sheet: <b className="text-[var(--color-text)]">{impact.matchedAssets.map((a) => a.tag).join(", ")}</b>, linked on adoption.
                     </div>
                   )}
                   {impact.tags.length === 0 && (
-                    <div className="text-[var(--color-text-faint)] italic">No equipment tags recognized in the number/title - adoption still works, links can be added later.</div>
+                    <div className="text-[var(--color-text-faint)] italic">No equipment tags found in the number or title. It can still be adopted; links can be added later.</div>
                   )}
 
                   {canManage && (
@@ -240,7 +247,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
                       />
                       <button onClick={() => void adoptOne(c)} disabled={busy === c.docId || !destLib}
                         title={!destLib ? "Pick the destination library above" : undefined}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[11px] font-black disabled:opacity-50">
                         {busy === c.docId ? <Loader2 className="w-3 h-3 animate-spin" /> : <ArrowRightCircle className="w-3 h-3" />} Adopt
                       </button>
                       {!impact.clean && onFlagCollision && (

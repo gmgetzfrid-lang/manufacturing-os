@@ -20,7 +20,7 @@ import TimeZoneSelect from "@/components/projects/TimeZoneSelect";
 import { browserTimeZone, fromDateInput } from "@/lib/scheduleTz";
 import {
   Briefcase, Loader2, Plus, X, ChevronLeft, ChevronRight, Check,
-  Target, FileText, CircleDollarSign, Flag, HardHat, Search, AlertTriangle, Sparkles,
+  Target, FileText, CircleDollarSign, Flag, HardHat, Search, Sparkles,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
@@ -34,6 +34,9 @@ import { BudgetDocDrop } from "@/components/projects/cost/BudgetImport";
 import { recordBudgetBasis, suppliersOf, partyKindFor, type BudgetReadResult } from "@/lib/budgetImport";
 import { projectPrefillFrom, reconcileBudget, matchParty, sameCompany, COST_TYPES, type CostType } from "@/lib/budgetDoc";
 import { fmtMoney } from "@/lib/costs";
+import StepPath from "@/components/ui/StepPath";
+import { useDraft } from "@/hooks/useDraft";
+import { appAlert } from "@/components/providers/DialogProvider";
 
 const STEPS = [
   { key: "basics", label: "Basics", icon: Briefcase },
@@ -46,9 +49,9 @@ const STEPS = [
 type StepKey = (typeof STEPS)[number]["key"];
 
 const JOB_KINDS = [
-  { v: "small", label: "Small job", hint: "A repair, a swap, a short scope - light paperwork, quick closeout." },
-  { v: "standard", label: "Standard project", hint: "A typical maintenance or improvement project - full turnover package." },
-  { v: "capital", label: "Capital project", hint: "Major scope, serious money - full quality program, PSSR, strict gates." },
+  { v: "small", label: "Small job", hint: "A repair, a swap, a short scope: light paperwork, quick closeout." },
+  { v: "standard", label: "Standard project", hint: "A typical maintenance or improvement project: full turnover package." },
+  { v: "capital", label: "Capital project", hint: "Major scope, serious money: full quality program, PSSR, strict gates." },
 ] as const;
 
 export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRole, onClose, onCreated }: {
@@ -87,6 +90,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
   const [sowQuery, setSowQuery] = useState("");
   const [sowResults, setSowResults] = useState<Array<{ id: string; label: string }>>([]);
   const [sowDoc, setSowDoc] = useState<{ id: string; label: string } | null>(null);
+  const [sowError, setSowError] = useState(false);
   // Budget
   const [budgetRows, setBudgetRows] = useState<Array<{ name: string; budget: string; type: string; supplier: string }>>([
     { name: "", budget: "", type: "subcontract", supplier: "" },
@@ -106,6 +110,14 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
   useEffect(() => {
     listCompanies(orgId).then(setCompanies).catch(() => setCompanies([]));
   }, [orgId]);
+
+  // What they've typed comes back if the page reloads or they close it.
+  type Typed = { name: string; description: string; purpose: string; successCriteria: string; goals: string[] };
+  const typed = useMemo<Typed>(() => ({ name, description, purpose, successCriteria, goals }), [name, description, purpose, successCriteria, goals]);
+  const draft = useDraft<Typed>(`new-project:${orgId}`, typed, (v) => {
+    setName(v.name ?? ""); setDescription(v.description ?? ""); setPurpose(v.purpose ?? "");
+    setSuccessCriteria(v.successCriteria ?? ""); setGoals(Array.isArray(v.goals) ? v.goals : []);
+  }, (v) => !v.name?.trim() && !v.description?.trim() && !v.purpose?.trim() && !v.successCriteria?.trim() && !(v.goals?.length));
 
   const prefillFromDoc = (r: BudgetReadResult) => {
     const doc = r.parsed;
@@ -141,13 +153,14 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
   // SOW search — org documents by number/title, debounced.
   useEffect(() => {
     const q = sowQuery.trim();
-    if (q.length < 2) { setSowResults([]); return; }
+    if (q.length < 2) { setSowResults([]); setSowError(false); return; }
     const t = setTimeout(async () => {
-      const { data } = await supabase
+      const { data, error: sErr } = await supabase
         .from("documents").select("id, document_number, title, name")
         .eq("org_id", orgId)
         .or(`document_number.ilike.%${q}%,title.ilike.%${q}%,name.ilike.%${q}%`)
         .limit(8);
+      setSowError(!!sErr);
       setSowResults((((data ?? []) as Array<Record<string, unknown>>)).map((d) => ({
         id: String(d.id),
         label: String(d.document_number || d.title || d.name || "Document"),
@@ -175,7 +188,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
 
   const finish = async (finalSkips: Record<string, boolean>) => {
     if (!name.trim()) { setStep(0); setError("Project name is required."); return; }
-    if (!description.trim()) { setStep(0); setError("Description is required - say what the team will be doing."); return; }
+    if (!description.trim()) { setStep(0); setError("Add a description: what the team will be doing."); return; }
     setBusy(true); setError(null);
     try {
       const project = await createProject({
@@ -184,6 +197,9 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
         actorUserId, actorEmail, actorRole,
       });
       const projectId = project.id!;
+      // The project exists from here. Anything below that doesn't save is
+      // told afterwards, so it can be added on the project.
+      const problems: string[] = [];
 
       // Wizard fields — tolerant of a pre-migration DB: the project exists
       // either way, the coach just has less to work with.
@@ -200,7 +216,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
         setup_state: setupState,
       }).eq("id", projectId);
       if (extErr && extErr.code !== "PGRST204" && extErr.code !== "42703") {
-        console.warn("[wizard] extended fields not saved:", extErr.message);
+        problems.push(`purpose, goals and Summary of Work (${extErr.message})`);
       }
 
       // Contractors/vendors — linked to the Known Companies registry when
@@ -220,10 +236,10 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
           // Pre-migration: company_id doesn't exist yet — save without the link.
           const { data: retry, error: retryErr } = await supabase.from("project_parties")
             .insert(rows.map(({ company_id: _c, ...rest }) => rest)).select("id, name");
-          if (retryErr) console.warn("[wizard] contractors not saved:", retryErr.message);
+          if (retryErr) problems.push(`contractors (${retryErr.message})`);
           savedParties = (retry ?? []) as Array<{ id: string; name: string }>;
         } else if (pErr) {
-          console.warn("[wizard] contractors not saved:", pErr.message);
+          problems.push(`contractors (${pErr.message})`);
         } else {
           savedParties = (pData ?? []) as Array<{ id: string; name: string }>;
         }
@@ -240,15 +256,16 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
           party_id: matchParty(r.supplier.trim() || null, savedParties)?.id ?? null,
           created_by: actorUserId,
         })));
-        if (accErr) console.warn("[wizard] budget lines not saved:", accErr.message);
+        if (accErr) problems.push(`budget lines (${accErr.message})`);
       }
 
       // The paper this project was started from — kept as its budget basis.
       if (fromDoc) {
-        await recordBudgetBasis({
+        const basis = await recordBudgetBasis({
           orgId, projectId, parsed: fromDoc.parsed, source: fromDoc.source,
           actor: { uid: actorUserId, email: actorEmail ?? null },
-        }).catch(() => undefined);
+        }).catch((e) => ({ docId: null, error: (e as Error).message }));
+        if (basis.error) problems.push(`the budget document (${basis.error})`);
       }
 
       // First milestones.
@@ -258,7 +275,8 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
           org_id: orgId, project_id: projectId,
           name: r.name.trim(), planned_at: fromDateInput(r.date, timezone, 12) ?? new Date(`${r.date}T12:00:00`).toISOString(),
           status: "planned", created_by: actorUserId,
-        }))).then(() => undefined, () => undefined);
+        }))).then(({ error: msErr }) => { if (msErr) problems.push(`milestones (${msErr.message})`); },
+          (e) => { problems.push(`milestones (${(e as Error).message})`); });
       }
 
       // The kind of project, as picked (or read from the name): the
@@ -267,46 +285,51 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
         const guessed = projectTypeOf(null, name);
         const word = kindPick ?? (isDefaultType(guessed) ? (jobKind === "capital" ? "Capital project" : null) : guessed.word);
         const t = word && word !== "Other" ? PROJECT_TYPES.find((x) => x.word === word) : null;
-        if (t) await saveProjectType(projectId, t).catch(() => undefined);
+        if (t) await saveProjectType(projectId, t).catch((e) => { problems.push(`the kind of project (${(e as Error).message})`); });
       }
 
       // Turnover package seeds, sized to the job. Failure is non-fatal —
       // the Quality tab can seed on demand.
-      await seedTurnoverItems({
+      const seeded = await seedTurnoverItems({
         orgId, projectId, jobKind, actor: { uid: actorUserId, email: actorEmail ?? null },
-      }).catch(() => undefined);
+      }).catch((e) => ({ ok: false, error: (e as Error).message }));
+      if (!seeded.ok) problems.push(`the turnover list (${seeded.error ?? "not saved"})`);
 
+      draft.clear();
       onCreated();
       router.push(`/projects/${projectId}`);
+      if (problems.length) {
+        void appAlert({ tone: "danger", message: `The project was made, but these didn't save: ${problems.join("; ")}. Add them on the project.` });
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally { setBusy(false); }
   };
 
   const Icon = STEPS[step].icon;
+  // Escape closes, like the X (not while it's saving).
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => { if (e.key === "Escape" && !busy) onClose(); };
+    window.addEventListener("keydown", on);
+    return () => window.removeEventListener("keydown", on);
+  }, [busy, onClose]);
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+    <div role="dialog" aria-modal="true" aria-label="New project" className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         {/* Header + stepper */}
         <div className="px-6 py-4 border-b border-[var(--color-border)]">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-[var(--color-surface-2)] rounded-lg"><Icon className="w-5 h-5 text-[var(--color-text-muted)]" /></div>
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-black text-[var(--color-text)]">New project - {STEPS[step].label}</div>
+              <div className="text-sm font-black text-[var(--color-text)]">New project</div>
               <div className="text-xs text-[var(--color-text-muted)]">
-                Step {step + 1} of {STEPS.length}. Everything after Basics is optional - skipped steps come back as coach suggestions, never lost.
+                {draft.restored ? "Your earlier typing is back. " : ""}Only Basics is needed. Skipped steps come back on the project.
               </div>
             </div>
-            <button onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
+            <button onClick={onClose} disabled={busy} aria-label="Close" className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
           </div>
-          <div className="mt-3 flex items-center gap-1">
-            {STEPS.map((s, i) => (
-              <button key={s.key} onClick={() => i < step && setStep(i)} disabled={i > step}
-                className={`h-1.5 flex-1 rounded-full transition-colors ${i < step ? "bg-[var(--color-text)]" : i === step ? "bg-[var(--color-text)]/40" : "bg-[var(--color-surface-2)]"}`}
-                title={s.label} />
-            ))}
-          </div>
+          <StepPath className="mt-3" steps={STEPS.map((s) => s.label)} current={step} onPick={(i) => { if (!busy) setStep(i); }} />
         </div>
 
         <div className="px-6 py-5 space-y-4 max-h-[60vh] overflow-y-auto">
@@ -316,7 +339,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                 <FromDocSummary result={fromDoc} onClear={() => setFromDoc(null)} />
               ) : (
                 <BudgetDocDrop orgId={orgId} onRead={prefillFromDoc} compact
-                  label="Start from a document - AFE, estimate, or budget sheet fills in every step" />
+                  label="Start from an AFE, estimate or budget sheet to fill in every step" />
               )}
               <Field label="Name *">
                 <input value={name} onChange={(e) => setName(e.target.value)} placeholder="2026 Q1 Turnaround - Unit 300" autoFocus
@@ -327,7 +350,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                   placeholder="What is this project about? What will the team do?"
                   className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y bg-[var(--color-surface)]" />
               </Field>
-              <Field label="Kind of project - groups it on the Projects page">
+              <Field label="Kind of project">
                 {(() => {
                   const guessed = projectTypeOf(null, name);
                   const kind = kindPick ?? (isDefaultType(guessed) ? (jobKind === "capital" ? "Capital project" : "Other") : guessed.word);
@@ -343,7 +366,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                   );
                 })()}
               </Field>
-              <Field label="Job size - sets sensible defaults, never permissions">
+              <Field label="Job size">
                 <div className="grid sm:grid-cols-3 gap-2">
                   {JOB_KINDS.map((k) => (
                     <button key={k.v} onClick={() => setJobKind(k.v)}
@@ -357,7 +380,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
               <div className="grid grid-cols-2 gap-3">
                 <Field label="MOC reference (Management of Change)">
                   <input value={moc} onChange={(e) => setMoc(e.target.value)} placeholder="MOC-2026-0142"
-                    title="The Management of Change number authorizing this work - required by PSM before modifying covered processes."
+                    title="The Management of Change number authorizing this work. PSM requires it before covered processes are changed."
                     className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm font-mono bg-[var(--color-surface)]" />
                 </Field>
                 <Field label="Target completion">
@@ -367,7 +390,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
               </div>
               <Field label="Plant timezone">
                 <TimeZoneSelect value={timezone} onChange={setTimezone} />
-                <div className="mt-1 text-[11px] text-[var(--color-text-faint)]">Schedule days, times and shifts are shown in this zone for everyone on the project.</div>
+                <div className="mt-1 text-[11px] text-[var(--color-text-faint)]">Everyone on the project sees days, times and shifts in this zone.</div>
               </Field>
               <Field label="Visibility">
                 <div className="flex bg-[var(--color-surface-2)] p-1 rounded-lg">
@@ -380,7 +403,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
 
           {step === 1 && (
             <>
-              <StepIntro text="Why does this project exist, and what does 'done well' mean? Everyone who opens the project reads this first - and the AI grounds checklist assessments on it." />
+              <StepIntro text="Why this job, and what does done well look like?" />
               <Field label="Purpose">
                 <textarea value={purpose} onChange={(e) => setPurpose(e.target.value)} rows={2} autoFocus
                   placeholder="e.g. Replace the corroded E-301 exchanger circuits before they force an unplanned outage."
@@ -398,10 +421,10 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                   <div className="flex items-center gap-2">
                     <input value={goalDraft} onChange={(e) => setGoalDraft(e.target.value)}
                       onKeyDown={(e) => { if (e.key === "Enter" && goalDraft.trim()) { setGoals([...goals, goalDraft.trim()]); setGoalDraft(""); } }}
-                      placeholder="Add a goal and press Enter - e.g. Zero recordables"
+                      placeholder="Add a goal, then Enter. e.g. Zero recordables"
                       className="flex-1 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
-                    <button onClick={() => { if (goalDraft.trim()) { setGoals([...goals, goalDraft.trim()]); setGoalDraft(""); } }}
-                      className="p-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)]"><Plus className="w-4 h-4" /></button>
+                    <button onClick={() => { if (goalDraft.trim()) { setGoals([...goals, goalDraft.trim()]); setGoalDraft(""); } }} aria-label="Add goal"
+                      className="p-2 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><Plus className="w-4 h-4" /></button>
                   </div>
                 </div>
               </Field>
@@ -415,7 +438,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
 
           {step === 2 && (
             <>
-              <StepIntro text="Attach the Summary of Work - the scope document. It feeds RFQs, grounds the AI's checklist assessment, and anchors the project report. Pick one from document control (upload it there first if it isn't in yet)." />
+              <StepIntro text="Pick the Summary of Work from document control. Not uploaded yet? Skip and add it later." />
               {sowDoc ? (
                 <div className="flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/[0.06] px-3 py-2.5 text-sm">
                   <FileText className="w-4 h-4 text-emerald-600 shrink-0" />
@@ -430,6 +453,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                       placeholder="Search documents by number or title…"
                       className="w-full pl-9 pr-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
                   </div>
+                  {sowError && <p className="mt-2 text-xs font-bold text-rose-700 dark:text-rose-300">Couldn&apos;t search documents. Try again.</p>}
                   {sowResults.length > 0 && (
                     <ul className="mt-2 rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
                       {sowResults.map((d) => (
@@ -449,8 +473,8 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
           {step === 3 && (
             <>
               <StepIntro text={fromDoc
-                ? `Read from ${fromDoc.source.fileName} - check each line. The company on a line is who it was budgeted for; their invoices will route to it on their own.`
-                : "Budget lines are where money lives - 'Piping subcontract', 'Scaffolding', 'Engineering hours'. Even one line unlocks the burn bar, the S-curve, and the finish-cost forecast."} />
+                ? `Read from ${fromDoc.source.fileName}. Check each line. The company on a line is who it was budgeted for.`
+                : "One line is enough to start, e.g. Piping subcontract, Scaffolding, Engineering hours."} />
               <div className="space-y-2">
                 {budgetRows.map((r, i) => (
                   <div key={i} className="flex items-center gap-2">
@@ -462,7 +486,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                     </select>
                     <input value={r.supplier} onChange={(e) => setBudgetRows(rows(budgetRows, i, { supplier: e.target.value }))}
                       list="wizard-line-companies" placeholder="Company"
-                      title="Who this line is budgeted for - their invoices route here"
+                      title="Who this line is budgeted for: their invoices go to it"
                       className="w-28 px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-xs bg-[var(--color-surface)]" />
                     <input value={r.budget} onChange={(e) => setBudgetRows(rows(budgetRows, i, { budget: e.target.value }))}
                       placeholder="Budget (USD)" inputMode="decimal"
@@ -484,7 +508,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
 
           {step === 4 && (
             <>
-              <StepIntro text="A few dated milestones are enough to start - they unlock the schedule board, overdue alerts, and the planned-pace line on the cost curve. Import a full P6/MS Project XML later from the Plan tab." />
+              <StepIntro text="A few dated milestones are enough. Import the full P6 or MS Project schedule later on Plan." />
               <div className="space-y-2">
                 {milestoneRows.map((r, i) => (
                   <div key={i} className="flex items-center gap-2">
@@ -504,7 +528,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
 
           {step === 5 && (
             <>
-              <StepIntro text="Who's working this job? Pick from your Known Companies registry (their performance record follows them) or type a new name. Teammate invites live on the project's Members tab." />
+              <StepIntro text="Which companies are working this job? Teammates are added later on Members." />
               <div className="space-y-2">
                 {partyRows.map((r, i) => (
                   <div key={i} className="flex items-center gap-2">
@@ -530,9 +554,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
           )}
 
           {error && (
-            <div className="flex items-start gap-2 p-3 rounded-lg border border-rose-500/40 bg-rose-500/[0.07] text-xs font-bold text-rose-700 dark:text-rose-300">
-              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {error}
-            </div>
+            <p role="alert" className="border-l-2 border-rose-500 pl-3 text-xs font-bold text-rose-700 dark:text-rose-300">{error}</p>
           )}
         </div>
 
@@ -600,25 +622,25 @@ function FromDocSummary({ result, onClear }: { result: BudgetReadResult; onClear
             {d.authorizedAmount != null ? ` · ${fmtMoney(d.authorizedAmount, cur)} authorized` : ""}
           </div>
           <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
-            {bits.length ? `${bits.join(", ")} - ` : ""}walk the steps to check each one. Fields you had already typed were kept.
+            {bits.length ? `Found ${bits.join(", ")}. ` : ""}Check each step. What you had typed was kept.
           </div>
           {!recon.balanced && recon.unallocated != null && (
             <div className="text-[11px] font-bold text-amber-700 dark:text-amber-300 mt-0.5">
-              Lines total {fmtMoney(recon.linesTotal, cur)} - {fmtMoney(Math.abs(recon.unallocated), cur)} {recon.unallocated > 0 ? "short of" : "over"} the authorized amount.
+              Lines total {fmtMoney(recon.linesTotal, cur)}: {fmtMoney(Math.abs(recon.unallocated), cur)} {recon.unallocated > 0 ? "short of" : "over"} the authorized amount.
             </div>
           )}
           {result.blankPages.length > 0 && (
             <div className="text-[11px] font-bold text-amber-700 dark:text-amber-300 mt-0.5">
-              Page{result.blankPages.length === 1 ? "" : "s"} {result.blankPages.join(", ")} came through blank (scanner compression) - anything only there wasn&apos;t read.
+              Page{result.blankPages.length === 1 ? "" : "s"} {result.blankPages.join(", ")} came through blank (scanner compression). Anything only there wasn&apos;t read.
             </div>
           )}
           {recon.overBudgetBy != null && recon.overBudgetBy > 0 && (
             <div className="text-[11px] font-bold text-amber-700 dark:text-amber-300 mt-0.5">
-              {fmtMoney(recon.overBudgetBy, cur)} over the approved budget it cites{d.varianceNote ? ` - ${d.varianceNote}` : "."}
+              {fmtMoney(recon.overBudgetBy, cur)} over the approved budget it cites{d.varianceNote ? `: ${d.varianceNote}` : "."}
             </div>
           )}
         </div>
-        <button onClick={onClear} className="text-[var(--color-text-faint)] hover:text-rose-600" title="Don't keep this document as the budget basis (prefilled fields stay)"><X className="w-3.5 h-3.5" /></button>
+        <button onClick={onClear} aria-label="Don't keep this document" className="text-[var(--color-text-faint)] hover:text-rose-600" title="Don't keep this document as the budget basis (prefilled fields stay)"><X className="w-3.5 h-3.5" /></button>
       </div>
     </div>
   );

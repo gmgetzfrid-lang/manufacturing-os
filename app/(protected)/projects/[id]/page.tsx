@@ -19,7 +19,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
-  Briefcase, ArrowLeft, Lock, Globe, Loader2, AlertTriangle, Pause, Play,
+  ArrowLeft, Lock, Loader2, AlertTriangle, Pause, Play,
   CheckCircle2, XCircle, Archive as ArchiveIcon, Layers, Send, Settings2,
   User as UserIcon, MessageSquare, Users, FileText, Activity as ActivityIcon,
   ExternalLink, Hash, Trash2, Plus, Flag, X, Download, Target, ShieldCheck, Pencil, CircleDollarSign, Package,
@@ -50,7 +50,8 @@ import PresenceIndicator from "@/components/ui/PresenceIndicator";
 import { useRole } from "@/components/providers/RoleContext";
 import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 import { Select } from "@/components/ui/Field";
-import { Spinner } from "@/components/ui/Spinner";
+import LoadingBlock from "@/components/ui/LoadingBlock";
+import { useDraft, clearDraft } from "@/hooks/useDraft";
 import {
   getProject, listMembers, listActivity, listProjectCheckouts,
   postComment, transitionProjectStatus, addMember, removeMember,
@@ -172,6 +173,8 @@ export default function ProjectDetailPage() {
   const tab: Tab | null = asked ?? (project && stepRows ? (workDone ? "closeout" : nextToSchedule ? "plan" : started ? "today" : "plan") : null);
   const [commentDraft, setCommentDraft] = useState("");
   const [posting, setPosting] = useState(false);
+  // A comment being written comes back after a reload.
+  useDraft<string>(projectId ? `project-comment:${projectId}` : null, commentDraft, setCommentDraft, (v) => !v.trim());
 
   const [showEdit, setShowEdit] = useState(false);
   const [showPhases, setShowPhases] = useState(false);
@@ -187,6 +190,7 @@ export default function ProjectDetailPage() {
   // Closeout gates: loaded when the Complete confirm opens, so the modal
   // shows exactly what's still outstanding before the project closes.
   const [gates, setGates] = useState<ProjectStateSnapshot | null>(null);
+  const [gatesFailed, setGatesFailed] = useState(false);
   // Wizard fields the typed Project doesn't carry — fetched tolerantly.
   const [jobKind, setJobKind] = useState<string | null>(null);
   // Lessons-learned editor
@@ -290,11 +294,11 @@ export default function ProjectDetailPage() {
 
   // Closeout gates load when the Complete confirmation opens.
   useEffect(() => {
-    if (pendingStatus !== "completed" || !project?.orgId || !projectId) { setGates(null); return; }
+    if (pendingStatus !== "completed" || !project?.orgId || !projectId) { setGates(null); setGatesFailed(false); return; }
     let cancelled = false;
     void gatherProjectSnapshot(project.orgId, projectId)
       .then((s) => { if (!cancelled) setGates(s); })
-      .catch(() => undefined);
+      .catch(() => { if (!cancelled) setGatesFailed(true); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingStatus, projectId]);
@@ -356,6 +360,7 @@ export default function ProjectDetailPage() {
         actorEmail: userEmail ?? undefined,
         actorRole: activeRole,
       });
+      clearDraft(`project-status:${project.id}:${pendingStatus}`);
       setPendingStatus(null);
       setStatusReason("");
       await refresh();
@@ -365,18 +370,16 @@ export default function ProjectDetailPage() {
   };
 
   if (loading) return (
-    <div className="min-h-full flex items-center justify-center">
-      <Spinner />
-    </div>
+    <div className="min-h-full p-4 sm:p-8"><LoadingBlock what="the project" className="max-w-2xl mx-auto" /></div>
   );
 
   if (error || !project) return (
     <div className="min-h-full p-4 sm:p-8">
-      <div className="max-w-2xl mx-auto bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700 flex items-start gap-2">
-        <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-        <div>
-          {error || "Project not found"}
-          <div className="mt-2"><Link href="/projects" className="text-red-600 underline">Back to projects</Link></div>
+      <div role="alert" className="max-w-2xl mx-auto border-l-2 border-rose-500 pl-3 py-1 text-sm text-rose-700 dark:text-rose-300">
+        {error === "Project not found" || !error ? "This project wasn't found. It may have been deleted, or you're not on it." : `Couldn't load the project: ${error}`}
+        <div className="mt-2 flex gap-4 text-xs font-bold">
+          {error && error !== "Project not found" && <button onClick={() => void refresh()} className="text-[var(--color-accent)] hover:underline">Try again</button>}
+          <Link href="/projects" className="text-[var(--color-accent)] hover:underline">All projects</Link>
         </div>
       </div>
     </div>
@@ -388,10 +391,9 @@ export default function ProjectDetailPage() {
       <div className="bg-[var(--color-surface)] border-b border-[var(--color-border)]">
         <div className={`${wideTab ? "max-w-[1800px] px-3 sm:px-4" : "max-w-6xl px-4 sm:px-6"} mx-auto pt-3 sm:pt-4`}>
           {actionError && (
-            <div className="mb-3 flex items-start gap-2 rounded-xl border border-rose-500/50 bg-rose-500/[0.08] px-3 py-2.5 text-xs font-bold text-rose-700 dark:text-rose-300 animate-in fade-in slide-in-from-top-1">
-              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+            <div role="alert" className="mb-3 flex items-start gap-2 border-l-2 border-rose-500 pl-3 py-1 text-xs font-bold text-rose-700 dark:text-rose-300">
               <span className="flex-1">{actionError}</span>
-              <button onClick={() => setActionError(null)} className="shrink-0 text-rose-400 hover:text-rose-600" aria-label="Dismiss">
+              <button onClick={() => setActionError(null)} className="shrink-0 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]" aria-label="Dismiss">
                 <X className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -548,9 +550,9 @@ export default function ProjectDetailPage() {
             )}
           </div>
         )}
-        {(tab === "intake" || isScheduleTab(tab) || !tab) && !uid && (
-          <div className="py-10 flex justify-center"><Spinner /></div>
-        )}
+        {(tab === "intake" || isScheduleTab(tab) || !tab) && !uid && <LoadingBlock what="your access" />}
+        {/* Where to open is decided by the schedule: until it's read, say so. */}
+        {!tab && uid && <LoadingBlock what="the schedule" />}
         {tab === "costs" && project.id && project.orgId && uid && (
           <CostsTab
             orgId={project.orgId}
@@ -584,7 +586,7 @@ export default function ProjectDetailPage() {
             onComplete={() => setPendingStatus("completed")}
           />
         )}
-        {tab === "closeout" && !uid && <div className="py-10 flex justify-center"><Spinner /></div>}
+        {tab === "closeout" && !uid && <LoadingBlock what="close-out" />}
         {tab === "materials" && project.id && project.orgId && uid && (
           <MaterialsRegister orgId={project.orgId} projectId={project.id} phases={phases} canManage={!!canManage || access.canEdit} actor={{ uid, email: userEmail }} />
         )}
@@ -605,8 +607,8 @@ export default function ProjectDetailPage() {
         {tab === "intake" && !canManage && (
           <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-8 text-center">
             <ShieldCheck className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-2" />
-            <div className="text-sm font-bold text-[var(--color-text)]">Intake is managed by the project owner and Document Control</div>
-            <div className="text-xs text-[var(--color-text-muted)] mt-1">Contractor submissions land here for review - approved revisions show up under Documents automatically.</div>
+            <div className="text-sm font-bold text-[var(--color-text)]">The project owner and Document Control run intake</div>
+            <div className="text-xs text-[var(--color-text-muted)] mt-1">Approved contractor revisions show up under Documents.</div>
           </div>
         )}
         {tab === "intake" && canManage && project.id && project.orgId && uid && (
@@ -693,9 +695,16 @@ export default function ProjectDetailPage() {
 
       {/* TRANSITION CONFIRM */}
       {pendingStatus && (
-        <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+        <div role="dialog" aria-modal="true" aria-label="Change project status" className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+          {/* The reason being typed is kept on this device until it's saved. */}
+          <ReasonDraft key={pendingStatus} draftKey={`project-status:${project.id}:${pendingStatus}`} value={statusReason} set={setStatusReason}
+            onEscape={() => { if (!transitionBusy && !reviewOpen) { setPendingStatus(null); setStatusReason(""); setActionError(null); } }} />
           <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
-            <div className="px-6 py-4 border-b border-[var(--color-border)]">
+            <div className="px-6 py-4 border-b border-[var(--color-border)] relative pr-12">
+              <button onClick={() => { setPendingStatus(null); setStatusReason(""); setActionError(null); }} disabled={transitionBusy} aria-label="Close"
+                className="absolute top-3 right-3 p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                <X className="w-4 h-4" />
+              </button>
               <div className="text-sm font-black text-[var(--color-text)]">
                 {pendingStatus === "cancelled" ? "Cancel project" :
                  pendingStatus === "completed" ? "Mark project complete" :
@@ -718,6 +727,11 @@ export default function ProjectDetailPage() {
             )}
             {/* Closeout gates — what a finished job should have closed out.
                 Warnings, not walls: the owner can complete anyway, on the record. */}
+            {pendingStatus === "completed" && !gates && (
+              <div className="px-6 pt-4 text-xs text-[var(--color-text-muted)]">
+                {gatesFailed ? <span className="font-bold text-amber-700 dark:text-amber-300">Couldn&apos;t check what&apos;s still open. You can still complete it.</span> : <><Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1.5" />Checking what&apos;s still open…</>}
+              </div>
+            )}
             {pendingStatus === "completed" && gates && (() => {
               const gateLines: Array<{ ok: boolean; text: string }> = [
                 { ok: gates.punchOpen === 0, text: gates.punchOpen === 0 ? "Punch list clear" : `${gates.punchOpen} punch item${gates.punchOpen === 1 ? "" : "s"} still open` },
@@ -739,7 +753,7 @@ export default function ProjectDetailPage() {
                   </ul>
                   {failed > 0 && (
                     <div className="mt-2 text-[11px] text-[var(--color-text-muted)]">
-                      You can complete anyway - the open items stay on the record and in the report.
+                      You can complete anyway. The open items stay on the record and in the report.
                     </div>
                   )}
                 </div>
@@ -752,6 +766,7 @@ export default function ProjectDetailPage() {
               <textarea
                 value={statusReason}
                 onChange={(e) => setStatusReason(e.target.value)}
+                autoFocus
                 rows={3}
                 className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
                 placeholder={pendingStatus === "cancelled" ? "Why is this project being cancelled?" : "Optional note for the audit log"}
@@ -784,13 +799,26 @@ export default function ProjectDetailPage() {
   );
 }
 
+/** Autosaves the status reason while its dialog is open; Escape closes it. */
+function ReasonDraft({ draftKey, value, set, onEscape }: { draftKey: string; value: string; set: (v: string) => void; onEscape: () => void }) {
+  useDraft<string>(draftKey, value, set, (v) => !v.trim());
+  const esc = React.useRef(onEscape);
+  useEffect(() => { esc.current = onEscape; });
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => { if (e.key === "Escape") esc.current(); };
+    window.addEventListener("keydown", on);
+    return () => window.removeEventListener("keydown", on);
+  }, []);
+  return null;
+}
+
 function StatusBadge({ status }: { status: ProjectStatus }) {
   const cls: Record<ProjectStatus, string> = {
-    active: "bg-emerald-100 text-emerald-700 border-emerald-200",
-    paused: "bg-amber-100 text-amber-700 border-amber-200",
+    active: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30",
+    paused: "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30",
     completed: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]",
-    cancelled: "bg-red-100 text-red-700 border-red-200",
-    archived: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
+    cancelled: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]",
+    archived: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]",
   };
   return (
     <span className={`inline-flex items-center gap-1 text-[12px] font-semibold px-2 py-0.5 rounded-full border ${cls[status]}`}>
@@ -828,8 +856,8 @@ function DocumentsTab({ checkouts }: { checkouts: CheckoutWithDoc[] }) {
   if (checkouts.length === 0) {
     return (
       <div className="bg-[var(--color-surface)] border border-dashed border-[var(--color-border-strong)] rounded-2xl p-10 text-center">
-        <FileText className="w-10 h-10 mx-auto text-slate-300 mb-3" />
-        <p className="text-sm text-[var(--color-text-muted)]">No documents checked out yet. Open a doc in a library and check it out to this project.</p>
+        <FileText className="w-10 h-10 mx-auto text-[var(--color-text-faint)] mb-3" />
+        <p className="text-sm text-[var(--color-text-muted)]">No documents checked out to this project yet. Check one out from its library.</p>
       </div>
     );
   }
@@ -858,7 +886,7 @@ function DocumentsTab({ checkouts }: { checkouts: CheckoutWithDoc[] }) {
 function Section({ title, count, tone, children }: { title: string; count: number; tone: "active" | "muted"; children: React.ReactNode }) {
   return (
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
-      <div className={`px-4 py-2.5 border-b border-[var(--color-border)] flex items-center justify-between text-xs font-bold ${tone === "active" ? "bg-emerald-50/40 text-emerald-800" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
+      <div className={`px-4 py-2.5 border-b border-[var(--color-border)] flex items-center justify-between text-xs font-bold ${tone === "active" ? "bg-[var(--color-surface)] text-[var(--color-text)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
         <span>{title}</span>
         <span className="text-[11px] font-mono bg-[var(--color-surface)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-full">{count}</span>
       </div>
@@ -869,7 +897,7 @@ function Section({ title, count, tone, children }: { title: string; count: numbe
 
 function CheckoutLine({ c, historical }: { c: CheckoutWithDoc; historical?: boolean }) {
   return (
-    <div className={`px-4 py-3 hover:bg-slate-50/60 transition-colors ${historical ? "opacity-70" : ""}`}>
+    <div className={`px-4 py-3 hover:bg-[var(--color-surface-2)] transition-colors ${historical ? "opacity-70" : ""}`}>
       <div className="flex items-center gap-3">
         <FileText className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
         <div className="flex-1 min-w-0">
@@ -892,6 +920,7 @@ function CheckoutLine({ c, historical }: { c: CheckoutWithDoc; historical?: bool
           href={`/documents/${c.libraryId}?doc=${c.documentId}`}
           className="p-1.5 rounded-md text-[var(--color-text-faint)] hover:text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] transition-colors"
           title="Open document"
+          aria-label={`Open ${c.docNumber || "document"}`}
         >
           <ExternalLink className="w-3.5 h-3.5" />
         </Link>
@@ -922,7 +951,7 @@ function ActivityTab({
               <textarea
                 value={commentDraft}
                 onChange={(e) => setCommentDraft(e.target.value)}
-                placeholder="Share an update, ask a question, or comment on someone's work…"
+                placeholder="Share an update or ask a question…"
                 rows={2}
                 className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
               />
@@ -944,7 +973,7 @@ function ActivityTab({
       <TimelineFeed
         events={timeline}
         showScope={false}
-        emptyMessage="No activity yet - comments, checkouts, and document revisions will land here."
+        emptyMessage="No activity yet. Comments, checkouts and revisions show up here."
       />
     </div>
   );
@@ -974,17 +1003,19 @@ function MembersTab({
     if (!email) return;
     setBusy(true); setError(null);
     try {
-      const { data: userRows } = await supabase.from("users").select("id, email").eq("email", email).limit(2);
+      const { data: userRows, error: lookErr } = await supabase.from("users").select("id, email").eq("email", email).limit(2);
+      if (lookErr) throw new Error(`Couldn't look up that email: ${lookErr.message}`);
       const candidates = (userRows ?? []) as Array<{ id: string; email: string }>;
-      if (candidates.length > 1) throw new Error("Multiple accounts share that email - contact your admin.");
+      if (candidates.length > 1) throw new Error("More than one account has that email. Ask your admin to sort it out.");
       const candidate = candidates[0] ?? null;
       // The membership check is what actually scopes this to the org — the
       // users table is global, and the old lookup happily attached strangers.
-      const { data: memberRow } = candidate
+      const { data: memberRow, error: orgErr } = candidate
         ? await supabase.from("org_members").select("uid").eq("org_id", project.orgId).eq("uid", candidate.id).eq("status", "active").maybeSingle()
-        : { data: null };
+        : { data: null, error: null };
+      if (orgErr) throw new Error(`Couldn't check that person is in this org: ${orgErr.message}`);
       const data = candidate && memberRow ? candidate : null;
-      if (!data?.id) throw new Error("No user with that email found in this org");
+      if (!data?.id) throw new Error("No one with that email is in this org.");
       await addMember({
         projectId: project.id!, orgId: project.orgId,
         userId: data.id as string, userEmail: email, userName: email.split("@")[0],
@@ -1040,10 +1071,11 @@ function MembersTab({
               {MEMBER_ROLES.map((r) => <option key={r.role} value={r.role}>{r.label}</option>)}
             </Select>
           </div>
-          <input value={addResp} onChange={(e) => setAddResp(e.target.value)} placeholder="Responsibility (what they own / will own) - optional"
+          <input value={addResp} onChange={(e) => setAddResp(e.target.value)} placeholder="What they're responsible for (optional)"
             className="mt-2 w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
           <div className="mt-2 flex justify-end">
-            <button onClick={addByEmail} disabled={busy || !addEmail.trim()} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+            {/* Orange once there's someone to add: the event organization's Save may be the orange one until then. */}
+            <button onClick={addByEmail} disabled={busy || !addEmail.trim()} className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50 ${addEmail.trim() ? "text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Add member
             </button>
           </div>
@@ -1113,7 +1145,7 @@ function MembersTab({
                 <div className="flex items-center gap-1 shrink-0">
                   {canTransfer && !isOwner && (
                     <button onClick={() => setTransferTo(m.userId)} title="Hand the project to this member"
-                      className="text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] px-1.5 py-1 rounded hover:bg-[var(--color-surface-2)] whitespace-nowrap">
+                      className="text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-1.5 py-1 rounded hover:bg-[var(--color-surface-2)] whitespace-nowrap">
                       Make owner
                     </button>
                   )}
@@ -1127,8 +1159,9 @@ function MembersTab({
                         } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
                       }}
                       title="Remove from project"
+                      aria-label={`Remove ${m.userName || m.userEmail || "member"}`}
                       // Shown on hover with a mouse; always there on a touch screen.
-                      className="opacity-60 sm:opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 transition-opacity p-1.5 pointer-coarse:p-2.5 rounded-md text-[var(--color-text-faint)] hover:text-red-600 hover:bg-red-50"
+                      className="opacity-60 sm:opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 transition-opacity p-1.5 pointer-coarse:p-2.5 rounded-md text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-500/10"
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>

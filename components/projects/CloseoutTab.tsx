@@ -42,6 +42,11 @@ import { useManpowerSettings } from "@/components/projects/ManpowerSetup";
 import { loadShiftRecords, type ShiftRecord } from "@/lib/shiftRecord";
 import { companyOf, handsAt, manpowerSummary, shiftCounts, type ManpowerSettings, type ShiftCount } from "@/lib/manpower";
 import PostEventReview from "@/components/projects/PostEventReview";
+import LoadingBlock from "@/components/ui/LoadingBlock";
+import FileThumb from "@/components/ui/FileThumb";
+import { useFileDrag } from "@/hooks/useFileDrag";
+import { tryUpload } from "@/lib/uploadRetry";
+import { fileSize } from "@/components/projects/cost/FilePreview";
 
 const money = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
 
@@ -73,7 +78,10 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
   const [tick, setTick] = useState(0);
   const reload = () => setTick((t) => t + 1);
   const [err, setErr] = useState<string | null>(null);
+  const [readFailed, setReadFailed] = useState<string[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+  // Turnover files already filed, so Try again only ties them.
+  const filed = useRef(new Map<string, { documentId: string; label: string }>());
   // Uploading a PSSR: for the whole job ("all") or a phase.
   const [uploading, setUploading] = useState<string | null>(null);
   const [newDoc, setNewDoc] = useState("");
@@ -94,15 +102,18 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
   useEffect(() => {
     let live = true;
     void (async () => {
+      // A read that fails says so, instead of looking like nothing's there.
+      const failed: string[] = [];
+      const miss = <T,>(what: string, v: T) => () => { failed.push(what); return v; };
       const rows = <T,>(table: string) => fetchAllRows<T>((from, to) => supabase.from(table).select("*").eq("project_id", projectId).order("id").range(from, to) as unknown as PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>);
       const [m, l, lines, entries, proj, s, lists, t, cs, h] = await Promise.all([
-        listMilestones({ orgId, projectId, includeGhost: true }).catch(() => [] as Milestone[]),
+        listMilestones({ orgId, projectId, includeGhost: true }).catch(miss("the schedule", [] as Milestone[])),
         loadProgressLog(projectId),
         rows<CostLine>("cost_accounts"), rows<CostEntry>("cost_entries"),
         supabase.from("projects").select("authorized_amount").eq("id", projectId).maybeSingle(),
-        gatherProjectSnapshot(orgId, projectId).catch(() => null),
-        listChecklists(orgId, projectId).catch(() => [] as Checklist[]),
-        listTurnoverItems(orgId, projectId).catch(() => [] as TurnoverItem[]),
+        gatherProjectSnapshot(orgId, projectId).catch(miss("the punch list and change orders", null)),
+        listChecklists(orgId, projectId).catch(miss("the PSSR", [] as Checklist[])),
+        listTurnoverItems(orgId, projectId).catch(miss("the turnover documents", [] as TurnoverItem[])),
         loadCloseoutSettings(projectId).catch(() => ({} as CloseoutSettings)),
         projectFileHome(orgId, projectId).catch(() => null),
       ]);
@@ -115,6 +126,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
       setMoney0({ lines: lines.rows, entries: entries.rows, afe: a == null ? null : Number(a) });
       setSnap(s); setItems(t); setSettings(cs); setHome(h);
       setPssrs(withProg);
+      setReadFailed(failed);
     })();
     return () => { live = false; };
   }, [orgId, projectId, tick]);
@@ -175,15 +187,38 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
     }
     reload();
   };
+  // Attach a file to a turnover document: filed in the project's place,
+  // then tied to the item. Try again never files it twice: a file already
+  // filed is only tied again.
+  const attachFile = async (it: TurnoverItem, file: File) => {
+    if (!home?.place) throw new Error("Pick where this project's files go first (above the list).");
+    const key = `${it.id}:${file.name}:${file.size}:${file.lastModified}`;
+    await tryUpload(file.name, async () => {
+      let made = filed.current.get(key);
+      if (!made) {
+        made = await uploadProjectFile({ orgId, projectId, projectName, file, prefix: "TURNOVER", title: `${it.name} - ${file.name.replace(/\.[a-z0-9]+$/i, "")}`, actorUserId: uid, actorEmail: userEmail });
+        filed.current.set(key, made);
+      }
+      const r = await attachTurnoverDocument({ item: it, documentId: made.documentId, documentLabel: made.label, actor });
+      if (!r.ok) throw new Error(r.error ?? "Filed, but not tied to the document.");
+    }, { onRetried: () => reload() });
+    reload();
+  };
   const invoiced = money0 ? money0.entries.filter((e) => e.status !== "void" && (e.entry_type === "actual" || e.entry_type === "adjustment")).reduce((s, e) => s + Number(e.amount ?? 0), 0) : 0;
   const left = [
     !allWorkDone, !pssrOk, items && required.length > inCount, snap && snap.punchOpen > 0, snap && snap.openChangeOrders > 0,
   ].filter(Boolean).length;
 
   const btn = "inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
-  const pri = "inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-black whitespace-nowrap disabled:opacity-50";
+  const pri = "inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-black whitespace-nowrap hover:bg-[var(--color-accent-hover)] disabled:opacity-50";
+  // One main next step, the only orange button: schedule a phase that has
+  // none, else the PSSR, else Mark complete once the work is done.
+  const main: "import" | "pssr" | "complete" | null = !canManage || projectStatus === "completed" ? null
+    : unscheduled.length ? "import"
+      : !phases.length && !pssrNotNeeded && pssr === null ? "pssr"
+        : allWorkDone ? "complete" : null;
 
-  if (!ms || !work) return <div className="py-16 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-text-muted)]" /></div>;
+  if (!ms || !work) return <LoadingBlock what="close-out" />;
 
   const nav = (
     <div className="flex gap-1.5 flex-wrap" role="tablist" aria-label="Close-out">
@@ -202,20 +237,10 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
   return (
     <div className="space-y-4">
       {nav}
-      {/* The review's own list of what it needs: one tap to it. */}
-      <button type="button" onClick={() => setView("review")} data-closeout-needs-link
-        className="w-full text-left rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 flex items-center gap-3 hover:bg-[var(--color-surface-2)]">
-        <span className="min-w-0 flex-1">
-          <b className="block text-[14px] text-[var(--color-text)]">What you are measured on, and what it needs from you</b>
-          <span className="block text-[12.5px] text-[var(--color-text-muted)]">The post-event review lists each item (setup, roles, bids and staffing plans, head counts, targets, spend, materials) with where it stands and where to put it in.</span>
-        </span>
-        <ArrowRight className="w-5 h-5 text-[var(--color-text-muted)] shrink-0" />
-      </button>
       {/* Where the work stands: the whole job, or each phase. */}
-      <div className={`rounded-2xl border px-4 py-3 flex items-start gap-3 flex-wrap ${allWorkDone ? "border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30 dark:border-emerald-800" : "border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800"}`}>
-        <span className={`mt-0.5 w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${allWorkDone ? "bg-emerald-600 text-white" : "bg-amber-500 text-white"}`}>{allWorkDone ? <Check className="w-5 h-5" /> : <span className="text-[15px] font-black">!</span>}</span>
+      <div className={`rounded-2xl border border-[var(--color-border)] border-l-2 bg-[var(--color-surface)] px-4 py-3 flex items-start gap-3 flex-wrap ${allWorkDone ? "border-l-emerald-500" : "border-l-amber-500"}`}>
         <div className="min-w-0 flex-1 basis-60">
-          <div className={`text-[15px] font-black ${allWorkDone ? "text-emerald-900 dark:text-emerald-200" : "text-amber-900 dark:text-amber-200"}`}>
+          <div className={`text-[15px] font-black ${allWorkDone ? "text-emerald-800 dark:text-emerald-300" : "text-amber-800 dark:text-amber-300"}`}>
             {phases.length
               ? allWorkDone ? `The work is done: every phase (${work.done} of ${work.total} steps)`
                 : unscheduled.length ? `Not done: ${unscheduled.map((p) => p.name).join(", ")} ${unscheduled.length === 1 ? "has" : "have"} no schedule yet`
@@ -223,7 +248,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
               : work.allDone ? `The work is done: ${work.done} of ${work.total} steps` : `${work.done} of ${work.total} steps done`}
           </div>
           {phases.length ? (
-            <ul className={`mt-1 space-y-1 text-[12.5px] ${allWorkDone ? "text-emerald-800 dark:text-emerald-300" : "text-amber-900 dark:text-amber-200"}`}>
+            <ul className="mt-1 space-y-1 text-[12.5px] text-[var(--color-text)]">
               {phaseWork.map(({ p, w }) => (
                 <li key={p.id} className="flex items-start gap-2 flex-wrap">
                   <span className="min-w-0 flex-1 basis-56">
@@ -231,14 +256,14 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
                       : w.allDone ? <><b>{p.name}: done</b>, {w.done} of {w.total} steps{w.finishedAt != null ? ` · last finished ${when(w.finishedAt)}` : ""}{w.finishedAt != null && w.plannedFinish != null ? ` · planned ${when(w.plannedFinish)} (${vsPlanWords(w.hoursAfterPlan)})` : ""}</>
                         : <><b>{p.name}</b>: {w.done} of {w.total} steps done</>}
                   </span>
-                  {w.total === 0 && canManage && <button type="button" onClick={() => importFor(p)} className={pri}><UploadCloud className="w-4 h-4" /> Import {p.name}&rsquo;s schedule</button>}
+                  {w.total === 0 && canManage && <button type="button" onClick={() => importFor(p)} className={main === "import" && p.id === unscheduled[0]?.id ? pri : btn}><UploadCloud className="w-4 h-4" /> Import {p.name}&rsquo;s schedule</button>}
                 </li>
               ))}
               {projectStatus !== "completed" && <li>{allWorkDone ? (left === 0 ? "Every close-out step is clear." : `Now close it out: ${left} thing${left === 1 ? "" : "s"} left.`) : "You can close out the finished phases now (their PSSR, turnover documents)."}</li>}
               {projectStatus === "completed" && <li>The project is marked complete.</li>}
             </ul>
           ) : (
-            <div className={`text-[12.5px] ${work.allDone ? "text-emerald-800 dark:text-emerald-300" : "text-amber-800 dark:text-amber-300"}`}>
+            <div className="text-[12.5px] text-[var(--color-text)]">
               {work.finishedAt != null
                 ? `Last step finished ${when(work.finishedAt)}${work.plannedFinish != null ? ` · planned ${when(work.plannedFinish)} (${vsPlanWords(work.hoursAfterPlan)})` : ""}. `
                 : work.total ? `${work.total - work.done} step${work.total - work.done === 1 ? "" : "s"} not marked done yet. ` : "No schedule yet. "}
@@ -252,7 +277,13 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
         </div>
       </div>
 
-      {err && <div role="alert" className="rounded-xl border border-rose-300 bg-rose-50 dark:bg-rose-950/30 px-3 py-2 text-[12.5px] font-semibold text-rose-800 dark:text-rose-300 whitespace-pre-line">{err}</div>}
+      {readFailed.length > 0 && (
+        <div role="alert" className="border-l-2 border-rose-500 pl-3 py-1 text-[12.5px] font-semibold text-rose-800 dark:text-rose-300 flex flex-wrap items-center gap-x-3">
+          <span>Couldn&apos;t load {readFailed.join(", ")}. What&apos;s shown may be missing items.</span>
+          <button type="button" onClick={reload} className="text-[var(--color-accent)] font-bold hover:underline">Try again</button>
+        </div>
+      )}
+      {err && <div role="alert" className="border-l-2 border-rose-500 pl-3 py-1 text-[12.5px] font-semibold text-rose-800 dark:text-rose-300 whitespace-pre-line">{err}</div>}
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] items-start">
         {/* To close this project */}
@@ -266,8 +297,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
               detail={phases.length
                 ? phaseWork.map(({ p, w }) => (w.total === 0 ? `${p.name}: no schedule yet` : w.allDone ? `${p.name}: done${w.finishedAt != null ? ` ${short(w.finishedAt)}` : ""}` : `${p.name}: ${w.done} of ${w.total} steps`)).join(" · ")
                 : work.allDone ? `${work.done} of ${work.total} steps${work.finishedAt != null ? ` · finished ${when(work.finishedAt)}` : ""}` : `${work.total - work.done} of ${work.total} steps not marked done`}
-              action={unscheduled.length && canManage ? <button type="button" onClick={() => importFor(unscheduled[0])} className={btn}>Import {unscheduled[0].name}&rsquo;s schedule</button>
-                : !allWorkDone ? <button type="button" onClick={() => onTab("work")} className={btn}>Open the work <ArrowRight className="w-3.5 h-3.5" /></button> : null} />
+              action={!allWorkDone && !unscheduled.length ? <button type="button" onClick={() => onTab("work")} className={btn}>Open the work <ArrowRight className="w-3.5 h-3.5" /></button> : null} />
 
             {phases.length ? (
               <Step n={2} ok={pssrs === undefined ? null : pssrOk} title="PSSR (pre-startup safety review), each phase"
@@ -311,7 +341,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
                 action={pssrNotNeeded ? (canManage ? <button type="button" disabled={!!busy} onClick={() => void run("pssr", () => saveCloseoutSettings(projectId, { pssr: null }))} className={btn}>Needed after all</button> : null)
                   : pssr ? <button type="button" onClick={() => onTab("quality")} className={btn}>Open <ArrowRight className="w-3.5 h-3.5" /></button>
                     : canManage ? <span className="flex gap-1.5 flex-wrap">
-                      <button type="button" onClick={() => { setErr(null); setUploading("all"); }} className={pri}><UploadCloud className="w-4 h-4" /> Upload PSSR</button>
+                      <button type="button" onClick={() => { setErr(null); setUploading("all"); }} className={main === "pssr" ? pri : btn}><UploadCloud className="w-4 h-4" /> Upload PSSR</button>
                       <button type="button" disabled={!!busy} onClick={() => void run("pssr", () => saveCloseoutSettings(projectId, { pssr: "not_needed" }))} className={btn}>Not needed</button>
                     </span> : null} />
             )}
@@ -330,11 +360,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
                     <TurnoverRow key={it.id} it={it} canManage={canManage} busy={busy === it.id}
                       onRequired={() => void run(it.id, () => updateTurnoverItem({ item: it, patch: { required: !it.required }, actor }))}
                       onAccept={() => void run(it.id, () => reviewTurnoverItem({ item: it, status: "accepted", actor }))}
-                      onFile={(file) => void run(it.id, async () => {
-                        if (!home?.place) return { ok: false, error: "Pick where this project's files go first (above the list)." };
-                        const d = await uploadProjectFile({ orgId, projectId, projectName, file, prefix: "TURNOVER", title: `${it.name} - ${file.name.replace(/\.[a-z0-9]+$/i, "")}`, actorUserId: uid, actorEmail: userEmail });
-                        return attachTurnoverDocument({ item: it, documentId: d.documentId, documentLabel: d.label, actor });
-                      })} />
+                      onFile={(file) => attachFile(it, file)} />
                   ))}
                   {canManage && (
                     <div className="px-3 py-2 flex items-center gap-2 flex-wrap bg-[var(--color-surface-2)]/40">
@@ -362,7 +388,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
               {unscheduled.length > 0
                 ? <span className="text-[12px] font-semibold text-amber-800 dark:text-amber-300">{unscheduled.map((p) => p.name).join(", ")} {unscheduled.length === 1 ? "has" : "have"} no schedule yet: complete the project only if {unscheduled.length === 1 ? "it isn't" : "they aren't"} going ahead.</span>
                 : left > 0 && <span className="text-[12px] text-[var(--color-text-muted)]">{left} step{left === 1 ? "" : "s"} still open: you can complete anyway.</span>}
-              <button type="button" onClick={onComplete} className={allWorkDone ? "inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-black hover:bg-[var(--color-accent-hover)]" : "inline-flex items-center gap-1.5 h-9 px-4 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[13px] font-bold hover:bg-[var(--color-surface-2)]"}><Check className="w-4 h-4" /> Mark project complete</button>
+              <button type="button" onClick={onComplete} className={main === "complete" ? "inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-black hover:bg-[var(--color-accent-hover)]" : "inline-flex items-center gap-1.5 h-9 px-4 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[13px] font-bold hover:bg-[var(--color-surface-2)]"}><Check className="w-4 h-4" /> Mark project complete</button>
             </div>
           )}
         </div>
@@ -375,7 +401,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
               <span className="inline-flex rounded-lg border border-[var(--color-border-strong)] overflow-hidden" role="group" aria-label="Phase">
                 {[{ id: null as string | null, name: "All" }, ...phases.map((p) => ({ id: p.id as string | null, name: p.name }))].map((p) => (
                   <button key={p.id ?? "all"} type="button" aria-pressed={phasePick === p.id} onClick={() => setPhasePick(p.id)}
-                    className={`h-8 px-2.5 text-[12px] font-bold border-r last:border-r-0 border-[var(--color-border-strong)] ${phasePick === p.id ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900" : "bg-[var(--color-surface)] text-[var(--color-text)]"}`}>{p.name}</button>
+                    className={`h-8 px-2.5 text-[12px] font-bold border-r last:border-r-0 border-[var(--color-border-strong)] ${phasePick === p.id ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>{p.name}</button>
                 ))}
               </span>
             )}
@@ -384,16 +410,15 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
             <div className="p-4 space-y-4">
               {pickedPhase && <div className="text-[12px] text-[var(--color-text-muted)]">{pickedPhase.name} · {phaseDates(pickedPhase)} · {pickedPhase.share}% of the {money0?.afe != null ? "AFE" : "budget"}</div>}
               {stats.noSchedule && pickedPhase ? (
-                <div className="rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-3 py-2.5 text-[12.5px] text-amber-900 dark:text-amber-200 flex items-center gap-2 flex-wrap">
-                  <span className="min-w-0 flex-1 basis-48"><b>{noScheduleWords(pickedPhase, now, tz)}.</b> Nothing to measure until its schedule is imported.</span>
-                  {canManage && <button type="button" onClick={() => importFor(pickedPhase)} className={pri}><UploadCloud className="w-4 h-4" /> Import {pickedPhase.name}&rsquo;s schedule</button>}
-                </div>
+                <p className="border-l-2 border-amber-500 pl-3 text-[12.5px] text-amber-900 dark:text-amber-200">
+                  <b>{noScheduleWords(pickedPhase, now, tz)}.</b> Nothing to measure until its schedule is imported.
+                </p>
               ) : (
                 <>
                   {stats.missing.length > 0 && (
-                    <div className="rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-3 py-2 text-[12.5px] text-amber-900 dark:text-amber-200">
+                    <p className="border-l-2 border-amber-500 pl-3 text-[12.5px] text-amber-900 dark:text-amber-200">
                       <b>{stats.missing.map((p) => noScheduleWords(p, now, tz)).join("; ")}.</b> The figures below cover only {phases.filter((p) => !stats.missing.some((x) => x.id === p.id)).map((p) => p.name).join(", ")}.
-                    </div>
+                    </p>
                   )}
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                     {stats.missing.length > 0
@@ -420,7 +445,6 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
                               : ps.finishedAt != null ? `Done ${when(ps.finishedAt)}${ps.plannedFinish != null ? `, ${vsPlanWords(Math.round(((ps.finishedAt - ps.plannedFinish) / 3_600_000) * 10) / 10)} (plan ${when(ps.plannedFinish)})` : ""}.`
                                 : `${ps.actualPct}% done, plan by now ${ps.plannedPct}% · ${ps.done} of ${ps.steps} steps.`}
                           </div>
-                          {ps.noSchedule && canManage && <button type="button" onClick={() => importFor(p)} className={pri}><UploadCloud className="w-4 h-4" /> Import {p.name}&rsquo;s schedule</button>}
                           {ps.shifts.length > 0 && <Progress stats={ps} tz={tz} look={look} lookById={lookById} ids={ids} loading={!look} records={records} mp={mp} />}
                         </div>
                       ))}
@@ -431,7 +455,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
               )}
               {stats.lines.length > 0 && <LinesChart rows={stats.lines} cur="USD" />}
             </div>
-          ) : <div className="py-10 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-text-muted)]" /></div>}
+          ) : <div className="p-4"><LoadingBlock what="how the job did" /></div>}
         </div>
       </div>
 
@@ -488,7 +512,7 @@ function Progress({ stats, tz, look, lookById, ids, loading, records, mp }: {
             return (
               <div key={r.start} className={`grid grid-cols-[116px_minmax(0,1fr)_auto] gap-2 items-center py-1 text-[12px] ${r.kind === "night" ? "bg-[var(--color-surface-2)]/50" : ""}`}>
                 <span className="text-[var(--color-text)] leading-tight pl-1">{shiftLabel(r)}
-                  {r.planEnds && stats.plannedFinish != null && <span className="block text-[11px] font-bold text-[#000A72] dark:text-[var(--color-text)]">plan finish {fmtInTz(stats.plannedFinish, tz, { hour: "numeric", minute: "2-digit", hour12: true })}</span>}
+                  {r.planEnds && stats.plannedFinish != null && <span className="block text-[11px] font-bold text-[var(--color-text)]">plan finish {fmtInTz(stats.plannedFinish, tz, { hour: "numeric", minute: "2-digit", hour12: true })}</span>}
                   {r.finishes && stats.finishedAt != null && <span className="block text-[11px] font-bold text-emerald-700 dark:text-emerald-400">all done {fmtInTz(stats.finishedAt, tz, { hour: "numeric", minute: "2-digit", hour12: true })}</span>}
                   {r.current && <span className="block text-[11px] text-[var(--color-text-muted)]">now</span>}</span>
                 <div className="space-y-0.5">
@@ -695,31 +719,54 @@ const STATUS: Record<TurnoverItem["status"], { word: string; cls: string }> = {
   received: { word: "Received", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)]" },
   accepted: { word: "Accepted", cls: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" },
   rejected: { word: "Rejected", cls: "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300" },
-  waived: { word: "Waived", cls: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300" },
+  waived: { word: "Waived", cls: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" },
 };
 
 /** One turnover document: needed for this job or not, where it stands,
  *  and attach the file or accept it. */
-function TurnoverRow({ it, canManage, busy, onRequired, onAccept, onFile }: { it: TurnoverItem; canManage: boolean; busy: boolean; onRequired: () => void; onAccept: () => void; onFile: (f: File) => void }) {
+function TurnoverRow({ it, canManage, busy, onRequired, onAccept, onFile }: { it: TurnoverItem; canManage: boolean; busy: boolean; onRequired: () => void; onAccept: () => void; onFile: (f: File) => Promise<void> }) {
   const file = useRef<HTMLInputElement | null>(null);
-  const st = it.required ? STATUS[it.status] : { word: "Not for this job", cls: "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400" };
+  // The file going up for this row, and one that didn't, kept for Try again.
+  const [sending, setSending] = useState<File | null>(null);
+  const [failed, setFailed] = useState<{ file: File; error: string } | null>(null);
+  const canAttach = canManage && it.required && (it.status === "open" || it.status === "rejected");
+  const send = async (f: File) => {
+    setSending(f); setFailed(null);
+    try { await onFile(f); }
+    catch (e) { setFailed({ file: f, error: (e as Error).message || "It didn't attach." }); }
+    finally { setSending(null); }
+  };
+  const drag = useFileDrag((fs) => { void send(fs[0]); }, !canAttach || busy || !!sending);
+  const st = it.required ? STATUS[it.status] : { word: "Not for this job", cls: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" };
   return (
+    <div {...drag.bind} className={`${drag.ring}`}>
     <div className={`px-3 py-2 flex items-center gap-2.5 text-[12.5px] ${it.required ? "" : "opacity-60"}`}>
       <button type="button" role="switch" aria-checked={it.required} aria-label={`${it.name} needed for this job`} disabled={!canManage || busy} onClick={onRequired}
-        className={`relative w-9 h-5 rounded-full shrink-0 transition-colors ${it.required ? "bg-[var(--color-text)]" : "bg-slate-300 dark:bg-slate-600"} disabled:opacity-60`}>
-        <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${it.required ? "left-[18px]" : "left-0.5"}`} />
+        className={`relative w-9 h-5 rounded-full shrink-0 transition-colors ${it.required ? "bg-[var(--color-text)]" : "bg-[var(--color-border-strong)]"} disabled:opacity-60`}>
+        <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-[var(--color-surface)] shadow transition-all ${it.required ? "left-[18px]" : "left-0.5"}`} />
       </button>
       <span className="min-w-0 flex-1 break-words leading-snug text-[var(--color-text)]" title={it.description ?? undefined}>{it.name}</span>
-      <span className={`shrink-0 text-[11px] font-black px-2 py-0.5 rounded-full ${st.cls}`}>{busy ? <Loader2 className="w-3 h-3 animate-spin inline" /> : st.word}</span>
-      {canManage && it.required && (it.status === "open" || it.status === "rejected") && (
+      <span className={`shrink-0 text-[11px] font-black px-2 py-0.5 rounded-full ${st.cls}`}>{busy || sending ? <Loader2 className="w-3 h-3 animate-spin inline" /> : st.word}</span>
+      {canAttach && (
         <>
-          <input ref={file} type="file" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); if (file.current) file.current.value = ""; }} />
-          <button type="button" disabled={busy} onClick={() => file.current?.click()} className="shrink-0 h-7 px-2.5 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Attach</button>
+          <input ref={file} type="file" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void send(f); if (file.current) file.current.value = ""; }} />
+          <button type="button" disabled={busy || !!sending} onClick={() => file.current?.click()} className="shrink-0 h-7 px-2.5 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Attach</button>
         </>
       )}
       {canManage && it.required && it.status === "received" && (
-        <button type="button" disabled={busy} onClick={onAccept} className="shrink-0 h-7 px-2.5 rounded-lg border border-emerald-400 text-[12px] font-bold text-emerald-800 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/30">Accept</button>
+        <button type="button" disabled={busy} onClick={onAccept} className="shrink-0 h-7 px-2.5 rounded-lg border border-emerald-500/60 text-[12px] font-bold text-emerald-800 dark:text-emerald-300 hover:bg-emerald-500/10">Accept</button>
       )}
+    </div>
+    {drag.over && <div className="px-3 pb-2 text-[12px] font-bold text-[var(--color-text)]">{drag.say}</div>}
+    {(sending || failed) && (
+      <div className="px-3 pb-2 flex items-center gap-2 text-[12px]">
+        <FileThumb file={(sending ?? failed!.file)} size={28} />
+        <span className="min-w-0 flex-1 truncate text-[var(--color-text)]">{(sending ?? failed!.file).name} <span className="text-[var(--color-text-muted)]">· {fileSize((sending ?? failed!.file).size)}</span>
+          {sending ? <span className="text-[var(--color-text-muted)]"> · attaching…</span> : <span className="block font-semibold text-rose-700 dark:text-rose-300 truncate">{failed!.error}</span>}
+        </span>
+        {failed && !sending && <button type="button" onClick={() => void send(failed.file)} className="shrink-0 h-7 px-2.5 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Try again</button>}
+      </div>
+    )}
     </div>
   );
 }

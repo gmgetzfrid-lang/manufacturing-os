@@ -12,7 +12,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
-  Briefcase, Plus, Search, Lock, Globe, AlertTriangle,
+  Briefcase, Plus, Search, Lock,
   Calendar, User as UserIcon, Layers, ChevronRight, ChevronDown, Download,
 } from "lucide-react";
 import { listedTypeOf, typePlural, typeOrder } from "@/lib/projectType";
@@ -21,7 +21,9 @@ import { useRole } from "@/components/providers/RoleContext";
 import { appAlert } from "@/components/providers/DialogProvider";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
-import { Spinner } from "@/components/ui/Spinner";
+import LoadingBlock from "@/components/ui/LoadingBlock";
+import MoreMenu from "@/components/ui/MoreMenu";
+import { badgeText } from "@/lib/badge";
 import { listProjects } from "@/lib/projects";
 import { projectDue, projectDueWords } from "@/lib/projectPhases";
 import { dayKey } from "@/lib/scheduleTz";
@@ -30,13 +32,13 @@ import { exportAllProjectsToCsv } from "@/lib/projectExport";
 import StaleCheckoutBanner from "@/components/projects/StaleCheckoutBanner";
 import type { Project, ProjectStatus, Timestamp } from "@/types/schema";
 
-const STATUS_TABS: { value: ProjectStatus | "all"; label: string; color: string }[] = [
-  { value: "active",    label: "Active",    color: "emerald" },
-  { value: "paused",    label: "Paused",    color: "amber"   },
-  { value: "completed", label: "Completed", color: "blue"    },
-  { value: "cancelled", label: "Cancelled", color: "red"     },
-  { value: "archived",  label: "Archived",  color: "slate"   },
-  { value: "all",       label: "All",       color: "slate"   },
+const STATUS_TABS: { value: ProjectStatus | "all"; label: string }[] = [
+  { value: "active",    label: "Active" },
+  { value: "paused",    label: "Paused" },
+  { value: "completed", label: "Completed" },
+  { value: "cancelled", label: "Cancelled" },
+  { value: "archived",  label: "Archived" },
+  { value: "all",       label: "All" },
 ];
 
 export default function ProjectsPage() {
@@ -153,24 +155,18 @@ export default function ProjectsPage() {
         <PageHeaderBar
           icon={Briefcase}
           title="Projects"
-          subtitle={<>Every project anyone in the org is working on. Click any to see who&apos;s on it and which files are checked out.</>}
+          subtitle={loading ? "Loading…" : `${tabCounts.active ?? 0} active project${(tabCounts.active ?? 0) === 1 ? "" : "s"}${tabCounts.paused ? `, ${tabCounts.paused} paused` : ""}.`}
           actions={
             <>
-              <Button
-                variant="secondary"
-                onClick={async () => {
-                  if (!activeOrgId) return;
+              <Button onClick={() => setShowCreate(true)}>
+                <Plus className="w-4 h-4" /> New project
+              </Button>
+              {activeOrgId && (tabCounts.all ?? 0) > 0 && (
+                <MoreMenu items={[{ icon: <Download className="w-4 h-4" />, label: "Export all to CSV", onClick: async () => {
                   try { await exportAllProjectsToCsv(activeOrgId); }
                   catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
-                }}
-                disabled={!activeOrgId || projects.length === 0}
-                title="Download every project + associated documents + active checkouts as a CSV (Excel opens it natively)."
-              >
-                <Download className="w-4 h-4" /> Export All
-              </Button>
-              <Button onClick={() => setShowCreate(true)}>
-                <Plus className="w-4 h-4" /> New Project
-              </Button>
+                } }]} />
+              )}
             </>
           }
         />
@@ -181,17 +177,18 @@ export default function ProjectsPage() {
             <button
               key={t.value}
               onClick={() => setStatusFilter(t.value)}
+              aria-pressed={statusFilter === t.value}
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
                 statusFilter === t.value
-                  ? "bg-slate-900 text-white"
+                  ? "bg-[var(--color-text)] text-[var(--color-surface)]"
                   : "bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
               }`}
             >
               {t.label}
               {typeof tabCounts[t.value] === "number" && tabCounts[t.value] > 0 && (
                 <span className={`text-[11px] px-1.5 py-0.5 rounded-full font-mono ${
-                  statusFilter === t.value ? "bg-white/20 text-white" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"
-                }`}>{tabCounts[t.value]}</span>
+                  statusFilter === t.value ? "bg-[var(--color-surface)]/20 text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"
+                }`}>{badgeText(tabCounts[t.value])}</span>
               )}
             </button>
           ))}
@@ -201,7 +198,7 @@ export default function ProjectsPage() {
         {unitChoices.some((u) => u.code !== "-") && (
           <div className="flex flex-wrap items-center gap-2 mb-3">
             <select value={unitPick} onChange={(e) => setUnitPick(e.target.value)} aria-label="Unit"
-              className={`h-8 rounded-lg border px-2 text-xs font-bold bg-[var(--color-surface)] text-[var(--color-text)] ${unitPick ? "border-[var(--color-accent)]" : "border-[var(--color-border)]"}`}>
+              className={`h-8 rounded-lg border px-2 text-xs font-bold bg-[var(--color-surface)] text-[var(--color-text)] ${unitPick ? "border-[var(--color-text)]" : "border-[var(--color-border)]"}`}>
               <option value="">All units</option>
               {unitChoices.map((u) => <option key={u.code} value={u.code}>{u.label} · {u.n}</option>)}
             </select>
@@ -219,7 +216,7 @@ export default function ProjectsPage() {
               <button key={g.key} onClick={() => setTypeFilter(typeFilter === g.key ? null : g.key)} aria-pressed={typeFilter === g.key}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${typeFilter === g.key ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
                 {g.label}
-                <span className={`text-[11px] px-1.5 py-0.5 rounded-full font-mono ${typeFilter === g.key ? "bg-white/20" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>{g.items.length}</span>
+                <span className={`text-[11px] px-1.5 py-0.5 rounded-full font-mono ${typeFilter === g.key ? "bg-[var(--color-surface)]/20" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>{badgeText(g.items.length)}</span>
               </button>
             ))}
           </div>
@@ -238,12 +235,11 @@ export default function ProjectsPage() {
 
         {/* RESULTS */}
         {loading ? (
-          <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)] p-8">
-            <Spinner size="sm" /> Loading projects…
-          </div>
+          <LoadingBlock what="projects" rows={6} />
         ) : error ? (
-          <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700 flex items-start gap-2">
-            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
+          <div role="alert" className="border-l-2 border-rose-500 pl-3 py-1 text-sm text-rose-700 dark:text-rose-300 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span>Couldn&apos;t load projects: {error}</span>
+            <button onClick={() => void refresh()} className="text-xs font-bold text-[var(--color-accent)] hover:underline">Try again</button>
           </div>
         ) : projects.length === 0 ? (
           filterActive && (tabCounts.all ?? 0) > 0 ? (
@@ -258,7 +254,7 @@ export default function ProjectsPage() {
               </button>
             </div>
           ) : (
-            <EmptyState onCreate={() => setShowCreate(true)} />
+            <EmptyState />
           )
         ) : (
           <div className="space-y-6">
@@ -293,7 +289,8 @@ export default function ProjectsPage() {
           actorEmail={userEmail ?? undefined}
           actorRole={activeRole}
           onClose={() => setShowCreate(false)}
-          onCreated={() => { setShowCreate(false); void refresh(); }}
+          // The wizard opens the new project itself.
+          onCreated={() => { setShowCreate(false); }}
         />
       )}
     </PageShell>
@@ -306,11 +303,11 @@ function ProjectCard({ project }: { project: Project }) {
   // In phases: the phase running now and its end, never the typed target.
   const due = project.phases?.length ? projectDue(project.phases, null, dayKey(nowMs, project.timezone || "America/Los_Angeles")) : null;
   const statusColors: Record<ProjectStatus, string> = {
-    active:    "bg-emerald-100 text-emerald-700 border-emerald-200",
-    paused:    "bg-amber-100 text-amber-700 border-amber-200",
+    active:    "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30",
+    paused:    "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30",
     completed: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]",
-    cancelled: "bg-red-100 text-red-700 border-red-200",
-    archived:  "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
+    cancelled: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]",
+    archived:  "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]",
   };
 
   return (
@@ -337,7 +334,7 @@ function ProjectCard({ project }: { project: Project }) {
             <p className="text-xs text-[var(--color-text-muted)] mt-1 line-clamp-2">{project.description}</p>
           )}
         </div>
-        <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-[var(--color-text-muted)] transition-colors shrink-0 mt-1" />
+        <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)] transition-colors shrink-0 mt-1" />
       </div>
 
       <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[var(--color-text-muted)]">
@@ -363,18 +360,13 @@ function ProjectCard({ project }: { project: Project }) {
   );
 }
 
-function EmptyState({ onCreate }: { onCreate: () => void }) {
+// The one way in is New project, up top.
+function EmptyState() {
   return (
     <div className="bg-[var(--color-surface)] border border-dashed border-[var(--color-border-strong)] rounded-2xl p-12 text-center">
-      <Briefcase className="w-10 h-10 mx-auto text-slate-300 mb-3" />
-      <h3 className="text-base font-black text-[var(--color-text)] mb-1">No projects to show</h3>
-      <p className="text-xs text-[var(--color-text-muted)] mb-4 max-w-md mx-auto">
-        Projects collect related document checkouts so teammates can see who&apos;s working on what,
-        coordinate, and request markups without stepping on each other.
-      </p>
-      <button onClick={onCreate} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-bold">
-        <Plus className="w-4 h-4" /> Create your first project
-      </button>
+      <Briefcase className="w-10 h-10 mx-auto text-[var(--color-text-faint)] mb-3" />
+      <h3 className="text-base font-black text-[var(--color-text)] mb-1">No projects yet</h3>
+      <p className="text-xs text-[var(--color-text-muted)] max-w-md mx-auto">Start one with New project. Its schedule, reports, costs and checkouts live there.</p>
     </div>
   );
 }

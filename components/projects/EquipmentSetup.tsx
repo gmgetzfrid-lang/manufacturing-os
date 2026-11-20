@@ -231,7 +231,7 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
 
       {/* Asks waiting on an admin: each opens on its work order, ready to add. */}
       {asks.length > 0 && (
-        <div className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-3 py-2.5 space-y-2">
+        <div className="border-l-2 border-amber-500 pl-3 py-1 space-y-2">
           <div className="text-[12.5px] font-bold text-amber-900 dark:text-amber-200">
             {asks.length === 1 ? "1 work order is" : `${asks.length} work orders are`} waiting on equipment to be added{canEditEquipment ? "" : " by an admin"}
           </div>
@@ -268,7 +268,7 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
           </div>
         )}
         {flaggedAssets.length > 0 && (
-          <div className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-[12.5px] text-amber-900 dark:text-amber-200 space-y-1.5">
+          <div className="border-l-2 border-amber-500 pl-3 py-1 text-[12.5px] text-amber-900 dark:text-amber-200 space-y-1.5">
             <div className="flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
               <span>
@@ -336,7 +336,7 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
 }
 
 const chip = (t: string, tone: "emerald" | "amber" | "slate") => (
-  <span className={`inline-block rounded px-1.5 py-px text-[12px] font-semibold ${tone === "emerald" ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300" : tone === "amber" ? "bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300" : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"}`}>{t}</span>
+  <span className={`inline-block rounded px-1.5 py-px text-[12px] font-semibold ${tone === "emerald" ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300" : tone === "amber" ? "bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>{t}</span>
 );
 
 /** The registry lists the work order's equipment ID under another name
@@ -353,7 +353,7 @@ function NameDiffers({ orgId, m, canRename, busy, onRename }: { orgId: string; m
   }, [orgId, code]);
   const backed = !!m.tag && !!drawn?.some((d) => tagKey(d.tag) === tagKey(m.tag!));
   return (
-    <div className="mt-1.5 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-2.5 py-2 text-[12.5px] text-amber-900 dark:text-amber-200 space-y-1.5" data-name-differs>
+    <div className="mt-1.5 border-l-2 border-amber-500 pl-2.5 py-1 text-[12.5px] text-amber-900 dark:text-amber-200 space-y-1.5" data-name-differs>
       <div><b>{code}</b> is in the equipment list as <b>{m.listedAs}</b>. This work order calls it <b>{m.tag}</b>. It is matched by its equipment number.</div>
       {drawn && drawn.length > 0 && (
         <ul className="space-y-0.5">

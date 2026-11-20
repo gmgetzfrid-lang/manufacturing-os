@@ -45,14 +45,16 @@ import { phaseStats } from "@/lib/phaseReport";
 import type { ProjectPhase } from "@/lib/projectPhases";
 import ContractorsPanel from "@/components/projects/cost/ContractorsPanel";
 import { OPEN_COSTS_EVENT, takePendingCosts, type CostsViewAsked } from "@/lib/costsNav";
+import LoadingBlock from "@/components/ui/LoadingBlock";
+import { badgeText } from "@/lib/badge";
 
 type CostView = "overview" | "contractors" | "budget" | "quotes" | "invoices" | "changes";
 
 interface BudgetBasis { afeNumber: string | null; chargeAccount: string | null; authorized: number | null; docId: string | null }
 
 const ENTRY_TYPES: Array<{ v: CostEntryType; label: string; hint: string }> = [
-  { v: "commitment", label: "Quote / PO", hint: "Awarded quote, PO or contract value - money promised. Type it here when the quote was a phone call or email." },
-  { v: "actual", label: "Actual", hint: "Invoice / timesheet - money really spent" },
+  { v: "commitment", label: "Quote / PO", hint: "Awarded quote, PO or contract value: money promised. Type it here when the quote was a phone call or email." },
+  { v: "actual", label: "Actual", hint: "Invoice or timesheet: money really spent" },
   { v: "adjustment", label: "Adjustment", hint: "Signed correction (can be negative to credit back)" },
 ];
 
@@ -199,22 +201,22 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
   const basisDoc = basis?.docId ? docs.find((d) => d.id === basis.docId) ?? null : null;
 
 
-  if (loading) return <div className="py-12 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-text-muted)]" /></div>;
+  if (loading) return <LoadingBlock what="costs" />;
 
   return (
     <div className="space-y-4">
       {preview && <FilePreviewModal file={preview} onClose={() => setPreview(null)} />}
       {err && (
-        <div className="flex items-center gap-2 rounded-xl border border-rose-500/50 bg-rose-500/[0.08] px-3 py-2.5 text-xs font-bold text-rose-700 dark:text-rose-300">
-          <AlertTriangle className="w-4 h-4 shrink-0" /> {err}
-          <button onClick={() => setErr(null)} className="ml-auto text-rose-400 hover:text-rose-600"><X className="w-3.5 h-3.5" /></button>
+        <div role="alert" className="flex items-center gap-2 border-l-2 border-rose-500 pl-3 py-1 text-xs font-bold text-rose-700 dark:text-rose-300">
+          <span className="min-w-0 flex-1">{err}</span>
+          <button onClick={() => setErr(null)} aria-label="Dismiss" className="shrink-0 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
         </div>
       )}
 
       {notice && (
-        <div className="flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/[0.07] px-3 py-2.5 text-xs font-bold text-emerald-800 dark:text-emerald-300">
-          <Check className="w-4 h-4 shrink-0" /> {notice}
-          <button onClick={() => setNotice(null)} className="ml-auto text-emerald-500 hover:text-emerald-700"><X className="w-3.5 h-3.5" /></button>
+        <div role="status" className="flex items-center gap-2 border-l-2 border-emerald-500 pl-3 py-1 text-xs font-bold text-emerald-800 dark:text-emerald-300">
+          <Check className="w-4 h-4 shrink-0" /> <span className="min-w-0 flex-1">{notice}</span>
+          <button onClick={() => setNotice(null)} aria-label="Dismiss" className="shrink-0 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
         </div>
       )}
 
@@ -243,16 +245,15 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       {phaseMoney && phaseMoney.s.lines.length > 0 && <LinesChart rows={phaseMoney.s.lines} cur={cur} />}
       {/* ── Stat strip ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard icon={<Landmark className="w-4 h-4" />} label="Budget" value={fmtMoney(rollup.budget, cur)} tone="accent" />
+        <StatCard icon={<Landmark className="w-4 h-4" />} label="Budget" value={fmtMoney(rollup.budget, cur)} />
         <StatCard icon={<Scale className="w-4 h-4" />} label="Quoted (awarded)" value={fmtMoney(rollup.committed, cur)}
-          sub={rollup.budget > 0 ? `${Math.round(outlook.quotedCoverage * 100)}% of the budget has a quote` : undefined} tone="sky" />
+          sub={rollup.budget > 0 ? `${Math.round(outlook.quotedCoverage * 100)}% of the budget has a quote` : undefined} />
         <StatCard icon={<HardHat className="w-4 h-4" />} label="Cost to date (est.)" value={fmtMoney(outlook.estimatedToDate, cur)}
-          sub={`${fmtMoney(outlook.invoiced, cur)} invoiced${outlook.unbilled >= 1 ? ` · ${fmtMoney(outlook.unbilled, cur)} not billed yet` : ""}`}
-          tone="violet" />
+          sub={`${fmtMoney(outlook.invoiced, cur)} invoiced${outlook.unbilled >= 1 ? ` · ${fmtMoney(outlook.unbilled, cur)} not billed yet` : ""}`} />
         <StatCard
           icon={outlook.variance > 0 ? <TrendingDown className="w-4 h-4" /> : <TrendingUp className="w-4 h-4" />}
           label="Forecast at finish" value={fmtMoney(outlook.forecast, cur)}
-          tone={outlook.variance > 0 ? "rose" : "emerald"}
+          tone={outlook.variance > 0 ? "bad" : "good"}
           sub={rollup.budget <= 0 ? undefined
             : Math.abs(outlook.variance) < 1 ? "on budget"
             : `${fmtMoney(Math.abs(outlook.variance), cur)} ${outlook.variance > 0 ? "over" : "under"} budget`}
@@ -271,8 +272,8 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
             <span className="tabular-nums">{fmtMoney(outlook.estimatedToDate, cur)} est. to date · {fmtMoney(rollup.committed, cur)} quoted · {fmtMoney(rollup.budget, cur)} budget</span>
           </div>
           <div className="relative h-2.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-            <div className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-surface-2)] transition-all duration-700" style={{ width: `${commitPct}%` }} />
-            <div className={`absolute inset-y-0 left-0 rounded-full transition-all duration-700 ${burnPct >= 100 ? "bg-rose-500" : "bg-[image:var(--brand-gradient)]"}`} style={{ width: `${burnPct}%` }} />
+            <div className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-border-strong)] transition-all duration-700" style={{ width: `${commitPct}%` }} />
+            <div className={`absolute inset-y-0 left-0 rounded-full transition-all duration-700 ${burnPct >= 100 ? "bg-rose-500" : "bg-[var(--color-text)]"}`} style={{ width: `${burnPct}%` }} />
           </div>
         </div>
       )}
@@ -287,10 +288,9 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       )}
 
       {mixedCurrency && (
-        <div className="flex items-center gap-2 rounded-xl border border-amber-500/40 bg-amber-500/[0.06] px-3 py-2 text-[11px] font-bold text-amber-800 dark:text-amber-300">
-          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-          Accounts use mixed currencies ({rollup.currencies.join(", ")}) - the totals above sum raw numbers. Keep one currency per project for honest rollups.
-        </div>
+        <p className="border-l-2 border-amber-500 pl-3 text-[11px] font-bold text-amber-800 dark:text-amber-300">
+          Accounts use mixed currencies ({rollup.currencies.join(", ")}). The totals above add raw numbers. Keep one currency per project.
+        </p>
       )}
 
       {/* ── The picture: S-curve, forecast sentence, crew curve (or the
@@ -350,7 +350,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         ) : canManage && (accounts.length === 0 || showDrop) ? (
           <div className="p-4">
             <BudgetDocDrop orgId={orgId} projectId={projectId} onRead={setImporting}
-              label={accounts.length === 0 ? "Drop the AFE, estimate, or budget sheet - the cost model builds itself" : undefined} />
+              label={accounts.length === 0 ? "Drop the AFE, estimate or budget sheet to build the budget" : undefined} />
           </div>
         ) : null}
       </div>
@@ -422,15 +422,15 @@ export function OutlookCard({ outlook: o, rollup, cur, authorized, onQuotes }: {
       <div className="flex items-center gap-2">
         <Gauge className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-sm font-bold text-[var(--color-text)]">Where this job lands</span>
-        <span className="text-[11px] text-[var(--color-text-muted)]">from awarded quotes and schedule progress - no invoices needed</span>
+        <span className="text-[11px] text-[var(--color-text-muted)]">from awarded quotes and schedule progress, no invoices needed</span>
       </div>
       <ul className="text-xs text-[var(--color-text)] space-y-1">
         <li>
           {o.quoted > 0
             ? <>Awarded quotes plus the budget for unquoted lines put the finish at <b className="tabular-nums">{fmtMoney(o.forecast, cur)}</b>
                 {Math.abs(o.variance) >= 1
-                  ? <> - <b className={o.variance > 0 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300"}>{fmtMoney(Math.abs(o.variance), cur)} {o.variance > 0 ? "over" : "under"} budget</b></>
-                  : " - on budget"}
+                  ? <>: <b className={o.variance > 0 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300"}>{fmtMoney(Math.abs(o.variance), cur)} {o.variance > 0 ? "over" : "under"} budget</b></>
+                  : ": on budget"}
                 {vsAuth != null && vsAuth > 0.5 && <>, <b className="text-rose-700 dark:text-rose-300">{fmtMoney(vsAuth, cur)} over the authorization</b> (a supplement may be needed)</>}.</>
             : <>No quotes awarded yet, so the forecast is just the budget. <button onClick={onQuotes} className="font-bold text-[var(--color-accent)] hover:underline">Award quotes</button> and this becomes a real forecast.</>}
         </li>
@@ -443,7 +443,7 @@ export function OutlookCard({ outlook: o, rollup, cur, authorized, onQuotes }: {
           <li>
             The schedule is <b>{o.projectPct}% complete</b>, so about <b className="tabular-nums">{fmtMoney(o.estimatedToDate, cur)}</b> of work has been done.
             {" "}{fmtMoney(o.invoiced, cur)} has been invoiced
-            {o.unbilled >= 1 ? <> - about <b className="tabular-nums">{fmtMoney(o.unbilled, cur)}</b> is done but not billed yet (your accrual).</> : "."}
+            {o.unbilled >= 1 ? <>. About <b className="tabular-nums">{fmtMoney(o.unbilled, cur)}</b> is done but not billed yet (your accrual).</> : "."}
           </li>
         ) : (
           <li className="text-[var(--color-text-muted)]">
@@ -452,7 +452,7 @@ export function OutlookCard({ outlook: o, rollup, cur, authorized, onQuotes }: {
         )}
         {o.quoted > 0 && unquoted > 0 && (
           <li className="text-[11px] text-[var(--color-text-muted)]">
-            {unquoted} budget line{unquoted === 1 ? " has" : "s have"} no awarded quote - {unquoted === 1 ? "it's" : "they're"} forecast at budget.
+            {unquoted} budget line{unquoted === 1 ? " has" : "s have"} no awarded quote, so {unquoted === 1 ? "it's" : "they're"} forecast at budget.
           </li>
         )}
       </ul>
@@ -464,13 +464,13 @@ function SubTab({ active, onClick, icon, label, count, attention }: {
   active: boolean; onClick: () => void; icon: React.ReactNode; label: string; count?: number; attention?: boolean;
 }) {
   return (
-    <button onClick={onClick}
+    <button onClick={onClick} aria-pressed={active}
       className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
         active ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
       {icon} {label}
       {count != null && count > 0 && (
         <span className={`text-[11px] font-black tabular-nums px-1.5 rounded-full ${
-          active ? "bg-white/20" : attention ? "bg-amber-500/15 text-amber-700 dark:text-amber-300" : "bg-[var(--color-surface-2)]"}`}>{count}</span>
+          active ? "bg-[var(--color-surface)]/20" : attention ? "bg-amber-500/15 text-amber-700 dark:text-amber-300" : "bg-[var(--color-surface-2)]"}`}>{badgeText(count)}</span>
       )}
     </button>
   );
@@ -505,16 +505,15 @@ function BasisLine({ basis, budget, spent, cur, onOpen }: {
 
 // ── pieces ──────────────────────────────────────────────────────────────
 
-function StatCard({ icon, label, value, sub, tone }: {
+function StatCard({ icon, label, value, sub, tone = "neutral" }: {
   icon: React.ReactNode; label: string; value: string; sub?: string;
-  tone: "accent" | "sky" | "violet" | "emerald" | "rose";
+  /** Good or bad news on the number; most are neutral. */
+  tone?: "neutral" | "good" | "bad";
 }) {
   const tones: Record<string, string> = {
-    accent: "text-[var(--color-accent)] bg-[var(--color-surface-2)]",
-    sky: "text-[var(--color-text)] bg-[var(--color-surface-2)]",
-    violet: "text-[var(--color-text)] bg-[var(--color-surface-2)]",
-    emerald: "text-emerald-600 bg-emerald-500/10",
-    rose: "text-rose-600 bg-rose-500/10",
+    neutral: "text-[var(--color-text)] bg-[var(--color-surface-2)]",
+    good: "text-emerald-600 bg-emerald-500/10",
+    bad: "text-rose-600 bg-rose-500/10",
   };
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3.5 shadow-sm">
@@ -568,10 +567,10 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
 
       <BudgetHistory changes={history} cur={cur} />
 
-      {canManage && <EntryForm orgId={orgId} projectId={projectId} accountId={a.id} parties={parties} actor={actor} onDone={onChanged} setErr={setErr} />}
+      {canManage && <EntryForm orgId={orgId} projectId={projectId} accountId={a.id} defaultParty={a.partyId} parties={parties} actor={actor} onDone={onChanged} setErr={setErr} />}
 
       {entries.length === 0 ? (
-        <div className="text-[11px] italic text-[var(--color-text-faint)]">No entries yet - enter the awarded quote or PO (Quote / PO), then invoices as actuals.</div>
+        <div className="text-[11px] italic text-[var(--color-text-faint)]">No entries yet. Enter the awarded quote or PO (Quote / PO), then invoices as actuals.</div>
       ) : (
         <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
           {entries.map((e) => (
@@ -625,15 +624,17 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
   );
 }
 
-function EntryForm({ orgId, projectId, accountId, parties, actor, onDone, setErr }: {
+function EntryForm({ orgId, projectId, accountId, defaultParty, parties, actor, onDone, setErr }: {
   orgId: string; projectId: string; accountId: string; parties: CostParty[];
+  /** The company the line is budgeted for: picked to start with. */
+  defaultParty?: string | null;
   actor: { uid: string; email: string | null };
   onDone: () => void; setErr: (m: string | null) => void;
 }) {
   const [type, setType] = useState<CostEntryType>("actual");
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [party, setParty] = useState("");
+  const [party, setParty] = useState(defaultParty ?? "");
   const [ref, setRef] = useState("");
   const [desc, setDesc] = useState("");
   const [saving, setSaving] = useState(false);
@@ -778,10 +779,10 @@ function PartiesPanel({ orgId, projectId, actor, parties, canManage, onChanged }
           </select>
           <input value={trade} onChange={(e) => setTrade(e.target.value)} placeholder="Trade (piping, E&I…)" className="h-8 w-36 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
           <input value={contract} onChange={(e) => setContract(e.target.value)} placeholder="Contract value" inputMode="decimal" className="h-8 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-mono tabular-nums" />
-          <button onClick={() => void add()} disabled={saving} className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+          <button onClick={() => void add()} disabled={saving} className="h-8 inline-flex items-center gap-1 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[11px] font-black hover:bg-[var(--color-surface-2)] disabled:opacity-50">
             {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Add
           </button>
-          {error && <span className="text-[11px] font-bold text-rose-700">{error}</span>}
+          {error && <span className="text-[11px] font-bold text-rose-700 dark:text-rose-300">{error}</span>}
         </div>
       )}
     </div>
@@ -845,7 +846,7 @@ function PartyEditor({ orgId, projectId, actor, party, onCancel, onSaved }: {
           <input value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} type="email" inputMode="email" placeholder="name@company.com" className={`mt-0.5 ${field}`} /></label>
       </div>
       <div className="flex items-center gap-2">
-        {error && <span className="text-[11px] font-bold text-rose-700">{error}</span>}
+        {error && <span className="text-[11px] font-bold text-rose-700 dark:text-rose-300">{error}</span>}
         <span className="ml-auto flex items-center gap-2">
           <button onClick={onCancel} className="px-2 py-1.5 text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
           <button onClick={() => void save()} disabled={saving} className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">

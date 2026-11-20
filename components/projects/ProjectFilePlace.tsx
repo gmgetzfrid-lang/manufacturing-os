@@ -121,7 +121,7 @@ export default function ProjectFilePlace({ orgId, projectId, uid, canManage, hom
     finally { setBusy(null); }
   };
 
-  if (!home) return null;
+  if (!home) return <div role="status" className="text-[12.5px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking where this project&rsquo;s files go…</div>;
   const movable = strays.filter((s) => s.sameLibrary), stuck = strays.filter((s) => !s.sameLibrary);
 
   return (
@@ -134,8 +134,7 @@ export default function ProjectFilePlace({ orgId, projectId, uid, canManage, hom
             {canManage && <button type="button" onClick={start} className="shrink-0 font-bold text-[var(--color-accent)] hover:underline">Change</button>}
           </div>
         ) : (
-          <div className="rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-3 py-2.5 flex items-center gap-2 flex-wrap text-[12.5px] text-amber-900 dark:text-amber-200">
-            <MapPin className="w-4 h-4 shrink-0" />
+          <div className="border-l-2 border-amber-500 pl-3 py-1 flex items-center gap-2 flex-wrap text-[12.5px] text-amber-900 dark:text-amber-200">
             <span className="min-w-0 flex-1 basis-48"><b>Pick where this project&rsquo;s {what === "files" ? "files" : `files (${what})`} go.</b> Asked once; nothing is filed until you choose.</span>
             {canManage ? <button type="button" onClick={start} className={pri}>Pick a place</button> : <span className="font-bold">The project&rsquo;s owner picks it.</span>}
           </div>

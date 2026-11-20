@@ -101,6 +101,13 @@ export function PreviewButton({ file, label = "Preview", className = "" }: { fil
   );
 }
 
+/** A picked file's size: 1.2 MB, 340 KB. */
+export function fileSize(n: number): string {
+  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  if (n >= 1024) return `${Math.round(n / 1024)} KB`;
+  return `${n} B`;
+}
+
 /** A cost document (AFE, quote, invoice) as a file to preview. */
 export function fileOfDoc(d: { fileUrl: string | null; fileName: string | null; mimeType: string | null; docNumber?: string | null; totalAmount?: number | null; currency?: string | null; vendorName?: string | null } | null | undefined): PreviewFile | null {
   if (!d?.fileUrl) return null;

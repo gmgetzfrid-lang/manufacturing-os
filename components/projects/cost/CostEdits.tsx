@@ -12,7 +12,10 @@ import {
   saveAfe, loadAfeHistory, reviseAccount, reviseEntry, parseMoney, COST_CONTROLS_SQL,
   type Afe, type AfeRevision, type BudgetChange,
 } from "@/lib/costRevisions";
-import { PreviewButton, type PreviewFile } from "@/components/projects/cost/FilePreview";
+import { PreviewButton, fileSize, type PreviewFile } from "@/components/projects/cost/FilePreview";
+import { useFileDrag } from "@/hooks/useFileDrag";
+import { tryUpload } from "@/lib/uploadRetry";
+import FileThumb from "@/components/ui/FileThumb";
 
 const field = "h-9 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px] text-[var(--color-text)]";
 const label = "block text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1";
@@ -36,7 +39,7 @@ export function AfeCard({ orgId, projectId, afe, linesTotal, cur, canManage, act
   const [history, setHistory] = useState<AfeRevision[] | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [tick, setTick] = useState(0);
-  useEffect(() => { let alive = true; void loadAfeHistory(projectId).then((h) => { if (alive) setHistory(h.history); }); return () => { alive = false; }; }, [projectId, tick]);
+  useEffect(() => { let alive = true; void loadAfeHistory(projectId).then((h) => { if (alive) setHistory(h.history); }).catch(() => { if (alive) setHistory([]); }); return () => { alive = false; }; }, [projectId, tick]);
   const left = a.authorized != null ? a.authorized - linesTotal : null;
   return (
     <div className="px-4 py-3 space-y-2">
@@ -109,17 +112,28 @@ function AfeEditor({ orgId, projectId, afe, actor, cur, onCancel, onSaved }: {
   const [err, setErr] = useState<string | null>(null);
   const n = parseMoney(amt);
   const changed = (num.trim() || null) !== afe.afeNumber || (acct.trim() || null) !== afe.chargeAccount || n !== afe.authorized || !!file;
+  const drag = useFileDrag((fs) => setFile(fs[0]), busy);
   const save = async () => {
     if (amt.trim() && n == null) { setErr("Enter the authorized amount as a number, e.g. 1250000."); return; }
     setBusy(true); setErr(null);
-    const res = await saveAfe({ orgId, projectId, before: afe, next: { afeNumber: num, chargeAccount: acct, authorized: n }, note, file, actor });
-    setBusy(false);
-    if (!res.ok) { setErr(res.error ?? "Not saved."); return; }
-    const delta = n != null && afe.authorized != null && n !== afe.authorized ? ` (${n > afe.authorized ? "+" : "-"}${fmtMoney(Math.abs(n - afe.authorized), cur)})` : "";
-    onSaved(`AFE saved${delta}.${res.historyKept ? "" : ` The change history needs the database update (${COST_CONTROLS_SQL}).`}`);
+    const done = (res: { ok: boolean; error?: string; historyKept: boolean }) => {
+      if (!res.ok) { setErr(res.error ?? "Not saved."); return; }
+      const delta = n != null && afe.authorized != null && n !== afe.authorized ? ` (${n > afe.authorized ? "+" : "-"}${fmtMoney(Math.abs(n - afe.authorized), cur)})` : "";
+      onSaved(`AFE saved${delta}.${res.historyKept ? "" : ` The change history needs the database update (${COST_CONTROLS_SQL}).`}`);
+    };
+    const run = () => saveAfe({ orgId, projectId, before: afe, next: { afeNumber: num, chargeAccount: acct, authorized: n }, note, file, actor });
+    try {
+      // Only a file that didn't upload is offered again: once its record
+      // exists, a second try would attach it twice.
+      const res = file
+        ? await tryUpload(file.name, async () => { const r = await run(); if (!r.ok && /didn't upload/.test(r.error ?? "")) throw new Error(r.error); return r; }, { onRetried: done })
+        : await run();
+      done(res);
+    } catch (e) { setErr((e as Error).message); }
+    finally { setBusy(false); }
   };
   return (
-    <div className="rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] p-3 space-y-3">
+    <div {...drag.bind} className={`rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] p-3 space-y-3 ${drag.ring}`}>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div><label className={label} htmlFor="afe-num">AFE number</label><input id="afe-num" value={num} onChange={(e) => setNum(e.target.value)} className={`${field} font-mono`} placeholder="25008" /></div>
         <div><label className={label} htmlFor="afe-amt">Authorized amount ({cur})</label><input id="afe-amt" value={amt} onChange={(e) => setAmt(e.target.value)} inputMode="decimal" className={`${field} font-mono tabular-nums`} placeholder="1250000" /></div>
@@ -130,14 +144,15 @@ function AfeEditor({ orgId, projectId, afe, actor, cur, onCancel, onSaved }: {
         <input id="afe-note" value={note} onChange={(e) => setNote(e.target.value)} className={field} placeholder="e.g. Supplement 1 approved for the V-7 downcomer cleaning" />
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <label className={`${quiet} cursor-pointer`}>
-          <FileUp className="w-3.5 h-3.5" /> {file ? file.name : "Replace the AFE document"}
-          <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg" className="sr-only" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+        {file && <FileThumb file={file} size={32} />}
+        <label className={`${quiet} cursor-pointer min-w-0`}>
+          {!file && <FileUp className="w-3.5 h-3.5" />} <span className="truncate">{drag.over ? drag.say : file ? `${file.name} · ${fileSize(file.size)}` : "Replace the AFE document"}</span>
+          <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg" className="sr-only" onChange={(e) => { setFile(e.target.files?.[0] ?? null); e.target.value = ""; }} />
         </label>
         {file && <button type="button" onClick={() => setFile(null)} className="text-[11.5px] text-[var(--color-text-muted)] underline">Keep the current one</button>}
-        <span className="text-[11px] text-[var(--color-text-faint)]">The old document stays on file.</span>
+        <span className="text-[11px] text-[var(--color-text-faint)]">{file ? "The old document stays on file." : "Or drop it here. The old document stays on file."}</span>
       </div>
-      {err && <div className="text-[12px] text-rose-700 dark:text-rose-300">{err}</div>}
+      {err && <div role="alert" className="text-[12px] text-rose-700 dark:text-rose-300">{err}</div>}
       <div className="flex gap-2">
         <button type="button" onClick={() => void save()} disabled={busy || !changed} className={primary}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save AFE</button>
         <button type="button" onClick={onCancel} disabled={busy} className="text-[12px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2">Cancel</button>

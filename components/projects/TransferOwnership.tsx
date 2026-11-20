@@ -40,11 +40,13 @@ export function TransferOwnershipModal({ project, members, preselect, actorUserI
       if (pick === "__email__") {
         const e = email.trim().toLowerCase();
         if (!e) throw new Error("Type their email.");
-        const { data: users } = await supabase.from("users").select("id, email").eq("email", e).limit(2);
+        const { data: users, error: lookErr } = await supabase.from("users").select("id, email").eq("email", e).limit(2);
+        if (lookErr) throw new Error(`Couldn't look up that email: ${lookErr.message}`);
         const list = (users ?? []) as Array<{ id: string; email: string }>;
-        if (list.length > 1) throw new Error("More than one account has that email - ask your admin.");
+        if (list.length > 1) throw new Error("More than one account has that email. Ask your admin.");
         const u = list[0];
-        const { data: inOrg } = u ? await supabase.from("org_members").select("uid").eq("org_id", project.orgId).eq("uid", u.id).eq("status", "active").maybeSingle() : { data: null };
+        const { data: inOrg, error: orgErr } = u ? await supabase.from("org_members").select("uid").eq("org_id", project.orgId).eq("uid", u.id).eq("status", "active").maybeSingle() : { data: null, error: null };
+        if (orgErr) throw new Error(`Couldn't check they're in this organization: ${orgErr.message}`);
         if (!u || !inOrg) throw new Error("No one with that email in this organization.");
         to = { id: u.id, email: e, name: e.split("@")[0] };
       } else {
@@ -61,7 +63,7 @@ export function TransferOwnershipModal({ project, members, preselect, actorUserI
     } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   };
 
-  const radio = (on: boolean) => `flex items-start gap-2 rounded-lg border px-3 py-2 text-left ${on ? "border-[var(--color-border-strong)] bg-[var(--color-surface-2)]" : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`;
+  const radio = (on: boolean) => `flex items-start gap-2 rounded-lg border px-3 py-2 text-left ${on ? "border-[var(--color-text)] bg-[var(--color-surface-2)] ring-1 ring-[var(--color-text)]" : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`;
   return (
     <Modal onClose={onClose} size="md">
       <ModalHeader icon={Crown} title="Transfer ownership" subtitle={project.name} onClose={onClose} />
@@ -96,7 +98,7 @@ export function TransferOwnershipModal({ project, members, preselect, actorUserI
               ))}
             </div>
           </div>
-          {err && <div className="text-[12px] text-rose-700 dark:text-rose-300">{err}</div>}
+          {err && <div role="alert" className="text-[12px] text-rose-700 dark:text-rose-300">{err}</div>}
         </div>
       </ModalBody>
       <ModalFooter>

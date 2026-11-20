@@ -27,6 +27,7 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
   // Folded to one line: the job's own results lead the Plan tab.
   const [open, setOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -36,7 +37,11 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
         if (cancelled) return;
         setHealth(computeProjectHealth(snap));
         setItems(buildCoachItems(snap, projectId));
-      } catch { /* coach is an enhancement — never breaks the page */ }
+        setFailed(false);
+      } catch {
+        // The coach never breaks the page: it says it couldn't check.
+        if (!cancelled) setFailed(true);
+      }
     })();
     return () => { cancelled = true; };
   }, [orgId, projectId, refreshKey]);
@@ -50,7 +55,13 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
     return "Concern";
   }, [health]);
 
-  if (!health) return null;
+  if (!health) return (
+    <div role="status" className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2.5 mb-4 flex items-center gap-2 text-sm">
+      <Sparkles className="w-4 h-4 text-[var(--color-text-muted)]" />
+      <span className="font-bold text-[var(--color-text)]">Health</span>
+      <span className="text-[12px] text-[var(--color-text-muted)]">{failed ? "Couldn't be checked right now." : "Checking…"}</span>
+    </div>
+  );
   const shown = showAll ? items : items.slice(0, 4);
 
   return (
@@ -99,7 +110,7 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
           <div className="pt-2 min-w-0">
             {items.length === 0 ? (
               <div className="text-xs text-[var(--color-text-muted)] italic">
-                Nothing to ask for - the system has what it needs. New gaps will show up here as the job runs.
+                Nothing missing. New gaps show up here as the job runs.
               </div>
             ) : (
               <ul className="space-y-1.5">
