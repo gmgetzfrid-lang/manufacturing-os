@@ -9,38 +9,32 @@ import { logAuditAction } from '@/lib/audit';
 import { appAlert, appConfirm } from '@/components/providers/DialogProvider';
 import LoadingBlock from '@/components/ui/LoadingBlock';
 import { PageShell } from '@/components/ui/PageShell';
-import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from '@/components/ui/PageHero';
-import MoreMenu from '@/components/ui/MoreMenu';
-import { badgeText } from '@/lib/badge';
+import { PageHero, PageBody, Card, heroPrimary, heroQuiet, type HeroFact } from '@/components/ui/PageHero';
+import MoreMenu, { type MoreItem } from '@/components/ui/MoreMenu';
 import UserAvatar from '@/components/ui/UserAvatar';
 import {
   Search,
   Plus,
-  Clock,
   AlertCircle,
-  ArrowRight,
-  LayoutGrid,
   List as ListIcon,
-  MoreVertical,
   Download,
   RefreshCw,
-  User,
   SlidersHorizontal,
   X,
-  ChevronDown,
   Eye,
   ArrowUpDown,
-  Flag,
-  TrendingUp,
   Trash2,
   Archive,
   MessageCircle,
   Zap,
-  FilterX,
   Inbox,
-  MousePointerClick,
   Users,
+  Check,
 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { bandInput, bandInputIcon, bandSelect, bandSeg, bandSegItem, plural } from '@/components/admin/band';
+import { isPastDue, isNearingDue } from '@/lib/notifications';
+import { StatusTag, stageLabel, stageTone, waitingOn, fmtDay, useNarrow } from '@/components/requests/RequestBits';
 import {
   isActionRequired as ticketNeedsAction,
   isManagementRole,
@@ -50,7 +44,7 @@ import {
 // SECTION 1: TYPES & CONFIGURATION INTERFACES
 // =========================================================================================
 
-type SortField = 'ticketId' | 'createdAt' | 'lastModified' | 'status' | 'priority' | 'unit';
+type SortField = 'ticketId' | 'title' | 'createdAt' | 'lastModified' | 'targetCompletionAt' | 'status' | 'priority' | 'unit';
 type SortDirection = 'asc' | 'desc';
 
 interface SortConfig {
@@ -70,17 +64,12 @@ interface FilterConfig {
 interface DashboardMetrics {
   totalVolume: number;
   activeQueue: number;
-  staleTickets: number; 
-  readyForIFC: number;  
   myActionItems: number;
-  slot2Count: number;
-  slot3Count: number;
-  slot4Count: number;
-  totalActive: number;
-  myAssignments: number;
+  overdue: number;
+  dueThisWeek: number;
+  staleTickets: number;
+  mine: number;
   unassigned: number;
-  urgentAttention: number;
-  pendingReview: number;
 }
 
 // =========================================================================================
@@ -104,43 +93,14 @@ const calculateDaysOpen = (date: unknown) => {
   return Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
 };
 
-const getStatusColor = (status: TicketStatus): string => {
-  switch (status) {
-    case 'NEW': return 'bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]';
-    case 'PENDING_ENG_INITIAL': return 'bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]';
-    case 'PENDING_ENG_TEAM': return 'bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]';
-    case 'PENDING_ASSIGNMENT': return 'bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]'; 
-    case 'DRAFTING': return 'bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]'; 
-    case 'PENDING_REVIEW': return 'bg-amber-50 text-amber-700 border-amber-200';
-    case 'REVISION_REQ': return 'bg-amber-50 text-amber-700 border-amber-200 font-bold'; 
-    case 'PENDING_IFC': return 'bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]';
-    case 'FINAL_DRAFT': return 'bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]';
-    case 'PENDING_FINAL_APPROVAL': return 'bg-amber-50 text-amber-700 border-amber-200';
-    case 'CLOSED': return 'bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]';
-    default: return 'bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)]';
-  }
-};
-
-const getPriorityColor = (isUrgent: boolean, type: string) => {
-  if (type === 'RFI') return 'text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]';
-  if (isUrgent) return 'text-amber-600 bg-amber-50 border-amber-100';
-  return 'text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]';
-};
-
-// A small count pill used in the supervisor board's column header to summarise
-// how a drafter's load breaks down by stage.
-const StageChip = ({ label, n, className }: { label: string; n: number; className: string }) => (
-  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold border ${className}`}>
-    {n}<span className="font-medium opacity-80">{label}</span>
-  </span>
-);
-
 // =========================================================================================
 // SECTION 4: MAIN COMPONENT - REQUEST PORTAL
 // =========================================================================================
 
 export default function RequestPortal() {
   const { activeRole, roles, activeOrgId, uid } = useRole();
+  const router = useRouter();
+  const narrow = useNarrow();
   
   // --- STATE ---
   const [tickets, setTickets] = useState<Ticket[]>([]);
@@ -163,21 +123,21 @@ export default function RequestPortal() {
   // auto-switched management roles onto the board, which replaced the page
   // people knew with one they never asked for. Never hijack the landing
   // view.) A user's last pick is remembered.
-  const [viewMode, setViewMode] = useState<'table' | 'grid' | 'team'>('table');
+  const [viewMode, setViewMode] = useState<'table' | 'team'>('table');
   const isSupervisorView = isManagementRole(roles);
   useEffect(() => {
     try {
       const saved = localStorage.getItem('requests.viewMode');
-      if (saved === 'table' || saved === 'grid' || saved === 'team') setViewMode(saved);
+      // The old card grid shows as the table now (same rows, real columns).
+      if (saved === 'table' || saved === 'team') setViewMode(saved);
     } catch { /* storage unavailable — keep the table default */ }
   }, []);
-  const pickView = useCallback((mode: 'table' | 'grid' | 'team') => {
+  const pickView = useCallback((mode: 'table' | 'team') => {
     setViewMode(mode);
     try { localStorage.setItem('requests.viewMode', mode); } catch { /* non-fatal */ }
   }, []);
   const [isFilterPanelOpen, setIsFilterPanelOpen] = useState<boolean>(false);
   const [selectedTicketIds, setSelectedTicketIds] = useState<Set<string>>(new Set());
-  const [openRowMenu, setOpenRowMenu] = useState<string | null>(null);
 
   // --- STATE: FILTERING ---
   const [filters, setFilters] = useState<FilterConfig>({
@@ -332,63 +292,31 @@ export default function RequestPortal() {
   // MEMO: ROLE-AWARE METRICS ENGINE
   // --------------------------------------------------------------------
   const metrics: DashboardMetrics = useMemo(() => {
-    const activeTickets = tickets.filter(t => t.status !== 'CLOSED'); 
-    
-    const myActionItems = tickets.filter(t => isActionRequired(t)).length;
-    let slot2Count = 0;
-    let slot3Count = 0;
-    let slot4Count = 0;
-
-    if (activeRole === 'Drafter') {
-      slot2Count = activeTickets.filter(t => t.assignedDrafterId === uid).length; 
-      slot3Count = activeTickets.filter(t => t.assignedDrafterId === uid && t.status === 'REVISION_REQ').length; 
-      slot4Count = activeTickets.filter(t => t.status === 'PENDING_ASSIGNMENT').length; 
-    } 
-    else if (activeRole === 'Requester') {
-      slot2Count = activeTickets.filter(t => t.requesterId === uid).length; 
-      slot3Count = activeTickets.filter(t => t.requesterId === uid && t.status === 'PENDING_REVIEW').length; 
-      slot4Count = tickets.filter(t => t.requesterId === uid && t.status === 'CLOSED').length; 
-    }
-    else if (['Manager', 'Admin', 'Supervisor', 'DraftingSupervisor'].includes(activeRole)) {
-      slot2Count = activeTickets.filter(t => t.status === 'PENDING_ENG_INITIAL').length;
-      slot3Count = activeTickets.filter(t => t.status === 'PENDING_ASSIGNMENT').length; 
-      slot4Count = activeTickets.filter(t => t.status === 'REVISION_REQ').length; 
-    }
-    else if (activeRole.includes('Engineer')) {
-      slot2Count = activeTickets.filter(t => t.status === 'PENDING_ENG_TEAM').length; 
-      slot3Count = activeTickets.filter(t => t.status === 'PENDING_REVIEW').length; 
-      slot4Count = activeTickets.filter(t => t.status === 'PENDING_ENG_INITIAL').length; 
-    }
-    else if (activeRole === 'DocCtrl') {
-      slot2Count = activeTickets.filter(t => t.status === 'PENDING_IFC').length; 
-      slot3Count = activeTickets.filter(t => t.status === 'FINAL_DRAFT').length; 
-      slot4Count = tickets.filter(t => t.status === 'CLOSED').length; 
-    }
-
+    const activeTickets = tickets.filter(t => t.status !== 'CLOSED' && t.status !== 'CANCELED');
+    const now = Date.now();
+    const week = 7 * 24 * 60 * 60 * 1000;
     return {
       totalVolume: tickets.length,
       activeQueue: activeTickets.length,
-      myActionItems,
-      slot2Count,
-      slot3Count,
-      slot4Count,
-      totalActive: activeTickets.length,
-      myAssignments: tickets.filter(t => t.assignedDrafterId === uid).length,
-      unassigned: activeTickets.filter(t => t.status === 'PENDING_ASSIGNMENT').length,
-      urgentAttention: activeTickets.filter(t => t.status === 'REVISION_REQ' || t.requestType === 'RFI').length,
-      pendingReview: activeTickets.filter(t => t.status === 'PENDING_REVIEW').length,
-      readyForIFC: activeTickets.filter(t => t.status === 'PENDING_IFC').length,
+      myActionItems: tickets.filter(t => isActionRequired(t)).length,
+      overdue: activeTickets.filter(t => isPastDue(t)).length,
+      dueThisWeek: activeTickets.filter(t => {
+        if (!t.targetCompletionAt) return false;
+        const due = new Date(t.targetCompletionAt as string).getTime();
+        return due >= now && due - now <= week;
+      }).length,
       staleTickets: activeTickets.filter(t => calculateDaysOpen(t.lastModified) > 7).length,
+      mine: activeTickets.filter(t => t.assignedDrafterId === uid || t.requesterId === uid).length,
+      unassigned: activeTickets.filter(t => !t.assignedDrafterId).length,
     };
-  }, [tickets, activeRole, isActionRequired, uid]);
+  }, [tickets, isActionRequired, uid]);
 
-  const cardLabels = useMemo(() => {
-    if (activeRole === 'Drafter') return { slot2: 'My Workload', slot3: 'Revisions Needed', slot4: 'Available to Claim' };
-    if (activeRole === 'Requester') return { slot2: 'My Open Requests', slot3: 'Waiting on Review', slot4: 'Completed History' };
-    if (['Admin', 'Manager', 'Supervisor', 'DraftingSupervisor'].includes(activeRole)) return { slot2: 'Pending Approval', slot3: 'Unassigned Pool', slot4: 'Revision Status' };
-    if (activeRole === 'DocCtrl') return { slot2: 'Ready to Issue', slot3: 'Pending Closure', slot4: 'Total Archives' };
-    return { slot2: 'Team Queue', slot3: 'Drawing Review', slot4: 'New Requests' }; 
-  }, [activeRole]);
+  // How many sit at each stage, shown beside each choice in the Stage filter.
+  const stageCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const t of tickets) m.set(t.status, (m.get(t.status) ?? 0) + 1);
+    return m;
+  }, [tickets]);
 
   // --------------------------------------------------------------------
   // MEMO: FILTERING & SORTING LOGIC
@@ -448,6 +376,13 @@ export default function RequestPortal() {
       if (sortConfig.field === 'lastModified' || sortConfig.field === 'createdAt') {
         valA = toDate(fieldA).getTime();
         valB = toDate(fieldB).getTime();
+      } else if (sortConfig.field === 'targetCompletionAt') {
+        // No due date sorts last either way.
+        valA = fieldA ? toDate(fieldA).getTime() : (sortConfig.direction === 'asc' ? Infinity : -Infinity);
+        valB = fieldB ? toDate(fieldB).getTime() : (sortConfig.direction === 'asc' ? Infinity : -Infinity);
+      } else if (fieldA == null || fieldB == null) {
+        valA = fieldA == null ? '' : String(fieldA);
+        valB = fieldB == null ? '' : String(fieldB);
       }
 
       if (typeof valA === 'string' && typeof valB === 'string') {
@@ -498,7 +433,7 @@ export default function RequestPortal() {
       if (!groups.has(key)) {
         groups.set(key, {
           id: t.assignedDrafterId || null,
-          name: t.assignedDrafterId ? (t.assignedDrafterName || 'Unnamed drafter') : 'Unassigned · Pool',
+          name: t.assignedDrafterId ? (t.assignedDrafterName || 'Unnamed drafter') : 'No drafter yet',
           tickets: [],
         });
       }
@@ -514,7 +449,7 @@ export default function RequestPortal() {
       awaitingIfc: count(g.tickets, (t) => t.status === 'PENDING_IFC'),
       review: count(g.tickets, (t) => ['PENDING_REVIEW', 'PENDING_FINAL_APPROVAL', 'PENDING_ENG_INITIAL', 'PENDING_ENG_TEAM', 'PENDING_ASSIGNMENT'].includes(t.status)),
       actionable: count(g.tickets, (t) => isActionRequired(t)),
-      overdue: count(g.tickets, (t) => !!t.targetCompletionAt && new Date(t.targetCompletionAt as string) < new Date()),
+      overdue: count(g.tickets, (t) => isPastDue(t)),
       stale: count(g.tickets, (t) => calculateDaysOpen(t.lastModified) > 7),
     }));
     // Pool first (it's the supervisor's triage queue), then heaviest workloads.
@@ -655,7 +590,6 @@ export default function RequestPortal() {
         orgId: activeOrgId || undefined, userId: uid || 'unknown', userRole: activeRole,
         details: { priority: 1 }
       });
-      setOpenRowMenu(null);
     } catch (error) {
       console.error("Mark urgent failed:", error);
       await appAlert({ message: `Couldn't mark it urgent: ${error instanceof Error ? error.message : String(error)}`, tone: 'danger' });
@@ -672,7 +606,6 @@ export default function RequestPortal() {
     if (!ok) return;
     try {
       await callWorkflowAction(ticketId, 'close_ticket');
-      setOpenRowMenu(null);
     } catch (error) {
       console.error("Quick close failed:", error);
       await appAlert({ message: error instanceof Error ? error.message : "Failed to close.", tone: 'danger' });
@@ -724,15 +657,67 @@ export default function RequestPortal() {
     );
   }
 
-  // The page's answer: how many are open, and how many wait on you.
+  // The page's answer: what waits on you, else what's late, else what's open.
   const openN = metrics.activeQueue;
-  const answer = openN === 0
-    ? (metrics.totalVolume === 0 ? 'No requests yet.' : 'No open requests.')
-    : `${openN} open request${openN === 1 ? '' : 's'}${metrics.myActionItems > 0 ? `, ${metrics.myActionItems} waiting on you.` : '.'}`;
-  // Controls on the dark band.
-  const bandField = 'h-10 rounded-[10px] border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] text-[13px] font-semibold text-[var(--color-ink-fg)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]';
-  const bandToggle = (on: boolean) => `inline-flex items-center gap-1.5 h-10 px-3 rounded-[10px] border text-[13px] font-semibold transition-colors ${on ? 'bg-white text-[var(--color-ink)] border-white' : 'border-[var(--color-ink-line)] bg-[var(--color-ink-2)] text-[var(--color-ink-fg)] hover:bg-[var(--color-ink-line)]'}`;
-  const chipOff = 'border-[var(--color-ink-line)] bg-[var(--color-ink-2)] text-[var(--color-ink-text)]';
+  const waitN = metrics.myActionItems;
+  const answer = metrics.totalVolume === 0 ? 'No requests yet.'
+    : openN === 0 ? 'No open requests.'
+    : waitN > 0 ? `${plural(waitN, 'request')} waiting on you.`
+    : metrics.overdue > 0 ? `${plural(metrics.overdue, 'request')} overdue.`
+    : `${plural(openN, 'open request')}.`;
+  const facts: HeroFact[] = metrics.totalVolume === 0 ? [] : [
+    { label: 'Waiting on you', value: waitN, tone: waitN > 0 ? 'warn' : undefined },
+    { label: 'Overdue', value: metrics.overdue, tone: metrics.overdue > 0 ? 'bad' : undefined },
+    ...(narrow ? [] : [{ label: 'Due this week', value: metrics.dueThisWeek }]),
+    { label: 'Open', value: openN },
+  ];
+  const onlyMine = filters.assignedTo === 'action';
+  const filtersOn = filters.status !== 'ALL' || filters.type !== 'ALL' || filters.dateRange !== 'all' || filters.assignedTo !== 'all' || filters.priority !== 'all' || !!filters.search;
+  const canForceClose = ['Manager', 'Admin'].includes(activeRole);
+  const allOnPage = selectedTicketIds.size === paginatedTickets.length && paginatedTickets.length > 0;
+  const count = (status: string) => stageCounts.get(status) ?? 0;
+  const withN = (label: string, n: number) => (n > 0 ? `${label} (${n})` : label);
+
+  const rowProps = (t: Ticket) => ({
+    ticket: t,
+    actionNeeded: isActionRequired(t),
+    unread: !!t.unreadBy?.includes(uid || ''),
+    selected: selectedTicketIds.has(t.id!),
+    onToggle: () => toggleTicketSelection(t.id!),
+    onOpen: () => router.push(`/requests/${t.id}`),
+    menu: [
+      { icon: <Eye className="w-4 h-4" />, label: 'Open', onClick: () => router.push(`/requests/${t.id}`) },
+      { icon: <AlertCircle className="w-4 h-4" />, label: 'Mark urgent', onClick: () => handleQuickMarkUrgent(t.id!) },
+      ...(canForceClose && t.status !== 'CLOSED' ? [{ icon: <Trash2 className="w-4 h-4" />, label: 'Force close', onClick: () => handleQuickForceClose(t.id!), tone: 'bad' as const, line: true }] : []),
+    ],
+  });
+
+  const sortHead = (field: SortField, label: string, className = '') => (
+    <th className={`font-semibold px-4 h-10 whitespace-nowrap ${className}`} aria-sort={sortConfig.field === field ? (sortConfig.direction === 'asc' ? 'ascending' : 'descending') : undefined}>
+      <button type="button" onClick={() => handleSort(field)} className="inline-flex items-center gap-1 hover:text-[var(--color-text)]">
+        {label}<ArrowUpDown className={`w-3 h-3 ${sortConfig.field === field ? 'text-[var(--color-text)]' : 'text-[var(--color-text-faint)]'}`} />
+      </button>
+    </th>
+  );
+  const tableHead = (
+    <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+      <tr>
+        <th className="w-11 pl-4 h-10 rounded-tl-lg">
+          <input type="checkbox" aria-label="Select all on this page" checked={allOnPage} onChange={handleSelectAll} className="w-4 h-4 rounded border-[var(--color-border-strong)] cursor-pointer align-middle" />
+        </th>
+        {sortHead('ticketId', 'Request')}
+        {sortHead('title', 'Title', 'w-full min-w-[220px]')}
+        {sortHead('status', 'Stage')}
+        <th className="font-semibold px-4 h-10 whitespace-nowrap hidden md:table-cell">Waiting on</th>
+        {sortHead('targetCompletionAt', 'Due')}
+        {sortHead('unit', 'Unit', 'hidden xl:table-cell')}
+        {sortHead('priority', 'Priority', 'hidden xl:table-cell')}
+        {sortHead('lastModified', 'Updated', 'hidden lg:table-cell')}
+        <th className="pr-3 h-10 rounded-tr-lg"><span className="sr-only">Comments and actions</span></th>
+      </tr>
+    </thead>
+  );
+  const COLS = 10;
 
   return (
     <PageShell width="full">
@@ -740,9 +725,10 @@ export default function RequestPortal() {
       <PageHero
         kicker="Drafting requests"
         title={answer}
-        sub={metrics.myActionItems > 0
-          ? <button type="button" onClick={() => setFilters({ ...filters, assignedTo: 'action', status: 'ALL' })} className="font-semibold text-white underline underline-offset-4 decoration-[var(--color-ink-line)] hover:decoration-white">Show only what waits on you</button>
-          : openN > 0 ? 'Nothing waiting on you.' : metrics.totalVolume > 0 ? `${metrics.totalVolume} in all, every one closed.` : 'New requests show up here.'}
+        facts={facts}
+        sub={waitN > 0 && !onlyMine
+          ? <button type="button" onClick={() => setFilters({ ...filters, assignedTo: 'action', status: 'ALL' })} className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Show only what waits on you</button>
+          : metrics.staleTickets > 0 ? `${plural(metrics.staleTickets, 'open request')} with no activity in 7 days.` : undefined}
         tools={
           <MoreMenu iconOnly label="More: refresh, export" triggerClass={heroQuiet} items={[
             { icon: <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />, label: refreshing ? "Refreshing…" : "Refresh", onClick: handleRefresh },
@@ -751,351 +737,326 @@ export default function RequestPortal() {
         }
         primary={<Link href="/requests/new" className={heroPrimary}><Plus className="w-4 h-4" /> New request</Link>}
       >
+        {/* The list's filters, in the header. On a phone they run in one line that scrolls sideways. */}
         <div className="space-y-3">
-          <div className="flex flex-col xl:flex-row gap-2">
-            <div className="relative flex-1 min-w-0 xl:min-w-[300px]">
-              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-ink-muted)]" />
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative flex-1 min-w-[240px] max-sm:basis-full">
+              <Search className={bandInputIcon} />
               <label htmlFor="req-search" className="sr-only">Search requests</label>
-              <input id="req-search" type="search" placeholder="Search by ID, requester, drafter or words" value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-                className="w-full h-11 pl-10 pr-4 rounded-xl border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] text-[15px] text-white placeholder:text-[var(--color-ink-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]" />
+              <input id="req-search" type="search" placeholder="Search by number, title or name" value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} className={bandInput} />
             </div>
-            {/* On a phone the controls run in one line that scrolls sideways (cut off at the edge, so it's plain there are more). */}
-            <div className="flex gap-2 items-center sm:flex-wrap max-sm:overflow-x-auto max-sm:-mx-5 max-sm:px-5 max-sm:pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:shrink-0">
-              <div className="h-10 inline-flex items-center gap-0.5 p-1 rounded-[10px] border border-[var(--color-ink-line)] bg-[var(--color-ink-2)]" role="group" aria-label="View">
-                {isSupervisorView && (
-                  <button onClick={() => pickView('team')} title="By drafter" aria-label="By drafter" aria-pressed={viewMode === 'team'} className={`h-8 w-8 grid place-items-center rounded-lg transition-colors ${viewMode === 'team' ? 'bg-white text-[var(--color-ink)] shadow-sm' : 'text-[var(--color-ink-muted)] hover:text-white'}`}><Users className="w-4 h-4" /></button>
-                )}
-                <button onClick={() => pickView('table')} title="Table" aria-label="Table" aria-pressed={viewMode === 'table'} className={`h-8 w-8 grid place-items-center rounded-lg transition-colors ${viewMode === 'table' ? 'bg-white text-[var(--color-ink)] shadow-sm' : 'text-[var(--color-ink-muted)] hover:text-white'}`}><ListIcon className="w-4 h-4" /></button>
-                <button onClick={() => pickView('grid')} title="Cards" aria-label="Cards" aria-pressed={viewMode === 'grid'} className={`h-8 w-8 grid place-items-center rounded-lg transition-colors ${viewMode === 'grid' ? 'bg-white text-[var(--color-ink)] shadow-sm' : 'text-[var(--color-ink-muted)] hover:text-white'}`}><LayoutGrid className="w-4 h-4" /></button>
-              </div>
-              <div className="relative">
-                <select aria-label="Assignee" value={filters.assignedTo} onChange={(e) => setFilters({ ...filters, assignedTo: e.target.value as FilterConfig['assignedTo'] })} className={`${bandField} appearance-none pl-3 pr-8 w-40`}><option value="all">Assignee: All</option><option value="action">Waiting on me</option><option value="me">Mine</option><option value="unassigned">Unassigned only</option></select>
-                <ChevronDown className="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-[var(--color-ink-muted)]" />
-              </div>
-              <div className="relative">
-                <select aria-label="Status" value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value as FilterConfig['status'] })} className={`${bandField} appearance-none pl-3 pr-8 w-40`}><option value="ALL">Status: Any</option><option value="PENDING_ASSIGNMENT">Pending Assignment</option><option value="DRAFTING">In Drafting</option><option value="PENDING_REVIEW">In Review</option><option value="REVISION_REQ">Revisions Required</option><option value="PENDING_IFC">Ready for IFC</option><option value="FINAL_DRAFT">Finalized</option><option value="CLOSED">Closed</option></select>
-                <ChevronDown className="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-[var(--color-ink-muted)]" />
-              </div>
-              <button onClick={() => setIsFilterPanelOpen(!isFilterPanelOpen)} aria-expanded={isFilterPanelOpen} className={bandToggle(isFilterPanelOpen)}><SlidersHorizontal className="w-4 h-4" />More filters</button>
-              <button onClick={() => setShowClosed((v) => !v)} className={bandToggle(showClosed)} aria-pressed={showClosed}>
-                {showClosed ? 'Hide closed' : 'Show closed'}
+            <div className="flex gap-2 items-center max-sm:w-[calc(100%+2rem)] max-sm:-mr-4 max-sm:pr-4 max-sm:overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:shrink-0">
+              {isSupervisorView && (
+                <div className={bandSeg} role="group" aria-label="View">
+                  <button type="button" onClick={() => pickView('table')} aria-pressed={viewMode === 'table'} className={bandSegItem(viewMode === 'table')}><ListIcon className="w-4 h-4" />List</button>
+                  <button type="button" onClick={() => pickView('team')} aria-pressed={viewMode === 'team'} className={bandSegItem(viewMode === 'team')}><Users className="w-4 h-4" />By drafter</button>
+                </div>
+              )}
+              <label className="sr-only" htmlFor="req-assignee">Assignee</label>
+              <select id="req-assignee" value={filters.assignedTo} onChange={(e) => setFilters({ ...filters, assignedTo: e.target.value as FilterConfig['assignedTo'] })} className={`${bandSelect} w-44`}>
+                <option value="all">Anyone</option>
+                <option value="action">{withN('Waiting on me', waitN)}</option>
+                <option value="me">{withN('Mine', metrics.mine)}</option>
+                <option value="unassigned">{withN('No drafter yet', metrics.unassigned)}</option>
+              </select>
+              <label className="sr-only" htmlFor="req-stage">Stage</label>
+              <select id="req-stage" value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value as FilterConfig['status'] })} className={`${bandSelect} w-48`}>
+                <option value="ALL">Any stage</option>
+                {(['PENDING_ENG_INITIAL', 'PENDING_ENG_TEAM', 'PENDING_ASSIGNMENT', 'DRAFTING', 'REVISION_REQ', 'PENDING_REVIEW', 'PENDING_FINAL_APPROVAL', 'PENDING_IFC', 'FINAL_DRAFT', 'CLOSED'] as TicketStatus[]).map((st) => (
+                  <option key={st} value={st}>{withN(st === 'PENDING_ENG_INITIAL' ? 'First review' : stageLabel(st), count(st))}</option>
+                ))}
+              </select>
+              <button type="button" onClick={() => setIsFilterPanelOpen(!isFilterPanelOpen)} aria-expanded={isFilterPanelOpen} className={`${heroQuiet} h-10 ${isFilterPanelOpen ? 'bg-[var(--color-surface-2)]' : ''}`}><SlidersHorizontal className="w-4 h-4" />More filters</button>
+              <button type="button" onClick={() => setShowClosed((v) => !v)} aria-pressed={showClosed} className={`${heroQuiet} h-10 ${showClosed ? 'bg-[var(--color-surface-2)]' : ''}`}>
+                {showClosed && <Check className="w-4 h-4" />}Show closed
               </button>
+              {filtersOn && <button type="button" onClick={clearAllFilters} className="h-10 px-1 text-[14px] text-[var(--color-accent-text)] hover:underline underline-offset-2">Clear filters</button>}
             </div>
           </div>
-          {/* The counts, each a filter where it can be one. */}
-          <div className="flex gap-2 text-[13px] sm:flex-wrap max-sm:overflow-x-auto max-sm:-mx-5 max-sm:px-5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:shrink-0 [&>*]:whitespace-nowrap">
-            {([
-              { label: cardLabels.slot2, n: metrics.slot2Count },
-              { label: cardLabels.slot3, n: metrics.slot3Count },
-              { label: cardLabels.slot4, n: metrics.slot4Count },
-              { label: "IFC ready", n: metrics.readyForIFC, on: () => setFilters({ ...filters, status: 'PENDING_IFC' }) },
-              { label: "No activity in 7 days", n: metrics.staleTickets },
-            ] as Array<{ label: string; n: number; on?: () => void }>).map((c) => {
-              const body = <><span className="font-bold text-white tabular-nums">{c.n}</span> <span>{c.label}</span></>;
-              return c.on
-                ? <button key={c.label} type="button" onClick={c.on} className={`h-8 px-3 rounded-full border ${chipOff} hover:text-white hover:bg-[var(--color-ink-line)] cursor-pointer`}>{body}</button>
-                : <span key={c.label} className={`h-8 px-3 inline-flex items-center gap-1 rounded-full border ${chipOff}`}>{body}</span>;
-            })}
-          </div>
+
+          {isFilterPanelOpen && (
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 grid grid-cols-1 lg:grid-cols-[auto_auto_1fr] gap-x-8 gap-y-4 items-start">
+              <div>
+                <div className="text-[13px] text-[var(--color-text-muted)] mb-1.5">Request type</div>
+                <div className={bandSeg} role="group" aria-label="Request type">
+                  <button type="button" onClick={() => setFilters({ ...filters, type: 'ALL' })} aria-pressed={filters.type === 'ALL'} className={bandSegItem(filters.type === 'ALL')}>All</button>
+                  {(requestTypeOptions.length > 0 ? requestTypeOptions.map((o) => ({ v: String(o.value), l: o.label })) : [{ v: 'ISO', l: 'ISO' }, { v: 'RFI', l: 'RFI' }, { v: 'MOC', l: 'MOC' }, { v: 'ASBUILT', l: 'As-built' }, { v: 'INSPECTION', l: 'Inspection' }]).map(({ v, l }) => (
+                    <button key={v} type="button" onClick={() => setFilters({ ...filters, type: v })} aria-pressed={filters.type === v} className={bandSegItem(filters.type === v)}>{l}</button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="text-[13px] text-[var(--color-text-muted)] mb-1.5">Last activity</div>
+                <div className={bandSeg} role="group" aria-label="Last activity">
+                  {([['all', 'Any time'], ['today', 'Today'], ['week', 'This week'], ['month', 'This month']] as const).map(([v, l]) => (
+                    <button key={v} type="button" onClick={() => setFilters({ ...filters, dateRange: v })} aria-pressed={filters.dateRange === v} className={bandSegItem(filters.dateRange === v)}>{l}</button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="text-[13px] text-[var(--color-text-muted)] mb-1.5">Urgency</div>
+                <label className="inline-flex items-center gap-2 h-9 text-[15px] text-[var(--color-text)] cursor-pointer">
+                  <input type="checkbox" checked={filters.priority === 'urgent'} onChange={(e) => setFilters({ ...filters, priority: e.target.checked ? 'urgent' : 'all' })} className="w-4 h-4 rounded border-[var(--color-border-strong)]" />
+                  Urgent and RFI only
+                </label>
+              </div>
+            </div>
+          )}
         </div>
       </PageHero>
 
-      <PageBody>
-        {/* BULK ACTIONS */}
+      <PageBody className="!space-y-3">
         {selectedTicketIds.size > 0 && (
-          <Card className="flex items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2">
-            <span className="text-[14px] font-bold text-[var(--color-text)]">{selectedTicketIds.size} selected</span>
-            <div className="flex items-center gap-2">
-              <button onClick={handleBulkUrgencyToggle} className="inline-flex items-center gap-1.5 h-9 px-3 border border-[var(--color-border-strong)] text-[var(--color-text)] rounded-lg text-[13px] font-bold hover:bg-[var(--color-surface-2)]" disabled={processingBulk}><Zap className="w-4 h-4" /> Mark urgent</button>
-              <button onClick={handleBulkArchive} className="inline-flex items-center gap-1.5 h-9 px-3 border border-[var(--color-border-strong)] text-[var(--color-text)] rounded-lg text-[13px] font-bold hover:bg-[var(--color-surface-2)]" disabled={processingBulk}><Archive className="w-4 h-4" /> Close</button>
-              <button onClick={() => setSelectedTicketIds(new Set())} aria-label="Clear selection" title="Clear selection" className="p-2 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
-            </div>
-          </Card>
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-4 py-2">
+            <span className="text-[15px] font-semibold text-[var(--color-text)] mr-2">{selectedTicketIds.size} selected</span>
+            <button type="button" onClick={handleBulkUrgencyToggle} disabled={processingBulk} className={heroQuiet}><Zap className="w-4 h-4" /> Mark urgent</button>
+            <button type="button" onClick={handleBulkArchive} disabled={processingBulk} className={heroQuiet}><Archive className="w-4 h-4" /> Close</button>
+            <div className="flex-1" />
+            <button type="button" onClick={() => setSelectedTicketIds(new Set())} aria-label="Clear selection" className="w-9 h-9 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+          </div>
         )}
 
-        {/* MORE FILTERS */}
-        {isFilterPanelOpen && (
-          <Card label="More filters" className="animate-in fade-in slide-in-from-top-2">
-           <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
-             <div>
-               <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">Request type</div>
-               <div className="flex flex-wrap gap-2">
-                 <button 
-                   onClick={() => setFilters({...filters, type: 'ALL'})} 
-                   className={`px-3 h-8 rounded-full text-[12.5px] font-semibold border transition-colors ${filters.type === 'ALL' ? 'bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]' : 'bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]'}`}
-                 >
-                   All
-                 </button>
-                 {requestTypeOptions.length > 0 ? requestTypeOptions.map(opt => (
-                   <button 
-                     key={String(opt.value)} 
-                     onClick={() => setFilters({...filters, type: String(opt.value)})} 
-                     className={`px-3 h-8 rounded-full text-[12.5px] font-semibold border transition-colors ${filters.type === String(opt.value) ? 'bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]' : 'bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]'}`}
-                   >
-                     {opt.label}
-                   </button>
-                 )) : (
-                   // Fallback defaults if config not loaded
-                   ['RFI', 'INSPECTION', 'ISO', 'MOC', 'ASBUILT'].map(type => (
-                     <button key={type} onClick={() => setFilters({...filters, type})} className={`px-3 h-8 rounded-full text-[12.5px] font-semibold border transition-colors ${filters.type === type ? 'bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]' : 'bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]'}`}>{type}</button>
-                   ))
-                 )}
-               </div>
-             </div>
-             <div><div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">Timeframe</div><div className="flex flex-wrap gap-2">{['all', 'today', 'week', 'month'].map(range => (<button key={range} onClick={() => setFilters({...filters, dateRange: range as FilterConfig['dateRange']})} className={`px-3 h-8 rounded-full text-[12.5px] font-semibold border transition-colors ${filters.dateRange === range ? 'bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]' : 'bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]'}`}>{range.charAt(0).toUpperCase() + range.slice(1)}</button>))}</div></div>
-             <div><div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">Urgency</div><div className="flex items-center gap-2 h-8"><input type="checkbox" id="urgentOnly" checked={filters.priority === 'urgent'} onChange={(e) => setFilters({...filters, priority: e.target.checked ? 'urgent' : 'all'})} className="w-4 h-4 text-[var(--color-text)] border-[var(--color-border-strong)] rounded focus:ring-[var(--color-accent-ring)]" /><label htmlFor="urgentOnly" className="text-[14px] text-[var(--color-text)] cursor-pointer">Urgent and RFI only</label></div></div>
-             <div className="flex items-end md:justify-end"><button onClick={clearAllFilters} className="flex items-center text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] font-bold transition-all"><FilterX className="w-4 h-4 mr-2" />Reset filters</button></div>
-           </div>
-          </Card>
-        )}
-
-        {/* CONTENT: a load problem sits on the list it is about. */}
         {error && (
-          <Card>
-            <p role="alert" className="text-[14px] font-semibold text-red-700 dark:text-red-400">
-              The requests didn&apos;t load: {error} <button type="button" onClick={handleRefresh} className="font-bold underline">Try again</button>
-            </p>
-          </Card>
+          <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-[15px] text-[var(--color-text)]">
+            <span className="relative pl-3"><span aria-hidden className="absolute left-0 top-1 bottom-1 w-[3px] bg-[var(--state-overdue)]" />The requests didn&apos;t load: {error}</span>
+            <button type="button" onClick={handleRefresh} className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Try again</button>
+          </div>
         )}
 
         {viewMode === 'team' ? (
-          /* VIEW: BY-DRAFTER SUPERVISOR BOARD */
           teamBoard.length === 0 ? (
-            <Card className="py-16 text-center">
-              <Users className="w-6 h-6 mx-auto mb-3 text-[var(--color-text-faint)]" />
-              <h3 className="text-[15px] font-bold text-[var(--color-text)]">No open work</h3>
-              <p className="mt-1 text-[14px] text-[var(--color-text-muted)]">Nothing is assigned or waiting right now.</p>
-            </Card>
+            error ? null : <EmptySheet title="No open work" line="Nothing is assigned or waiting right now." />
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 items-start">
-              {teamBoard.map((b) => {
-                const isPool = b.id === null;
-                return (
-                  <section key={b.id || 'pool'} className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] flex flex-col overflow-hidden">
-                    <header className="px-4 py-3 border-b border-[var(--color-border)]">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2 min-w-0">
-                          {isPool ? (
-                            <div className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-xs font-black bg-[var(--color-surface-2)] text-[var(--color-text)]">
-                              <Inbox className="w-4 h-4" />
-                            </div>
-                          ) : (
-                            <UserAvatar uid={b.id} name={b.name} size={36} rounded="full" />
-                          )}
-                          <div className="min-w-0">
-                            <div className="text-[14px] font-bold text-[var(--color-text)] truncate">{b.name}</div>
-                            <div className="text-[12px] text-[var(--color-text-muted)]">{b.total - b.closed} active{b.closed > 0 ? ` · ${b.closed} closed` : ''}{b.actionable > 0 ? ` · ${b.actionable} need action` : ''}</div>
-                          </div>
-                        </div>
-                        {b.actionable > 0 && (
-                          <span title={`${b.actionable} need action`} className="shrink-0 inline-flex items-center gap-1 bg-red-600 text-white text-[11px] font-black px-2 py-0.5 rounded-full">{badgeText(b.actionable)}</span>
-                        )}
-                      </div>
-                      <div className="flex flex-wrap gap-1.5 mt-3">
-                        {b.drafting > 0 && <StageChip className="bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" label="Drafting" n={b.drafting} />}
-                        {b.revision > 0 && <StageChip className="bg-amber-50 text-amber-700 border-amber-200" label="Revisions" n={b.revision} />}
-                        {b.awaitingIfc > 0 && <StageChip className="bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" label="Awaiting IFC" n={b.awaitingIfc} />}
-                        {b.review > 0 && <StageChip className="bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" label="In review" n={b.review} />}
-                        {b.overdue > 0 && <StageChip className="bg-red-50 text-red-700 border-red-200" label="Overdue" n={b.overdue} />}
-                        {b.closed > 0 && <StageChip className="bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" label="Closed" n={b.closed} />}
-                      </div>
-                    </header>
-                    <div className="px-2 py-1 divide-y divide-[var(--color-border)] max-h-[60vh] overflow-y-auto">
-                      {b.tickets.map((t) => {
-                        const actionNeeded = isActionRequired(t);
-                        const due = t.targetCompletionAt ? new Date(t.targetCompletionAt as string) : null;
-                        const overdue = !!due && due < new Date();
-                        return (
-                          <Link key={t.id} href={`/requests/${t.id}`} className="block">
-                            <div className="group rounded-lg px-2 py-2.5 transition-colors hover:bg-[var(--color-surface-2)]">
-                              <div className="flex items-center justify-between gap-2">
-                                <div className="flex items-center gap-1.5 min-w-0">
-                                  {actionNeeded && <span className="shrink-0 w-2 h-2 rounded-full bg-red-500" title="Action needed" />}
-                                  <span className="font-mono text-[12px] font-bold text-[var(--color-text)] truncate">{t.ticketId}</span>
-                                </div>
-                                <span className={`shrink-0 px-2 py-0.5 rounded-full text-[11px] font-bold uppercase border ${getStatusColor(t.status)}`}>{t.status.replace(/_/g, ' ')}</span>
-                              </div>
-                              <div className="text-[13.5px] text-[var(--color-text)] mt-0.5 line-clamp-1">{t.title}</div>
-                              <div className="flex items-center gap-3 mt-1 text-[12px] text-[var(--color-text-muted)]">
-                                <span className="font-mono">{t.unit}</span>
-                                {due && <span className={`flex items-center gap-0.5 font-bold ${overdue ? 'text-red-600' : 'text-[var(--color-text-muted)]'}`}><Clock className="w-3 h-3" />{overdue ? 'Past due' : due.toLocaleDateString()}</span>}
-                                {(t.comments?.length || 0) > 0 && <span className="flex items-center gap-0.5"><MessageCircle className="w-3 h-3" />{t.comments?.length}</span>}
-                              </div>
-                            </div>
-                          </Link>
-                        );
-                      })}
-                    </div>
+            <>
+              <div className="max-sm:hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]">
+                <table className="w-full text-[15px]">
+                  {tableHead}
+                  {teamBoard.map((b) => (
+                    <tbody key={b.id || 'pool'} className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border-strong)]">
+                      <tr className="bg-[var(--color-canvas)]">
+                        <td colSpan={COLS} className="px-4 py-2.5">
+                          <DrafterHead b={b} />
+                        </td>
+                      </tr>
+                      {b.tickets.map((t) => <RequestRow key={t.id} {...rowProps(t)} />)}
+                    </tbody>
+                  ))}
+                </table>
+              </div>
+              <div className="sm:hidden space-y-5">
+                {teamBoard.map((b) => (
+                  <section key={b.id || 'pool'}>
+                    <div className="mb-2"><DrafterHead b={b} /></div>
+                    <ul className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
+                      {b.tickets.map((t) => <RequestItem key={t.id} {...rowProps(t)} />)}
+                    </ul>
                   </section>
-                );
-              })}
-            </div>
+                ))}
+              </div>
+            </>
           )
         ) : paginatedTickets.length === 0 ? (
           error ? null : (
-          <Card className="py-16 text-center">
-            <Search className="w-6 h-6 mx-auto mb-3 text-[var(--color-text-faint)]" />
-            <h3 className="text-[15px] font-bold text-[var(--color-text)]">{tickets.length === 0 ? "No requests yet" : "Nothing matches"}</h3>
-            <p className="mt-1 text-[14px] text-[var(--color-text-muted)]">{tickets.length === 0 ? "New requests show up here." : "Try fewer filters or other words."}</p>
-            {tickets.length > 0 && <button onClick={clearAllFilters} className="mt-4 h-10 border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] px-5 rounded-lg text-[14px] font-bold hover:bg-[var(--color-surface-2)] transition-colors">Clear filters</button>}
-          </Card>
+            <EmptySheet
+              title={tickets.length === 0 ? 'No requests yet' : 'Nothing matches'}
+              line={tickets.length === 0 ? 'New requests show up here.' : 'Try fewer filters or other words.'}
+              action={tickets.length > 0 ? <button type="button" onClick={clearAllFilters} className={heroQuiet}>Clear filters</button> : undefined}
+            />
           )
         ) : (
-          <>
-            {/* VIEW: TABLE MODE */}
-            {viewMode === 'table' && (
-              <div className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-[var(--color-border)]">
-                    <thead>
-                      <tr>
-                        <th className="w-12 px-4 sm:px-5 py-3"><input type="checkbox" checked={selectedTicketIds.size === paginatedTickets.length && paginatedTickets.length > 0} onChange={handleSelectAll} className="rounded border-[var(--color-border-strong)] text-[var(--color-text)] focus:ring-[var(--color-accent-ring)] w-4 h-4 cursor-pointer" /></th>
-                        {[{ id: 'ticketId', label: 'Request ID' }, { id: 'status', label: 'Status' }, { id: 'title', label: 'Details' }, { id: 'unit', label: 'Unit' }, { id: 'priority', label: 'Priority' }, { id: 'lastModified', label: 'Last Activity' }].map((col) => (
-                          <th key={col.id} className="px-4 py-3 text-left text-[13px] font-semibold text-[var(--color-text-muted)] cursor-pointer hover:text-[var(--color-text)] transition-colors group" onClick={() => handleSort(col.id as SortField)}><div className="flex items-center space-x-1"><span>{col.label}</span><ArrowUpDown className={`w-3 h-3 ${sortConfig.field === col.id ? 'text-[var(--color-text)]' : 'text-[var(--color-text-faint)]'}`} /></div></th>
-                        ))}
-                        <th className="px-4 sm:px-5 py-3 text-right text-[13px] font-semibold text-[var(--color-text-muted)] "><span className="sr-only">Actions</span></th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
-                      {paginatedTickets.map((ticket) => {
-                         const daysOpen = calculateDaysOpen(ticket.createdAt);
-                         const isStale = daysOpen > 14 && ticket.status !== 'CLOSED';
-                         const isUrgent = ticket.status === 'REVISION_REQ' || ticket.requestType === 'RFI' || ticket.priority === 1;
-                         const isSelected = selectedTicketIds.has(ticket.id!);
-                         const isUnread = ticket.unreadBy?.includes(uid || '');
-                         const isActionNeeded = isActionRequired(ticket); // Use Helper
-
-                         return (
-                          <tr key={ticket.id} className={`transition-colors group ${isSelected ? 'bg-[var(--color-surface-2)]' : 'hover:bg-[var(--color-surface-2)]'}`}>
-                            <td className="px-4 sm:px-5 py-3"><input type="checkbox" checked={isSelected} onChange={() => toggleTicketSelection(ticket.id!)} className="rounded border-[var(--color-border-strong)] text-[var(--color-text)] focus:ring-[var(--color-accent-ring)] w-4 h-4 cursor-pointer" /></td>
-                            <td className="px-4 py-3 whitespace-nowrap">
-                              <div className="flex flex-col">
-                                <div className="flex items-center">
-                                  {/* DUAL BADGE LOGIC: Show Action OR Unread OR Both if room permits */}
-                                  {isActionNeeded && <div className="w-2.5 h-2.5 bg-red-500 rounded-full mr-2" title="Action Required" />}
-                                  {!isActionNeeded && isUnread && <div className="w-2.5 h-2.5 bg-[var(--color-text-muted)] rounded-full mr-2" title="New Updates" />}
-                                  <Link href={`/requests/${ticket.id}`} className={`text-sm ${isUnread || isActionNeeded ? 'font-black text-[var(--color-text)]' : 'font-bold text-[var(--color-text)]'} hover:text-[var(--color-accent-hover)] hover:underline`}>{ticket.ticketId}</Link>
-                                </div>
-                                <span className="text-[11px] text-[var(--color-text-faint)] mt-0.5 font-mono">{ticket.requestType}</span>
-                              </div>
-                            </td>
-                            <td className="px-4 py-3 whitespace-nowrap"><span className={`inline-flex px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase border ${getStatusColor(ticket.status)}`}>{ticket.status.replace(/_/g, ' ')}</span>{ticket.archivedAt && <span className="ml-1.5 inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold uppercase border border-[var(--color-border)] text-[var(--color-text)] bg-[var(--color-surface-2)]" title="Content archived for space - restore from the saved archive to view">Archived</span>}</td>
-                            <td className="px-4 py-3"><div className="flex flex-col max-w-md"><span className={`text-sm ${isUnread ? 'font-bold text-[var(--color-text)]' : 'font-medium text-[var(--color-text)]'} truncate`}>{ticket.title}</span><div className="flex items-center mt-1 text-xs text-[var(--color-text-muted)]"><User className="w-3 h-3 mr-1" /><span className="mr-3">{ticket.requesterName}</span>{ticket.assignedDrafterName && (<><ArrowRight className="w-3 h-3 mr-1 text-[var(--color-text-faint)]" /><span className="font-semibold text-[var(--color-text)]">{ticket.assignedDrafterName}</span></>)}</div></div></td>
-                            <td className="px-4 py-3 whitespace-nowrap"><span className="text-[13px] font-mono text-[var(--color-text-muted)]">{ticket.unit}</span></td>
-                            <td className="px-4 py-3 whitespace-nowrap">
-                              {typeof ticket.priority === 'number' ? (
-                                <div className={`flex items-center px-2 py-1 rounded border text-xs font-bold w-fit 
-                                  ${ticket.priority === 1 ? 'text-red-600 bg-red-50 border-red-100' : 
-                                    ticket.priority === 2 ? 'text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]' :
-                                    ticket.priority === 3 ? 'text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]' :
-                                    'text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]'
-                                  }`}>
-                                  {ticket.priority === 1 && <AlertCircle className="w-3 h-3 mr-1" />}
-                                  {ticket.priority === 2 && <TrendingUp className="w-3 h-3 mr-1" />}
-                                  {ticket.priority >= 3 && <Flag className="w-3 h-3 mr-1" />}
-                                  P{ticket.priority}
-                                </div>
-                              ) : (
-                                <div className={`flex items-center px-2 py-1 rounded border text-xs font-bold w-fit ${getPriorityColor(isUrgent, ticket.requestType)}`}>{isUrgent ? <AlertCircle className="w-3 h-3 mr-1" /> : <Flag className="w-3 h-3 mr-1" />}{isUrgent ? 'URGENT' : 'Normal'}</div>
-                              )}
-                            </td>
-                            <td className="px-4 py-3 whitespace-nowrap">
-                              <div className="flex flex-col text-xs">
-                                <span className="font-medium text-[var(--color-text)]">{toDate(ticket.lastModified).toLocaleDateString()}</span>
-                                {ticket.targetCompletionAt && (() => {
-                                  const due = new Date(ticket.targetCompletionAt as string);
-                                  const past = due < new Date() && ticket.status !== 'CLOSED' && ticket.status !== 'CANCELED';
-                                  const soon = !past && due.getTime() - Date.now() < 24 * 60 * 60 * 1000 && ticket.status !== 'CLOSED' && ticket.status !== 'CANCELED';
-                                  return (
-                                    <span className={`font-bold flex items-center mt-0.5 ${past ? "text-red-600" : soon ? "text-amber-600" : "text-[var(--color-text-muted)]"}`}>
-                                      <Clock className="w-3 h-3 mr-1" />
-                                      {past ? `Past Due (${due.toLocaleDateString()})` : soon ? `Due Soon (${due.toLocaleDateString()})` : `Due ${due.toLocaleDateString()}`}
-                                    </span>
-                                  );
-                                })()}
-                                {isStale && !ticket.targetCompletionAt && (
-                                  <span className="text-red-500 font-bold flex items-center mt-0.5"><Clock className="w-3 h-3 mr-1" />Stale ({daysOpen}d)</span>
-                                )}
-                              </div>
-                            </td>
-                            
-                            <td className="px-4 sm:px-5 py-3 whitespace-nowrap text-right text-sm font-medium relative">
-                              <div className="flex items-center justify-end space-x-2">
-                                {/* NEW COMMENT BADGE FOR TABLE */}
-                                {(ticket.comments?.length || 0) > 0 && (
-                                  <div className={`flex items-center px-1.5 py-0.5 rounded text-[11px] font-bold mr-2 ${isUnread ? 'bg-[var(--color-surface-2)] text-[var(--color-text)]' : 'text-[var(--color-text-faint)]'}`}>
-                                    <MessageCircle className="w-3 h-3 mr-1" /> {ticket.comments?.length}
-                                  </div>
-                                )}
-                                <Link href={`/requests/${ticket.id}`} className="text-[var(--color-text-faint)] hover:text-[var(--color-text)] transition-colors p-2 hover:bg-[var(--color-surface-2)] rounded-full" title="Open" aria-label={`Open ${ticket.ticketId}`}><Eye className="w-4 h-4" /></Link>
-                                
-                                <div className="relative">
-                                  <button onClick={() => setOpenRowMenu(openRowMenu === ticket.id ? null : ticket.id!)} aria-label="More" aria-haspopup="menu" aria-expanded={openRowMenu === ticket.id} className="text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] transition-colors p-2 hover:bg-[var(--color-surface-2)] rounded-full"><MoreVertical className="w-4 h-4" /></button>
-                                  {openRowMenu === ticket.id && (
-                                    <>
-                                      <div className="fixed inset-0 z-40" onClick={() => setOpenRowMenu(null)}></div>
-                                      <div className="absolute right-0 mt-2 w-48 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg z-50 origin-top-right animate-in fade-in zoom-in-95 duration-150">
-                                        <div className="py-1">
-                                          <button onClick={() => handleQuickMarkUrgent(ticket.id!)} className="flex w-full items-center px-4 py-2 text-xs text-amber-600 hover:bg-amber-50 font-bold"><AlertCircle className="w-3 h-3 mr-2" /> Mark urgent</button>
-                                          {['Manager', 'Admin'].includes(activeRole) && (<button onClick={() => handleQuickForceClose(ticket.id!)} className="flex w-full items-center px-4 py-2 text-xs text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] font-medium"><Trash2 className="w-3 h-3 mr-2" /> Force close</button>)}
-                                        </div>
-                                      </div>
-                                    </>
-                                  )}
-                                </div>
-                              </div>
-                            </td>
-                          </tr>
-                         );
-                      })}
-                    </tbody>
-                  </table>
+          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]">
+            <table className="w-full text-[15px] max-sm:hidden">
+              {tableHead}
+              <tbody className="divide-y divide-[var(--color-border)]">
+                {paginatedTickets.map((t) => <RequestRow key={t.id} {...rowProps(t)} />)}
+              </tbody>
+            </table>
+            <ul className="sm:hidden divide-y divide-[var(--color-border)]">
+              {paginatedTickets.map((t) => <RequestItem key={t.id} {...rowProps(t)} />)}
+            </ul>
+            {filteredTickets.length > 10 && (
+              <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 border-t border-[var(--color-border)] text-[13px] text-[var(--color-text-muted)]">
+                <div className="flex items-center gap-3">
+                  <span className="tabular-nums">{(currentPage - 1) * itemsPerPage + 1}-{Math.min(currentPage * itemsPerPage, filteredTickets.length)} of {filteredTickets.length}</span>
+                  <label className="sr-only" htmlFor="req-per-page">Rows per page</label>
+                  <select id="req-per-page" value={itemsPerPage} onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }} className="h-8 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] text-[var(--color-text)]">
+                    {[10, 25, 50, 100].map((n) => <option key={n} value={n}>{n} per page</option>)}
+                  </select>
                 </div>
-                <div className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] flex items-center justify-between gap-3">
-                  <div className="flex flex-col md:flex-row md:items-center text-[13px] text-[var(--color-text-muted)]"><span className="mr-4">Showing <span className="font-bold text-[var(--color-text)]">{(currentPage - 1) * itemsPerPage + 1}</span> to <span className="font-bold text-[var(--color-text)]">{Math.min(currentPage * itemsPerPage, filteredTickets.length)}</span> of <span className="font-bold text-[var(--color-text)]">{filteredTickets.length}</span> results</span><select value={itemsPerPage} onChange={(e) => setItemsPerPage(Number(e.target.value))} className="mt-2 md:mt-0 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded text-xs py-1 px-2 focus:ring-[var(--color-accent-ring)] focus:border-[var(--color-accent)] cursor-pointer"><option value={10}>10 per page</option><option value={25}>25 per page</option><option value={50}>50 per page</option><option value={100}>100 per page</option></select></div>
-                  <div className="flex items-center space-x-2"><button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="px-3 py-1.5 border border-[var(--color-border-strong)] rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[var(--color-surface-2)] transition-colors">Previous</button><button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} className="px-3 py-1.5 border border-[var(--color-border-strong)] rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[var(--color-surface-2)] transition-colors">Next</button></div>
+                <div className="flex items-center gap-2">
+                  <button type="button" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className={heroQuiet}>Previous</button>
+                  <button type="button" onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage >= totalPages} className={heroQuiet}>Next</button>
                 </div>
               </div>
             )}
-
-            {/* VIEW: GRID MODE */}
-            {viewMode === 'grid' && (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-6">
-                {paginatedTickets.map((ticket) => {
-                   const isUrgent = ticket.status === 'REVISION_REQ' || ticket.requestType === 'RFI' || ticket.priority === 1;
-                   const isUnread = ticket.unreadBy?.includes(uid || '');
-                   const isActionNeeded = isActionRequired(ticket);
-                   const commentCount = ticket.comments?.length || 0;
-                   return (
-                    <div key={ticket.id} className={`group bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] p-5 flex flex-col ${isUrgent ? 'border-l-2 border-l-red-500' : ''}`}>
-                      {(isActionNeeded || commentCount > 0) && (
-                        <div className="flex flex-wrap items-center gap-1.5 mb-2">
-                          {isActionNeeded && (
-                            <span className="inline-flex items-center text-red-700 dark:text-red-400 text-[11px] font-bold">
-                              <MousePointerClick className="w-3 h-3 mr-1" /> Waiting on you
-                            </span>
-                          )}
-                          {commentCount > 0 && (
-                            <span className={`inline-flex items-center text-[11px] font-bold ${isUnread ? 'text-[var(--color-text)]' : 'text-[var(--color-text-muted)]'}`}>
-                              <MessageCircle className="w-3 h-3 mr-1" /> {commentCount}{isUnread ? ' new' : ''}
-                            </span>
-                          )}
-                        </div>
-                      )}
-
-                      <div className="flex justify-between items-start mb-4"><div className="flex flex-col"><span className="font-mono text-xs font-bold text-[var(--color-text-faint)]">{ticket.ticketId}</span><span className="text-[11px] font-bold text-[var(--color-text-faint)] mt-0.5 uppercase tracking-wide">{ticket.requestType}</span></div><div className="flex flex-col items-end gap-1"><span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase border ${getStatusColor(ticket.status)}`}>{ticket.status.replace(/_/g, ' ')}</span>{ticket.archivedAt && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold uppercase border border-[var(--color-border)] text-[var(--color-text)] bg-[var(--color-surface-2)]" title="Content archived for space - restore from the saved archive to view">Archived</span>}</div></div>
-                      <Link href={`/requests/${ticket.id}`} className="block mb-4"><h3 className={`text-[15px] leading-snug line-clamp-2 ${isUnread ? 'font-extrabold text-[var(--color-text)]' : 'font-bold text-[var(--color-text)]'}`}>{ticket.title}</h3></Link>
-                      <div className="flex items-center text-[13px] text-[var(--color-text-muted)] mb-5"><span className="font-mono font-semibold text-[var(--color-text)] mr-2">{ticket.unit}</span><User className="w-3 h-3 mr-1" /><span className="truncate flex-1">{ticket.requesterName}</span></div>
-                      <div className="mt-auto pt-4 border-t border-[var(--color-border)] flex items-center justify-between"><div className="flex flex-col"><span className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase">Assigned To</span><span className="text-xs font-semibold text-[var(--color-text)]">{ticket.assignedDrafterName || 'Unassigned'}</span></div><Link href={`/requests/${ticket.id}`} aria-label={`Open ${ticket.ticketId}`} className="h-8 w-8 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text-muted)] flex items-center justify-center group-hover:text-[var(--color-text)] transition-colors"><ArrowRight className="w-4 h-4" /></Link></div>
-                    </div>
-                   );
-                })}
-              </div>
-            )}
-          </>
+          </div>
         )}
       </PageBody>
       </div>
     </PageShell>
+  );
+}
+
+// =========================================================================================
+// ROWS
+// =========================================================================================
+
+interface RowProps {
+  ticket: Ticket;
+  actionNeeded: boolean;
+  unread: boolean;
+  selected: boolean;
+  onToggle: () => void;
+  onOpen: () => void;
+  menu: MoreItem[];
+}
+
+const rowMenuTrigger = "w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]";
+
+function DueText({ t }: { t: Ticket }) {
+  if (!t.targetCompletionAt) return <span className="text-[var(--color-text-faint)]">None</span>;
+  const late = isPastDue(t);
+  const soon = !late && isNearingDue(t);
+  return (
+    <span className={`tabular-nums whitespace-nowrap ${late ? 'font-semibold text-[var(--state-overdue)]' : soon ? 'font-semibold text-[var(--state-held)]' : 'text-[var(--color-text)]'}`}>
+      {fmtDay(t.targetCompletionAt)}{late && <span className="sr-only"> (overdue)</span>}{soon && <span className="sr-only"> (due soon)</span>}
+    </span>
+  );
+}
+
+function priorityText(t: Ticket): React.ReactNode {
+  if (typeof t.priority === 'number') {
+    return <span className={t.priority === 1 ? 'font-semibold text-[var(--color-text)]' : 'text-[var(--color-text-muted)]'}>P{t.priority}{t.priority === 1 ? ' Urgent' : ''}</span>;
+  }
+  const urgent = t.status === 'REVISION_REQ' || t.requestType === 'RFI';
+  return <span className={urgent ? 'font-semibold text-[var(--color-text)]' : 'text-[var(--color-text-muted)]'}>{urgent ? 'Urgent' : 'Normal'}</span>;
+}
+
+/** One request as a table row: the whole row opens it. */
+function RequestRow({ ticket: t, actionNeeded, unread, selected, onToggle, onOpen, menu }: RowProps) {
+  const late = isPastDue(t);
+  const who = waitingOn(t);
+  const comments = t.comments?.length ?? 0;
+  return (
+    <tr
+      onClick={(e) => { if ((e.target as HTMLElement).closest('a,button,input,label,select,[role=menu]')) return; onOpen(); }}
+      className={`cursor-pointer transition-colors ${selected ? 'bg-[var(--color-surface-2)]' : 'hover:bg-[var(--color-surface-2)]'}`}
+    >
+      <td className="pl-4 py-3 relative align-top">
+        {late && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />}
+        <input type="checkbox" aria-label={`Select ${t.ticketId}`} checked={selected} onChange={onToggle} className="mt-1 w-4 h-4 rounded border-[var(--color-border-strong)] cursor-pointer" />
+      </td>
+      <td className="px-4 py-3 align-top whitespace-nowrap">
+        <div className="flex items-center gap-1.5">
+          {unread && <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-text)]" title="New updates" aria-label="New updates" />}
+          <Link href={`/requests/${t.id}`} className="font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{t.ticketId}</Link>
+        </div>
+        <div className="text-[13px] text-[var(--color-text-muted)]">{t.requestType}</div>
+      </td>
+      <td className="px-4 py-3 align-top">
+        <div className={`line-clamp-2 max-w-[60ch] ${unread ? 'font-semibold' : ''} text-[var(--color-text)]`}>{t.title}</div>
+        {t.requesterName && <div className="text-[13px] text-[var(--color-text-muted)]">From {t.requesterName}</div>}
+      </td>
+      <td className="px-4 py-3 align-top">
+        <StatusTag tone={stageTone(t.status)}>{stageLabel(t.status)}</StatusTag>
+        {t.archivedAt && <div className="text-[13px] text-[var(--color-text-muted)]" title="Its files moved to the archive">Archived</div>}
+      </td>
+      <td className="px-4 py-3 align-top hidden md:table-cell whitespace-nowrap">
+        {actionNeeded ? <span className="font-semibold text-[var(--color-text)]">You</span> : who ? <span className="text-[var(--color-text)]">{who}</span> : <span className="text-[var(--color-text-faint)]">Nobody</span>}
+      </td>
+      <td className="px-4 py-3 align-top"><DueText t={t} /></td>
+      <td className="px-4 py-3 align-top hidden xl:table-cell font-display tabular-nums">{t.unit}</td>
+      <td className="px-4 py-3 align-top hidden xl:table-cell whitespace-nowrap">{priorityText(t)}</td>
+      <td className="px-4 py-3 align-top hidden lg:table-cell whitespace-nowrap tabular-nums text-[var(--color-text-muted)]">{fmtDay(t.lastModified)}</td>
+      <td className="pr-3 py-2 align-top">
+        <div className="flex items-center justify-end gap-1">
+          {comments > 0 && (
+            <span className={`inline-flex items-center gap-1 text-[13px] tabular-nums ${unread ? 'font-semibold text-[var(--color-text)]' : 'text-[var(--color-text-muted)]'}`} title={`${comments} comment${comments === 1 ? '' : 's'}`}>
+              <MessageCircle className="w-3.5 h-3.5" />{comments}
+            </span>
+          )}
+          <MoreMenu iconOnly label={`More for ${t.ticketId}`} triggerClass={rowMenuTrigger} items={menu} />
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+/** The same request as a stacked row on a phone. */
+function RequestItem({ ticket: t, actionNeeded, unread, menu }: RowProps) {
+  const late = isPastDue(t);
+  const who = actionNeeded ? 'you' : waitingOn(t);
+  return (
+    <li className="relative flex items-start gap-1">
+      {late && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />}
+      <Link href={`/requests/${t.id}`} className="flex-1 min-w-0 pl-4 pr-1 py-3 active:bg-[var(--color-surface-2)]">
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <span className="font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)]">{t.ticketId}</span>
+            {unread && <span className="ml-1.5 inline-block w-1.5 h-1.5 rounded-full bg-[var(--color-text)] align-middle" aria-label="New updates" />}
+            <div className={`text-[15px] text-[var(--color-text)] line-clamp-1 ${unread ? 'font-semibold' : ''}`}>{t.title}</div>
+          </div>
+          <StatusTag tone={stageTone(t.status)} className="mt-1">{stageLabel(t.status)}</StatusTag>
+        </div>
+        <div className="mt-0.5 text-[13px] text-[var(--color-text-muted)] flex flex-wrap gap-x-3">
+          {who && <span>Waiting on {actionNeeded ? <span className="font-semibold text-[var(--color-text)]">you</span> : who}</span>}
+          {t.targetCompletionAt && <span>Due <DueText t={t} /></span>}
+          <span>Updated {fmtDay(t.lastModified)}</span>
+        </div>
+      </Link>
+      <div className="pt-2.5 pr-2"><MoreMenu iconOnly label={`More for ${t.ticketId}`} triggerClass={rowMenuTrigger} items={menu} /></div>
+    </li>
+  );
+}
+
+interface DrafterGroup {
+  id: string | null;
+  name: string;
+  total: number;
+  closed: number;
+  drafting: number;
+  revision: number;
+  awaitingIfc: number;
+  review: number;
+  actionable: number;
+  overdue: number;
+}
+
+/** A drafter's group heading in the By drafter view: who, and how their load breaks down. */
+function DrafterHead({ b }: { b: DrafterGroup }) {
+  const parts: Array<[string, number, boolean?]> = [
+    ['Active', b.total - b.closed],
+    ['Waiting on you', b.actionable],
+    ['Overdue', b.overdue, true],
+    ['Drafting', b.drafting],
+    ['Revision', b.revision],
+    ['In review', b.review],
+    ['Ready to issue', b.awaitingIfc],
+    ['Closed', b.closed],
+  ];
+  return (
+    <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
+      <span className="inline-flex items-center gap-2 min-w-0">
+        {b.id === null
+          ? <span className="w-7 h-7 rounded-full grid place-items-center bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-muted)]"><Inbox className="w-3.5 h-3.5" /></span>
+          : <UserAvatar uid={b.id} name={b.name} size={28} rounded="full" />}
+        <span className="font-display text-[17px] font-semibold text-[var(--color-text)] truncate">{b.name}</span>
+      </span>
+      {parts.filter(([, n], i) => i === 0 || n > 0).map(([label, n, bad]) => (
+        <span key={label} className="text-[13px] text-[var(--color-text-muted)]">
+          {label} <span className={`font-semibold tabular-nums ${bad ? 'text-[var(--state-overdue)]' : 'text-[var(--color-text)]'}`}>{n}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function EmptySheet({ title, line, action }: { title: string; line: string; action?: React.ReactNode }) {
+  return (
+    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-12 text-center">
+      <div className="font-display text-[19px] font-semibold text-[var(--color-text)]">{title}</div>
+      <p className="mt-1 text-[15px] text-[var(--color-text-muted)]">{line}</p>
+      {action && <div className="mt-4">{action}</div>}
+    </div>
   );
 }

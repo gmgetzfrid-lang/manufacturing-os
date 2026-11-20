@@ -79,7 +79,7 @@ export default function WorkflowDiagramModal({
         <div className="flex items-start gap-2 px-5 sm:px-6 pt-5 pb-4 border-b border-[var(--color-border)]">
           <div className="flex-1 min-w-0">
             <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">How a drafting request flows</div>
-            <h2 className="mt-1.5 text-[24px] leading-tight font-black tracking-[-0.02em] text-[var(--color-text)]">
+            <h2 className="mt-1.5 font-display text-[24px] leading-tight font-semibold text-[var(--color-text)]">
               {currentIdx >= 0 ? `Step ${currentIdx + 1} of ${MAIN_FLOW.length}: ${MAIN_FLOW[currentIdx].label}.` : BRANCHES.find((b) => b.status === current)?.label ?? "Seven steps, start to close."}
             </h2>
           </div>

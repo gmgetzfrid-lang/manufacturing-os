@@ -13,11 +13,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import {
-  Loader2, AlertTriangle, X, Check, Plus, Pencil,
-  Phone, Mail, FileText, Search, Sparkles, BookOpenCheck, Trophy,
-  GitPullRequestArrow, Briefcase, ShieldAlert,
-} from "lucide-react";
+import { Loader2, X, Check, Plus, Pencil, FileText, Search, Sparkles } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import LoadingBlock from "@/components/ui/LoadingBlock";
@@ -27,14 +23,17 @@ import {
   COMPANY_KIND_LABEL, EVENT_KIND_LABEL,
   type Company, type CompanyEvent, type CompanyProfileData,
 } from "@/lib/companies";
-import { scoreBand, type CompanyScorecard } from "@/lib/companyScore";
+import { scoreBand } from "@/lib/companyScore";
 import { QUALITY_MANUAL_RUBRIC, type RubricFinding } from "@/lib/checklistEngine";
 import { CO_REASON_LABEL, type CoReason } from "@/lib/changeOrders";
-import { ScoreDial, scoreBandColor } from "@/components/ui/ChartKit";
 import { fmtMoney } from "@/lib/costs";
 import { orIlike } from "@/lib/orFilter";
 import { PageShell } from "@/components/ui/PageShell";
-import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
+import { PageHero, PageBody, Card, heroPrimary, heroQuiet, type HeroFact } from "@/components/ui/PageHero";
+import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
+import HelpTooltip from "@/components/ui/HelpTooltip";
+import { plural } from "@/components/admin/band";
+import { StatusTag, fmtDay, type Tone } from "@/components/requests/RequestBits";
 
 async function authHeader(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();
@@ -85,8 +84,8 @@ export default function CompanyProfilePage() {
   const goBack = () => { if (window.history.length > 1) router.back(); else router.push("/companies"); };
   if (loading) return (
     <PageShell width="work">
-      <PageHero kicker="Known companies" title="Company" back={{ onClick: goBack, label: "Back to companies" }} size="md" overlap={false} />
-      <LoadingBlock what="the company" />
+      <PageHero kicker="Known companies" title="Company" back={{ onClick: goBack, label: "Back to companies" }} size="md" />
+      <PageBody><Card><LoadingBlock what="the company" className="border-0 p-0" /></Card></PageBody>
     </PageShell>
   );
   if (error || !company) return (
@@ -95,14 +94,12 @@ export default function CompanyProfilePage() {
         title={error === "Company not found." || !error ? "Company not found." : "Couldn't load this company."} />
       <PageBody>
         <Card>
-          <div role="alert" className="text-[14px] text-red-700 dark:text-red-400 flex items-start gap-2">
-            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-            <div>{error ?? "Company not found."}
-              <div className="mt-2 flex gap-3">
-                {error && error !== "Company not found." && <button type="button" onClick={() => { setLoading(true); refresh(); }} className="font-bold underline">Try again</button>}
-                <Link href="/companies" className="underline">Back to companies</Link>
-              </div>
-            </div>
+          <p role="alert" className="relative pl-3 text-[15px] text-[var(--color-text)]">
+            <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />{error ?? "Company not found."}
+          </p>
+          <div className="mt-3 flex gap-2">
+            {error && error !== "Company not found." && <button type="button" onClick={() => { setLoading(true); refresh(); }} className={heroQuiet}>Try again</button>}
+            <Link href="/companies" className={heroQuiet}>Back to companies</Link>
           </div>
         </Card>
       </PageBody>
@@ -118,23 +115,29 @@ export default function CompanyProfilePage() {
     : `${company.name} is not rated yet.`;
   const events = profile?.events ?? [];
   const bad = events.filter((e) => e.kind === "recordable" || e.kind === "stop_work").length;
-  const sub = [
-    COMPANY_KIND_LABEL[company.kind],
-    company.trade,
-    company.status === "inactive" ? "Inactive" : null,
-    sc?.composite != null ? band.label : null,
-    profile ? `${profile.projects.length} job${profile.projects.length === 1 ? "" : "s"}` : null,
-    profile && bad > 0 ? `${bad} recordable or stop-work event${bad === 1 ? "" : "s"}` : null,
-  ].filter(Boolean).join(" · ");
+  const facts: HeroFact[] = profile ? [
+    { label: "Score", value: sc?.composite != null ? Math.round(sc.composite) : "None", tone: band.tone === "green" ? "good" : band.tone === "amber" ? "warn" : band.tone === "rose" ? "bad" : undefined },
+    { label: "Jobs", value: profile.projects.length },
+    { label: <span title="Recordable injuries and stop works">Incidents</span>, value: bad, tone: bad > 0 ? "bad" : undefined },
+  ] : [];
+  const cells: Array<[string, React.ReactNode]> = [
+    ["Kind", COMPANY_KIND_LABEL[company.kind]],
+    ["Trade", company.trade || <Faint key="t">None</Faint>],
+    ["Status", company.status === "do_not_use" ? <StatusTag key="s" tone="bad">Do not use</StatusTag> : company.status === "inactive" ? <StatusTag key="s">Inactive</StatusTag> : <StatusTag key="s" tone="good">Active</StatusTag>],
+    ["Contact", company.contactName || <Faint key="c">None</Faint>],
+    ["Phone", company.contactPhone ? <a key="p" href={`tel:${company.contactPhone}`} className="text-[var(--color-accent-text)] hover:underline underline-offset-2">{company.contactPhone}</a> : <Faint key="p">None</Faint>],
+    ["Email", company.contactEmail ? <a key="e" href={`mailto:${company.contactEmail}`} className="truncate text-[var(--color-accent-text)] hover:underline underline-offset-2">{company.contactEmail}</a> : <Faint key="e">None</Faint>],
+  ];
 
   return (
     <PageShell width="work">
       <PageHero
-        kicker={<>Known companies · {COMPANY_KIND_LABEL[company.kind]}</>}
+        kicker="Known companies"
         back={{ onClick: goBack, label: "Back to companies" }}
         size="md"
         title={answer}
-        sub={sub}
+        sub={sc?.composite != null ? `${band.label}, from ${plural(sc.evidenceCount, "recorded evidence point")}.` : company.trade ? `${COMPANY_KIND_LABEL[company.kind]}, ${company.trade}.` : undefined}
+        facts={facts}
         tools={canManage ? (
           <button type="button" onClick={() => setShowEdit(true)} className={heroQuiet}>
             <Pencil className="w-3.5 h-3.5" /> Edit
@@ -153,58 +156,62 @@ export default function CompanyProfilePage() {
       />
 
       <PageBody>
-      {/* ── Score card ── */}
-      <Card label="Score">
-        {actionError && (
-          <p role="alert" className="mb-3 text-[13px] text-red-700 dark:text-red-400 flex items-start gap-2">
-            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {actionError}
-            <button type="button" onClick={() => setActionError(null)} className="ml-auto font-bold underline">Dismiss</button>
-          </p>
-        )}
-        <div className="flex items-start gap-5 flex-wrap">
-          <ScoreDial score={sc?.composite ?? null} size={92} label={band.label} />
-          <div className="min-w-0 flex-1">
-            {company.status === "do_not_use" && (
-              <p className="mb-1.5 text-[13px] font-bold text-rose-700 dark:text-rose-300">Marked do not use. The record stays; the company is flagged across the app.</p>
-            )}
-            <div className="flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-[var(--color-text-muted)]">
-              {company.contactName && <span className="inline-flex items-center gap-1"><Phone className="w-3 h-3" /> {company.contactName}{company.contactPhone ? ` · ${company.contactPhone}` : ""}</span>}
-              {company.contactEmail && <span className="inline-flex items-center gap-1"><Mail className="w-3 h-3" /> {company.contactEmail}</span>}
-            </div>
-            {company.notes && <p className="mt-2 text-[13px] text-[var(--color-text-muted)]">{company.notes}</p>}
-
-            {/* Dimensions with their work shown. */}
-            <div className="mt-3 space-y-1.5">
-              {(sc?.dimensions ?? []).map((d) => (
-                <div key={d.key} className="flex items-center gap-2 text-[13px]">
-                  <span className="w-28 shrink-0 font-semibold text-[var(--color-text-muted)]">{d.label}</span>
-                  {d.score != null ? (
-                    <>
-                      <span className="h-2 w-32 rounded-full bg-[var(--viz-track)] overflow-hidden shrink-0">
-                        <span className="block h-full rounded-full" style={{ width: `${d.score}%`, background: scoreBandColor(d.score) }} />
-                      </span>
-                      <span className="tabular-nums font-black text-[var(--color-text)] w-8 shrink-0">{Math.round(d.score)}</span>
-                      <span className="text-[var(--color-text-muted)] min-w-0">{d.detail}</span>
-                    </>
-                  ) : (
-                    <span className="text-[var(--color-text-faint)] italic">{d.detail}</span>
-                  )}
-                </div>
-              ))}
-              {!profile && profileError && (
-                <div role="alert" className="text-[11px] text-rose-700 dark:text-rose-400">
-                  Couldn&apos;t gather the record: {profileError} <button type="button" onClick={refresh} className="font-bold underline">Try again</button>
-                </div>
-              )}
-              {!profile && !profileError && <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-faint)]"><Loader2 className="w-3 h-3 animate-spin" /> Gathering the record…</div>}
-            </div>
-            {sc && (
-              <div className="mt-2 text-[12px] text-[var(--color-text-muted)]">
-                Scored from {sc.evidenceCount} recorded evidence point{sc.evidenceCount === 1 ? "" : "s"}, never from typed-in ratings. A part with no evidence stays Unrated and doesn&apos;t count.
-              </div>
-            )}
-          </div>
+      {actionError && (
+        <div role="alert" className="flex items-center gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-[15px] text-[var(--color-text)]">
+          <span className="relative pl-3 flex-1"><span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />{actionError}</span>
+          <button type="button" onClick={() => setActionError(null)} className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Dismiss</button>
         </div>
+      )}
+
+      <Card label="Details" pad={false} className="overflow-hidden">
+        <dl className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-px bg-[var(--color-border)]">
+          {cells.map(([label, value]) => (
+            <div key={label} className="bg-[var(--color-surface)] px-4 py-3 min-w-0">
+              <dt className="text-[13px] text-[var(--color-text-muted)]">{label}</dt>
+              <dd className="mt-0.5 text-[15px] text-[var(--color-text)] min-w-0 truncate">{value}</dd>
+            </div>
+          ))}
+        </dl>
+        {company.notes && <p className="px-4 py-3 border-t border-[var(--color-border)] text-[15px] text-[var(--color-text)] max-w-[80ch]">{company.notes}</p>}
+      </Card>
+
+      <Card pad={false} className="overflow-hidden" label={
+        <span className="inline-flex items-center gap-1.5">Score
+          <HelpTooltip>Scored from recorded work only, never from typed-in ratings. A part with no evidence stays unrated and doesn&apos;t count.</HelpTooltip>
+        </span>
+      }>
+        {!profile ? (
+          profileError
+            ? <p role="alert" className="px-4 py-3 text-[15px] text-[var(--color-text)]">Couldn&apos;t gather the record: {profileError} <button type="button" onClick={refresh} className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Try again</button></p>
+            : <p className="px-4 py-3 flex items-center gap-2 text-[15px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Gathering the record…</p>
+        ) : (
+          <table className="w-full text-[15px]">
+            <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+              <tr>
+                <th className="font-semibold px-4 h-10 whitespace-nowrap">Part</th>
+                <th className="font-semibold px-4 h-10 text-right whitespace-nowrap">Score</th>
+                <th className="font-semibold px-4 h-10 hidden sm:table-cell w-40"><span className="sr-only">Out of 100</span></th>
+                <th className="font-semibold px-4 h-10 w-full">How it&apos;s worked out</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--color-border)]">
+              {(sc?.dimensions ?? []).map((d) => (
+                <tr key={d.key}>
+                  <td className="px-4 py-2.5 font-semibold text-[var(--color-text)] whitespace-nowrap">{d.label}</td>
+                  <td className="px-4 py-2.5 text-right">{d.score != null ? <span className="font-display text-[17px] font-semibold tabular-nums">{Math.round(d.score)}</span> : <Faint>None</Faint>}</td>
+                  <td className="px-4 py-2.5 hidden sm:table-cell">
+                    {d.score != null && (
+                      <span className="block h-1.5 w-32 rounded-full bg-[var(--color-border)] overflow-hidden" aria-hidden>
+                        <span className="block h-full rounded-full bg-[var(--color-text)]" style={{ width: `${d.score}%` }} />
+                      </span>
+                    )}
+                  </td>
+                  <td className={`px-4 py-2.5 ${d.score != null ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{d.detail}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </Card>
 
       <QualityManualPanel orgId={activeOrgId ?? company.orgId} company={company} canManage={canManage}
@@ -214,7 +221,7 @@ export default function CompanyProfilePage() {
         canManage={canManage} actorId={uid ?? ""} actorName={userEmail?.split("@")[0] ?? null}
         onChanged={() => void refresh()} setErr={setActionError} />
 
-      <HistoryPanels profile={profile} scorecard={sc} />
+      <HistoryPanels profile={profile} />
 
       {showEdit && uid && (
         <EditCompanyModal company={company} actorId={uid}
@@ -225,6 +232,14 @@ export default function CompanyProfilePage() {
     </PageShell>
   );
 }
+
+function Faint({ children }: { children: React.ReactNode }) {
+  return <span className="text-[var(--color-text-faint)]">{children}</span>;
+}
+
+const FIELD = "h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[15px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40";
+const LABEL = "block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5";
+const TH = "font-semibold px-4 h-10 whitespace-nowrap";
 
 // ── Quality manual ───────────────────────────────────────────────────────
 
@@ -291,63 +306,62 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
   };
 
   return (
-    <Card pad={false} className="overflow-hidden">
-      <div className="px-4 sm:px-5 pt-4 pb-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
-        <BookOpenCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)]">Quality manual</h2>
+    <Card pad={false} className="overflow-hidden"
+      label={<span className="inline-flex items-center gap-1.5">Quality manual <HelpTooltip>How much of a real quality program their manual covers, checked against an ISO 9001-shaped list (document control, welding, NDE, calibration, ITPs, materials, NCRs, training, records). The AI only proposes; you confirm before anything is recorded.</HelpTooltip></span>}
+      action={company.qualityManualReviewedAt ? <span className="text-[13px] text-[var(--color-text-muted)]">Confirmed {fmtDay(company.qualityManualReviewedAt)}</span> : undefined}>
+      <div className="px-4 py-3 flex items-baseline gap-2">
         {company.qualityManualScore != null ? (
-          <span className="text-[13px] font-bold tabular-nums" style={{ color: scoreBandColor(company.qualityManualScore) }}>
-            {Math.round(company.qualityManualScore)}% coverage
-          </span>
+          <><span className="font-display text-[22px] font-semibold tabular-nums text-[var(--color-text)]">{Math.round(company.qualityManualScore)}%</span><span className="text-[15px] text-[var(--color-text-muted)]">covered</span></>
         ) : (
-          <span className="text-[13px] text-[var(--color-text-muted)]">Not checked yet. The score shows how much of a real quality program their manual covers.</span>
-        )}
-        {company.qualityManualReviewedAt && (
-          <span className="ml-auto text-[12px] text-[var(--color-text-muted)]">confirmed {new Date(company.qualityManualReviewedAt).toLocaleDateString()}</span>
+          <span className="text-[15px] text-[var(--color-text-muted)]">Not checked yet.</span>
         )}
       </div>
 
       {(company.qualityManualGaps?.length ?? 0) > 0 && !proposal && (
-        <ul className="px-4 sm:px-5 py-2.5 space-y-1 border-b border-[var(--color-border)]">
-          {company.qualityManualGaps!.map((g, i) => (
-            <li key={i} className="text-[13px] text-[var(--color-text-muted)]">
-              <span className="font-bold text-amber-700 dark:text-amber-300">{areaLabel.get(g.area) ?? g.area}:</span> {g.finding}
-            </li>
-          ))}
-        </ul>
+        <table className="w-full text-[15px] border-t border-[var(--color-border)]">
+          <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+            <tr><th className={TH}>Gap</th><th className={`${TH} w-full`}>Finding</th></tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--color-border)]">
+            {company.qualityManualGaps!.map((g, i) => (
+              <tr key={i}>
+                <td className="px-4 py-2.5 align-top whitespace-nowrap"><StatusTag tone="warn">{areaLabel.get(g.area) ?? g.area}</StatusTag></td>
+                <td className="px-4 py-2.5 text-[var(--color-text)]">{g.finding}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
 
       {canManage && (
-        <div className="px-4 sm:px-5 py-3 space-y-2">
+        <div className="px-4 py-3 border-t border-[var(--color-border)] space-y-2">
           {!proposal ? (
             <>
               <div className="flex items-center gap-2 flex-wrap">
                 {doc ? (
-                  <span className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] px-2.5 py-1.5 text-xs font-bold text-[var(--color-text)]">
-                    <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {doc.label}
-                    <button onClick={() => setDoc(null)} aria-label={`Remove ${doc.label}`} className="text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3 h-3" /></button>
+                  <span className="inline-flex items-center gap-1.5 h-10 rounded-md border border-[var(--color-border-strong)] px-3 text-[15px] font-semibold text-[var(--color-text)]">
+                    <FileText className="w-4 h-4 text-[var(--color-text-muted)]" /> {doc.label}
+                    <button type="button" onClick={() => setDoc(null)} aria-label={`Remove ${doc.label}`} className="w-7 h-7 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
                   </span>
                 ) : (
                   <span className="relative flex-1 min-w-64">
-                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-faint)]" />
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)]" />
                     <input value={query} onChange={(e) => setQuery(e.target.value)}
                       aria-label="Find their quality manual"
-                      placeholder="Find their quality manual in document control…"
-                      className="w-full h-9 pl-8 pr-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[13px]" />
+                      placeholder="Find their quality manual in document control"
+                      className={`${FIELD} w-full pl-9`} />
                   </span>
                 )}
-                <button onClick={() => void evaluate()} disabled={!doc || evaluating}
-                  className="h-9 inline-flex items-center gap-1 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[13px] font-semibold hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-                  title="AI reads the manual against the ISO 9001-shaped rubric (doc control, welding, NDE, calibration, ITPs, materials, NCRs, training, records). You review before anything lands.">
-                  {evaluating ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Evaluate
+                <button type="button" onClick={() => void evaluate()} disabled={!doc || evaluating} className={`${heroQuiet} h-10`}>
+                  {evaluating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} Evaluate
                 </button>
               </div>
               {results.length > 0 && !doc && (
-                <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
+                <ul className="rounded-md border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
                   {results.map((d) => (
                     <li key={d.id}>
-                      <button onClick={() => setDoc(d)} className="w-full px-3 py-1.5 text-left text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2">
-                        <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> {d.label}
+                      <button type="button" onClick={() => setDoc(d)} className="w-full px-3 h-10 text-left text-[15px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2">
+                        <FileText className="w-4 h-4 text-[var(--color-text-faint)]" /> {d.label}
                       </button>
                     </li>
                   ))}
@@ -356,25 +370,26 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
             </>
           ) : (
             <>
-              <div className="flex items-center gap-2">
-                <span className="text-[14px] font-bold text-[var(--color-text)]">Proposed: {proposal.score}% coverage</span>
-                <span className="text-[13px] text-[var(--color-text-muted)]">Check the findings. Nothing goes on the record until you confirm.</span>
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-[15px] font-semibold text-[var(--color-text)]">Proposed: {proposal.score}% covered</span>
+                <span className="text-[13px] text-[var(--color-text-muted)]">Nothing is recorded until you confirm.</span>
                 <span className="ml-auto flex items-center gap-2">
-                  <button onClick={() => setProposal(null)} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Discard</button>
-                  <button onClick={() => void confirm()} disabled={confirming}
-                    className="inline-flex items-center gap-1 h-9 px-3 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[13px] font-bold hover:opacity-90 disabled:opacity-50">
-                    {confirming ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Confirm to record
+                  <button type="button" onClick={() => setProposal(null)} className={heroQuiet}>Discard</button>
+                  <button type="button" onClick={() => void confirm()} disabled={confirming} className={heroQuiet}>
+                    {confirming ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Confirm to record
                   </button>
                 </span>
               </div>
-              <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
-                {proposal.findings.map((f) => (
-                  <li key={f.area} className="px-3 py-1.5 text-[13px] flex items-start gap-2">
-                    <span className={`mt-1 w-2 h-2 rounded-full shrink-0 ${f.covered ? "bg-emerald-500" : "bg-rose-500"}`} />
-                    <span><b className="text-[var(--color-text)]">{areaLabel.get(f.area) ?? f.area}:</b> <span className="text-[var(--color-text-muted)]">{f.finding}</span></span>
-                  </li>
-                ))}
-              </ul>
+              <table className="w-full text-[15px] rounded-md border border-[var(--color-border)]">
+                <tbody className="divide-y divide-[var(--color-border)]">
+                  {proposal.findings.map((f) => (
+                    <tr key={f.area}>
+                      <td className="px-3 py-2 align-top whitespace-nowrap"><StatusTag tone={f.covered ? "good" : "bad"}>{areaLabel.get(f.area) ?? f.area}</StatusTag></td>
+                      <td className="px-3 py-2 text-[var(--color-text)]">{f.finding}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </>
           )}
         </div>
@@ -384,6 +399,8 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
 }
 
 // ── Safety & performance log ─────────────────────────────────────────────
+
+const EVENT_TONE: Record<CompanyEvent["kind"], Tone> = { recordable: "bad", stop_work: "bad", warning: "warn", commendation: "good", near_miss: "none", other: "none" };
 
 function EventsPanel({ orgId, company, events, canManage, actorId, actorName, onChanged, setErr }: {
   orgId: string; company: Company; events: CompanyEvent[];
@@ -408,54 +425,47 @@ function EventsPanel({ orgId, company, events, canManage, actorId, actorName, on
   };
 
   return (
-    <Card pad={false} className="overflow-hidden">
-      <div className="px-4 sm:px-5 pt-4 pb-3 border-b border-[var(--color-border)]">
-        <div className="flex items-center gap-2">
-          <ShieldAlert className="w-4 h-4 text-[var(--color-text-muted)]" />
-          <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)]">Safety and performance log · {events.length}</h2>
-        </div>
-        <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">Dated, named facts that feed the safety score. Reporting a near miss costs almost nothing: it&apos;s a healthy habit.</p>
-      </div>
+    <Card pad={false} className="overflow-hidden"
+      label={<span className="inline-flex items-center gap-1.5">Safety and performance log <HelpTooltip>Dated, named facts that feed the safety score. Logging a near miss costs nothing; it&apos;s a healthy habit.</HelpTooltip></span>}
+      action={<span className="text-[13px] text-[var(--color-text-muted)] tabular-nums">{plural(events.length, "event")}</span>}>
       {canManage && (
-        <div className="px-4 sm:px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
-          <select value={kind} aria-label="Kind of event" onChange={(e) => setKind(e.target.value as CompanyEvent["kind"])}
-            className="h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] px-2 text-[13px]">
+        <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
+          <select value={kind} aria-label="Kind of event" onChange={(e) => setKind(e.target.value as CompanyEvent["kind"])} className={FIELD}>
             {(Object.keys(EVENT_KIND_LABEL) as CompanyEvent["kind"][]).map((k) => (
               <option key={k} value={k}>{EVENT_KIND_LABEL[k]}</option>
             ))}
           </select>
-          <input type="date" value={date} aria-label="Date" onChange={(e) => setDate(e.target.value)}
-            className="h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[13px] [color-scheme:light] dark:[color-scheme:dark]" />
+          <input type="date" value={date} aria-label="Date" onChange={(e) => setDate(e.target.value)} className={`${FIELD} [color-scheme:light] dark:[color-scheme:dark]`} />
           <input id="company-event-what" value={desc} onChange={(e) => setDesc(e.target.value)}
             aria-label="What happened"
             onKeyDown={(e) => { if (e.key === "Enter" && desc.trim()) void add(); }}
-            placeholder="What happened? (goes on their permanent record)"
-            className="h-9 flex-1 min-w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] px-2.5 text-[13px]" />
-          <button type="button" onClick={() => void add()} disabled={busy || !desc.trim()}
-            className="h-9 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[13px] font-bold hover:opacity-90 disabled:opacity-50">
-            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Log it
+            placeholder="What happened? It goes on their permanent record."
+            className={`${FIELD} flex-1 min-w-56`} />
+          <button type="button" onClick={() => void add()} disabled={busy || !desc.trim()} className={`${heroQuiet} h-10`}>
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Log it
           </button>
         </div>
       )}
       {events.length === 0 ? (
-        <div className="px-4 py-4 text-center text-[13px] text-[var(--color-text-muted)]">No events on record.</div>
+        <p className="px-4 py-4 text-[15px] text-[var(--color-text-muted)]">No events on record.</p>
       ) : (
-        <ul className="divide-y divide-[var(--color-border)] max-h-80 overflow-y-auto">
-          {events.map((e) => (
-            <li key={e.id} className="px-4 sm:px-5 py-2.5 flex items-start gap-2 text-[13px]">
-              <span className={`mt-1 w-2 h-2 rounded-full shrink-0 ${
-                e.kind === "recordable" || e.kind === "stop_work" ? "bg-rose-500"
-                : e.kind === "warning" ? "bg-amber-500"
-                : e.kind === "commendation" ? "bg-emerald-500"
-                : "bg-[var(--color-text-faint)]"}`} />
-              <div className="min-w-0">
-                <span className="font-bold text-[var(--color-text)]">{EVENT_KIND_LABEL[e.kind]}</span>
-                <span className="text-[var(--color-text-muted)]"> · {new Date(e.eventDate + "T00:00:00").toLocaleDateString()}{e.createdByName ? ` · logged by ${e.createdByName}` : ""}</span>
-                <div className="text-[var(--color-text-muted)]">{e.description}</div>
-              </div>
-            </li>
-          ))}
-        </ul>
+        <div className="max-h-96 overflow-y-auto">
+          <table className="w-full text-[15px]">
+            <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+              <tr><th className={TH}>Date</th><th className={TH}>Event</th><th className={`${TH} w-full`}>What happened</th><th className={`${TH} hidden sm:table-cell`}>Logged by</th></tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--color-border)]">
+              {events.map((e) => (
+                <tr key={e.id}>
+                  <td className="px-4 py-2.5 align-top whitespace-nowrap tabular-nums">{fmtDay(e.eventDate + "T00:00:00")}</td>
+                  <td className="px-4 py-2.5 align-top whitespace-nowrap"><StatusTag tone={EVENT_TONE[e.kind]}>{EVENT_KIND_LABEL[e.kind]}</StatusTag></td>
+                  <td className="px-4 py-2.5 align-top text-[var(--color-text)]">{e.description}</td>
+                  <td className="px-4 py-2.5 align-top whitespace-nowrap hidden sm:table-cell text-[var(--color-text-muted)]">{e.createdByName ?? ""}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </Card>
   );
@@ -463,61 +473,73 @@ function EventsPanel({ orgId, company, events, canManage, actorId, actorName, on
 
 // ── History: jobs, bids, change orders ───────────────────────────────────
 
-function HistoryPanels({ profile, scorecard }: { profile: CompanyProfileData | null; scorecard: CompanyScorecard | null }) {
-  void scorecard;
+function HistoryPanels({ profile }: { profile: CompanyProfileData | null }) {
   if (!profile) return null;
   const { projects, bids, changeOrders } = profile;
   if (projects.length === 0 && bids.length === 0 && changeOrders.length === 0) return null;
+  const won = bids.filter((b) => b.won).length;
   return (
-    <div className="grid md:grid-cols-2 gap-4">
+    <>
       {projects.length > 0 && (
-        <Card pad={false} className="overflow-hidden" label={<span className="inline-flex items-center gap-2"><Briefcase className="w-4 h-4" /> Jobs · {projects.length}</span>}>
-          <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
-            {projects.map((p) => (
-              <li key={p.projectId} className="px-4 sm:px-5 py-2.5 text-[14px]">
-                <Link href={`/projects/${p.projectId}`} className="font-bold text-[var(--color-text)] hover:underline">{p.projectName}</Link>
-                <div className="text-[12px] text-[var(--color-text-muted)]">
-                  {[p.trade, p.contractValue != null ? `contract ${fmtMoney(p.contractValue)}` : null].filter(Boolean).join(" · ") || "-"}
-                </div>
-              </li>
-            ))}
-          </ul>
+        <Card pad={false} className="overflow-hidden" label="Jobs" action={<span className="text-[13px] text-[var(--color-text-muted)] tabular-nums">{plural(projects.length, "job")}</span>}>
+          <table className="w-full text-[15px]">
+            <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+              <tr><th className={`${TH} w-full`}>Project</th><th className={TH}>Trade</th><th className={`${TH} text-right`}>Contract</th></tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--color-border)]">
+              {projects.map((p) => (
+                <tr key={p.projectId}>
+                  <td className="px-4 py-2.5"><Link href={`/projects/${p.projectId}`} className="font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{p.projectName}</Link></td>
+                  <td className="px-4 py-2.5 whitespace-nowrap">{p.trade ?? <Faint>None</Faint>}</td>
+                  <td className="px-4 py-2.5 whitespace-nowrap text-right tabular-nums">{p.contractValue != null ? fmtMoney(p.contractValue) : <Faint>None</Faint>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </Card>
       )}
       {bids.length > 0 && (
-        <Card pad={false} className="overflow-hidden" label={<span className="inline-flex items-center gap-2"><Trophy className="w-4 h-4" /> Bid history · {bids.filter((b) => b.won).length} of {bids.length} won</span>}>
-          <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
-            {bids.map((b, i) => (
-              <li key={i} className="px-4 sm:px-5 py-2.5 text-[13px] flex items-center gap-2">
-                <span className="text-[var(--color-text)]">{b.rfqGroup ?? "Quote"}</span>
-                {b.total != null && <span className="font-black tabular-nums">{fmtMoney(b.total)}</span>}
-                {b.won
-                  ? <span className="ml-auto text-[11px] font-black uppercase text-emerald-700 dark:text-emerald-300">won</span>
-                  : <span className="ml-auto text-[11px] font-bold uppercase text-[var(--color-text-faint)]">not selected</span>}
-              </li>
-            ))}
-          </ul>
+        <Card pad={false} className="overflow-hidden" label="Bid history" action={<span className="text-[13px] text-[var(--color-text-muted)] tabular-nums">{won} of {bids.length} won</span>}>
+          <table className="w-full text-[15px]">
+            <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+              <tr><th className={`${TH} w-full`}>Quote</th><th className={`${TH} hidden sm:table-cell`}>Date</th><th className={`${TH} text-right`}>Total</th><th className={TH}>Result</th></tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--color-border)]">
+              {bids.map((b, i) => (
+                <tr key={i}>
+                  <td className="px-4 py-2.5">{b.rfqGroup ?? "Quote"}</td>
+                  <td className="px-4 py-2.5 whitespace-nowrap hidden sm:table-cell tabular-nums text-[var(--color-text-muted)]">{b.docDate ? fmtDay(b.docDate) : ""}</td>
+                  <td className="px-4 py-2.5 whitespace-nowrap text-right tabular-nums">{b.total != null ? fmtMoney(b.total) : <Faint>None</Faint>}</td>
+                  <td className="px-4 py-2.5 whitespace-nowrap">{b.won ? <StatusTag tone="good">Won</StatusTag> : <span className="text-[13px] text-[var(--color-text-muted)]">Not selected</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </Card>
       )}
       {changeOrders.length > 0 && (
-        <Card pad={false} className="overflow-hidden md:col-span-2" label={<span className="inline-flex items-center gap-2"><GitPullRequestArrow className="w-4 h-4" /> Change orders on their scopes · {changeOrders.length}</span>}>
-          <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
-            {changeOrders.map((co, i) => (
-              <li key={i} className="px-4 sm:px-5 py-2.5 text-[13px] flex items-center gap-2 flex-wrap">
-                <span className="font-mono text-[11px] font-black text-[var(--color-text-muted)]">{co.coNumber}</span>
-                <span className="text-[var(--color-text)]">{co.title}</span>
-                <span className="font-black tabular-nums">{fmtMoney(co.amount)}</span>
-                <span className={`text-[11px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${co.reasonCode === "scope_gap" ? "border-rose-500/40 bg-rose-500/[0.06] text-rose-700 dark:text-rose-300" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}
-                  title={co.reasonCode === "scope_gap" ? "Their bid missed this scope. It counts against their cost discipline." : undefined}>
-                  {CO_REASON_LABEL[co.reasonCode as CoReason] ?? co.reasonCode}
-                </span>
-                <span className="ml-auto text-[11px] font-bold uppercase text-[var(--color-text-faint)]">{co.status}</span>
-              </li>
-            ))}
-          </ul>
+        <Card pad={false} className="overflow-hidden" label="Change orders on their scopes" action={<span className="text-[13px] text-[var(--color-text-muted)] tabular-nums">{plural(changeOrders.length, "change order")}</span>}>
+          <table className="w-full text-[15px]">
+            <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+              <tr><th className={TH}>Number</th><th className={`${TH} w-full`}>Title</th><th className={`${TH} text-right`}>Amount</th><th className={`${TH} hidden md:table-cell`}>Reason</th><th className={`${TH} hidden sm:table-cell`}>Status</th></tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--color-border)]">
+              {changeOrders.map((co, i) => (
+                <tr key={i}>
+                  <td className="px-4 py-2.5 whitespace-nowrap font-display font-semibold tabular-nums">{co.coNumber}</td>
+                  <td className="px-4 py-2.5">{co.title}</td>
+                  <td className="px-4 py-2.5 whitespace-nowrap text-right tabular-nums">{fmtMoney(co.amount)}</td>
+                  <td className="px-4 py-2.5 whitespace-nowrap hidden md:table-cell" title={co.reasonCode === "scope_gap" ? "Their bid missed this scope. It counts against their cost discipline." : undefined}>
+                    <StatusTag tone={co.reasonCode === "scope_gap" ? "bad" : "none"}>{CO_REASON_LABEL[co.reasonCode as CoReason] ?? co.reasonCode}</StatusTag>
+                  </td>
+                  <td className="px-4 py-2.5 whitespace-nowrap hidden sm:table-cell text-[var(--color-text-muted)]">{co.status ? co.status[0].toUpperCase() + co.status.slice(1).replace(/_/g, " ") : ""}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </Card>
       )}
-    </div>
+    </>
   );
 }
 
@@ -537,13 +559,6 @@ function EditCompanyModal({ company, actorId, onClose, onSaved }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (busy) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [busy, onClose]);
-
   const submit = async () => {
     setBusy(true); setError(null);
     try {
@@ -560,58 +575,52 @@ function EditCompanyModal({ company, actorId, onClose, onSaved }: {
   };
 
   return (
-    <div role="dialog" aria-modal="true" aria-label={`Edit ${company.name}`} className="fixed inset-0 z-[200] bg-[var(--color-ink)]/60 animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
-        <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
-          <div className="text-[14px] font-bold text-[var(--color-text)] flex-1">Edit {company.name}</div>
-          <button onClick={onClose} disabled={busy} aria-label="Close" className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"><X className="w-4 h-4" /></button>
-        </div>
-        <div className="px-6 py-5 space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Company name *" aria-label="Company name"
-              className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
-            <select value={kind} aria-label="Kind" onChange={(e) => setKind(e.target.value as Company["kind"])}
-              className="px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]">
-              {(Object.keys(COMPANY_KIND_LABEL) as Company["kind"][]).map((k) => (
-                <option key={k} value={k}>{COMPANY_KIND_LABEL[k]}</option>
-              ))}
-            </select>
+    <Modal onClose={onClose} dismissable={!busy} size="lg">
+      <ModalHeader title={`Edit ${company.name}`} onClose={busy ? undefined : onClose} />
+      <form onSubmit={(e) => { e.preventDefault(); if (name.trim()) void submit(); }} className="contents">
+        <ModalBody className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_200px] gap-4">
+            <div><label htmlFor="ce-name" className={LABEL}>Company name</label><input id="ce-name" value={name} onChange={(e) => setName(e.target.value)} required className={`${FIELD} w-full`} /></div>
+            <div>
+              <label htmlFor="ce-kind" className={LABEL}>Kind</label>
+              <select id="ce-kind" value={kind} onChange={(e) => setKind(e.target.value as Company["kind"])} className={`${FIELD} w-full`}>
+                {(Object.keys(COMPANY_KIND_LABEL) as Company["kind"][]).map((k) => (
+                  <option key={k} value={k}>{COMPANY_KIND_LABEL[k]}</option>
+                ))}
+              </select>
+            </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <input value={trade} onChange={(e) => setTrade(e.target.value)} placeholder="Trade" aria-label="Trade"
-              className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
-            <select value={status} aria-label="Status" onChange={(e) => setStatus(e.target.value as Company["status"])}
-              className="px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]"
-              title="'Do not use' keeps the record but flags the company across the app.">
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
-              <option value="do_not_use">Do not use</option>
-            </select>
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_200px] gap-4">
+            <div><label htmlFor="ce-trade" className={LABEL}>Trade <span className="font-normal">(optional)</span></label><input id="ce-trade" value={trade} onChange={(e) => setTrade(e.target.value)} className={`${FIELD} w-full`} /></div>
+            <div>
+              <label htmlFor="ce-status" className={LABEL}>Status</label>
+              <select id="ce-status" value={status} onChange={(e) => setStatus(e.target.value as Company["status"])} className={`${FIELD} w-full`} aria-describedby="ce-status-hint">
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+                <option value="do_not_use">Do not use</option>
+              </select>
+            </div>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <input value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="Contact name" aria-label="Contact name"
-              className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
-            <input value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} placeholder="Email" aria-label="Email"
-              className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
-            <input value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} placeholder="Phone" aria-label="Phone"
-              className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
+          <p id="ce-status-hint" className="-mt-2 text-[13px] text-[var(--color-text-muted)]">Do not use keeps the record and flags the company across the app.</p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div><label htmlFor="ce-cname" className={LABEL}>Contact <span className="font-normal">(optional)</span></label><input id="ce-cname" value={contactName} onChange={(e) => setContactName(e.target.value)} className={`${FIELD} w-full`} /></div>
+            <div><label htmlFor="ce-email" className={LABEL}>Email <span className="font-normal">(optional)</span></label><input id="ce-email" type="email" value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} className={`${FIELD} w-full`} /></div>
+            <div><label htmlFor="ce-phone" className={LABEL}>Phone <span className="font-normal">(optional)</span></label><input id="ce-phone" type="tel" value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} className={`${FIELD} w-full`} /></div>
           </div>
-          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Notes" aria-label="Notes"
-            className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y bg-[var(--color-surface)] text-[var(--color-text)]" />
+          <div><label htmlFor="ce-notes" className={LABEL}>Notes <span className="font-normal">(optional)</span></label><textarea id="ce-notes" value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={`${FIELD} w-full h-auto py-2 resize-y`} /></div>
           {error && (
-            <p role="alert" className="flex items-start gap-2 border-l-2 border-rose-500 pl-3 text-xs font-bold text-rose-700 dark:text-rose-300">
-              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {error}
+            <p role="alert" className="relative pl-3 text-[13px] font-semibold text-[var(--color-text)]">
+              <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />{error}
             </p>
           )}
-        </div>
-        <div className="px-6 py-3 border-t border-[var(--color-border)] flex items-center justify-end gap-2">
-          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
-          <button onClick={() => void submit()} disabled={busy || !name.trim()}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
-            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Save
+        </ModalBody>
+        <ModalFooter>
+          <button type="button" onClick={onClose} disabled={busy} className={heroQuiet}>Cancel</button>
+          <button type="submit" disabled={busy || !name.trim()} className={heroPrimary}>
+            {busy && <Loader2 className="w-4 h-4 animate-spin" />} Save
           </button>
-        </div>
-      </div>
-    </div>
+        </ModalFooter>
+      </form>
+    </Modal>
   );
 }

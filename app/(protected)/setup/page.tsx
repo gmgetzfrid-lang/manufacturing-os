@@ -15,12 +15,14 @@ import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Compass, BookMarked, Tag, FileStack, Link2, Bot, Waypoints, Loader2,
-  CheckCircle2, ArrowRight,
+  Check, ArrowRight,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, Card, StepLine, heroPrimary } from "@/components/ui/PageHero";
+import HelpTooltip from "@/components/ui/HelpTooltip";
+import { StatusTag } from "@/components/requests/RequestBits";
 
 interface Facts {
   units: number; equipTypes: number;
@@ -113,7 +115,7 @@ export default function SetupPage() {
     return [
       {
         key: "codebook", title: "Teach it your language",
-        blurb: "Units, equipment prefixes, and your drawing-number format live in the Site Codebook - imported from your own documents or entered by hand. Everything downstream decodes through it.",
+        blurb: "Units, equipment prefixes, and your drawing-number format live in the Site Codebook, imported from your own documents or entered by hand. Everything downstream decodes through it.",
         icon: BookMarked,
         checks: [
           { label: `${f.units} operating unit${f.units === 1 ? "" : "s"} defined`, ok: f.units > 0 },
@@ -127,8 +129,8 @@ export default function SetupPage() {
         icon: Tag,
         checks: [
           { label: `${f.assets} asset${f.assets === 1 ? "" : "s"} registered`, ok: f.assets > 0 },
-          { label: f.uncategorized === 0 ? "All categorized" : `${f.uncategorized} uncategorized - auto-categorize in Operating areas`, ok: f.assets > 0 && f.uncategorized === 0 },
-          { label: f.unitless === 0 ? "All filed to a unit" : `${f.unitless} not filed to a unit`, ok: f.assets > 0 && f.unitless === 0 },
+          { label: f.assets === 0 ? "Nothing to categorize yet" : f.uncategorized === 0 ? "All categorized" : `${f.uncategorized} uncategorized (auto-categorize in Operating areas)`, ok: f.assets > 0 && f.uncategorized === 0 },
+          { label: f.assets === 0 ? "Nothing to file to a unit yet" : f.unitless === 0 ? "All filed to a unit" : `${f.unitless} not filed to a unit`, ok: f.assets > 0 && f.unitless === 0 },
         ],
         href: "/admin/assets", cta: "Open Operating areas",
       },
@@ -137,24 +139,24 @@ export default function SetupPage() {
         blurb: "Libraries, revisions, locks, distribution. The title-block ingest wizard reads numbers and titles off the drawings themselves during mass transition.",
         icon: FileStack,
         checks: [
-          { label: `${f.libraries} librar${f.libraries === 1 ? "y" : "ies"} · ${f.documents} document${f.documents === 1 ? "" : "s"}`, ok: f.documents > 0 },
+          { label: `${f.libraries} librar${f.libraries === 1 ? "y" : "ies"}, ${f.documents} document${f.documents === 1 ? "" : "s"}`, ok: f.documents > 0 },
           { label: `${f.numbered} carry document numbers`, ok: f.numbered > 0 },
         ],
         href: "/documents", cta: "Open Documents",
       },
       {
         key: "bridge", title: "Bridge paper to plant",
-        blurb: "Link documents to the equipment they govern - the Equipment sweep reads tags off each library, and every link becomes a graph edge and an answer source.",
+        blurb: "Link documents to the equipment they govern. The Equipment sweep reads tags off each library, and every link becomes a graph edge and an answer source.",
         icon: Link2,
         checks: [
-          { label: `${f.docAssetLinks} document↔equipment link${f.docAssetLinks === 1 ? "" : "s"}`, ok: f.docAssetLinks > 0 },
+          { label: `${f.docAssetLinks} document-to-equipment link${f.docAssetLinks === 1 ? "" : "s"}`, ok: f.docAssetLinks > 0 },
           { label: `${f.mentions} text mention${f.mentions === 1 ? "" : "s"} indexed`, ok: f.mentions > 0 },
         ],
         href: "/documents", cta: "Run an Equipment sweep",
       },
       {
         key: "ai", title: "Index the knowledge",
-        blurb: "Knowledge libraries make documents askable - link your document-control libraries as sources so answers cite the real controlled files, on your own AI key.",
+        blurb: "Knowledge libraries make documents askable. Link your document-control libraries as sources so answers cite the real controlled files, on your own AI key.",
         icon: Bot,
         checks: [
           { label: `${f.kdocs} document${f.kdocs === 1 ? "" : "s"} indexed (${f.mirrored} mirroring controlled files)`, ok: f.kdocs > 0 },
@@ -169,7 +171,7 @@ export default function SetupPage() {
         icon: Waypoints,
         checks: [
           { label: `${f.skillsEnabled} connection skill${f.skillsEnabled === 1 ? "" : "s"} + ${f.reasoningSkills} reasoning skill${f.reasoningSkills === 1 ? "" : "s"} enabled`, ok: f.skillsEnabled > 0 },
-          { label: `${f.curatedLinks} curated link${f.curatedLinks === 1 ? "" : "s"}${f.pendingProposals > 0 ? ` · ${f.pendingProposals} proposal${f.pendingProposals === 1 ? "" : "s"} awaiting review` : ""}`, ok: f.curatedLinks > 0 },
+          { label: `${f.curatedLinks} curated link${f.curatedLinks === 1 ? "" : "s"}${f.pendingProposals > 0 ? `, ${f.pendingProposals} proposal${f.pendingProposals === 1 ? "" : "s"} awaiting review` : ""}`, ok: f.curatedLinks > 0 },
         ],
         href: "/intelligence/skills", cta: "Open the Skill library",
         extraHref: "/admin/proposed-links", extraCta: "Review queue",
@@ -198,14 +200,18 @@ export default function SetupPage() {
       <PageHero
         kicker="Facility setup"
         title={facts === null ? "Setup navigator" : !next ? "Every stage reads healthy." : `${doneCount} of ${stages.length} stages done.`}
-        sub={facts === null ? "Reading where your workspace is…" : next ? <>Next: <span className="text-white font-semibold">{next.title}</span>. Each stage reads live counts, so this picks up wherever you left off.</> : "Nothing is waiting on you."}
+        sub={facts === null ? "Reading where your workspace is…" : next ? `Next: ${next.title}. Counts are live, so this picks up where you left off.` : "Nothing is waiting on you."}
+        facts={facts === null ? undefined : [
+          { label: "Done", value: doneCount, tone: doneCount === stages.length ? "good" : undefined },
+          { label: "To go", value: stages.length - doneCount },
+        ]}
         primary={next ? <Link href={next.href} className={heroPrimary}>{next.cta} <ArrowRight className="w-4 h-4" /></Link> : undefined}
       >
         {facts !== null && (
           <>
-            <p className="sm:hidden mb-3 text-[13px] font-bold text-white">{next ? `Stage ${firstIncomplete + 1} of ${stages.length}: ${next.title}` : `All ${stages.length} stages done`}</p>
+            <p className="sm:hidden mb-2.5 text-[14px] font-semibold text-[var(--color-text)]">{next ? `Stage ${firstIncomplete + 1} of ${stages.length}: ${next.title}` : `All ${stages.length} stages done`}</p>
             <div className="max-sm:hidden">
-              <StepLine onDark steps={stages.map((st, i) => ({ label: st.title, state: st.checks.every((c) => c.ok) ? "done" : i === firstIncomplete ? "now" : "next" }))} />
+              <StepLine steps={stages.map((st, i) => ({ label: st.title, state: st.checks.every((c) => c.ok) ? "done" : i === firstIncomplete ? "now" : "next" }))} />
             </div>
           </>
         )}
@@ -213,63 +219,59 @@ export default function SetupPage() {
 
       <PageBody>
       {facts === null ? (
-        <Card><p className="flex items-center justify-center gap-2 py-12 text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin" /> Reading where your workspace is…</p></Card>
+        <Card><p className="flex items-center justify-center gap-2 py-12 text-[15px] text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin" /> Reading where your workspace is…</p></Card>
       ) : (
         <Card label="Stages" pad={false} className="overflow-hidden">
-          {/* One path: every stage on one line down the left, so setup reads as a route to walk. */}
-          <ol className="relative border-t border-[var(--color-border)]">
-            {stages.map((s, i) => {
-              const done = s.checks.every((c) => c.ok);
-              const active = i === firstIncomplete;
-              const Icon = s.icon;
-              const last = i === stages.length - 1;
-              return (
-                <li key={s.key} aria-current={active ? "step" : undefined}
-                  className={`relative pl-14 sm:pl-16 pr-4 sm:pr-5 py-4 border-b border-[var(--color-border)] last:border-b-0 ${active ? "bg-[var(--color-surface-2)]" : ""}`}
-                  style={{ animation: "rise 0.45s var(--ease-fluid) both", animationDelay: `${i * 60}ms` }}>
-                  {!last && <span aria-hidden className={`absolute left-[27px] sm:left-[31px] top-[34px] -bottom-4 w-0.5 z-10 ${done ? "bg-[var(--color-text)]" : "bg-[var(--color-border)]"}`} />}
-                  <span className={`absolute left-4 sm:left-5 top-4 z-20 w-6 h-6 rounded-full grid place-items-center text-[11px] font-black ${done
-                    ? "bg-[var(--color-text)] text-[var(--color-surface)]"
-                    : active ? "border-2 border-[var(--color-text)] bg-[var(--color-surface)] text-[var(--color-text)]"
-                      : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>
-                    {done ? <CheckCircle2 className="w-3.5 h-3.5" /> : i + 1}
-                  </span>
-                  <div className={`flex items-start gap-3 flex-wrap ${done ? "opacity-80" : ""}`}>
-                    <div className="flex-1 min-w-[14rem]">
-                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                        <Icon className="w-4 h-4 text-[var(--color-text-muted)]" />
-                        <span className="text-[14px] font-bold text-[var(--color-text)]">{s.title}</span>
-                        {active && (
-                          <span className="text-[13px] font-semibold text-[var(--color-text)] whitespace-nowrap">Continue here</span>
-                        )}
+          <table className="w-full text-[15px]">
+            <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left max-md:hidden">
+              <tr>
+                <th className="font-semibold pl-4 pr-2 h-10 w-10">#</th>
+                <th className="font-semibold px-4 h-10">Stage</th>
+                <th className="font-semibold px-4 h-10">Status</th>
+                <th className="font-semibold px-4 h-10">What&apos;s there now</th>
+                <th className="font-semibold px-4 h-10 text-right">Go to</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--color-border)]">
+              {stages.map((s, i) => {
+                const done = s.checks.every((c) => c.ok);
+                const active = i === firstIncomplete;
+                return (
+                  <tr key={s.key} aria-current={active ? "step" : undefined} className="max-md:flex max-md:flex-col max-md:px-4 max-md:py-3 max-md:gap-1.5">
+                    <td className="md:pl-4 md:pr-2 md:py-3 align-top font-display text-[17px] font-semibold tabular-nums text-[var(--color-text-muted)] max-md:hidden">{i + 1}</td>
+                    <td className="md:px-4 md:py-3 align-top">
+                      <div className="flex items-center gap-1.5">
+                        <span className="md:hidden font-display tabular-nums text-[var(--color-text-muted)]">{i + 1}.</span>
+                        <span className="font-semibold text-[var(--color-text)]">{s.title}</span>
+                        <HelpTooltip>{s.blurb}</HelpTooltip>
                       </div>
-                      <p className="text-[13px] text-[var(--color-text-muted)] leading-relaxed mt-1">{s.blurb}</p>
-                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+                    </td>
+                    <td className="md:px-4 md:py-3 align-top whitespace-nowrap">
+                      {done ? <StatusTag tone="good">Done</StatusTag> : active ? <StatusTag tone="warn">Next</StatusTag> : <StatusTag>To do</StatusTag>}
+                    </td>
+                    <td className="md:px-4 md:py-3 align-top">
+                      <ul className="space-y-0.5">
                         {s.checks.map((c) => (
-                          <div key={c.label} className="flex items-center gap-1.5 text-[12.5px]">
-                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${c.ok ? "bg-emerald-500" : "bg-amber-500"}`} />
-                            <span className={c.ok ? "text-[var(--color-text-muted)]" : "font-semibold text-[var(--color-text)]"}>{c.label}</span>
-                          </div>
+                          <li key={c.label} className={`flex items-start gap-2 text-[14px] ${c.ok ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}>
+                            {c.ok
+                              ? <Check aria-label="Done" className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-released)]" />
+                              : <span aria-label="Not yet" className="w-4 h-4 mt-0.5 shrink-0 grid place-items-center"><span className="w-2 h-2 rounded-full border-2 border-[var(--state-held)]" /></span>}
+                            {c.label}
+                          </li>
                         ))}
+                      </ul>
+                    </td>
+                    <td className="md:px-4 md:py-3 align-top md:text-right">
+                      <div className="flex flex-wrap md:flex-col md:items-end gap-x-4 gap-y-0.5 text-[14px]">
+                        <Link href={s.href} className="inline-flex items-center gap-1 text-[var(--color-accent-text)] hover:underline underline-offset-2 whitespace-nowrap">{s.cta} <ArrowRight className="w-3.5 h-3.5" /></Link>
+                        {s.extraHref && <Link href={s.extraHref} className="text-[var(--color-accent-text)] hover:underline underline-offset-2 whitespace-nowrap">{s.extraCta}</Link>}
                       </div>
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      {s.extraHref && (
-                        <Link href={s.extraHref}
-                          className="inline-flex items-center justify-center gap-1 h-9 px-3 rounded-lg text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
-                          {s.extraCta}
-                        </Link>
-                      )}
-                      <Link href={s.href}
-                        className="inline-flex items-center justify-center gap-1 h-9 px-3 rounded-lg text-[13px] font-bold text-[var(--color-text)] border border-[var(--color-border-strong)] hover:bg-[var(--color-surface)] transition-colors">
-                        {s.cta} <ArrowRight className="w-3.5 h-3.5" />
-                      </Link>
-                    </div>
-                  </div>
-                </li>
-              );
-            })}
-          </ol>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </Card>
       )}
       </PageBody>

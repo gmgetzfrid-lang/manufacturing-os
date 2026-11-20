@@ -9,11 +9,12 @@
 // "don't interrupt experienced users" rule. Auto-hides once everything's done.
 
 import React from "react";
+import { heroQuiet } from "@/components/ui/PageHero";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import {
-  CheckCircle2, Circle, Library, Users, Factory, MailPlus, Map as MapIcon, X, Rocket, ChevronRight,
+  CheckCircle2, Circle, Library, Users, Factory, MailPlus, Map as MapIcon, X, ChevronRight,
 } from "lucide-react";
 
 interface Step {
@@ -70,49 +71,40 @@ export default function SetupChecklist() {
 
   const dismiss = () => { try { localStorage.setItem(DISMISS_KEY, "1"); } catch { /* ignore */ } setDismissed(true); };
 
+  const next = steps.find((s) => !s.done);
   return (
-    <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
-      <div className="flex items-start gap-3">
-        <div className="w-9 h-9 rounded-xl bg-[var(--color-surface-2)] flex items-center justify-center shrink-0">
-          <Rocket className="w-[18px] h-[18px] text-[var(--color-text-muted)]" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <h2 className="text-[14px] font-bold text-[var(--color-text)]">Get your workspace ready</h2>
-            <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">{doneCount} of {steps.length} done</span>
-          </div>
-          {(() => {
-            const next = steps.find((s) => !s.done);
-            return next ? (
-              <Link href={next.href} className="mt-2 inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[13px] font-bold hover:opacity-90">
-                Next: {next.label} <ChevronRight className="w-3.5 h-3.5" />
-              </Link>
-            ) : null;
-          })()}
-        </div>
-        <button onClick={dismiss} aria-label="Dismiss" className="p-1.5 rounded-md text-[var(--color-text-faint)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+    <section className="min-w-0">
+      <div className="flex flex-wrap items-end gap-x-3 gap-y-2 mb-2.5 min-h-8">
+        <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Get your workspace ready</h2>
+        <span className="text-[13px] text-[var(--color-text-muted)] tabular-nums">{doneCount} of {steps.length} done</span>
+        <div className="flex-1" />
+        {next && (
+          <Link href={next.href} className={heroQuiet}>
+            Next: {next.label} <ChevronRight className="w-4 h-4" />
+          </Link>
+        )}
+        <button type="button" onClick={dismiss} aria-label="Hide this list" className="w-9 h-9 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]"><X className="w-4 h-4" /></button>
       </div>
 
-      <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-x-6 border-t border-[var(--color-border)]">
+      <ul className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] grid grid-cols-1 sm:grid-cols-2 [&>li]:border-b [&>li]:border-[var(--color-border)] [&>li:last-child]:border-b-0 sm:[&>li:nth-last-child(2):nth-child(odd)]:border-b-0 overflow-hidden">
         {steps.map((s) => {
           const Icon = s.icon;
           return (
-            <Link
-              key={s.key}
-              href={s.href}
-              className="flex items-center gap-3 py-3 border-b border-[var(--color-border)] transition-colors hover:bg-[var(--color-surface-2)] -mx-2 px-2 rounded-lg"
-            >
-              {s.done ? <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" /> : <Circle className="w-5 h-5 text-[var(--color-text-faint)] shrink-0" />}
-              <div className="flex-1 min-w-0">
-                <div className={`text-[14px] font-semibold ${s.done ? "text-[var(--color-text-muted)] line-through" : "text-[var(--color-text)]"}`}>{s.label}</div>
-                {!s.done && <div className="text-[12.5px] text-[var(--color-text-muted)] truncate">{s.blurb}</div>}
-              </div>
-              {!s.done && <Icon className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />}
-              {!s.done && <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />}
-            </Link>
+            <li key={s.key} className="sm:odd:border-r">
+              <Link href={s.href} className="flex items-center gap-3 px-4 py-3 hover:bg-[var(--color-surface-2)]">
+                {s.done
+                  ? <CheckCircle2 aria-label="Done" className="w-5 h-5 text-[var(--state-released)] shrink-0" />
+                  : <Circle aria-label="Not done" className="w-5 h-5 text-[var(--color-text-faint)] shrink-0" />}
+                <div className="flex-1 min-w-0">
+                  <div className={`text-[15px] font-semibold ${s.done ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}>{s.label}</div>
+                  {!s.done && <div className="text-[13px] text-[var(--color-text-muted)] truncate">{s.blurb}</div>}
+                </div>
+                {!s.done && <Icon className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />}
+              </Link>
+            </li>
           );
         })}
-      </div>
+      </ul>
     </section>
   );
 }

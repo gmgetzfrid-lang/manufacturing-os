@@ -10,9 +10,10 @@
 
 import React, { useEffect, useState } from "react";
 import {
-  Mail, Save, Check, AlertTriangle, Loader2,
+  Save, Check, Loader2,
   AtSign, UserPlus, Activity, AlertOctagon, Briefcase,
 } from "lucide-react";
+import { bandSeg, bandSegItem } from "@/components/admin/band";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { PageShell } from "@/components/ui/PageShell";
@@ -125,15 +126,15 @@ export default function NotificationSettingsPage() {
 
         <PageBody>
         {/* Master switch */}
-        <Card label={<span className="inline-flex items-center gap-1.5"><Mail className="w-3.5 h-3.5" /> Email</span>}>
+        <Card label="Email">
           {error && (
-            <p role="alert" className="mb-3 text-[13px] text-red-700 dark:text-red-400 flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
+            <p role="alert" className="mb-3 relative pl-3 text-[15px] text-[var(--color-text)]">
+              <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />{error}
             </p>
           )}
           <div className="flex items-start gap-3">
             <div className="flex-1">
-              <div className="text-[14px] font-bold text-[var(--color-text)]">Email notifications</div>
+              <div className="text-[15px] font-semibold text-[var(--color-text)]">Email notifications</div>
               <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">Off means no email at all, whatever is set below.</div>
             </div>
             <Toggle label="Email notifications" on={prefs.email_enabled} onChange={(v) => setPrefs({ ...prefs, email_enabled: v })} />
@@ -144,31 +145,32 @@ export default function NotificationSettingsPage() {
         <Card label="Email me when" pad={false} className={`overflow-hidden ${prefs.email_enabled ? "" : "opacity-50 pointer-events-none"}`}>
         <div className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
           <PrefRow icon={AtSign} title="Mentions" hint="Someone @-mentions you in a comment." on={prefs.email_on_mention} onChange={(v) => setPrefs({ ...prefs, email_on_mention: v })} />
-          <PrefRow icon={UserPlus} title="Assignments" hint="You were assigned as drafter or engineer reviewer on a ticket." on={prefs.email_on_assignment} onChange={(v) => setPrefs({ ...prefs, email_on_assignment: v })} />
-          <PrefRow icon={Briefcase} title="Status changes" hint="A ticket you're on advanced, was approved, closed, or sent back for revision." on={prefs.email_on_status_change} onChange={(v) => setPrefs({ ...prefs, email_on_status_change: v })} />
-          <PrefRow icon={Activity} title="Watched activity" hint="Activity on tickets you're watching (comments, file uploads)." on={prefs.email_on_watched_activity} onChange={(v) => setPrefs({ ...prefs, email_on_watched_activity: v })} />
-          <PrefRow icon={AlertOctagon} title="SLA warnings" hint="A ticket you're responsible for is at risk of breaching its target completion date." on={prefs.email_on_sla_warning} onChange={(v) => setPrefs({ ...prefs, email_on_sla_warning: v })} />
+          <PrefRow icon={UserPlus} title="Assignments" hint="You were assigned as drafter or engineer reviewer on a request." on={prefs.email_on_assignment} onChange={(v) => setPrefs({ ...prefs, email_on_assignment: v })} />
+          <PrefRow icon={Briefcase} title="Status changes" hint="A request you're on moved ahead, was approved, closed, or sent back for revision." on={prefs.email_on_status_change} onChange={(v) => setPrefs({ ...prefs, email_on_status_change: v })} />
+          <PrefRow icon={Activity} title="Watched activity" hint="Comments and new files on requests you watch." on={prefs.email_on_watched_activity} onChange={(v) => setPrefs({ ...prefs, email_on_watched_activity: v })} />
+          <PrefRow icon={AlertOctagon} title="Due date warnings" hint="A request you're responsible for is close to its target completion date." on={prefs.email_on_sla_warning} onChange={(v) => setPrefs({ ...prefs, email_on_sla_warning: v })} />
         </div>
         </Card>
 
         {/* Digest cadence */}
-        <Card label="Delivery cadence">
-          <div className="text-[13px] text-[var(--color-text-muted)] mb-3">Only Immediate and Never work today. Hourly and daily batching isn&apos;t built yet.</div>
-          <div className="flex flex-wrap gap-2">
+        <Card label="How often">
+          <div className={bandSeg} role="radiogroup" aria-label="How often to email">
             {(["immediate", "hourly", "daily", "never"] as const).map((opt) => (
               <button
                 key={opt}
                 type="button"
+                role="radio"
                 onClick={() => setPrefs({ ...prefs, digest_frequency: opt })}
-                aria-pressed={prefs.digest_frequency === opt}
-                className={`h-9 px-3.5 rounded-lg text-[13px] font-semibold border transition-colors ${prefs.digest_frequency === opt ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}
+                aria-checked={prefs.digest_frequency === opt}
+                className={bandSegItem(prefs.digest_frequency === opt)}
               >
-                {opt[0].toUpperCase() + opt.slice(1)}
+                {opt === "immediate" ? "Right away" : opt[0].toUpperCase() + opt.slice(1)}
               </button>
             ))}
           </div>
+          <p className="mt-2 text-[13px] text-[var(--color-text-muted)]">Only Right away and Never work today. Hourly and daily batching isn&apos;t built yet.</p>
         </Card>
-        {saved && <p role="status" className="px-1 inline-flex items-center gap-1 text-[13px] font-bold text-emerald-700 dark:text-emerald-400"><Check className="w-3.5 h-3.5" /> Saved</p>}
+        {saved && <p role="status" className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]"><Check className="w-4 h-4 text-[var(--state-released)]" /> Saved</p>}
         </PageBody>
     </PageShell>
   );
@@ -186,7 +188,7 @@ function PrefRow({ icon: Icon, title, hint, on, onChange }: PrefRowProps) {
     <div className="px-5 py-4 flex items-start gap-3">
       <Icon className="w-4 h-4 text-[var(--color-text-faint)] mt-1 shrink-0" />
       <div className="flex-1 min-w-0">
-        <div className="text-[14px] font-bold text-[var(--color-text)]">{title}</div>
+        <div className="text-[15px] font-semibold text-[var(--color-text)]">{title}</div>
         <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{hint}</div>
       </div>
       <Toggle label={title} on={on} onChange={onChange} />

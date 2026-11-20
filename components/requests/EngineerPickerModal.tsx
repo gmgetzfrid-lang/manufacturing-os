@@ -14,6 +14,7 @@
 // their email + role tag + count of open tickets they're already on
 // (workload hint). Required comment + engineer selection before submit.
 
+import { heroPrimary, heroQuiet } from "@/components/ui/PageHero";
 import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import {
@@ -171,19 +172,19 @@ export default function EngineerPickerModal({
 
         <ModalBody className="space-y-4">
           <div>
-            <label className="text-[13px] font-semibold text-[var(--color-text)] ">Engineer *</label>
+            <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Engineer</div>
             <div className="mt-1.5 max-h-64 overflow-y-auto rounded-lg border border-[var(--color-border)]">
               {loading ? (
                 <div className="flex items-center gap-2 p-4 text-sm text-[var(--color-text-muted)]">
                   <Spinner size="sm" /> Loading engineers…
                 </div>
               ) : loadError ? (
-                <p role="alert" className="p-4 text-sm font-semibold text-red-700 dark:text-red-400">Couldn&apos;t load the engineers: {loadError}</p>
+                <p role="alert" className="p-4 text-[15px] font-semibold text-[var(--state-overdue)]">Couldn&apos;t load the engineers: {loadError}</p>
               ) : filtered.length === 0 ? (
-                <div className="p-4 text-sm text-[var(--color-text-muted)] text-center">
-                  <p className="font-bold text-[var(--color-text)]">No active engineers in this workspace.</p>
-                  <p className="mt-1 text-xs">This step needs someone holding an Engineer role. Ask an Admin to invite one or add the Engineer role to an existing member.</p>
-                  <a href="/admin/users" className="inline-block mt-2 text-xs font-black text-[var(--color-accent-text)] hover:underline">Open user management →</a>
+                <div className="p-4 text-[15px] text-[var(--color-text-muted)] text-center">
+                  <p className="font-semibold text-[var(--color-text)]">No active engineers in this workspace.</p>
+                  <p className="mt-1 text-[13px]">An admin can invite one, or give an existing member an Engineer role.</p>
+                  <a href="/admin/users" className="inline-block mt-2 text-[15px] text-[var(--color-accent-text)] hover:underline underline-offset-2">Open Users</a>
                 </div>
               ) : (
                 <div className="divide-y divide-[var(--color-border)]">
@@ -202,17 +203,14 @@ export default function EngineerPickerModal({
                       />
                       <div className="p-1.5 bg-[var(--color-surface-2)] rounded-full"><User className="w-4 h-4 text-[var(--color-text-muted)]" /></div>
                       <div className="flex-1 min-w-0">
-                        <div className="text-sm font-bold text-[var(--color-text)] truncate">{eng.name}</div>
-                        <div className="text-[11px] text-[var(--color-text-muted)] truncate">{eng.email}</div>
+                        <div className="text-[15px] font-semibold text-[var(--color-text)] truncate">{eng.name}</div>
+                        <div className="text-[13px] text-[var(--color-text-muted)] truncate">{eng.email}</div>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
-                        <span className="text-[11px] font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded">{eng.role}</span>
+                        <span className="text-[13px] text-[var(--color-text-muted)]">{eng.role}</span>
                         <span
                           title={`${eng.workload} open ticket${eng.workload === 1 ? "" : "s"}`}
-                          className={`inline-flex items-center gap-1 text-[11px] font-bold px-1.5 py-0.5 rounded border ${
-                            eng.workload < 3 ? "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]"
-                            : "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-500/30"
-                          }`}
+                          className={`inline-flex items-center gap-1 text-[13px] font-semibold tabular-nums ${eng.workload < 3 ? "text-[var(--color-text-muted)]" : "text-[var(--state-held)]"}`}
                         >
                           <Inbox className="w-3 h-3" /> {eng.workload}
                         </span>
@@ -222,12 +220,12 @@ export default function EngineerPickerModal({
                 </div>
               )}
             </div>
-            <div className="text-[11px] text-[var(--color-text-muted)] mt-1.5">Fewest open requests first.</div>
+            <div className="text-[13px] text-[var(--color-text-muted)] mt-1.5">Fewest open requests first.</div>
           </div>
 
           {requireComment && (
             <div>
-              <label className="text-[13px] font-semibold text-[var(--color-text)] ">{commentLabel}</label>
+              <label className="text-[13px] font-semibold text-[var(--color-text-muted)]">{commentLabel.replace(/\s*\*$/, "")}</label>
               <Textarea
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
@@ -239,14 +237,14 @@ export default function EngineerPickerModal({
           )}
 
           {error && (
-            <p role="alert" className="border-l-2 border-red-500 pl-2 text-xs font-semibold text-red-700 dark:text-red-400">{error}</p>
+            <p role="alert" className="relative pl-3 text-[13px] font-semibold text-[var(--color-text)]"><span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />{error}</p>
           )}
         </ModalBody>
 
         <ModalFooter>
-          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] transition-colors disabled:opacity-50">Cancel</button>
-          <button onClick={submit} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] transition-colors disabled:opacity-60">
-            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ChevronRight className="w-3.5 h-3.5" />}
+          <button type="button" onClick={onClose} disabled={busy} className={heroQuiet}>Cancel</button>
+          <button type="button" onClick={submit} disabled={busy} className={heroPrimary}>
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ChevronRight className="w-4 h-4" />}
             {busy ? "Sending…" : "Send to engineer"}
           </button>
         </ModalFooter>

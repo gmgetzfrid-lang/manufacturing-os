@@ -7,7 +7,10 @@ import { tryUpload } from '@/lib/uploadRetry';
 import { Modal, ModalHeader, ModalBody, ModalFooter } from '@/components/ui/Modal';
 import LoadingBlock from '@/components/ui/LoadingBlock';
 import { PageShell } from '@/components/ui/PageShell';
-import { PageHero, PageBody, Card, StepLine, heroPrimary, heroQuiet } from '@/components/ui/PageHero';
+import { PageHero, PageBody, Card, StepLine, heroPrimary, heroQuiet, type HeroFact } from '@/components/ui/PageHero';
+import { Button } from '@/components/ui/Button';
+import { StatusTag, stageLabel, waitingOn, fmtDay, fmtWhen, sentence, useNarrow } from '@/components/requests/RequestBits';
+import { isActionRequired } from '@/lib/ticketAttention';
 import FileThumb from '@/components/ui/FileThumb';
 import dynamic from 'next/dynamic';
 import MoreMenu from '@/components/ui/MoreMenu';
@@ -34,14 +37,12 @@ import { logAuditAction } from '@/lib/audit';
 // of which the request-detail page needs until the user actually opens markup.
 const AdvancedRedlineEditor = dynamic(() => import('@/components/drafting/AdvancedRedlineEditor'), { ssr: false });
 import UserAvatar from '@/components/ui/UserAvatar';
+import HelpTooltip from '@/components/ui/HelpTooltip';
 import {
-  Calendar,
   CheckCircle2,
   FileText,
-  MessageSquare,
   Paperclip,
   Send,
-  User,
   Download,
   Eye,
   X,
@@ -61,7 +62,6 @@ import {
   Pen,
   Check, // Added Check icon
   HelpCircle,
-  RotateCcw,
   Archive,
   QrCode,
 } from 'lucide-react';
@@ -82,9 +82,7 @@ const toDate = (date: unknown): Date => {
   return new Date(date as string | number);
 };
 
-// Other people's comments: one quiet bubble (the name on top tells them
-// apart); yours sit on the right.
-const OTHER_BUBBLE = 'bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)]';
+// A comment's author as a short name.
 function authorLabel(user: string): string {
   return (user || 'Unknown').split('@')[0];
 }
@@ -137,38 +135,37 @@ const ActionModal = ({ onClose, onSubmit, onRedline, title, description, isDestr
 
   return (
     <Modal onClose={onClose} dismissable={!isLoading}>
-      <ModalHeader title={<span className={isDestructive ? 'text-red-700 dark:text-red-400' : ''}>{title}</span>} subtitle={description} onClose={isLoading ? undefined : onClose} />
+      <ModalHeader title={title} subtitle={description} onClose={isLoading ? undefined : onClose} />
       <ModalBody className="space-y-4">
           {showCategorySelection && (
             <div>
-              <label className="block text-sm font-bold text-[var(--color-text)] mb-2">
-                Reason <span className="text-red-500">*</span>
-              </label>
+              <label htmlFor="action-reason" className="block text-[13px] text-[var(--color-text-muted)] mb-1.5">Reason</label>
               <select
+                id="action-reason"
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
-                className="w-full p-2.5 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface-2)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+                className="w-full h-10 px-3 border border-[var(--color-border-strong)] rounded-md text-[15px] bg-[var(--color-surface)] text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
               >
                 {REVISION_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
               </select>
             </div>
           )}
           <div>
-            <label className="block text-sm font-bold text-[var(--color-text)] mb-2">
-              {showCategorySelection ? 'What to fix' : 'Comment'} <span className="text-red-500">*</span>
+            <label htmlFor="action-comment" className="block text-[13px] text-[var(--color-text-muted)] mb-1.5">
+              {showCategorySelection ? 'What to fix' : 'Comment'}
             </label>
             <textarea 
-              className="w-full h-32 p-3 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none resize-none"
+              id="action-comment"
+              className="w-full h-32 p-3 border border-[var(--color-border-strong)] rounded-md text-[15px] bg-[var(--color-surface)] text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none resize-none"
               placeholder="Say what and where"
               value={comment}
               onChange={(e) => setComment(e.target.value)}
               autoFocus
             />
             {draft.restored ? (
-              <p className="text-[11px] text-[var(--color-text-muted)] mt-2">Your unsent note is back.</p>
+              <p className="text-[13px] text-[var(--color-text-muted)] mt-1.5">Your unsent note is back.</p>
             ) : defaultValue ? (
-              <p className="text-[11px] text-[var(--color-text-muted)] mt-2 flex items-center">
-                <CheckCircle2 className="w-3 h-3 mr-1" />
+              <p className="text-[13px] text-[var(--color-text-muted)] mt-1.5">
                 Filled in from your last comment.
               </p>
             ) : null}
@@ -176,19 +173,15 @@ const ActionModal = ({ onClose, onSubmit, onRedline, title, description, isDestr
       </ModalBody>
       <ModalFooter className="justify-between">
             {onRedline ? (
-              <button 
-                onClick={onRedline}
-                className="flex items-center px-3 py-2 text-sm font-bold text-[var(--color-text)] hover:bg-[var(--color-surface)] rounded-lg transition-colors border border-[var(--color-border)]"
-                disabled={isLoading}
-              >
-                <Pen className="w-4 h-4 mr-2" /> Add redlines
+              <button type="button" onClick={onRedline} className={heroQuiet} disabled={isLoading}>
+                <Pen className="w-4 h-4" /> Add redlines
               </button>
             ) : <span />}
-            <div className="flex space-x-3">
-              <button onClick={onClose} className="px-4 py-2 text-sm font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] rounded-lg transition-colors" disabled={isLoading}>Cancel</button>
-              <button onClick={() => onSubmit(comment, showCategorySelection ? category : undefined)} disabled={!comment.trim() || isLoading} className={`px-6 py-2 text-sm font-bold rounded-lg shadow-sm transition-all flex items-center disabled:opacity-50 disabled:cursor-not-allowed ${isDestructive ? 'bg-rose-600 hover:bg-rose-500 text-white' : 'bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)]'}`}>
-                {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />} {isDestructive ? 'Send back' : 'Confirm'}
-              </button>
+            <div className="flex gap-2">
+              <button type="button" onClick={onClose} className={heroQuiet} disabled={isLoading}>Cancel</button>
+              <Button variant={isDestructive ? 'danger' : 'primary'} onClick={() => onSubmit(comment, showCategorySelection ? category : undefined)} disabled={!comment.trim()} loading={isLoading}>
+                {isDestructive ? 'Send back' : 'Confirm'}
+              </Button>
             </div>
       </ModalFooter>
     </Modal>
@@ -242,17 +235,16 @@ const AssignmentModal = ({ onClose, onSubmit, isLoading, activeOrgId, isReassign
       <ModalBody className="space-y-4">
           {isReassignment && (
             <div>
-              <label className="block text-sm font-bold text-[var(--color-text)] mb-2">
-                Why the change <span className="text-red-500">*</span>
-              </label>
+              <label htmlFor="reassign-why" className="block text-[13px] text-[var(--color-text-muted)] mb-1.5">Why the change</label>
               <textarea 
-                className="w-full p-3 border border-[var(--color-border-strong)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none resize-none bg-[var(--color-surface)]"
+                id="reassign-why"
+                className="w-full p-3 border border-[var(--color-border-strong)] rounded-md text-[15px] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none resize-none bg-[var(--color-surface)] text-[var(--color-text)]"
                 rows={3}
                 placeholder="e.g. Out this week"
                 value={reason}
                 onChange={(e) => { setReason(e.target.value); setReasonMissing(false); }}
               />
-              {reasonMissing && <p role="alert" className="mt-1 text-xs font-semibold text-red-700 dark:text-red-400">Say why first.</p>}
+              {reasonMissing && <p role="alert" className="mt-1 text-[13px] font-semibold text-[var(--state-overdue)]">Say why first.</p>}
             </div>
           )}
 
@@ -260,7 +252,7 @@ const AssignmentModal = ({ onClose, onSubmit, isLoading, activeOrgId, isReassign
             {loadingList ? (
               <div className="flex items-center justify-center gap-2 py-8 text-sm text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin" /> Loading drafters…</div>
             ) : listError ? (
-              <p role="alert" className="p-4 text-sm font-semibold text-red-700 dark:text-red-400">Couldn&apos;t load the drafters: {listError}</p>
+              <p role="alert" className="p-4 text-[15px] font-semibold text-[var(--state-overdue)]">Couldn&apos;t load the drafters: {listError}</p>
             ) : drafters.length === 0 ? (
               <div className="p-4 text-center text-[var(--color-text-muted)]">No drafters in this workspace yet.</div>
             ) : (
@@ -276,7 +268,7 @@ const AssignmentModal = ({ onClose, onSubmit, isLoading, activeOrgId, isReassign
                     className="flex items-center p-3 hover:bg-[var(--color-surface-2)] rounded-lg transition-colors group text-left w-full border border-transparent hover:border-[var(--color-border)] disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <UserAvatar uid={drafter.uid} email={drafter.email} size={36} rounded="full" className="mr-3" />
-                    <div className="min-w-0"><p className="font-bold text-[var(--color-text)] text-sm truncate">{drafter.email}</p><p className="text-xs text-[var(--color-text-muted)]">{drafter.uid === currentDrafterId ? 'On it now' : 'Drafter'}</p></div>
+                    <div className="min-w-0"><p className="font-semibold text-[var(--color-text)] text-[15px] truncate">{drafter.email}</p><p className="text-[13px] text-[var(--color-text-muted)]">{drafter.uid === currentDrafterId ? 'On it now' : 'Drafter'}</p></div>
                     <ChevronDown className="w-4 h-4 ml-auto text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)] -rotate-90" />
                   </button>
                 ))}
@@ -284,7 +276,7 @@ const AssignmentModal = ({ onClose, onSubmit, isLoading, activeOrgId, isReassign
             )}
           </div>
       </ModalBody>
-      <ModalFooter><button onClick={onClose} disabled={isLoading} className="text-sm font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button></ModalFooter>
+      <ModalFooter><button type="button" onClick={onClose} disabled={isLoading} className={heroQuiet}>Cancel</button></ModalFooter>
     </Modal>
   );
 };
@@ -327,18 +319,13 @@ const UploadIFCModal = ({ onClose, onSubmit, isLoading, error }: UploadIFCModalP
             )}
             <input type="file" className="hidden" accept=".pdf" onChange={(e) => { const f = e.target.files?.[0]; if (f) setFile(f); e.target.value = ''; }} />
           </label>
-          {error && <p role="alert" className="border-l-2 border-red-500 pl-2 text-xs font-semibold text-red-700 dark:text-red-400">{error}</p>}
+          {error && <p role="alert" className="relative pl-3 text-[13px] font-semibold text-[var(--color-text)]"><span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />{error}</p>}
       </ModalBody>
       <ModalFooter>
-           <button onClick={onClose} disabled={isLoading} className="text-sm font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
-           <button 
-             onClick={() => file && onSubmit(file)}
-             disabled={!file || isLoading}
-             className="px-4 py-2 bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-bold rounded-lg hover:bg-[var(--color-accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center"
-           >
-             {isLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
+           <button type="button" onClick={onClose} disabled={isLoading} className={heroQuiet}>Cancel</button>
+           <Button onClick={() => file && onSubmit(file)} disabled={!file} loading={isLoading}>
              {isLoading ? 'Issuing…' : error ? 'Try again' : 'Issue final package'}
-           </button>
+           </Button>
       </ModalFooter>
     </Modal>
   );
@@ -361,10 +348,8 @@ const DownloadComplianceModal = ({ onClose, onConfirm, fileName }: DownloadCompl
       <p className="mt-2 border-l-2 border-amber-500 pl-2 text-sm font-semibold text-amber-800 dark:text-amber-300">Not for construction. For review only.</p>
     </ModalBody>
     <ModalFooter>
-      <button onClick={onClose} className="px-3 py-2 text-sm font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
-      <button onClick={onConfirm} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-bold bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]">
-        <Download className="w-4 h-4" /> Download the draft
-      </button>
+      <button type="button" onClick={onClose} className={heroQuiet}>Cancel</button>
+      <Button onClick={onConfirm}><Download className="w-4 h-4" /> Download the draft</Button>
     </ModalFooter>
   </Modal>
 );
@@ -424,7 +409,7 @@ function RedlineEditorMount({
     return (
       <Modal onClose={onClose} size="sm" zIndex={500}>
         <ModalHeader icon={AlertTriangle} title="Couldn't open the markup" onClose={onClose} />
-        <ModalBody><p className="text-sm font-semibold text-red-700 dark:text-red-400">Couldn&apos;t load the file: {error}</p></ModalBody>
+        <ModalBody><p className="text-[15px] font-semibold text-[var(--state-overdue)]">Couldn&apos;t load the file: {error}</p></ModalBody>
       </Modal>
     );
   }
@@ -723,8 +708,8 @@ const FileViewerModal = ({
               <h3 className="text-xl font-bold text-[var(--color-text)] mb-2">This file is in the archive</h3>
               <p className="text-[var(--color-text-muted)] leading-relaxed">
                 The request closed a while ago, so its files moved to{' '}
-                {archiveId ? <span className="font-mono font-bold">{archiveId}</span> : 'the offline archive'}.
-                An admin can restore it{archiveId && <> from <span className="font-mono break-all">&lt;root&gt;/data/{archiveId}.zip</span></>}.
+                {archiveId ? <span className="font-display font-semibold">{archiveId}</span> : 'the offline archive'}.
+                An admin can restore it{archiveId && <> from <code className="font-mono break-all">&lt;root&gt;/data/{archiveId}.zip</code></>}.
               </p>
             </div>
           ) : isPdf ? (
@@ -766,7 +751,8 @@ const FileViewerModal = ({
 export default function TicketDetailView() {
   const params = useParams();
   const router = useRouter();
-  const { activeRole, userEmail, activeOrgId, uid } = useRole();
+  const { activeRole, roles, userEmail, activeOrgId, uid } = useRole();
+  const narrow = useNarrow();
   // The org's capability policy — so the buttons drawn here match what the
   // workflow-action route will actually allow (it re-derives with the same
   // policy). Undefined until loaded → defaults, which mirror historic rules.
@@ -1370,8 +1356,8 @@ export default function TicketDetailView() {
         <PageHero back={{ href: '/requests', label: 'Drafting requests' }} kicker="Drafting requests" title="This request didn't load." size="md" />
         <PageBody>
           <Card>
-            <p role="alert" className="text-[14px] font-semibold text-red-700 dark:text-red-400">{loadError}</p>
-            <button type="button" onClick={() => router.push('/requests')} className="mt-4 h-10 px-4 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Go to drafting requests</button>
+            <p role="alert" className="relative pl-3 text-[15px] text-[var(--color-text)]"><span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />{loadError}</p>
+            <button type="button" onClick={() => router.push('/requests')} className={`${heroQuiet} mt-4`}>Go to drafting requests</button>
           </Card>
         </PageBody>
       </PageShell>
@@ -1397,15 +1383,13 @@ export default function TicketDetailView() {
   const draftFilesRaw = ticket.attachments?.filter(a => a.type === 'Draft') || [];
   const sortedDrafts = draftFilesRaw.sort((a, b) => toDate(b.uploadedAt).getTime() - toDate(a.uploadedAt).getTime());
   
-  const latestDraft = sortedDrafts[0];
-  const previousDrafts = sortedDrafts.slice(1);
 
   const finalFiles = ticket.attachments?.filter(a => a.type === 'Final') || [];
 
   // LOGIC: Check for Staged Files
   const hasStagedFiles = ticket.attachments?.some(a => a.status === 'staged' && a.type === 'Draft');
 
-  // The answer: where the request is, in words.
+  // Where the request is, in words.
   const stateWords = (() => {
     switch (ticket.status) {
       case 'NEW': return 'New. Waiting for a first look.';
@@ -1420,7 +1404,7 @@ export default function TicketDetailView() {
       case 'FINAL_DRAFT': return 'Issued. Waiting to close.';
       case 'CLOSED': return 'Closed.';
       case 'CANCELED': return 'Canceled.';
-      default: return String(ticket.status).replace(/_/g, ' ').toLowerCase().replace(/^\w/, (c) => c.toUpperCase()) + '.';
+      default: return sentence(String(ticket.status).replace(/_/g, ' ')) + '.';
     }
   })();
   // One main step (drafts waiting to go out come first); the rest quiet;
@@ -1449,17 +1433,44 @@ export default function TicketDetailView() {
       });
     } },
     ...(isAdmin && ticket.assignedDrafterId && ticket.status !== 'CLOSED' ? [{ icon: <UserPlus className="w-4 h-4" />, label: "Reassign", onClick: () => handleReassignClick() }] : []),
-    ...dangerActs.map((a, i) => ({ icon: <ShieldAlert className="w-4 h-4" />, label: a.label, onClick: () => initiateWorkflowAction(a), tone: "bad" as const, line: i === 0 })),
+    ...dangerActs.map((a, i) => ({ icon: <ShieldAlert className="w-4 h-4" />, label: sentence(a.label), onClick: () => initiateWorkflowAction(a), tone: "bad" as const, line: i === 0 })),
   ];
   const stepAt = requestStepIndex(ticket.status);
   const canAddFile = activeRole === 'Drafter' || activeRole === 'Requester' || activeRole === 'Admin' || uid === ticket.requesterId;
-  const pastDue = !!ticket.targetCompletionAt && isPastDue(ticket);
-  const meta = [
-    ticket.deliverableRev ? `Rev ${ticket.deliverableRev}` : null,
-    typeof ticket.priority === 'number' ? `P${ticket.priority}` : null,
-    ticket.requestType || null,
-    ticket.unit ? `Unit ${ticket.unit}` : null,
-  ].filter(Boolean).join(' · ');
+  const pastDue = isPastDue(ticket);
+  const nearDue = !pastDue && isNearingDue(ticket);
+  const onYou = isActionRequired(ticket, { uid, roles });
+  const who = waitingOn(ticket);
+  const watching = (ticket.watchers ?? []).includes(uid ?? '');
+  const facts: HeroFact[] = [
+    ...(narrow ? [] : [{ label: 'Stage', value: stageLabel(ticket.status) }]),
+    { label: 'Waiting on', value: onYou ? 'You' : (who ?? 'Nobody'), tone: onYou ? 'warn' as const : undefined },
+    { label: 'Due', value: ticket.targetCompletionAt ? fmtDay(ticket.targetCompletionAt) : 'None', tone: pastDue ? 'bad' as const : nearDue ? 'warn' as const : undefined },
+    ...(narrow ? [] : [{ label: 'Priority', value: typeof ticket.priority === 'number' ? `P${ticket.priority}` : 'None' }]),
+  ];
+  const stagedNote = hasStagedFiles
+    ? (availableActions.some((a) => a.action === 'submit_draft') ? ' Your drafts aren’t sent yet: Submit draft for review sends them.' : ' Drafts are added but not sent to the requester yet.')
+    : '';
+  const quietButtons = quietActs.map((a) => (
+    <button key={a.action + a.label} type="button" onClick={() => initiateWorkflowAction(a)} disabled={!!actionLoading} className={heroQuiet}>
+      {iconOf(a)}{sentence(a.label)}
+    </button>
+  ));
+
+  // Files, in the order the work needs them: drafts before the issued set
+  // while it's being drawn, the issued set first once it's out.
+  const issuedFirst = ['FINAL_DRAFT', 'PENDING_FINAL_APPROVAL', 'CLOSED'].includes(ticket.status);
+  type FileRow = { file: TicketAttachment; kind: string; tag?: React.ReactNode; faded?: boolean; redline?: boolean; issued?: boolean };
+  const fileGroups: Array<{ key: string; label: React.ReactNode; empty: string; rows: FileRow[] }> = [
+    { key: 'source', label: 'Source and reference', empty: 'No source files.', rows: sourceFiles.map((f) => ({ file: f, kind: f.type === 'Reference' ? 'Reference' : 'Source' })) },
+    { key: 'drafts', label: 'Drafts', empty: 'No drafts yet.', rows: sortedDrafts.map((f, i) => ({
+      file: f, kind: i === 0 ? 'Draft, latest' : 'Earlier draft', faded: i > 0,
+      tag: f.status === 'staged' ? <StatusTag tone="warn">Not sent yet</StatusTag> : undefined,
+      redline: i === 0 && ticket.status === 'PENDING_REVIEW' && ticket.requesterId === uid,
+    })) },
+    { key: 'issued', label: <>Issued for construction{ticket.deliverableRev && /^\d+$/.test(ticket.deliverableRev) ? `, Rev ${ticket.deliverableRev}` : ''}</>, empty: 'Nothing issued yet.', rows: finalFiles.map((f) => ({ file: f, kind: 'Issued', issued: true })) },
+  ];
+  if (issuedFirst) fileGroups.splice(1, 2, fileGroups[2], fileGroups[1]);
 
   return (
     <PageShell width="full">
@@ -1580,358 +1591,242 @@ export default function TicketDetailView() {
         />
       )}
 
-      {/* THE BAND: where it is, what it is, the one next step. */}
+      {fileToUpload && !isUploading && (() => {
+        // The likely kind goes first and is the main button: a
+        // drafter's upload is a draft, anyone else's a source file.
+        const draftFirst = activeRole === 'Drafter' || ticket.assignedDrafterId === uid;
+        const kinds: Array<{ type: 'Source' | 'Draft' | 'Reference'; label: string; icon: React.ReactNode }> = [
+          { type: 'Draft', label: 'Draft drawing', icon: <FileText className="w-4 h-4" /> },
+          { type: 'Source', label: 'Source file', icon: <FileIcon className="w-4 h-4" /> },
+          { type: 'Reference', label: 'Reference', icon: <Paperclip className="w-4 h-4" /> },
+        ];
+        const ordered = draftFirst ? kinds : [kinds[1], kinds[0], kinds[2]];
+        return (
+          <Modal onClose={() => setFileToUpload(null)} size="sm">
+            <ModalHeader title="What kind of file is it?" onClose={() => setFileToUpload(null)} />
+            <ModalBody>
+              <div className="p-3 border border-[var(--color-border)] rounded-md mb-4 flex items-center gap-3">
+                <FileThumb file={fileToUpload} />
+                <div className="overflow-hidden">
+                  <p className="font-semibold text-[15px] truncate text-[var(--color-text)]">{fileToUpload.name}</p>
+                  <p className="text-[13px] text-[var(--color-text-muted)]">{formatBytes(fileToUpload.size)}</p>
+                </div>
+              </div>
+              <div className="flex flex-col gap-2">
+                {ordered.map((k, i) => (
+                  <button key={k.type} type="button" onClick={() => handleFileUpload(k.type)} className={`${i === 0 ? heroPrimary : heroQuiet} w-full h-11`}>
+                    {k.icon} {k.label}
+                  </button>
+                ))}
+              </div>
+            </ModalBody>
+          </Modal>
+        );
+      })()}
+
+      {/* The title block: which request, where it is, the one next step. */}
       <PageHero
         back={{ onClick: () => router.back(), label: 'Back' }}
         size="md"
-        kicker={<>Drafting requests · <span className="font-mono">{ticket.ticketId}</span></>}
-        title={stateWords}
-        sub={
-          <>
-            <span className="text-white font-semibold">{ticket.title}</span>
-            {meta && <span> · {meta}</span>}
-            {pastDue && <span className="font-bold text-rose-200"> · Past due {toDate(ticket.targetCompletionAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>}
-            {hasStagedFiles && (availableActions.some((a) => a.action === 'submit_draft')
-              ? <span className="block mt-1 text-white">Your drafts aren&apos;t sent to the requester yet: Submit draft for review sends them.</span>
-              : <span className="block mt-1">Drafts are added but not sent to the requester yet.</span>)}
-            {availableActions.length === 0 && <span className="block mt-1">Nothing for you to do on this request.</span>}
-          </>
-        }
+        kicker="Drafting requests"
+        title={<><span className="block tabular-nums">{ticket.ticketId}</span>{ticket.title}</>}
+        sub={<>{stateWords}{stagedNote}{availableActions.length === 0 ? ' Nothing for you to do here.' : ''}</>}
+        facts={facts}
         tools={
           <>
+            {quietButtons.length > 0 && <div className="max-lg:hidden flex items-center gap-2">{quietButtons}</div>}
             {canAddFile && (
-              <>
-                <label className={`${heroQuiet} cursor-pointer ${isUploading ? 'opacity-50 pointer-events-none' : ''}`}>
-                  {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}
-                  <span className="max-sm:hidden">{isUploading ? `Uploading ${uploadProgress.toFixed(0)}%` : 'Add a file'}</span>
-                  <span className="sr-only sm:hidden">Add a file</span>
-                  <input 
-                    type="file" 
-                    className="hidden" 
-                    onChange={(e) => { 
-                      const file = e.target.files?.[0];
-                      // Everyone classifies their upload — silently force-filing
-                      // a requester's redline as a "Source" asset misled both
-                      // sides of the review.
-                      if (file) { setUploadError(null); setFileToUpload(file); }
-                      e.target.value = '';
-                    }} 
-                  />
-                </label>
-
-                {fileToUpload && !isUploading && (() => {
-                  // The likely kind goes first and is the main button: a
-                  // drafter's upload is a draft, anyone else's a source file.
-                  const draftFirst = activeRole === 'Drafter' || ticket.assignedDrafterId === uid;
-                  const kinds: Array<{ type: 'Source' | 'Draft' | 'Reference'; label: string; icon: React.ReactNode }> = [
-                    { type: 'Draft', label: 'Draft drawing', icon: <FileText className="w-4 h-4 mr-2"/> },
-                    { type: 'Source', label: 'Source file', icon: <FileIcon className="w-4 h-4 mr-2"/> },
-                    { type: 'Reference', label: 'Reference', icon: <Paperclip className="w-4 h-4 mr-2"/> },
-                  ];
-                  const ordered = draftFirst ? kinds : [kinds[1], kinds[0], kinds[2]];
-                  return (
-                  <Modal onClose={() => setFileToUpload(null)} size="sm">
-                    <ModalHeader title="What kind of file is it?" onClose={() => setFileToUpload(null)} />
-                    <ModalBody>
-                      <div className="p-3 bg-[var(--color-surface-2)] rounded-lg mb-4 flex items-center gap-3">
-                        <FileThumb file={fileToUpload} />
-                        <div className="overflow-hidden">
-                          <p className="font-bold text-[14px] truncate text-[var(--color-text)]">{fileToUpload.name}</p>
-                          <p className="text-[12px] text-[var(--color-text-muted)]">{formatBytes(fileToUpload.size)}</p>
-                        </div>
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        {ordered.map((k, i) => (
-                          <button key={k.type} onClick={() => handleFileUpload(k.type)} className={`w-full py-3 rounded-lg font-bold transition-colors flex items-center justify-center ${i === 0 ? 'bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]' : 'border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]'}`}>
-                            {k.icon} {k.label}
-                          </button>
-                        ))}
-                      </div>
-                    </ModalBody>
-                  </Modal>
-                  );
-                })()}
-              </>
+              <label className={`${heroQuiet} cursor-pointer ${isUploading ? 'opacity-50 pointer-events-none' : ''}`}>
+                {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}
+                <span className="max-sm:hidden">{isUploading ? `Uploading ${uploadProgress.toFixed(0)}%` : 'Add a file'}</span>
+                <span className="sr-only sm:hidden">Add a file</span>
+                <input
+                  type="file"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    // Everyone says what kind of file it is.
+                    if (file) { setUploadError(null); setFileToUpload(file); }
+                    e.target.value = '';
+                  }}
+                />
+              </label>
             )}
             <MoreMenu items={moreMenu} iconOnly label="More: how it flows, traveler, reassign, close" triggerClass={heroQuiet} />
           </>
         }
         primary={mainAct ? (
-          <button onClick={() => initiateWorkflowAction(mainAct)} disabled={!!actionLoading} className={heroPrimary}>
-            {iconOf(mainAct)}{mainAct.label}
+          <button type="button" onClick={() => initiateWorkflowAction(mainAct)} disabled={!!actionLoading} className={heroPrimary}>
+            {iconOf(mainAct)}{sentence(mainAct.label)}
           </button>
         ) : undefined}
       >
-        <div className="space-y-5">
+        <div className="space-y-4">
           {stepAt >= 0 && (
-            <button type="button" onClick={() => setShowWorkflowDiagram(true)} title="See what each step means" className="block w-full text-left rounded-lg -m-1 p-1 hover:bg-[var(--color-ink-2)]">
-              <span className="sm:hidden block mb-3 text-[13px] font-bold text-white">Step {stepAt + 1} of {REQUEST_STEPS.length}: {REQUEST_STEPS[stepAt]}</span>
+            <button type="button" onClick={() => setShowWorkflowDiagram(true)} title="See what each step means" className="block w-full text-left rounded-md -m-1.5 p-1.5 hover:bg-[var(--color-surface)]">
+              <span className="sm:hidden block mb-2.5 text-[14px] font-semibold text-[var(--color-text)]">Step {stepAt + 1} of {REQUEST_STEPS.length}: {REQUEST_STEPS[stepAt]}</span>
               <span className="hidden sm:block">
-                <StepLine onDark steps={REQUEST_STEPS.map((label, i) => ({ label, state: i < stepAt ? 'done' : i === stepAt ? 'now' : 'next' }))} />
+                <StepLine steps={REQUEST_STEPS.map((label, i) => ({ label, state: i < stepAt ? 'done' : i === stepAt ? 'now' : 'next' }))} />
               </span>
               <span className="sm:hidden block">
-                <StepLine onDark steps={REQUEST_STEPS.map((_, i) => ({ label: '', state: i < stepAt ? 'done' : i === stepAt ? 'now' : 'next' }))} />
+                <StepLine steps={REQUEST_STEPS.map((_, i) => ({ label: '', state: i < stepAt ? 'done' : i === stepAt ? 'now' : 'next' }))} />
               </span>
             </button>
           )}
-          {quietActs.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {quietActs.map((a) => (
-                <button key={a.action + a.label} onClick={() => initiateWorkflowAction(a)} disabled={!!actionLoading} className={heroQuiet}>
-                  {iconOf(a)}{a.label}
-                </button>
-              ))}
-            </div>
-          )}
+          {quietButtons.length > 0 && <div className="lg:hidden flex flex-wrap gap-2">{quietButtons}</div>}
         </div>
       </PageHero>
 
       <PageBody>
-      {ticket.status === 'REVISION_REQ' && latestRevision && (
-        <Card className="border-l-2 border-l-amber-500">
-          <div>
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-[13px] font-semibold text-amber-800 dark:text-amber-300 inline-flex items-center gap-1.5"><RotateCcw className="w-3.5 h-3.5" /> What to fix</h2>
-                {latestRevision.category && (
-                  <span className="text-[12px] font-bold text-[var(--color-text-muted)]">{latestRevision.category}</span>
-                )}
-              </div>
-              <p className="text-[14px] text-[var(--color-text)] mt-2 whitespace-pre-wrap leading-relaxed">{latestRevision.text}</p>
-              <p className="text-[12px] text-[var(--color-text-muted)] mt-1.5">
-                {latestRevision.user ?? 'Reviewer'}{latestRevision.date ? ` · ${new Date(latestRevision.date).toLocaleString()}` : ''}
-              </p>
-              {(() => {
-                // Surface redline markups attached with the revision so the
-                // drafter finds them here instead of hunting the references list.
-                const redlines = (ticket.attachments || [])
-                  .filter((a) => a.name?.startsWith('REDLINE_'))
-                  .sort((a, b) => toDate(b.uploadedAt).getTime() - toDate(a.uploadedAt).getTime());
-                return redlines[0] ? (
-                  <button
-                    onClick={() => setViewerFile(redlines[0])}
-                    className="mt-2 inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-xs font-bold"
-                  >
-                    <Pen className="w-3.5 h-3.5" /> Open the redlines
-                  </button>
-                ) : null;
-              })()}
-            </div>
-          </div>
-        </Card>
-      )}
+      {ticket.status === 'REVISION_REQ' && latestRevision && (() => {
+        // Redlines sent with the revision, so the drafter finds them here.
+        const redlines = (ticket.attachments || [])
+          .filter((a) => a.name?.startsWith('REDLINE_'))
+          .sort((a, b) => toDate(b.uploadedAt).getTime() - toDate(a.uploadedAt).getTime());
+        return (
+          <Card label="What to fix" action={redlines[0] ? (
+            <button type="button" onClick={() => setViewerFile(redlines[0])} className={heroQuiet}><Pen className="w-4 h-4" /> Open the redlines</button>
+          ) : undefined} className="relative">
+            <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-l-lg bg-[var(--state-held)]" />
+            {latestRevision.category && <StatusTag tone="warn">{latestRevision.category}</StatusTag>}
+            <p className="text-[15px] text-[var(--color-text)] mt-1.5 whitespace-pre-wrap leading-relaxed max-w-[75ch]">{latestRevision.text}</p>
+            <p className="text-[13px] text-[var(--color-text-muted)] mt-1.5">
+              {authorLabel(latestRevision.user ?? 'Reviewer')}{latestRevision.date ? `, ${fmtWhen(latestRevision.date)}` : ''}
+            </p>
+          </Card>
+        );
+      })()}
 
       {ticket.archivedAt && (() => {
         const sum = (ticket.metadata?.archive_summary ?? {}) as {
           commentCount?: number; attachmentCount?: number; attachmentNames?: string[]; historyCount?: number;
         };
         const names = Array.isArray(sum.attachmentNames) ? sum.attachmentNames : [];
-        const plural = (n: number | undefined, w: string) => `${n ?? 0} ${w}${(n ?? 0) === 1 ? '' : 's'}`;
         const hasShape = !!(sum.commentCount || sum.attachmentCount || sum.historyCount);
         return (
-          <Card>
-            <div className="flex items-start gap-3">
-              <Archive className="w-4 h-4 text-[var(--color-text-muted)] shrink-0 mt-0.5" />
-              <div className="min-w-0">
-                <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)]">Archived</h2>
-                <p className="text-[14px] text-[var(--color-text)] mt-1.5 leading-relaxed">
-                  It closed a while ago, so its files and comments moved to the archive{' '}
-                  {ticket.archiveId ? <span className="font-mono font-bold">{ticket.archiveId}</span> : ''}. This page keeps the summary.
-                </p>
-                {hasShape && (
-                  <p className="text-[13px] text-[var(--color-text)] mt-2">
-                    <span className="font-bold">What was here:</span>{' '}
-                    {plural(sum.commentCount, 'comment')}, {plural(sum.attachmentCount, 'attachment')}
-                    {names.length > 0 && <> (<span className="italic">{names.join(', ')}{(sum.attachmentCount ?? 0) > names.length ? `, +${(sum.attachmentCount ?? 0) - names.length} more` : ''}</span>)</>}, {plural(sum.historyCount, 'history event')}.
-                  </p>
-                )}
-                <p className="text-[13px] text-[var(--color-text-muted)] mt-2">
-                  Have the archive file{ticket.archiveId ? <> (<span className="font-mono break-all">&lt;root&gt;/data/{ticket.archiveId}.zip</span>)</> : ''}? Open it here. An admin can restore it fully on the Storage &amp; Backup page.
-                </p>
-                <button
-                  onClick={() => setShowArchiveViewer(true)}
-                  className="mt-2.5 inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-xs font-bold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
-                >
-                  <Archive className="w-3.5 h-3.5" /> Open from the archive
-                </button>
-              </div>
-            </div>
+          <Card label="Archived" action={
+            <button type="button" onClick={() => setShowArchiveViewer(true)} className={heroQuiet}><Archive className="w-4 h-4" /> Open from the archive</button>
+          }>
+            <p className="text-[15px] text-[var(--color-text)]">
+              Its files and comments moved to the archive{ticket.archiveId ? <> <span className="font-display font-semibold">{ticket.archiveId}</span></> : ''}.
+              <HelpTooltip>Have the archive file{ticket.archiveId ? <> (<span className="break-all">&lt;root&gt;/data/{ticket.archiveId}.zip</span>)</> : ''}? Open it here. An admin can restore it fully on the Storage and backup page.</HelpTooltip>
+            </p>
+            {hasShape && (
+              <dl className="mt-3 flex flex-wrap gap-x-8 gap-y-2">
+                <div><dt className="text-[13px] text-[var(--color-text-muted)]">Comments</dt><dd className="font-display text-[19px] font-semibold tabular-nums">{sum.commentCount ?? 0}</dd></div>
+                <div><dt className="text-[13px] text-[var(--color-text-muted)]">Files</dt><dd className="font-display text-[19px] font-semibold tabular-nums">{sum.attachmentCount ?? 0}</dd></div>
+                <div><dt className="text-[13px] text-[var(--color-text-muted)]">History events</dt><dd className="font-display text-[19px] font-semibold tabular-nums">{sum.historyCount ?? 0}</dd></div>
+              </dl>
+            )}
+            {names.length > 0 && (
+              <p className="mt-2 text-[13px] text-[var(--color-text-muted)]">{names.join(', ')}{(sum.attachmentCount ?? 0) > names.length ? `, and ${(sum.attachmentCount ?? 0) - names.length} more` : ''}</p>
+            )}
           </Card>
         );
       })()}
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 sm:gap-5">
-        {/* LEFT: DETAILS & FILES */}
-        <div className="xl:col-span-2 space-y-4 sm:space-y-5 min-w-0">
-          <Card label="Request details">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-5 [&_label]:block [&_label]:text-[11px] [&_label]:font-bold [&_label]:uppercase [&_label]:tracking-[0.12em] [&_label]:text-[var(--color-text-muted)]">
-              <div><label className="text-[11px] text-[var(--color-text-faint)] font-medium">Unit</label><div className="font-mono text-[14px] font-bold text-[var(--color-text)] mt-1">{ticket.unit}</div></div>
-              <div><label className="text-[11px] text-[var(--color-text-faint)] font-medium">Requester</label><div className="min-w-0 text-sm text-[var(--color-text)] mt-1 flex items-center group cursor-help" title={ticket.requesterId}><User className="w-4 h-4 mr-2 text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)] transition-colors shrink-0" /><span className="truncate">{ticket.requesterName}</span></div></div>
-              <div><label className="text-[11px] text-[var(--color-text-faint)] font-medium">Assigned Lead</label><div className="min-w-0 text-sm text-[var(--color-text)] mt-1">{ticket.assignedDrafterName ? (<div className="flex items-center"><span className="truncate">{ticket.assignedDrafterName}</span></div>) : <span className="text-[var(--color-text-faint)] italic">Unassigned</span>}</div></div>
-              <div>
-                <label className="text-[11px] text-[var(--color-text-faint)] font-medium">Engineer Reviewer</label>
-                <div className="min-w-0 text-sm text-[var(--color-text)] mt-1">
-                  {ticket.assignedEngineerName ? (
-                    <div className="flex items-center">
-                      <span className="truncate" title={ticket.assignedEngineerEmail || ticket.assignedEngineerName}>{ticket.assignedEngineerName}</span>
-                      {ticket.engineerApprovedAt && <span className="ml-2 text-[11px] text-emerald-600 font-bold uppercase">approved</span>}
-                    </div>
-                  ) : <span className="text-[var(--color-text-faint)] italic">Not yet assigned</span>}
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(360px,420px)] gap-x-6 gap-y-8 items-start">
+        {/* LEFT: the request and its files */}
+        <div className="space-y-8 min-w-0">
+          <Card label="Details" pad={false} className="overflow-hidden">
+            <dl className="grid grid-cols-2 md:grid-cols-4 gap-px bg-[var(--color-border)]">
+              {([
+                ['Unit', <span key="u" className="font-display text-[17px] font-semibold tabular-nums">{ticket.unit}</span>],
+                ['Type', ticket.requestType || <Muted key="t">None</Muted>],
+                ['Requester', <span key="r" title={ticket.requesterEmail || undefined}>{ticket.requesterName || <Muted>Unknown</Muted>}</span>],
+                ['Drafter', ticket.assignedDrafterName || <Muted key="d">Not assigned</Muted>],
+                ['Engineer reviewer', ticket.assignedEngineerName ? (
+                  <span key="e" className="flex flex-wrap items-center gap-x-2" title={ticket.assignedEngineerEmail || undefined}>
+                    {ticket.assignedEngineerName}
+                    {ticket.engineerApprovedAt && <StatusTag tone="good">Approved</StatusTag>}
+                  </span>
+                ) : <Muted key="e">Not assigned</Muted>],
+                ['Started', fmtDay(ticket.createdAt)],
+                ['Deliverable', ticket.deliverableRev ? <span key="rev" className="font-display font-semibold tabular-nums">Rev {ticket.deliverableRev}</span> : <Muted key="rev">Not issued</Muted>],
+                ['Watchers', (
+                  <span key="w" className="flex items-center gap-2">
+                    <span className="tabular-nums">{(ticket.watchers ?? []).length}</span>
+                    <button type="button" onClick={toggleWatch} aria-pressed={watching}
+                      className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                      {watching ? <><Check className="w-3.5 h-3.5" /> Watching</> : <><Eye className="w-3.5 h-3.5" /> Watch</>}
+                    </button>
+                  </span>
+                )],
+              ] as Array<[string, React.ReactNode]>).map(([label, value]) => (
+                <div key={label} className="bg-[var(--color-surface)] px-4 py-3 min-w-0">
+                  <dt className="text-[13px] text-[var(--color-text-muted)]">{label}</dt>
+                  <dd className="mt-0.5 text-[15px] text-[var(--color-text)] min-h-8 flex items-center">{value}</dd>
                 </div>
-              </div>
-              <div><label className="text-[11px] text-[var(--color-text-faint)] font-medium">Initiated</label><div className="text-sm font-semibold text-[var(--color-text)] mt-1 flex items-center"><Calendar className="w-4 h-4 mr-2 text-[var(--color-text-faint)] shrink-0" />{toDate(ticket.createdAt).toLocaleDateString()}</div></div>
-              <div>
-                <label className="text-[11px] text-[var(--color-text-faint)] font-medium">Target Completion</label>
-                <div className="text-sm font-semibold mt-1 flex flex-wrap items-center gap-1.5">
-                  {ticket.targetCompletionAt ? (
-                    <>
-                      <Calendar className={`w-4 h-4 shrink-0 ${isPastDue(ticket) ? "text-red-500" : isNearingDue(ticket) ? "text-amber-500" : "text-[var(--color-text-faint)]"}`} />
-                      <span className={isPastDue(ticket) ? "text-red-700" : "text-[var(--color-text)]"}>{toDate(ticket.targetCompletionAt).toLocaleDateString()}</span>
-                      {isPastDue(ticket) && <span className="whitespace-nowrap text-[11px] font-black uppercase bg-red-100 text-red-700 px-1.5 py-0.5 rounded">Past due</span>}
-                      {!isPastDue(ticket) && isNearingDue(ticket) && <span className="text-[11px] font-black uppercase bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">Due Soon</span>}
-                    </>
-                  ) : (
-                    <span className="text-[var(--color-text-faint)] italic text-xs">No target set</span>
-                  )}
-                </div>
-              </div>
-              <div>
-                <label className="text-[11px] text-[var(--color-text-faint)] font-medium">Watching</label>
-                <div className="text-sm font-semibold mt-1 flex items-center gap-2">
-                  <button
-                    onClick={toggleWatch}
-                    aria-pressed={(ticket.watchers ?? []).includes(uid ?? "")}
-                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold transition-colors ${
-                      (ticket.watchers ?? []).includes(uid ?? "")
-                        ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)]"
-                        : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"
-                    }`}
-                  >
-                    {(ticket.watchers ?? []).includes(uid ?? "") ? "Watching" : "Watch"}
-                  </button>
-                  <span className="text-[11px] text-[var(--color-text-faint)]">{(ticket.watchers ?? []).length} watching</span>
-                </div>
-              </div>
-            </div>
-            <div className="mt-5 pt-4 border-t border-[var(--color-border)]"><div className="text-[13px] text-[var(--color-text-muted)] font-semibold mb-1.5">Scope of work</div><div className="text-[14px] text-[var(--color-text)] leading-relaxed whitespace-pre-wrap">{ticket.description}</div></div>
+              ))}
+            </dl>
           </Card>
 
-          <div {...filesDrag.bind} className={`bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden flex flex-col ${filesDrag.ring}`}>
-             <div className="px-4 sm:px-5 pt-4 pb-3 flex flex-col sm:flex-row justify-between sm:items-center gap-2">
-               <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center"><Paperclip className="w-3.5 h-3.5 mr-1.5" /> Files</h2>
-               {filesDrag.over
-                 ? <span className="text-[13px] font-bold text-[var(--color-text)]">{filesDrag.say}</span>
-                 : isUploading
-                   ? <span className="text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Uploading {uploadProgress.toFixed(0)}%</span>
-                   : !ticket.archivedAt && <span className="text-[12px] text-[var(--color-text-muted)]">Drop a file here to add it</span>}
-             </div>
-             {uploadError && (
-               <p role="alert" className="mx-4 mt-3 border-l-2 border-red-500 pl-2 text-xs font-semibold text-red-700 dark:text-red-400">{uploadError}</p>
-             )}
+          <Card label="Scope of work">
+            <p className="text-[15px] text-[var(--color-text)] leading-relaxed whitespace-pre-wrap max-w-[80ch]">{ticket.description || <Muted>No scope written.</Muted>}</p>
+          </Card>
 
-             <div className="px-4 sm:px-5 py-4 border-t border-[var(--color-border)] order-1">
-               <h3 className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">Source and reference</h3>
-               <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4">
-                 {sourceFiles.length === 0 ? <p className="text-[13px] text-[var(--color-text-muted)]">No source files provided.</p> : sourceFiles.map((file, idx) => (
-                   <div key={idx} className="flex items-center justify-between py-2 border-b border-[var(--color-border)] last:border-b-0 md:[&:nth-last-child(2):nth-child(odd)]:border-b-0">
-                     <div className="flex items-center gap-3 overflow-hidden"><div className="w-8 h-8 grid place-items-center bg-[var(--color-surface-2)] rounded-[9px] text-[var(--color-text-muted)] shrink-0"><FileIcon className="w-4 h-4" /></div><span className="text-[13.5px] font-semibold text-[var(--color-text)] truncate">{file.name}</span></div>
-                     <button onClick={() => setViewerFile(file)} aria-label={`Open ${file.name}`} className="p-1.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><Eye className="w-4 h-4" /></button>
-                   </div>
-                 ))}
-               </div>
-             </div>
-
-             <div className={`px-4 sm:px-5 py-4 border-t border-[var(--color-border)] ${['FINAL_DRAFT', 'PENDING_FINAL_APPROVAL', 'CLOSED'].includes(ticket.status) ? 'order-3 opacity-70' : 'order-2'}`}>
-               <h3 className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">Work in progress (drafts)</h3>
-               <div className="space-y-3">
-                 {sortedDrafts.length === 0 ? <p className="text-[13px] text-[var(--color-text-muted)]">No drafts started yet.</p> : (
-                    <>
-                      {/* LATEST DRAFT */}
-                      {latestDraft && (
-                         <div className="py-1 relative group">
-                           <div className="flex items-center justify-between relative z-10">
-                              <div className="flex items-center space-x-4 min-w-0">
-                                <div className="w-10 h-10 grid place-items-center bg-[var(--color-surface-2)] text-[var(--color-text-muted)] rounded-[10px] shrink-0">
-                                  <FileText className="w-5 h-5" />
-                                </div>
-                                <div className="min-w-0">
-                                  <button type="button" className="block max-w-full text-left text-[14px] font-bold text-[var(--color-text)] truncate hover:underline" onClick={() => setViewerFile(latestDraft)}>{latestDraft.name}</button>
-                                  <div className="flex flex-wrap items-center text-[12px] text-[var(--color-text-muted)] mt-0.5 gap-x-2">
-                                     <span>{latestDraft.size}</span>
-                                     <span className="w-1 h-1 rounded-full bg-[var(--color-border-strong)]"/>
-                                     <span>{toDate(latestDraft.uploadedAt).toLocaleString()}</span>
-                                     <span className="w-1 h-1 rounded-full bg-[var(--color-border-strong)]"/>
-                                     <span className="font-bold text-[var(--color-text)]">Latest</span>
-                                  </div>
-                                </div>
-                              </div>
-                              <div className="flex items-center space-x-2">
-                                {(ticket.status === 'PENDING_REVIEW' && ticket.requesterId === uid) && (
-                                   <button 
-                                     onClick={() => { setFileToRedline(latestDraft); setShowRedlineEditor(true); }}
-                                     className="px-3 py-1.5 rounded-lg font-bold text-xs flex items-center bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)] transition-all shadow-sm"
-                                   >
-                                     <Pen className="w-3 h-3 mr-1.5"/> Redline
-                                   </button>
-                                )}
-                                <button onClick={() => setViewerFile(latestDraft)} aria-label={`Open ${latestDraft.name}`} className="p-2 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg transition-colors"><Eye className="w-5 h-5" /></button>
-                              </div>
-                           </div>
-                         </div>
-                      )}
-
-                      {/* PREVIOUS VERSIONS */}
-                      {previousDrafts.length > 0 && (
-                        <div className="space-y-3 pt-2">
-                          <div className="flex items-center gap-3">
-                            <div className="h-px bg-[var(--color-border)] flex-1"/>
-                            <span className="text-[13px] font-semibold text-[var(--color-text-faint)] ">Earlier versions</span>
-                            <div className="h-px bg-[var(--color-border)] flex-1"/>
+          {/* Files: drop one anywhere here to add it. */}
+          <section {...filesDrag.bind} className={`min-w-0 rounded-lg ${filesDrag.ring}`}>
+            <div className="flex items-end gap-3 mb-2.5 min-h-8">
+              <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Files</h2>
+              <div className="flex-1" />
+              {filesDrag.over
+                ? <span className="text-[13px] font-semibold text-[var(--color-text)]">{filesDrag.say}</span>
+                : isUploading
+                  ? <span className="text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Uploading {uploadProgress.toFixed(0)}%</span>
+                  : !ticket.archivedAt && canAddFile && <span className="max-sm:hidden text-[13px] text-[var(--color-text-muted)]">Drop a file here to add it</span>}
+            </div>
+            {uploadError && (
+              <p role="alert" className="mb-2 relative pl-3 text-[13px] font-semibold text-[var(--color-text)]"><span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />{uploadError}</p>
+            )}
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+              <table className="w-full text-[15px]">
+                <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+                  <tr>
+                    <th className="font-semibold px-4 h-10 w-full">File</th>
+                    <th className="font-semibold px-4 h-10 hidden sm:table-cell">Kind</th>
+                    <th className="font-semibold px-4 h-10 hidden 2xl:table-cell">Size</th>
+                    <th className="font-semibold px-4 h-10 hidden sm:table-cell">Added</th>
+                    <th className="h-10 pr-3"><span className="sr-only">Open</span></th>
+                  </tr>
+                </thead>
+                {fileGroups.map((g) => (
+                  <tbody key={g.key} className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
+                    <tr><th colSpan={5} scope="colgroup" className="px-4 pt-3 pb-1.5 text-left text-[13px] font-semibold text-[var(--color-text-muted)]">{g.label}</th></tr>
+                    {g.rows.length === 0 ? (
+                      <tr><td colSpan={5} className="px-4 pb-3 text-[13px] text-[var(--color-text-faint)]">{g.empty}</td></tr>
+                    ) : g.rows.map((r) => (
+                      <tr key={r.file.id || r.file.name} onClick={(e) => { if ((e.target as HTMLElement).closest('button,a')) return; setViewerFile(r.file); }}
+                        className={`cursor-pointer hover:bg-[var(--color-surface-2)] ${r.faded ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-text)]'}`}>
+                        <td className="px-4 py-2.5 max-w-0">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            {r.issued ? <CheckSquare className="w-4 h-4 shrink-0 text-[var(--state-released)]" /> : r.kind.startsWith('Draft') ? <FileText className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" /> : <FileIcon className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" />}
+                            <button type="button" onClick={() => setViewerFile(r.file)} title={r.file.name} className={`min-w-0 text-left truncate hover:text-[var(--color-accent-text)] ${r.faded ? '' : 'font-semibold'}`}>{r.file.name}</button>
                           </div>
-                          <div>
-                            {previousDrafts.map((file, idx) => (
-                              <div key={idx} className="flex items-center justify-between py-2 border-b border-[var(--color-border)] last:border-b-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors">
-                                 <div className="flex items-center space-x-3 min-w-0">
-                                   <FileIcon className="w-4 h-4 shrink-0" />
-                                   <div className="min-w-0">
-                                      <p className="text-[13px] font-medium truncate">{file.name}</p>
-                                      <p className="text-[12px] opacity-80">{toDate(file.uploadedAt).toLocaleString()}</p>
-                                   </div>
-                                 </div>
-                                 <button onClick={() => setViewerFile(file)} aria-label={`Open ${file.name}`} className="p-1.5 hover:bg-[var(--color-surface-2)] rounded"><Eye className="w-3.5 h-3.5" /></button>
-                              </div>
-                            ))}
+                          <div className="sm:hidden pl-[26px] text-[13px] text-[var(--color-text-muted)] flex flex-wrap items-center gap-x-2">{r.kind}{r.file.uploadedAt ? `, ${fmtDay(r.file.uploadedAt)}` : ''}{r.tag}</div>
+                        </td>
+                        <td className="px-4 py-2.5 hidden sm:table-cell whitespace-nowrap">{r.kind}{r.tag && <div className="max-sm:hidden">{r.tag}</div>}</td>
+                        <td className="px-4 py-2.5 hidden 2xl:table-cell whitespace-nowrap tabular-nums text-[var(--color-text-muted)]">{r.file.size}</td>
+                        <td className="px-4 py-2.5 hidden sm:table-cell whitespace-nowrap tabular-nums text-[var(--color-text-muted)]">{fmtWhen(r.file.uploadedAt)}</td>
+                        <td className="pr-3 py-1.5 whitespace-nowrap text-right">
+                          <div className="inline-flex items-center gap-1">
+                            {r.redline && (
+                              <button type="button" onClick={() => { setFileToRedline(r.file); setShowRedlineEditor(true); }} className={`${heroQuiet} h-8`}>
+                                <Pen className="w-3.5 h-3.5" /> Redline
+                              </button>
+                            )}
+                            <button type="button" onClick={() => setViewerFile(r.file)} aria-label={`Open ${r.file.name}`} className="w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                              {r.issued ? <Maximize2 className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                            </button>
                           </div>
-                        </div>
-                      )}
-                    </>
-                 )}
-               </div>
-             </div>
-
-             <div className={`px-4 sm:px-5 py-4 border-t border-[var(--color-border)] ${['FINAL_DRAFT', 'PENDING_FINAL_APPROVAL', 'CLOSED'].includes(ticket.status) ? 'order-2' : 'order-3'}`}>
-               <h3 className="text-[13px] font-semibold mb-2 flex items-center text-[var(--color-text-muted)]">
-                 <CheckCircle2 className="w-3 h-3 mr-1" /> Issued for construction
-                 {ticket.deliverableRev && /^\d+$/.test(ticket.deliverableRev) && (
-                   <span className="ml-2 px-1.5 py-0.5 bg-[var(--color-surface-2)] text-[var(--color-text)] text-[11px] font-black rounded normal-case tracking-normal">Rev {ticket.deliverableRev}</span>
-                 )}
-               </h3>
-               <div className="space-y-2 relative z-10">
-                 {finalFiles.length === 0 ? <p className="text-[13px] text-[var(--color-text-muted)]">Nothing issued for construction yet.</p> : finalFiles.map((file, idx) => (
-                   <div key={idx} className="flex items-center justify-between py-2 border-b border-[var(--color-border)] last:border-b-0">
-                     <div className="flex items-center gap-3 min-w-0">
-                       <div className="w-9 h-9 grid place-items-center bg-[var(--color-surface-2)] text-emerald-700 dark:text-emerald-400 rounded-[9px] shrink-0"><CheckSquare className="w-4 h-4" /></div>
-                       <div className="min-w-0">
-                         <p className="text-[14px] font-bold text-[var(--color-text)] truncate">{file.name}</p>
-                         <p className="text-[12px] text-[var(--color-text-muted)]">Issued {toDate(file.uploadedAt).toLocaleDateString()}</p>
-                       </div>
-                     </div>
-                     <button onClick={() => setViewerFile(file)} aria-label={`Open ${file.name}`} className="p-2 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded"><Maximize2 className="w-4 h-4" /></button>
-                   </div>
-                 ))}
-               </div>
-             </div>
-          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                ))}
+              </table>
+            </div>
+          </section>
 
           {/* Formal approvals / e-signatures */}
           {ticket.id && (
@@ -1944,137 +1839,120 @@ export default function TicketDetailView() {
           )}
         </div>
 
-        {/* RIGHT: ACTIVITY */}
-        <div className="h-[calc(100dvh-140px)] min-h-[420px] flex flex-col bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden xl:sticky xl:top-4">
-          <div role="tablist" className="flex items-center gap-1 px-3 pt-3 border-b border-[var(--color-border)]"><button role="tab" aria-selected={activeTab === 'discussion'} onClick={() => setActiveTab('discussion')} className={`px-3 h-10 text-[13px] font-bold border-b-2 -mb-px transition-colors ${activeTab === 'discussion' ? 'text-[var(--color-text)] border-[var(--color-text)]' : 'text-[var(--color-text-muted)] border-transparent hover:text-[var(--color-text)]'}`}>Discussion{(ticket.comments?.length ?? 0) > 0 ? ` · ${ticket.comments?.length}` : ''}</button><button role="tab" aria-selected={activeTab === 'audit'} onClick={() => setActiveTab('audit')} className={`px-3 h-10 text-[13px] font-bold border-b-2 -mb-px transition-colors ${activeTab === 'audit' ? 'text-[var(--color-text)] border-[var(--color-text)]' : 'text-[var(--color-text-muted)] border-transparent hover:text-[var(--color-text)]'}`}>History</button></div>
-          <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-4 space-y-5 custom-scrollbar relative">
+        {/* RIGHT: discussion and history */}
+        <section className="min-w-0 xl:sticky xl:top-4">
+          <div role="tablist" aria-label="Discussion and history" className="flex items-end gap-5 mb-2.5 min-h-8">
+            {([['discussion', `Discussion${(ticket.comments?.length ?? 0) > 0 ? ` (${ticket.comments?.length})` : ''}`], ['audit', 'History']] as const).map(([key, label]) => (
+              <button key={key} type="button" role="tab" aria-selected={activeTab === key} onClick={() => setActiveTab(key)}
+                className={`pb-1 -mb-px border-b-2 font-display text-[19px] leading-tight font-semibold transition-colors ${activeTab === key ? 'text-[var(--color-text)] border-[var(--color-accent)]' : 'text-[var(--color-text-muted)] border-transparent hover:text-[var(--color-text)]'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] h-[min(70dvh,640px)] xl:h-[calc(100dvh-170px)] min-h-[420px]">
+          <div ref={chatContainerRef} className="flex-1 overflow-y-auto custom-scrollbar relative">
             {activeTab === 'discussion' && (
               <>
-                {(!ticket.comments || ticket.comments.length === 0) && <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none"><MessageSquare className="w-6 h-6 text-[var(--color-text-faint)] mb-2" /><p className="text-[13px] text-[var(--color-text-muted)]">No comments yet</p></div>}
-                {ticket.comments?.map((comment, idx) => (
-                  <div key={`${comment.id}-${idx}`} id={`comment-${comment.id}`} className={`flex flex-col ${comment.user === userEmail ? 'items-end' : 'items-start'} animate-in slide-in-from-bottom-2 ${highlightCommentId === comment.id ? 'rounded-2xl ring-2 ring-[var(--color-border-strong)] ring-offset-2 transition-shadow' : ''}`}>
-                    <div className="flex items-end gap-2 max-w-[90%]">
-                       {comment.user !== userEmail && <UserAvatar email={comment.user} size={24} rounded="full" className="mb-1" />}
-                       <div className={`rounded-2xl p-3.5 shadow-sm text-sm relative group ${comment.type === 'Rejection' || comment.type === 'Revision' ? 'bg-amber-50 border border-amber-200 text-amber-900 dark:bg-amber-500/10 dark:border-amber-500/30 dark:text-amber-200 rounded-bl-none' : comment.type === 'Approval' ? 'bg-emerald-50 border border-emerald-100 text-emerald-900 dark:bg-emerald-500/10 dark:border-emerald-500/30 dark:text-emerald-200 rounded-bl-none' : comment.user === userEmail ? 'bg-[var(--color-surface-2)] text-[var(--color-text)] rounded-br-none ' : `${OTHER_BUBBLE} rounded-bl-none`}`}>
-                          {comment.user !== userEmail && comment.type === 'General' && (
-                            <div className="text-[13px] font-semibold mb-1 opacity-60">{authorLabel(comment.user)}</div>
-                          )}
-                          
-                          {/* HEADER: Type & Category */}
-                          {comment.type !== 'General' && (
-                            <div className={`text-[11px] font-bold uppercase mb-1.5 flex items-center justify-between ${comment.user === userEmail ? 'opacity-80' : 'opacity-60'} ${comment.type === 'Reassignment' ? 'text-[var(--color-text)] border-b border-[var(--color-border)] pb-1 italic' : ''}`}>
-                              <div className="flex items-center">
-                                {comment.type === 'Rejection' || comment.type === 'Revision' ? <AlertTriangle className="w-3 h-3 mr-1" /> : 
-                                 comment.type === 'Reassignment' ? <UserPlus className="w-3 h-3 mr-1" /> :
-                                 <CheckCircle2 className="w-3 h-3 mr-1" />}
-                                
-                                {comment.type === 'Rejection' || comment.type === 'Revision' ? 'Revision Requested' : 
-                                 comment.type === 'Reassignment' ? 'Reassigned' : 
-                                 comment.type}
-                              </div>
-                              
-                              {/* ADMIN OVERRIDE CONTROLS */}
-                              {(comment.type === 'Rejection' || comment.type === 'Revision') && (
-                                <div className="ml-2">
-                                  {editingCommentId === comment.id ? (
-                                    <div className="flex items-center space-x-1" onClick={(e) => e.stopPropagation()}>
-                                       <select 
-                                         value={editCategoryVal} 
-                                         onChange={(e) => setEditCategoryVal(e.target.value)}
-                                         className="text-[11px] p-1 rounded border border-[var(--color-border-strong)] text-[var(--color-text)] bg-[var(--color-surface)] focus:ring-1 focus:ring-[var(--color-accent-ring)]"
-                                       >
-                                         {REVISION_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
-                                       </select>
-                                       <button onClick={() => handleUpdateCategory(comment.id)} aria-label="Save reason" className="p-1 bg-[var(--color-text)] text-[var(--color-surface)] rounded hover:opacity-90"><Check className="w-3 h-3" /></button>
-                                       <button onClick={() => setEditingCommentId(null)} aria-label="Cancel" className="p-1 bg-[var(--color-surface-2)] text-[var(--color-text-muted)] rounded hover:text-[var(--color-text)]"><X className="w-3 h-3" /></button>
-                                    </div>
-                                  ) : (
-                                    <div className="flex items-center">
-                                      <span className="bg-[var(--color-surface)] px-1.5 py-0.5 rounded text-[11px] border border-[var(--color-border)] mr-1">
-                                        {comment.category || 'Uncategorized'}
-                                      </span>
-                                      {isAdmin && (
-                                        <button 
-                                          onClick={() => { setEditingCommentId(comment.id); setEditCategoryVal(comment.category || REVISION_REASONS[0]); }} 
-                                          className="p-1 hover:bg-black/10 rounded transition-colors"
-                                          title="Change the reason"
-                                          aria-label="Change the reason"
-                                        >
-                                          <Pen className="w-3 h-3" />
-                                        </button>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          )}
-
-                          {editingTextId === comment.id ? (
-                            <div className="space-y-1.5">
-                              <textarea
-                                value={editTextDraft}
-                                onChange={(e) => setEditTextDraft(e.target.value)}
-                                autoFocus
-                                rows={3}
-                                className="w-full p-2 rounded text-xs border border-[var(--color-border-strong)] text-[var(--color-text)] bg-[var(--color-surface)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
-                              />
-                              <div className="flex items-center gap-1.5 justify-end">
-                                <button onClick={() => { setEditingTextId(null); setEditTextDraft(''); }} className="px-2 py-1 rounded text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] font-bold">Cancel</button>
-                                <button onClick={() => void handleSaveCommentEdit(comment.id)} disabled={!editTextDraft.trim()} className="px-2 py-1 rounded text-[11px] bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 font-bold disabled:opacity-50">Save</button>
-                              </div>
-                            </div>
-                          ) : (
-                            <>
-                              <CommentBody text={comment.text} currentUserId={uid ?? undefined} className="leading-relaxed" />
-                              {(comment as TicketComment & { editedAt?: string }).editedAt && (
-                                <div className="mt-1 text-[11px] italic opacity-70">edited</div>
-                              )}
-                            </>
-                          )}
-                       </div>
-                    </div>
-                    {/* Time, and edit / delete for the author or an admin: a quiet line under the bubble. */}
-                    {editingTextId !== comment.id && (
-                      <div className={`mt-1 flex items-center gap-2 text-[11px] text-[var(--color-text-faint)] ${comment.user === userEmail ? 'pr-1' : 'pl-9'}`}>
-                        <span>{toDate(comment.date).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
-                        {(comment.user === userEmail || isAdmin) && (
-                          <>
-                            <button onClick={() => { setEditingTextId(comment.id); setEditTextDraft(comment.text); }} className="font-semibold hover:text-[var(--color-text)] hover:underline">Edit</button>
-                            <button onClick={async () => { if (await appConfirm({ message: 'Delete this comment? It cannot be brought back.', tone: "danger", confirmLabel: "Delete" })) void handleDeleteComment(comment.id); }} className="font-semibold hover:text-red-700 dark:hover:text-red-400 hover:underline">Delete</button>
-                          </>
-                        )}
+                {(!ticket.comments || ticket.comments.length === 0) && <p className="px-4 py-10 text-center text-[15px] text-[var(--color-text-muted)]">No comments yet.</p>}
+                <ol className="divide-y divide-[var(--color-border)]">
+                {ticket.comments?.map((comment, idx) => {
+                  const kindTag = comment.type === 'Rejection' || comment.type === 'Revision'
+                    ? <StatusTag tone="warn">Revision requested</StatusTag>
+                    : comment.type === 'Approval' ? <StatusTag tone="good">Approved</StatusTag>
+                    : comment.type === 'Reassignment' ? <StatusTag>Reassigned</StatusTag>
+                    : comment.type && comment.type !== 'General' ? <StatusTag>{comment.type}</StatusTag> : null;
+                  const mine = comment.user === userEmail;
+                  return (
+                  <li key={`${comment.id}-${idx}`} id={`comment-${comment.id}`} className={`flex gap-3 px-4 py-3.5 transition-colors ${highlightCommentId === comment.id ? 'bg-[var(--color-surface-2)]' : ''}`}>
+                    <UserAvatar email={comment.user} size={28} rounded="full" className="shrink-0 mt-0.5" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                        <span className="text-[15px] font-semibold text-[var(--color-text)]">{mine ? 'You' : authorLabel(comment.user)}</span>
+                        <span className="text-[13px] text-[var(--color-text-muted)] tabular-nums">{fmtWhen(comment.date)}</span>
                       </div>
-                    )}
-                  </div>
-                ))}
+                      {kindTag && (
+                        <div className="mt-1 flex flex-wrap items-center gap-2">
+                          {kindTag}
+                          {/* The reason on a sent-back comment; an admin can correct it. */}
+                          {(comment.type === 'Rejection' || comment.type === 'Revision') && (
+                            editingCommentId === comment.id ? (
+                              <span className="inline-flex items-center gap-1">
+                                <select aria-label="Reason" value={editCategoryVal} onChange={(e) => setEditCategoryVal(e.target.value)}
+                                  className="h-8 px-2 rounded-md border border-[var(--color-border-strong)] text-[13px] text-[var(--color-text)] bg-[var(--color-surface)]">
+                                  {REVISION_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+                                </select>
+                                <button type="button" onClick={() => handleUpdateCategory(comment.id)} aria-label="Save reason" className="w-8 h-8 grid place-items-center rounded-md border border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]"><Check className="w-3.5 h-3.5" /></button>
+                                <button type="button" onClick={() => setEditingCommentId(null)} aria-label="Cancel" className="w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-3.5 h-3.5" /></button>
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-[13px] text-[var(--color-text-muted)]">
+                                {comment.category || 'No reason given'}
+                                {isAdmin && (
+                                  <button type="button" onClick={() => { setEditingCommentId(comment.id); setEditCategoryVal(comment.category || REVISION_REASONS[0]); }}
+                                    className="w-7 h-7 grid place-items-center rounded-md hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]" title="Change the reason" aria-label="Change the reason">
+                                    <Pen className="w-3 h-3" />
+                                  </button>
+                                )}
+                              </span>
+                            )
+                          )}
+                        </div>
+                      )}
+                      {editingTextId === comment.id ? (
+                        <div className="mt-1.5 space-y-2">
+                          <textarea value={editTextDraft} onChange={(e) => setEditTextDraft(e.target.value)} autoFocus rows={3} aria-label="Edit comment"
+                            className="w-full p-2.5 rounded-md text-[15px] border border-[var(--color-border-strong)] text-[var(--color-text)] bg-[var(--color-surface)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
+                          <div className="flex items-center gap-2 justify-end">
+                            <button type="button" onClick={() => { setEditingTextId(null); setEditTextDraft(''); }} className={`${heroQuiet} h-8`}>Cancel</button>
+                            <button type="button" onClick={() => void handleSaveCommentEdit(comment.id)} disabled={!editTextDraft.trim()} className={`${heroQuiet} h-8`}>Save</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <CommentBody text={comment.text} currentUserId={uid ?? undefined} className="mt-1 text-[15px] leading-relaxed text-[var(--color-text)]" />
+                          <div className="mt-1 flex items-center gap-3 text-[13px]">
+                            {(comment as TicketComment & { editedAt?: string }).editedAt && <span className="text-[var(--color-text-muted)]">Edited</span>}
+                            {(mine || isAdmin) && (
+                              <>
+                                <button type="button" onClick={() => { setEditingTextId(comment.id); setEditTextDraft(comment.text); }} className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Edit</button>
+                                <button type="button" onClick={async () => { if (await appConfirm({ message: 'Delete this comment? It cannot be brought back.', tone: "danger", confirmLabel: "Delete" })) void handleDeleteComment(comment.id); }} className="text-[var(--state-overdue)] hover:underline underline-offset-2">Delete</button>
+                              </>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </li>
+                  );
+                })}
+                </ol>
               </>
             )}
             {activeTab === 'audit' && (
-              <div className="space-y-6 pl-2">
-                 {ticket.history?.map((event, idx) => (
-                   <div key={`history-${idx}`} className="flex gap-4 relative animate-in fade-in slide-in-from-left-2">
-                     {idx !== (ticket.history?.length || 0) - 1 && <div className="absolute left-[11px] top-8 bottom-[-24px] w-0.5 bg-[var(--color-border)]" />}
-                     <div className="relative z-10"><div className="w-6 h-6 rounded-full bg-[var(--color-surface)] border-2 border-[var(--color-border)] flex items-center justify-center"><div className="w-2 h-2 rounded-full bg-[var(--color-text-muted)]" /></div></div>
-                     <div className="flex-1 pb-1">
-                       <div className="flex items-center justify-between gap-2"><span className="text-[13px] font-bold text-[var(--color-text)]">{event.action.replace(/_/g, ' ')}</span><span className="text-[12px] text-[var(--color-text-muted)] tabular-nums">{toDate(event.date).toLocaleDateString()}</span></div>
-                       <p className="text-[12px] text-[var(--color-text-muted)] mt-0.5">by <span className="font-semibold text-[var(--color-text)]">{event.user?.split('@')[0]}</span></p>
-                       {event.details && <p className="mt-1.5 text-[13px] text-[var(--color-text-muted)]">&ldquo;{event.details}&rdquo;</p>}
-                     </div>
-                   </div>
-                 ))}
-                 {(!ticket.history || ticket.history.length === 0) && <div className="text-center py-8 text-[var(--color-text-faint)] text-xs italic">No history recorded yet.</div>}
-              </div>
+              (!ticket.history || ticket.history.length === 0)
+                ? <p className="px-4 py-10 text-center text-[15px] text-[var(--color-text-muted)]">No history yet.</p>
+                : (
+                  <ol className="divide-y divide-[var(--color-border)]">
+                    {ticket.history.map((event, idx) => (
+                      <li key={`history-${idx}`} className="px-4 py-3">
+                        <div className="flex items-baseline justify-between gap-3">
+                          <span className="text-[15px] font-semibold text-[var(--color-text)]">{sentence(event.action.replace(/_/g, ' '))}</span>
+                          <span className="shrink-0 text-[13px] text-[var(--color-text-muted)] tabular-nums">{fmtWhen(event.date)}</span>
+                        </div>
+                        <p className="text-[13px] text-[var(--color-text-muted)]">By {event.user?.split('@')[0] || 'someone'}{event.details ? `: ${event.details}` : ''}</p>
+                      </li>
+                    ))}
+                  </ol>
+                )
             )}
           </div>
           {activeTab === 'discussion' && (
             ticket.archivedAt ? (
-              <div className="p-4 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] text-[11px] text-[var(--color-text)] flex items-center gap-2 flex-wrap">
-                <Archive className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-                <span>Archived. The comments are in the archive; restore it to comment again.</span>
-              </div>
+              <p className="px-4 py-3 border-t border-[var(--color-border)] text-[13px] text-[var(--color-text-muted)]">
+                Archived. Restore it to comment again.
+              </p>
             ) : (
-            <div className="p-4 bg-[var(--color-surface)] border-t border-[var(--color-border)]">
+            <div className="p-3 border-t border-[var(--color-border)]">
               {activeOrgId && (
                 <MentionableTextarea
                   value={newComment}
@@ -2085,22 +1963,25 @@ export default function TicketDetailView() {
                 />
               )}
               <div className="mt-2 flex items-center justify-between gap-2">
-                <p className="text-[11px] text-[var(--color-text-muted)] min-w-0">
-                  {newCommentMentions.length > 0 ? <span className="text-[var(--color-text)] font-bold">{newCommentMentions.length} {newCommentMentions.length === 1 ? 'person' : 'people'} will be notified</span> : null}
+                <p className="text-[13px] text-[var(--color-text-muted)] min-w-0">
+                  {newCommentMentions.length > 0 ? `${newCommentMentions.length} ${newCommentMentions.length === 1 ? 'person' : 'people'} will be notified` : null}
                 </p>
-                <button
-                  onClick={() => handlePostComment(newComment)}
-                  disabled={!newComment.trim()}
-                  className="inline-flex items-center gap-1.5 h-9 px-3 bg-[var(--color-text)] text-[var(--color-surface)] rounded-lg text-[13px] font-bold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
-                ><Send className="w-4 h-4" /> Send</button>
+                <button type="button" onClick={() => handlePostComment(newComment)} disabled={!newComment.trim()} className={heroQuiet}>
+                  <Send className="w-4 h-4" /> Send
+                </button>
               </div>
             </div>
             )
           )}
-        </div>
+          </div>
+        </section>
       </div>
       </PageBody>
       </div>
     </PageShell>
   );
+}
+
+function Muted({ children }: { children: React.ReactNode }) {
+  return <span className="text-[var(--color-text-faint)]">{children}</span>;
 }

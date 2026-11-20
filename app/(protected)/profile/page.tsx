@@ -6,16 +6,13 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import {
-  Mail, Shield, Bell, LogOut, Save,
-  AlertTriangle, Check, Briefcase, Edit3, Camera, Trash2, Loader2,
-} from "lucide-react";
+import { Bell, LogOut, Check, Camera, Loader2 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase, setPreferMicrosoft } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import { PageShell } from "@/components/ui/PageShell";
-import { PageHero, PageBody, Card, heroPrimary } from "@/components/ui/PageHero";
-import { Input } from "@/components/ui/Field";
+import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
+import { StatusTag } from "@/components/requests/RequestBits";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import FileThumb from "@/components/ui/FileThumb";
 import { useFileDrag } from "@/hooks/useFileDrag";
@@ -109,176 +106,160 @@ export default function ProfilePage() {
   };
 
   if (loading) {
-    return <PageShell width="form"><PageHero kicker="Your profile" title="Your profile" size="md" overlap={false} /><LoadingBlock what="your profile" /></PageShell>;
+    return <PageShell width="form"><PageHero kicker="Your profile" title="Your profile" size="md" /><PageBody><Card><LoadingBlock what="your profile" className="border-0 p-0" /></Card></PageBody></PageShell>;
   }
 
+  const shownName = displayName.trim() || (userEmail ? userEmail.split("@")[0] : "you");
   return (
     <PageShell width="form">
         <PageHero
           kicker="Your profile"
           size="md"
-          title={`Signed in as ${displayName.trim() || (userEmail ? userEmail.split("@")[0] : "you")}.`}
-          sub={`${activeRole ? `${activeRole} · ` : ""}${orgs.length} workspace${orgs.length === 1 ? "" : "s"}${userEmail ? ` · ${userEmail}` : ""}`}
+          title={`Signed in as ${shownName}.`}
+          sub={userEmail ?? undefined}
+          facts={[
+            { label: "Role", value: activeRole || "None" },
+            { label: "Workspaces", value: orgs.length },
+          ]}
+          tools={
+            <>
+              <Link href="/settings/notifications" className={heroQuiet} aria-label="Notification settings">
+                <Bell className="w-4 h-4" /><span className="max-sm:hidden">Notifications</span>
+              </Link>
+              <button type="button" onClick={handleSignOut} className={heroQuiet} aria-label="Sign out">
+                <LogOut className="w-4 h-4" /><span className="max-sm:hidden">Sign out</span>
+              </button>
+            </>
+          }
         />
 
         <PageBody>
-        {/* Identity */}
-        <Card label="Identity">
-          {error && (
-            <p role="alert" className="mb-3 text-[13px] text-red-700 dark:text-red-400 flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
-            </p>
-          )}
-
-          {/* Avatar — photo if set, otherwise initials from the display name
-              (Grant Getzfrid → GG). This is the face shown everywhere. */}
-          <div {...avatarDrag.bind} className={`flex items-center gap-4 mb-4 rounded-xl ${avatarDrag.ring}`}>
-            {avatarDrag.over ? (
-              <div className="w-16 h-16 rounded-xl grid place-items-center text-[11px] font-bold text-[var(--color-text)] text-center">{avatarDrag.say}</div>
-            ) : (
-              <UserAvatar uid={uid} name={displayName || undefined} email={userEmail} size={64} rounded="xl" />
-            )}
-            <div className="flex flex-col gap-1.5">
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => avatarInputRef.current?.click()}
-                  disabled={avatarBusy}
-                  className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-[13px] font-semibold border border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] transition-colors disabled:opacity-50"
-                >
-                  {avatarBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
-                  {hasAvatar ? "Change photo" : "Add photo"}
-                </button>
-                {hasAvatar && (
-                  <button
-                    onClick={async () => {
-                      if (!uid) return;
-                      setAvatarBusy(true); setAvatarError(null);
-                      try { await saveMyAvatar(uid, null); clearProfileCache(); setHasAvatar(false); }
-                      catch (e) { setAvatarError(`Couldn't remove the photo: ${(e as Error).message}`); }
-                      finally { setAvatarBusy(false); }
-                    }}
-                    type="button"
-                    disabled={avatarBusy}
-                    className="inline-flex items-center gap-1 h-9 px-2.5 rounded-lg text-[13px] font-semibold text-rose-600 hover:bg-[var(--color-surface-2)] transition-colors disabled:opacity-50"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" /> Remove
-                  </button>
-                )}
-              </div>
-              {avatarFile ? (
-                <div className="flex items-center gap-2">
-                  <FileThumb file={avatarFile} size={28} />
-                  <span className="min-w-0">
-                    <span className="block text-[11px] font-bold text-[var(--color-text)] truncate max-w-[12rem]">{avatarFile.name}</span>
-                    <span className="block text-[11px] text-[var(--color-text-muted)]">{formatBytes(avatarFile.size)}{avatarBusy ? " · uploading…" : ""}</span>
-                  </span>
-                  {!avatarBusy && avatarError && (
-                    <button type="button" onClick={() => void uploadAvatar(avatarFile)} className="px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Try again</button>
-                  )}
-                </div>
-              ) : (
-                <div className="text-[12px] text-[var(--color-text-muted)]">
-                  No photo? Your initials show instead, so set your display name below.
-                </div>
+        <Card label="Your details" pad={false}>
+          <form onSubmit={(e) => { e.preventDefault(); void save(); }}>
+            <div className="px-5 sm:px-6 py-5 space-y-5">
+              {error && (
+                <p role="alert" className="relative pl-3 text-[15px] text-[var(--color-text)]">
+                  <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />{error}
+                </p>
               )}
-              {avatarError && <div role="alert" className="text-[11px] text-red-700 dark:text-red-400">{avatarError}</div>}
-              <input
-                ref={avatarInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  e.target.value = "";
-                  if (file) void uploadAvatar(file);
-                }}
-              />
-            </div>
-          </div>
 
-          <Row icon={Mail} label="Email" value={userEmail ?? "-"} mono />
-          <div className="mt-3">
-            <label htmlFor="profile-display-name" className="text-[13px] font-semibold text-[var(--color-text-muted)] inline-flex items-center gap-1">
-              <Edit3 className="w-3 h-3" /> Display name
-            </label>
-            <Input
-              id="profile-display-name"
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              placeholder="Your display name (defaults to email handle)"
-              className="mt-1"
-            />
-          </div>
-          <div className="mt-4 flex items-center justify-end gap-3">
-            {saved && <span role="status" className="inline-flex items-center gap-1 text-[13px] font-bold text-emerald-700 dark:text-emerald-400"><Check className="w-3.5 h-3.5" /> Saved</span>}
-            <button type="button" onClick={save} disabled={saving || loadFailed} className={heroPrimary}>
-              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-              Save name
-            </button>
-          </div>
+              {/* Photo if set, otherwise initials from the display name. This
+                  is the face shown everywhere. Drop an image here to use it. */}
+              <div>
+                <div className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Photo</div>
+                <div {...avatarDrag.bind} className={`flex items-center gap-4 rounded-md ${avatarDrag.ring}`}>
+                  {avatarDrag.over ? (
+                    <div className="w-16 h-16 rounded-xl grid place-items-center border border-dashed border-[var(--color-border-strong)] text-[13px] font-semibold text-[var(--color-text)] text-center">{avatarDrag.say}</div>
+                  ) : (
+                    <UserAvatar uid={uid} name={displayName || undefined} email={userEmail} size={64} rounded="xl" />
+                  )}
+                  <div className="min-w-0 space-y-1.5">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <button type="button" onClick={() => avatarInputRef.current?.click()} disabled={avatarBusy} className={heroQuiet}>
+                        {avatarBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
+                        {hasAvatar ? "Change photo" : "Add photo"}
+                      </button>
+                      {hasAvatar && (
+                        <button
+                          type="button"
+                          disabled={avatarBusy}
+                          onClick={async () => {
+                            if (!uid) return;
+                            setAvatarBusy(true); setAvatarError(null);
+                            try { await saveMyAvatar(uid, null); clearProfileCache(); setHasAvatar(false); }
+                            catch (e) { setAvatarError(`Couldn't remove the photo: ${(e as Error).message}`); }
+                            finally { setAvatarBusy(false); }
+                          }}
+                          className="text-[14px] text-[var(--state-overdue)] hover:underline underline-offset-2 disabled:opacity-50"
+                        >
+                          Remove photo
+                        </button>
+                      )}
+                    </div>
+                    {avatarFile ? (
+                      <div className="flex items-center gap-2">
+                        <FileThumb file={avatarFile} size={28} />
+                        <span className="min-w-0 text-[13px]">
+                          <span className="block font-semibold text-[var(--color-text)] truncate max-w-[14rem]">{avatarFile.name}</span>
+                          <span className="block text-[var(--color-text-muted)]">{formatBytes(avatarFile.size)}{avatarBusy ? ", uploading…" : ""}</span>
+                        </span>
+                        {!avatarBusy && avatarError && (
+                          <button type="button" onClick={() => void uploadAvatar(avatarFile)} className={`${heroQuiet} h-8`}>Try again</button>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-[13px] text-[var(--color-text-muted)]">No photo shows your initials. Under 5 MB.</p>
+                    )}
+                    {avatarError && <p role="alert" className="text-[13px] font-semibold text-[var(--state-overdue)]">{avatarError}</p>}
+                  </div>
+                </div>
+                <input
+                  ref={avatarInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = "";
+                    if (file) void uploadAvatar(file);
+                  }}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                <div>
+                  <label htmlFor="profile-display-name" className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Display name</label>
+                  <input
+                    id="profile-display-name"
+                    value={displayName}
+                    onChange={(e) => setDisplayName(e.target.value)}
+                    placeholder={userEmail ? userEmail.split("@")[0] : "Your name"}
+                    aria-describedby="profile-name-hint"
+                    className="w-full h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[15px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
+                  />
+                  <p id="profile-name-hint" className="mt-1 text-[13px] text-[var(--color-text-muted)]">Blank uses the first part of your email.</p>
+                </div>
+                <div>
+                  <div className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Email</div>
+                  <div className="h-10 flex items-center text-[15px] text-[var(--color-text)] truncate">{userEmail ?? "None"}</div>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-3 px-5 sm:px-6 py-3 border-t border-[var(--color-border)]">
+              {saved && <span role="status" className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]"><Check className="w-4 h-4 text-[var(--state-released)]" /> Saved</span>}
+              <button type="submit" disabled={saving || loadFailed} className={heroPrimary}>
+                {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+                Save
+              </button>
+            </div>
+          </form>
         </Card>
 
-        {/* Workspaces */}
-        <Card label="Workspaces">
+        <Card label="Workspaces" pad={false} className="overflow-hidden">
           {orgs.length === 0 ? (
-            <p className="text-[14px] text-[var(--color-text-muted)]">You aren&apos;t a member of any workspaces.</p>
+            <p className="px-5 py-4 text-[15px] text-[var(--color-text-muted)]">You aren&apos;t in any workspace.</p>
           ) : (
-            <ul className="divide-y divide-[var(--color-border)]">
-              {orgs.map((o) => (
-                <li key={o.org_id} className="py-2 flex items-center gap-3">
-                  <Briefcase className="w-4 h-4 text-[var(--color-text-muted)]" />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-[14px] font-bold text-[var(--color-text)] truncate">{o.org_name}</div>
-                    <div className="text-[13px] text-[var(--color-text-muted)] font-mono ">{o.role}</div>
-                  </div>
-                  {o.org_id === activeOrgId && <span className="text-[11px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded">current</span>}
-                </li>
-              ))}
-            </ul>
+            <table className="w-full text-[15px]">
+              <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+                <tr>
+                  <th className="font-semibold px-4 sm:px-5 h-10 w-full">Workspace</th>
+                  <th className="font-semibold px-4 h-10 whitespace-nowrap">Your role</th>
+                  <th className="h-10 pr-4 sm:pr-5"><span className="sr-only">Current</span></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--color-border)]">
+                {orgs.map((o) => (
+                  <tr key={o.org_id}>
+                    <td className="px-4 sm:px-5 py-3 font-semibold text-[var(--color-text)] max-w-0 truncate">{o.org_name}</td>
+                    <td className="px-4 py-3 whitespace-nowrap text-[var(--color-text)]">{o.role}</td>
+                    <td className="pr-4 sm:pr-5 py-3 whitespace-nowrap text-right">{o.org_id === activeOrgId && <StatusTag tone="good">Current</StatusTag>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
         </Card>
-
-        {/* Current session */}
-        <Card label="Current session">
-          <Row icon={Shield} label="Role" value={activeRole || "-"} />
-        </Card>
-
-        {/* Quick links */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <Link
-            href="/settings/notifications"
-            className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] p-4 flex items-center gap-3 hover-lift"
-          >
-            <div className="p-2.5 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><Bell className="w-4 h-4" /></div>
-            <div className="flex-1">
-              <div className="text-[14px] font-bold text-[var(--color-text)]">Notification preferences</div>
-              <div className="text-[13px] text-[var(--color-text-muted)]">What gets emailed to you, and when.</div>
-            </div>
-          </Link>
-          <button
-            type="button"
-            onClick={handleSignOut}
-            className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] p-4 flex items-center gap-3 hover-lift text-left"
-          >
-            <div className="p-2.5 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><LogOut className="w-4 h-4" /></div>
-            <div className="flex-1">
-              <div className="text-[14px] font-bold text-[var(--color-text)]">Sign out</div>
-              <div className="text-[13px] text-[var(--color-text-muted)]">End your session on this device.</div>
-            </div>
-          </button>
-        </div>
         </PageBody>
     </PageShell>
-  );
-}
-
-function Row({ icon: Icon, label, value, mono }: { icon: React.ComponentType<{ className?: string }>; label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="flex items-center gap-3 py-1.5">
-      <Icon className="w-4 h-4 text-[var(--color-text-faint)]" />
-      <span className="text-[13px] font-semibold text-[var(--color-text-muted)] w-16">{label}</span>
-      <span className={`text-[14px] text-[var(--color-text)] min-w-0 truncate ${mono ? "font-mono" : ""}`}>{value}</span>
-    </div>
   );
 }

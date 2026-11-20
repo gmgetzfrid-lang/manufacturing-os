@@ -1,8 +1,9 @@
 "use client";
 
-// TrialBanner: one quiet line at the top of the page during the free trial.
-// Hides once subscription_status leaves 'trialing'. Not a banner: the days
-// left turn amber in the last week and red once it has ended, nothing else.
+// TrialBanner: one quiet full-width line across the top during the free
+// trial. Hides once subscription_status leaves 'trialing'. The words stay
+// graphite; a small dot carries the state (amber in the last week, red once
+// it has ended), and Subscribe is a plain link.
 
 import React from "react";
 import Link from "next/link";
@@ -20,18 +21,19 @@ export default function TrialBanner() {
     : days !== null
       ? `Free trial: ${days} day${days === 1 ? "" : "s"} left.`
       : "Free trial.";
-  const tone = expired
-    ? "text-rose-700 dark:text-rose-400 font-semibold"
+  const dot = expired
+    ? "bg-[var(--state-overdue)]"
     : days !== null && days <= 6
-      ? "text-amber-700 dark:text-amber-400 font-semibold"
-      : "";
+      ? "bg-[var(--state-held)]"
+      : "bg-[var(--color-text-faint)]";
 
   return (
-    <p className="px-4 py-1.5 text-[12px] text-center text-[var(--color-text-muted)] bg-[var(--color-canvas)]">
-      <span className={tone}>{label}</span>{" "}
-      <Link href="/admin/billing" className="font-bold text-[var(--color-text)] underline underline-offset-2">
+    <div role="status" className="shrink-0 w-full flex items-center gap-2 min-h-9 px-4 sm:px-6 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-surface)] text-[13px] text-[var(--color-text)]">
+      <span aria-hidden className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
+      <span>{label}</span>
+      <Link href="/admin/billing" className="text-[var(--color-accent-text)] hover:underline underline-offset-2">
         Subscribe
       </Link>
-    </p>
+    </div>
   );
 }
