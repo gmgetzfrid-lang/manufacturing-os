@@ -102,11 +102,11 @@ export default function PlanNextShift({ milestones, next, now, tz, times, mode, 
                   </div>
                   <div className="flex items-center gap-1.5">
                     <button type="button" onClick={() => { setSaved(null); setView({ v: "pick", outId: r.leaf.id! }); }}
-                      className="inline-flex items-center gap-1 h-9 rounded-[10px] bg-[var(--color-surface-2)] px-3 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)]">
+                      className="inline-flex items-center gap-1 h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                       <ArrowLeftRight className="w-3.5 h-3.5" /> Swap
                     </button>
                     <button type="button" onClick={() => { setSaved(null); setView({ v: "push", outId: r.leaf.id! }); }}
-                      className="inline-flex items-center gap-1 h-9 rounded-[10px] bg-[var(--color-surface-2)] px-3 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)]">
+                      className="inline-flex items-center gap-1 h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                       <LogOut className="w-3.5 h-3.5" /> Push out
                     </button>
                   </div>
@@ -135,7 +135,7 @@ export default function PlanNextShift({ milestones, next, now, tz, times, mode, 
                 <div className="flex flex-wrap gap-1.5">
                   {later.map((w) => (
                     <button key={w.start} type="button" onClick={() => setView({ v: "confirm", action: { kind: "push", outId: view.outId, to: w.start }, back: view })}
-                      className="h-9 rounded-[10px] bg-[var(--color-surface-2)] px-3 font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)]">
+                      className="h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                       {shiftName(w)} <span className="text-[var(--color-text-muted)] font-normal">{T(w.start)}</span>
                     </button>
                   ))}
@@ -352,7 +352,7 @@ function Where({ r }: { r: ShiftRow }) {
   return (
     <div className="mt-0.5 text-[11.5px] text-[var(--color-text-muted)] break-words" title={r.path.join(" › ")}>
       <span className="font-semibold text-[var(--color-text)]">{r.parentName ?? r.path[r.path.length - 1]}</span>
-      {wo ? <> · WO <span className="font-mono">{wo}</span></> : null}{r.leaf.responsibleParty ? ` · ${r.leaf.responsibleParty}` : ""}
+      {wo ? <> · WO <span className="font-display tabular-nums">{wo}</span></> : null}{r.leaf.responsibleParty ? ` · ${r.leaf.responsibleParty}` : ""}
     </div>
   );
 }

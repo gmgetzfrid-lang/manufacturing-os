@@ -10,7 +10,7 @@ import type { PathMarks } from "@/lib/criticalPath";
 export default function PathTag({ id, marks, className = "" }: { id?: string | null; marks?: PathMarks; className?: string }) {
   if (!id || !marks) return null;
   if (marks.ids.has(id)) {
-    return <span title="On the critical path: it sets the finish date" className={`inline-block whitespace-nowrap rounded px-1 py-px text-[11px] font-black uppercase tracking-wide leading-none bg-rose-700 text-white align-middle ${className}`}>Critical</span>;
+    return <span title="On the critical path: it sets the finish date" className={`inline-block whitespace-nowrap rounded px-1 py-px text-[11px] font-black leading-none bg-rose-700 text-white align-middle ${className}`}>Critical</span>;
   }
   if (marks.near.has(id)) {
     const f = marks.floatH.get(id);

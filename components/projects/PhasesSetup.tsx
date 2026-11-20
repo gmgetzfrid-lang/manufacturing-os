@@ -290,7 +290,7 @@ export function PhasesSetup({ orgId, projectId, projectName, phases: saved, uid,
         )}
 
         <div className="flex items-center gap-2 flex-wrap">
-          <button type="button" onClick={add} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)]"><Plus className="w-4 h-4" /> Add phase</button>
+          <button type="button" onClick={add} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><Plus className="w-4 h-4" /> Add phase</button>
         </div>
         {phases.length > 1 && (
           <p className="text-[12.5px] text-[var(--color-text-muted)] border-t border-[var(--color-border)] pt-3">

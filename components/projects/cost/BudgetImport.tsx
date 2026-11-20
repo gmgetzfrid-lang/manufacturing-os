@@ -153,7 +153,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
           </div>
           <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 flex flex-wrap gap-x-3">
             <span>{result.source.fileName}</span>
-            {p.chargeAccount && <span>Account <span className="font-mono">{p.chargeAccount}</span></span>}
+            {p.chargeAccount && <span>Account <span className="font-display tabular-nums">{p.chargeAccount}</span></span>}
             {p.docDate && <span>Dated {p.docDate}</span>}
             {p.preparedBy && <span>Prepared by {p.preparedBy}</span>}
             {p.approvals.length > 0 && (
@@ -239,7 +239,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
                         placeholder="-" className="w-36 h-7 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 text-[11px]" />
                       {l.supplier && !exists && (
                         <span title={known ? `Matches ${known.name} on this project` : "New company: it will be added"}
-                          className={`text-[11px] font-black uppercase ${known ? "text-emerald-600" : "text-[var(--color-text-faint)]"}`}>
+                          className={`text-[11px] font-black ${known ? "text-emerald-600" : "text-[var(--color-text-faint)]"}`}>
                           {known ? <Check className="w-3 h-3" /> : "new"}
                         </span>
                       )}
@@ -248,7 +248,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
                   <td className="py-1.5 text-right">
                     <input value={l.amount ?? ""} inputMode="decimal"
                       onChange={(e) => { const n = Number(e.target.value.replace(/[^0-9.]/g, "")); patch(l.key, { amount: e.target.value.trim() && Number.isFinite(n) ? n : null }); }}
-                      className="w-28 h-7 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 text-[11px] text-right font-mono tabular-nums" />
+                      className="w-28 h-7 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 text-[11px] text-right font-display tabular-nums" />
                   </td>
                   <td className="py-1.5 pl-1">
                     <button onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))}

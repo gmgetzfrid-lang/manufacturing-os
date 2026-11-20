@@ -8,6 +8,8 @@
 
 import { Card } from "@/components/ui/PageHero";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import HelpTooltip from "@/components/ui/HelpTooltip";
+import { bandSeg, bandSegItem } from "@/components/admin/band";
 import { Loader2, Plus, Trash2 } from "lucide-react";
 import type { ProjectPhase } from "@/lib/projectPhases";
 import { supabase } from "@/lib/supabase";
@@ -93,7 +95,7 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
   if (!rows) return <Card><LoadingBlock what="the materials register" className="border-0 p-0" /></Card>;
 
   const Pill = ({ id, children }: { id: Filter; children: React.ReactNode }) => (
-    <button type="button" onClick={() => setFilter(id)} aria-pressed={filter === id} className={`h-8 px-3 rounded-full border text-[12.5px] font-extrabold whitespace-nowrap ${filter === id ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)]"}`}>{children}</button>
+    <button type="button" onClick={() => setFilter(id)} aria-pressed={filter === id} className={bandSegItem(filter === id)}>{children}</button>
   );
   // The counts in one line the eye runs along; a bad count in red.
   const Kpi = ({ name, value, detail, bad }: { name: string; value: number; detail: string; bad?: boolean }) => (
@@ -124,17 +126,19 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
         <Kpi name="Short or late" value={sum.late} bad detail="against the need-by date" />
       </div>
 
-      <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex gap-1.5 flex-wrap items-center">
-        <Pill id="all">All {scoped.length}</Pill>
-        <Pill id="attention">Needs attention {sum.needAttention}</Pill>
-        <Pill id="offsite">Off-site repairs {sum.offsite}</Pill>
-        <Pill id="received">Received {sum.received}</Pill>
+      <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex gap-2 flex-wrap items-center">
+        <div className={bandSeg} role="group" aria-label="Show">
+          <Pill id="all">All <span className="tabular-nums text-[var(--color-text-muted)]">{scoped.length}</span></Pill>
+          <Pill id="attention">Needs attention <span className="tabular-nums text-[var(--color-text-muted)]">{sum.needAttention}</span></Pill>
+          <Pill id="offsite">Off-site repairs <span className="tabular-nums text-[var(--color-text-muted)]">{sum.offsite}</span></Pill>
+          <Pill id="received">Received <span className="tabular-nums text-[var(--color-text-muted)]">{sum.received}</span></Pill>
+        </div>
         {phases.length > 0 && <select aria-label="Phase" value={phaseId ?? ""} onChange={(e) => setPhaseId(e.target.value || null)} className={`${field} !w-auto ml-auto h-8 !py-0`}><option value="">All phases</option>{phases.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>}
       </div>
       </Card>
 
       {shown.length === 0 ? (
-        <Card><p className="text-[14px] text-[var(--color-text-muted)]">{scoped.length ? "Nothing under this filter." : "No lines yet. Add each material and each item sent out for repair, with who owns it and when it's needed."}</p></Card>
+        <Card><p className="text-[15px] text-[var(--color-text-muted)]">{scoped.length ? "Nothing under this filter." : <>No lines yet. <HelpTooltip>Add each material and each item sent out for repair, with who owns it and when it&apos;s needed.</HelpTooltip></>}</p></Card>
       ) : <Card pad={false} className="overflow-hidden">
         <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-[12.5px] border-collapse">

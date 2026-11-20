@@ -111,7 +111,7 @@ function TopicCard({ t, n, tone, print, onPresent, onUse, chosen }: { t: SafetyT
             <span className="inline-flex items-center gap-1 h-8 px-3 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[12px] font-bold"><Check className="w-3.5 h-3.5" /> The meeting&apos;s topic</span>
           ) : (
             <button type="button" onClick={(e) => { e.stopPropagation(); onUse?.(); }}
-              className="inline-flex items-center gap-1 h-8 px-3 rounded-lg bg-[var(--color-surface-2)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-border)]">
+              className="inline-flex items-center gap-1 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
               Use for the meeting
             </button>
           )}

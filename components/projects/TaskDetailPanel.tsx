@@ -319,13 +319,13 @@ export default function TaskDetailPanel({
             <div className="mt-2.5 flex items-center gap-2 flex-wrap">
               <StatusPill status={effStatus} />
               <span className="text-[13px] font-bold tabular-nums text-[var(--color-text)]">{effPct}% done</span>
-              {m.wbs && <span className="font-mono text-[12px] text-[var(--color-text-muted)]">{m.wbs}</span>}
+              {m.wbs && <span className="font-display tabular-nums text-[12px] text-[var(--color-text-muted)]">{m.wbs}</span>}
               {!isLeaf && <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Summary</span>}
             </div>
           </div>
           <div className="flex items-center gap-1 shrink-0">
             {canEdit && !editing && (
-              <button onClick={() => setEditing(true)} title="Edit" aria-label="Edit" className="w-9 h-9 inline-flex items-center justify-center rounded-[10px] bg-[var(--color-surface-2)] text-[var(--color-text)] hover:bg-[var(--color-border)]"><Pencil className="w-4 h-4" /></button>
+              <button onClick={() => setEditing(true)} title="Edit" aria-label="Edit" className="w-9 h-9 inline-flex items-center justify-center rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><Pencil className="w-4 h-4" /></button>
             )}
             <button onClick={onClose} aria-label="Close" className="w-9 h-9 inline-flex items-center justify-center rounded-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><XIcon className="w-5 h-5" /></button>
           </div>
@@ -470,13 +470,13 @@ export default function TaskDetailPanel({
                 {(m.responsibleParty || m.responsibleOrg) && (
                   <Field icon={<User className="w-3.5 h-3.5" />} label="Responsible (planned)">
                     {[m.responsibleParty, m.responsibleOrg].filter(Boolean).join(" · ")}
-                    {m.responsibleKind && <span className="ml-1.5 text-[11px] uppercase tracking-wide text-[var(--color-text-faint)]">{m.responsibleKind}</span>}
+                    {m.responsibleKind && <span className="ml-1.5 text-[11px] text-[var(--color-text-faint)]">{m.responsibleKind}</span>}
                   </Field>
                 )}
                 {(m.actualParty || m.actualOrg) && (
                   <Field icon={<HardHat className="w-3.5 h-3.5" />} label="Actually performed by">
                     {[m.actualParty, m.actualOrg].filter(Boolean).join(" · ")}
-                    {m.actualKind && <span className="ml-1.5 text-[11px] uppercase tracking-wide text-[var(--color-text-faint)]">{m.actualKind}</span>}
+                    {m.actualKind && <span className="ml-1.5 text-[11px] text-[var(--color-text-faint)]">{m.actualKind}</span>}
                   </Field>
                 )}
                 {m.location && (
@@ -592,7 +592,7 @@ export default function TaskDetailPanel({
                   <div className="flex items-center gap-1.5 mb-1">
                     <Layers className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                     <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Subtasks</span>
-                    {leafProgress && <span className="text-[11px] font-mono text-[var(--color-text)] dark:text-[var(--color-text)] font-bold ml-auto">{leafProgress.done}/{leafProgress.total} · {leafProgress.pct}%</span>}
+                    {leafProgress && <span className="text-[11px] font-display tabular-nums text-[var(--color-text)] dark:text-[var(--color-text)] font-bold ml-auto">{leafProgress.done}/{leafProgress.total} · {leafProgress.pct}%</span>}
                   </div>
                   <div className="text-[11px] text-[var(--color-text-faint)] mb-2">
                     % = progress and what got done · dot = status · ◀ ▶ = move this step a day (the rest stay put) · name = open it
@@ -625,7 +625,7 @@ export default function TaskDetailPanel({
                         </span>
                         <button onClick={() => onSelectSubtask?.(s)} className="flex-1 min-w-0 text-left" title="Open subtask">
                           <span className={`block text-[12px] truncate ${sStatus === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{s.name}</span>
-                          <span className="block text-[11px] text-[var(--color-text-muted)] font-mono">{spanLabel(startOf(s), finishOf(s), tz)}{sInfo ? ` · ${sInfo.percent}%` : ""}</span>
+                          <span className="block text-[11px] text-[var(--color-text-muted)] font-display tabular-nums">{spanLabel(startOf(s), finishOf(s), tz)}{sInfo ? ` · ${sInfo.percent}%` : ""}</span>
                         </button>
                         {/* A step's % with what got done — right here, no need to open it. */}
                         {!sIsSummary && s.id && (
@@ -660,7 +660,7 @@ export default function TaskDetailPanel({
                             </button>
                           </span>
                         )}
-                        {s.id && childCount(s.id) > 0 && <span className="text-[11px] text-[var(--color-text-faint)] font-mono shrink-0">{childCount(s.id)}</span>}
+                        {s.id && childCount(s.id) > 0 && <span className="text-[11px] text-[var(--color-text-faint)] font-display tabular-nums shrink-0">{childCount(s.id)}</span>}
                       </li>
                       );
                     })}

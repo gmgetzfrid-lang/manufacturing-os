@@ -70,7 +70,7 @@ export function SetupNotice({ missing, canManage }: { missing: SetupItem[]; canM
       </div>
       {canManage ? (
         <button type="button" onClick={() => window.dispatchEvent(new CustomEvent(OPEN_SETUP_EVENT, { detail: missing[0].id }))}
-          className="shrink-0 inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] bg-[var(--color-surface-2)] hover:bg-[var(--color-border)] text-[var(--color-text)] text-[13px] font-semibold">
+          className="shrink-0 inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[13px] font-semibold">
           <Settings2 className="w-4 h-4" /> Finish setup
         </button>
       ) : (
@@ -192,7 +192,7 @@ export function ScheduleSetupButton(p: Props) {
   return (
     <>
       <button onClick={() => setOpen(true)} title="Project type, unit & equipment, time zone, shift times, night shifts, critical path, baseline, staffing plans, roles & responsibilities, printed reports"
-        className="inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] text-[13px] font-semibold transition-colors text-[var(--color-text)] bg-[var(--color-surface-2)] hover:bg-[var(--color-border)]">
+        className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md text-[13px] font-semibold transition-colors text-[var(--color-text)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]">
         <Settings2 className="w-3.5 h-3.5" /> Setup{todo ? <span className="text-amber-700 dark:text-amber-400">{` · ${todo} to do`}</span> : <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />}
       </button>
       {open && <SetupWizard {...p} items={items} start={items.find((i) => !i.done && !i.extra)?.id ?? "timezone"} critical={critical} onClose={() => setOpen(false)} />}
@@ -655,9 +655,9 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
           <div className="flex items-center gap-2">
             <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">The shifts</span>
             <span className="ml-auto inline-flex items-center gap-1">
-              <button type="button" onClick={() => setOffset((o) => o - 3)} className="w-8 h-8 inline-flex items-center justify-center rounded-lg bg-[var(--color-surface-2)] hover:bg-[var(--color-border)]" aria-label="Earlier days"><ChevronLeft className="w-4 h-4" /></button>
-              {offset !== 0 && <button type="button" onClick={() => setOffset(0)} className="px-2.5 h-8 rounded-lg bg-[var(--color-surface-2)] text-[12px] font-bold hover:bg-[var(--color-border)]">Back</button>}
-              <button type="button" onClick={() => setOffset((o) => o + 3)} className="w-8 h-8 inline-flex items-center justify-center rounded-lg bg-[var(--color-surface-2)] hover:bg-[var(--color-border)]" aria-label="Later days"><ChevronRight className="w-4 h-4" /></button>
+              <button type="button" onClick={() => setOffset((o) => o - 3)} className="w-8 h-8 inline-flex items-center justify-center rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]" aria-label="Earlier days"><ChevronLeft className="w-4 h-4" /></button>
+              {offset !== 0 && <button type="button" onClick={() => setOffset(0)} className="px-2.5 h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-semibold hover:bg-[var(--color-surface-2)]">Back</button>}
+              <button type="button" onClick={() => setOffset((o) => o + 3)} className="w-8 h-8 inline-flex items-center justify-center rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]" aria-label="Later days"><ChevronRight className="w-4 h-4" /></button>
             </span>
           </div>
           {dayKeys.map((k) => {
@@ -701,7 +701,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
                 {waiting.sort((a, b) => startMsOf(a.m) - startMsOf(b.m)).map(({ m }) => (
                   <li key={m.id} className="grid grid-cols-[1fr_auto] gap-2 text-[12px]">
                     <span className="min-w-0 truncate text-[var(--color-text)]"><b>{short(jobOf(m)?.name ?? "")}</b> · {m.name} · {crewName(m.responsibleParty?.trim() ?? "")}</span>
-                    <span className="font-mono text-[11px] text-[var(--color-text-muted)]">{dayF.format(startMsOf(m)).split(",")[0]} {clockF.format(startMsOf(m))}</span>
+                    <span className="font-display tabular-nums text-[11px] text-[var(--color-text-muted)]">{dayF.format(startMsOf(m)).split(",")[0]} {clockF.format(startMsOf(m))}</span>
                   </li>
                 ))}
               </ul>
@@ -783,7 +783,7 @@ function CriticalStep({ projectId, milestones, canManage, critical, onSaved }: P
             <span className="block text-[13px] font-bold text-[var(--color-text)]">{o.label}</span>
             <span className="block text-[12px] text-[var(--color-text-muted)]">{o.hint}</span>
           </span>
-          <span className="shrink-0 text-[12px] font-mono text-[var(--color-text-muted)]">{counts.of[o.value]} of {counts.steps} open steps</span>
+          <span className="shrink-0 text-[12px] font-display tabular-nums text-[var(--color-text-muted)]">{counts.of[o.value]} of {counts.steps} open steps</span>
         </label>
       ))}
       </div>

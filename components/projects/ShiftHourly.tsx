@@ -239,12 +239,12 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
                       <>
                       <button type="button" onClick={() => h.onAddWork?.(hr.start)} aria-label={`Add discovery or added scope at ${clocks[i]}`}
                         title="Add discovery or added scope at this hour: it goes into the schedule"
-                        className="shrink-0 inline-flex items-center gap-0.5 h-7 px-2 rounded-lg bg-[var(--color-surface-2)] text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)]">
+                        className="shrink-0 inline-flex items-center gap-0.5 h-7 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                         <Plus className="w-3 h-3" /> Add work
                       </button>
                     <button type="button" onClick={() => newFinding({ at: hr.start })} aria-label={`Add a finding at ${clocks[i]}`}
                       title="A problem, a lesson, a material shortfall or missed scope, kept for the next job"
-                      className="shrink-0 inline-flex items-center gap-0.5 h-7 px-2 rounded-lg bg-[var(--color-surface-2)] text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)]">
+                      className="shrink-0 inline-flex items-center gap-0.5 h-7 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                       <Plus className="w-3 h-3" /> Finding
                     </button>
                       </>
@@ -305,12 +305,12 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
                 <>
                 <button type="button" onClick={() => h.onAddWork?.(r.slot.start)} aria-label={`Add discovery or added scope at ${clocks[i]}`}
                   title="Add discovery or added scope at this hour: it goes into the schedule"
-                  className="shrink-0 inline-flex items-center gap-0.5 h-7 px-2 rounded-lg bg-[var(--color-surface-2)] text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)]">
+                  className="shrink-0 inline-flex items-center gap-0.5 h-7 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                   <Plus className="w-3 h-3" /> Add work
                 </button>
                     <button type="button" onClick={() => newFinding({ at: r.slot.start })} aria-label={`Add a finding at ${clocks[i]}`}
                       title="A problem, a lesson, a material shortfall or missed scope, kept for the next job"
-                      className="shrink-0 inline-flex items-center gap-0.5 h-7 px-2 rounded-lg bg-[var(--color-surface-2)] text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)]">
+                      className="shrink-0 inline-flex items-center gap-0.5 h-7 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                       <Plus className="w-3 h-3" /> Finding
                     </button>
                 </>
@@ -340,7 +340,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
           ? <HoldOverForm ot={h.overtime} adding={otForm === "new"} onDone={() => setOtForm(null)} onError={setMsg} />
           : !h.overtime.list.length && (
             <button type="button" onClick={() => setOtForm("new")}
-              className="inline-flex items-center gap-1 h-9 px-3 rounded-[10px] bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)]">
+              className="inline-flex items-center gap-1 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
               <Plus className="w-3.5 h-3.5" /> Hold a crew over (overtime)
             </button>
           ))}
@@ -475,7 +475,7 @@ function MeetingTable({ p }: { p: MeetingParts }) {
     <>
       {p.rows.length > 0 && (
         <table className="w-full border-collapse my-[2pt]">
-          <thead><tr className="text-[7pt] uppercase text-slate-500 text-left"><th className="font-bold pr-2">Resource</th><th className="font-bold pr-2">Meeting attendees</th><th className="font-bold text-right">On site</th></tr></thead>
+          <thead><tr className="text-[7pt] text-slate-500 text-left"><th className="font-bold pr-2">Resource</th><th className="font-bold pr-2">Meeting attendees</th><th className="font-bold text-right">On site</th></tr></thead>
           <tbody>
             {p.rows.map((x) => <tr key={x.crew} className="border-t border-slate-200"><td className="font-semibold pr-2">{x.crew}</td><td className="pr-2">{x.attendees || "-"}</td><td className={`text-right ${x.plant ? "" : "font-semibold"}`}>{onSiteCell(x)}</td></tr>)}
             {p.total != null && <tr className="border-t border-slate-300"><td className="font-bold pr-2">Total on the job</td><td /><td className="text-right font-bold">{p.total}</td></tr>}
@@ -568,7 +568,7 @@ export function MeetingBox({ m, edit }: { m: MeetingCtx; edit: boolean }) {
         {(edit || (total != null && list.length > 1)) && (
           <div className={`${grid} items-center px-2 py-1 border-t border-[var(--color-border)]`}>
             <span className="min-w-0 sm:col-span-2">{edit && <AddCompany onAdd={(name) => void setCrew(cleanName(name), (c) => c ?? {}).catch(() => undefined)} />}</span>
-            <span className="text-right text-[12px] tabular-nums whitespace-nowrap">{total != null && <><span className="text-[11px] font-bold uppercase text-[var(--color-text-muted)]">Total on the job </span><b>{total}</b></>}</span>
+            <span className="text-right text-[12px] tabular-nums whitespace-nowrap">{total != null && <><span className="text-[11px] font-bold text-[var(--color-text-muted)]">Total on the job </span><b>{total}</b></>}</span>
           </div>
         )}
       </div>
@@ -763,7 +763,7 @@ function HeadCount({ crew, value, plant, edit, onSave, onTotal, onPlant }: {
       onFocus={(e) => e.target.select()}
       onChange={(e) => { const x = e.target.value.replace(/[^0-9]/g, "").slice(0, 4); setTyped((t) => ({ ...t, [k]: x })); }} onBlur={k === "t" ? commitTotal : commit}
       onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-      className={`${inputCls} block ${wide ? "w-16" : "w-12"} h-8 text-right font-mono text-[13px]`} />
+      className={`${inputCls} block ${wide ? "w-16" : "w-12"} h-8 text-right font-display tabular-nums text-[13px]`} />
   );
   const link = "text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] hover:underline";
   return (
@@ -812,7 +812,7 @@ function SafetyTopic({ value, topics, edit, onSave }: { value?: string; topics?:
           )}
         </>
       ) : edit ? (
-        <button type="button" onClick={open} aria-label="Add the safety topic" className="inline-flex items-center gap-0.5 h-7 px-2 rounded-lg bg-[var(--color-surface-2)] text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)]">
+        <button type="button" onClick={open} aria-label="Add the safety topic" className="inline-flex items-center gap-0.5 h-7 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
           <Plus className="w-3 h-3" /> Add
         </button>
       ) : <span className="text-[var(--color-text-faint)]">-</span>}

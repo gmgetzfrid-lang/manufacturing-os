@@ -198,7 +198,7 @@ export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, on
         <ul className="mt-1 space-y-0.5">
           {[...items].sort((a, b) => a.at - b.at).map((x) => (
             <li key={x.id} className={`flex items-baseline gap-1.5 ${editingId === x.id ? "rounded bg-[var(--color-surface-2)]" : ""}`}>
-              <span className="shrink-0 font-mono text-[11px] text-[var(--color-text-muted)]">{T(x.at)}</span>
+              <span className="shrink-0 font-display tabular-nums text-[11px] text-[var(--color-text-muted)]">{T(x.at)}</span>
               <b className="shrink-0 whitespace-nowrap text-rose-700 dark:text-rose-400">{x.kind}</b>
               <span className="min-w-0 break-words">{x.text}</span>
               {edit && !print && (
@@ -314,7 +314,7 @@ export function ShiftNotesBox({ notes, edit, print, shift, tz, T, D, onAdd, onCl
         <ul className={`space-y-0.5 ${print ? "text-[8pt]" : "text-[12px]"}`}>
           {sorted.map((n) => (
             <li key={`${n.shiftKey}:${n.id}`} className={`flex items-baseline gap-1.5 ${editing?.id === n.id ? "rounded bg-[var(--color-surface-2)]" : ""}`}>
-              <span className="font-mono text-[11px] text-[var(--color-text-muted)] whitespace-nowrap">{n.from ? `${D(n.at)} ${T(n.at)}` : T(n.at)}</span>
+              <span className="font-display tabular-nums text-[11px] text-[var(--color-text-muted)] whitespace-nowrap">{n.from ? `${D(n.at)} ${T(n.at)}` : T(n.at)}</span>
               <span className="min-w-0 break-words">
                 {n.text}
                 {n.followUp && !n.cleared && <span className="ml-1.5 text-[11px] font-bold text-amber-800 dark:text-amber-300">{n.from ? `follow-up, open since ${n.from}` : "follow-up"}</span>}
@@ -378,7 +378,7 @@ export function TimeLogButton({ busy, msg, onExport, shiftLabel }: { busy: boole
     <span className="relative inline-flex">
       <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} disabled={busy}
         title="Every work order and step with the time each thing was done: its own file for the project, not part of the update"
-        className="inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)] disabled:opacity-60">
+        className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-60">
         <FileSpreadsheet className="w-3.5 h-3.5" /> {busy ? "Exporting…" : "Time log"}
       </button>
       {open && (

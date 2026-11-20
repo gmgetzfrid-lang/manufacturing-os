@@ -6,6 +6,7 @@
 // and the Intelligence graph read it. A project with no checkouts is no
 // longer an island.
 
+import HelpTooltip from "@/components/ui/HelpTooltip";
 import { Card } from "@/components/ui/PageHero";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -80,7 +81,7 @@ export default function ProjectScopePanel({ orgId, projectId, projectName, canMa
 
   return (
     <Card label="Scope: what this project is about"
-      action={<Link href={`/graph?focus=${encodeURIComponent(node)}`} className="text-[13px] font-bold text-[var(--color-text)] hover:underline inline-flex items-center gap-1 whitespace-nowrap"><Link2 className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> See on the graph</Link>}>
+      action={<Link href={`/graph?focus=${encodeURIComponent(node)}`} className="text-[14px] text-[var(--color-accent-text)] hover:underline inline-flex items-center gap-1 whitespace-nowrap"><Link2 className="w-3.5 h-3.5" /> See on the graph</Link>}>
       <div className="space-y-3">
         {err && <div role="alert" className="text-[13px] text-rose-700 dark:text-rose-300">{err}</div>}
         {edges === null ? (
@@ -88,7 +89,7 @@ export default function ProjectScopePanel({ orgId, projectId, projectName, canMa
         ) : (
           <>
             <div className="flex flex-wrap gap-1.5">
-              {scope.length === 0 && <span className="text-[13px] text-[var(--color-text-muted)]">No unit or equipment set yet, so this project won&apos;t show up when someone asks what&apos;s going on in a unit.</span>}
+              {scope.length === 0 && <span className="text-[14px] text-[var(--color-text-muted)]">No unit or equipment set yet. <HelpTooltip>Set them so this project shows up when someone asks what&apos;s going on in a unit.</HelpTooltip></span>}
               {scope.map((e) => {
                 const l = L(e.b);
                 return (
@@ -111,13 +112,13 @@ export default function ProjectScopePanel({ orgId, projectId, projectName, canMa
             )}
             {canManage && (
               <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-[var(--color-border)]">
-                <select value={unitPick} onChange={(e) => setUnitPick(e.target.value)} aria-label="Unit" className="h-9 text-[13px] rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2">
+                <select value={unitPick} onChange={(e) => setUnitPick(e.target.value)} aria-label="Unit" className="h-9 text-[14px] font-semibold rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2">
                   <option value="">Add a unit…</option>
                   {units.map((u) => <option key={u.code} value={u.code}>{u.label} ({u.code})</option>)}
                 </select>
-                <button onClick={addUnit} disabled={busy || !unitPick} className="inline-flex items-center gap-1 h-9 rounded-lg border border-[var(--color-border-strong)] px-2.5 text-[13px] font-bold disabled:opacity-50"><Plus className="w-3.5 h-3.5" /> Unit</button>
+                <button onClick={addUnit} disabled={busy || !unitPick} className="inline-flex items-center gap-1 h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"><Plus className="w-3.5 h-3.5" /> Unit</button>
                 <input value={tagInput} onChange={(e) => setTagInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void addAsset(); }} placeholder="Equipment tag, e.g. X-35" aria-label="Equipment tag" className="h-9 text-[13px] rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 w-44" />
-                <button onClick={addAsset} disabled={busy || !tagInput.trim()} className="inline-flex items-center gap-1 h-9 rounded-lg border border-[var(--color-border-strong)] px-2.5 text-[13px] font-bold disabled:opacity-50"><Plus className="w-3.5 h-3.5" /> Equipment</button>
+                <button onClick={addAsset} disabled={busy || !tagInput.trim()} className="inline-flex items-center gap-1 h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"><Plus className="w-3.5 h-3.5" /> Equipment</button>
               </div>
             )}
           </>

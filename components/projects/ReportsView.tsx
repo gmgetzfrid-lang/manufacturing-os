@@ -75,6 +75,7 @@ const lastOpen = new Map<string, ReportId>();
 // A report asked for from another tab (Close-out's "Close-out report"):
 // opened straight, on a phone too.
 const askedOpen = new Set<string>();
+const upper = (x: string) => (x ? x[0].toUpperCase() + x.slice(1) : x);
 export function openReportNext(projectId: string, id: ReportId): void { lastOpen.set(projectId, id); askedOpen.add(projectId); }
 
 const SHOWS: Array<[Show, string]> = [["all", "All"], ["open", "Open"], ["behind", "Behind"], ["critical", "Critical path"], ["notStarted", "Not started"], ["held", "Held"], ["done", "Done"], ["added", "Discovery & added"]];
@@ -449,7 +450,7 @@ export default function ReportsView(p: Props) {
   const today = dayKey(now, tz);
 
   // ── Pieces ──
-  const seg = (on: boolean) => `h-8 px-3 text-[12.5px] font-bold ${on ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
+  const seg = (on: boolean) => `h-8 px-3 text-[13px] font-semibold ${on ? "bg-[var(--color-surface-2)] text-[var(--color-text)] ring-1 ring-inset ring-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
   // A labeled line of choices (a function, not a component: its inputs keep focus).
   const row = (label: string, children: React.ReactNode) => (
     <div className="grid grid-cols-[88px_1fr] sm:grid-cols-[100px_1fr] items-center gap-2 min-h-9">
@@ -623,8 +624,8 @@ export default function ReportsView(p: Props) {
             {/* Closing the job (PSSR, turnover, punch, complete) is on its own tab. */}
             {sel === "closeout" && (
               <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("project:tab", { detail: "closeout" }))}
-                className="w-full flex items-center gap-2 text-left text-[12.5px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
-                <span className="flex-1">To close the project (PSSR, turnover, punch list), go to <b className="text-[var(--color-text)] underline">Close-out</b>.</span>
+                className="text-left text-[14px] text-[var(--color-accent-text)] hover:underline">
+                Close the project on Close-out
               </button>
             )}
             {(!meeting || meeting === "turnover" || lhRow) && options}
@@ -652,23 +653,23 @@ export default function ReportsView(p: Props) {
 
   const base = { milestones: p.milestones, cancelled: p.cancelled, userId: p.userId, userName: p.userName, canEdit: p.canEdit, progress: p.progress, projectId, projectName: p.projectName, pathNow: p.pathNow };
   return (
-    <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] sm:flex min-h-[520px]">
+    <div className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] sm:flex min-h-[520px]">
       {/* The update a meeting sends, made off screen for the preview. */}
       {meeting && <ShiftReportView key={sel} {...base} docOnly meetingFixed={meeting} shiftPick={meeting === "turnover" ? shiftPick : undefined} onDoc={setDoc} />}
       <nav aria-label="Reports" className={`${phoneOpen ? "hidden sm:block" : ""} sm:w-[280px] shrink-0 sm:border-r border-[var(--color-border)] py-3`}>
         {[{ head: "Reports", sub: "filled in from the project", items: REPORTS.filter((r) => !r.form && (r.id !== "phase" || ph.phases.length > 0)) }, { head: "Forms", sub: "blank, filled in by hand", items: REPORTS.filter((r) => r.form) }].map((g) => (
           <div key={g.head} className="mb-2">
             <div className="px-4 pt-1 pb-1">
-              <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">{g.head}</div>
-              <div className="text-[11.5px] text-[var(--color-text-faint)]">{g.sub}</div>
+              <div className="font-display text-[17px] font-semibold text-[var(--color-text)]">{g.head}</div>
+              <div className="text-[13px] text-[var(--color-text-muted)]">{upper(g.sub)}</div>
             </div>
             {g.items.map((r) => {
               const on = r.id === sel;
               return (
                 <button key={r.id} type="button" aria-current={on ? "page" : undefined} onClick={() => { setSel(r.id); setPhoneOpen(true); }}
-                  className={`w-full text-left px-4 py-2 border-l-[3px] ${on ? "sm:border-[var(--color-text)] sm:bg-[var(--color-surface-2)] border-transparent" : "border-transparent hover:bg-[var(--color-surface-2)]"}`}>
-                  <span className={`block text-[14px] font-bold ${on ? "sm:text-[var(--color-text)] text-[var(--color-text)]" : "text-[var(--color-text)]"}`}>{r.name}</span>
-                  <span className="block text-[12px] text-[var(--color-text-muted)] leading-snug">{r.sub}</span>
+                  className={`w-full text-left px-4 py-2 border-l-[3px] ${on ? "sm:border-[var(--color-accent)] sm:bg-[var(--color-surface-2)] border-transparent" : "border-transparent hover:bg-[var(--color-surface-2)]"}`}>
+                  <span className="block text-[15px] font-semibold text-[var(--color-text)]">{r.name}</span>
+                  <span className="block text-[13px] text-[var(--color-text-muted)] leading-snug">{r.sub}</span>
                 </button>
               );
             })}

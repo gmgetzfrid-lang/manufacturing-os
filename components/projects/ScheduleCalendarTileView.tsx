@@ -97,7 +97,7 @@ interface Props {
 }
 
 // A quiet button on the white card.
-const QUIET = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-[10px] bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)] disabled:opacity-50 transition-colors";
+const QUIET = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -382,9 +382,9 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
   }, [clock, tz, shiftTimes]);
   const tagOf = (key: string, band: Band) => {
     const k = `${band}:${key}`;
-    if (k === shiftTags.now) return <span className="shrink-0 rounded px-1 text-[11px] leading-[14px] font-black uppercase tracking-wide bg-rose-600 text-white">Now</span>;
-    if (k === shiftTags.last) return <span title="The shift that just ended: the one to write up" className="shrink-0 rounded px-1 text-[11px] leading-[14px] font-black uppercase tracking-wide border border-amber-500 text-amber-800 dark:text-amber-300">Last shift</span>;
-    if (k === shiftTags.next) return <span title="The next shift" className="shrink-0 rounded px-1 text-[11px] leading-[14px] font-black uppercase tracking-wide border border-[var(--color-border-strong)] text-[var(--color-text)]">Next</span>;
+    if (k === shiftTags.now) return <span className="shrink-0 rounded px-1 text-[11px] leading-[14px] font-black bg-rose-600 text-white">Now</span>;
+    if (k === shiftTags.last) return <span title="The shift that just ended: the one to write up" className="shrink-0 rounded px-1 text-[11px] leading-[14px] font-black border border-amber-500 text-amber-800 dark:text-amber-300">Last shift</span>;
+    if (k === shiftTags.next) return <span title="The next shift" className="shrink-0 rounded px-1 text-[11px] leading-[14px] font-black border border-[var(--color-border-strong)] text-[var(--color-text)]">Next</span>;
     return null;
   };
   // Which shift the day list opens on (from a shift's heading).
@@ -616,7 +616,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
         )}
         {/* Less-used: jump to the schedule's start, the night-shift setup. */}
         <MoreMenu iconOnly label="More calendar actions"
-          triggerClass="inline-flex items-center justify-center w-9 h-9 rounded-[10px] bg-[var(--color-surface-2)] text-[var(--color-text)] hover:bg-[var(--color-border)]"
+          triggerClass="inline-flex items-center justify-center w-9 h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
           items={[
             ...(span ? [{ icon: <ChevronsLeft className="w-4 h-4" />, label: "Go to the schedule's start", onClick: () => { setCursor(firstOfMonthUTC(span.earliest, tz)); setFocusDay(startOfDayUTC(span.earliest, tz)); } }] : []),
             { icon: <Moon className="w-4 h-4" />, label: "Night shifts: which jobs run nights", onClick: () => { window.dispatchEvent(new CustomEvent(OPEN_SETUP_EVENT, { detail: "night" })); } },
@@ -1254,7 +1254,7 @@ function Chip({
                   mixes are marked; day work — most of it — is left quiet. */}
               {foundHere.map((k) => (
                 <span key={k} title={`${ADDED[k].word} on this shift: ${ADDED[k].tip}`}
-                  className={`shrink-0 rounded border px-1 text-[11px] font-black uppercase leading-[13px] ${ADDED_TONE[k]}`}>{ADDED[k].word}</span>
+                  className={`shrink-0 rounded border px-1 text-[11px] font-black leading-[13px] ${ADDED_TONE[k]}`}>{ADDED[k].word}</span>
               ))}
               {night && bandStart == null && (
                 <span title="Night-shift work" className="shrink-0 inline-flex items-center gap-0.5 rounded px-1 text-[11px] font-black leading-[14px] bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-200">
@@ -1262,10 +1262,10 @@ function Chip({
                 </span>
               )}
               {critical && (
-                <span title="Critical-path work on this shift: it sets the finish date" className="shrink-0 rounded px-1 text-[11px] font-black leading-[14px] uppercase bg-rose-700 text-white">Crit</span>
+                <span title="Critical-path work on this shift: it sets the finish date" className="shrink-0 rounded px-1 text-[11px] font-black leading-[14px] bg-rose-700 text-white">Crit</span>
               )}
               {aheadOf && (
-                <span title={`Worked ahead of plan: planned to start ${aheadOf}`} className="shrink-0 rounded px-1 text-[11px] font-black leading-[14px] uppercase bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-200">Ahead</span>
+                <span title={`Worked ahead of plan: planned to start ${aheadOf}`} className="shrink-0 rounded px-1 text-[11px] font-black leading-[14px] bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-200">Ahead</span>
               )}
               {crew === "both" && <ShiftMark work="both" />}
               {crew === "mixed" && (

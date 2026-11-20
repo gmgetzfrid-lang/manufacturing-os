@@ -25,6 +25,7 @@
 // WBS — all write through to the same audited mutations.
 
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { bandSeg, bandSegItem } from "@/components/admin/band";
 import {
   ChevronDown, ChevronRight as ChevronRightIcon, ChevronLeft,
   CalendarDays, CircleCheck, Loader2,
@@ -135,7 +136,7 @@ interface Props {
 }
 
 // A quiet button on a white card.
-const QUIET = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-[10px] bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)] disabled:opacity-50 transition-colors";
+const QUIET = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
 
 // Day-width bounds (px). Auto-fit fills the available width; we never
 // shrink a day below MIN_PX_PER_DAY (so labels stay legible — scroll
@@ -1304,14 +1305,14 @@ export default function ExecutionView({
       {mode === "work" ? (
       <Card pad={false}>
       <div className="px-3 sm:px-4 pt-3 pb-2.5 flex items-center gap-2 flex-wrap">
-        <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-[10px] p-0.5 gap-0.5" role="tablist" aria-label="View">
+        <div className={bandSeg} role="tablist" aria-label="View">
           {([["timeline", "Timeline"], ["calendar", "Calendar"], ["wo", "Work orders"]] as const).map(([id, label]) => (
             <button
               key={id}
               role="tab"
               aria-selected={layout === id}
               onClick={() => setLayout(id)}
-              className={`h-8 px-3 rounded-lg text-[13px] font-semibold transition-colors ${layout === id ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
+              className={bandSegItem(layout === id)}
             >
               {label}
             </button>
@@ -1332,9 +1333,9 @@ export default function ExecutionView({
             onClick={() => setShowCritical((v) => !v)}
             aria-pressed={showCritical}
             title="Show the critical path, and mark tasks on or off it"
-            className={`inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] text-[13px] font-semibold transition-colors ${showCritical ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text)] hover:bg-[var(--color-border)]"}`}
+            className={`inline-flex items-center gap-1.5 h-9 px-3 rounded-md border text-[14px] font-semibold text-[var(--color-text)] transition-colors ${showCritical ? "border-[var(--color-text)] bg-[var(--color-surface-2)] shadow-[inset_0_1px_2px_rgb(31_39_51/0.15)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"}`}
           >
-            <Zap className={`w-3.5 h-3.5 ${showCritical ? "" : "text-rose-600 dark:text-rose-400"}`} /> Critical path <span className="tabular-nums opacity-70">{critical.ids.size}</span>
+            <Zap className="w-3.5 h-3.5 text-[var(--state-overdue)]" /> Critical path <span className="tabular-nums text-[var(--color-text-muted)]">{critical.ids.size}</span>
           </button>
         )}
         <span className="ml-auto" />
@@ -1355,13 +1356,13 @@ export default function ExecutionView({
             From
             <select value={critical.mode} disabled={!canEdit} onChange={(e) => void setCriticalSource(e.target.value as CriticalMode)}
               title={CRITICAL_MODES.find((x) => x.value === critical.mode)?.hint}
-              className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] font-semibold text-[var(--color-text)]">
+              className="h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[13px] font-semibold text-[var(--color-text)]">
               {CRITICAL_MODES.map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
             </select>
           </label>
           {canEdit && <span>Tap <Zap className="inline w-3 h-3 text-rose-600" /> on a row to mark it on or off</span>}
           {canEdit && handMarked.length > 0 && (
-            <button onClick={() => void clearMarks()} className="font-bold text-[var(--color-text)] underline underline-offset-2">
+            <button onClick={() => void clearMarks()} className="text-[var(--color-accent-text)] hover:underline">
               Clear {handMarked.length} hand mark{handMarked.length === 1 ? "" : "s"}
             </button>
           )}
@@ -1391,7 +1392,7 @@ export default function ExecutionView({
             <ScheduleProgress bare milestones={items} metrics={metrics} projectId={projectId}
               onShowOverdue={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, overdueOnly: true, query: f.query })); }}
               onShowBlocked={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, blockedOnly: true, query: f.query })); }} />
-            <button onClick={() => setShowCards(false)} className="mt-2 text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Fold the summary</button>
+            <button onClick={() => setShowCards(false)} className="mt-2 text-[14px] text-[var(--color-accent-text)] hover:underline">Fold the summary</button>
           </div>
         )}
         {notice}
@@ -1822,17 +1823,17 @@ function Toolbar({
         </div>
       ) : (
         <>
-          <button onClick={onToday} className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg text-[12px] font-semibold text-[var(--color-text)] bg-[var(--color-surface-2)] hover:bg-[var(--color-border)]">
+          <button onClick={onToday} className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md text-[13px] font-semibold text-[var(--color-text)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]">
             <Crosshair className="w-3.5 h-3.5 text-rose-500" /> Today
           </button>
           <div className="w-px h-5 bg-[var(--color-border)]" />
-          <button onClick={onExpandAll} className="h-8 text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 rounded-lg hover:bg-[var(--color-surface-2)]">Expand all</button>
-          <button onClick={onCollapseAll} className="h-8 text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 rounded-lg hover:bg-[var(--color-surface-2)]">Collapse all</button>
+          <button onClick={onExpandAll} className="h-8 px-2.5 rounded-md text-[13px] font-semibold text-[var(--color-text)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]">Expand all</button>
+          <button onClick={onCollapseAll} className="h-8 px-2.5 rounded-md text-[13px] font-semibold text-[var(--color-text)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]">Collapse all</button>
           <div className="ml-auto inline-flex items-center gap-1">
             <button
               onClick={onZoomOut}
               disabled={!canZoomOut}
-              className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] disabled:opacity-30"
+              className="w-8 h-8 inline-flex items-center justify-center rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-30"
               title="Zoom out" aria-label="Zoom out"
             >
               <ZoomOut className="w-4 h-4" />
@@ -1840,7 +1841,7 @@ function Toolbar({
             <button
               onClick={onFit}
               aria-pressed={isAutoFit}
-              className={`h-8 text-[12px] font-semibold px-2.5 rounded-lg transition-colors ${isAutoFit ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:bg-[var(--color-border)]"}`}
+              className={`h-8 text-[13px] font-semibold px-2.5 rounded-md border transition-colors ${isAutoFit ? "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)] shadow-[inset_0_1px_2px_rgb(31_39_51/0.15)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}
               title="Fit the whole schedule to the screen width"
             >
               Fit
@@ -1848,7 +1849,7 @@ function Toolbar({
             <button
               onClick={onZoomIn}
               disabled={!canZoomIn}
-              className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] disabled:opacity-30"
+              className="w-8 h-8 inline-flex items-center justify-center rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-30"
               title="Zoom in" aria-label="Zoom in"
             >
               <ZoomIn className="w-4 h-4" />
@@ -1939,7 +1940,7 @@ function OutlineRow({
         <div className={`truncate text-[13px] leading-tight ${checked ? "line-through text-[var(--color-text-faint)]" : ms.isSummary ? "font-bold text-[var(--color-text)]" : "font-medium text-[var(--color-text)]"}`}>
           {ms.name}
         </div>
-        <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-faint)] font-mono leading-tight min-w-0">
+        <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-faint)] font-display tabular-nums leading-tight min-w-0">
           {/* A problem sits on its own row: held, blocked, missed or late. */}
           {!hasChildren && (ms.status === "blocked" || ms.status === "missed" || ms.status === "on_hold" || late) && (
             <span className={`shrink-0 font-sans font-bold ${ms.status === "on_hold" ? "text-amber-700 dark:text-amber-300" : "text-rose-700 dark:text-rose-300"}`}>
@@ -2410,9 +2411,9 @@ function Legend() {
       </div>
       <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-faint)]">
         <Info className="w-3 h-3" /> Drag a bar or ◀ ▶ to reschedule · click the dot for status ·
-        <kbd className="px-1 rounded bg-[var(--color-surface)] border border-[var(--color-border-strong)] font-mono">↑↓</kbd> navigate
-        <kbd className="px-1 rounded bg-[var(--color-surface)] border border-[var(--color-border-strong)] font-mono">←→</kbd> move
-        <kbd className="px-1 rounded bg-[var(--color-surface)] border border-[var(--color-border-strong)] font-mono">↵</kbd> open
+        <kbd className="px-1 rounded bg-[var(--color-surface)] border border-[var(--color-border-strong)] font-display tabular-nums">↑↓</kbd> navigate
+        <kbd className="px-1 rounded bg-[var(--color-surface)] border border-[var(--color-border-strong)] font-display tabular-nums">←→</kbd> move
+        <kbd className="px-1 rounded bg-[var(--color-surface)] border border-[var(--color-border-strong)] font-display tabular-nums">↵</kbd> open
       </div>
     </div>
   );

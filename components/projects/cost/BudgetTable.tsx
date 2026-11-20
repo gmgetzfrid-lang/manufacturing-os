@@ -215,7 +215,7 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
                         <td className={`${td} min-w-[200px]`}>
                           <div className="flex items-center gap-1">
                             <button type="button" onClick={() => setOpen(open === a.id ? null : a.id)} aria-label={`${open === a.id ? "Close" : "Open"} ${a.name}'s entries`} className="shrink-0 text-[var(--color-text-faint)]">{open === a.id ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}</button>
-                            {a.code && <span className="font-mono text-[11px] text-[var(--color-text-faint)]">{a.code}</span>}
+                            {a.code && <span className="font-display tabular-nums text-[11px] text-[var(--color-text-faint)]">{a.code}</span>}
                             <Cell value={a.name} disabled={!canManage || closed} aria={`${a.name} name`} onSave={(v) => (v.trim() && v.trim() !== a.name ? savePatch(a, { name: v.trim() }) : undefined)} className="font-bold" />
                             {closed && <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">closed</span>}
                           </div>

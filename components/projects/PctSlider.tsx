@@ -8,7 +8,7 @@ import React from "react";
 /** The % done: slide it, or nudge it a point at a time. 100% is finished. */
 export default function PctSlider({ value, was, onChange, disabled }: { value: number; was: number; onChange: (v: number) => void; disabled?: boolean }) {
   const set = (v: number) => onChange(Math.max(0, Math.min(100, Math.round(v))));
-  const nudge = "w-9 h-9 rounded-lg bg-[var(--color-surface-2)] text-[18px] font-bold leading-none text-[var(--color-text)] hover:bg-[var(--color-border)] disabled:opacity-40";
+  const nudge = "w-9 h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[18px] font-semibold leading-none text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40";
   return (
     <div className="space-y-1">
       <div className="flex items-center gap-2">

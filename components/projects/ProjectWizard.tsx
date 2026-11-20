@@ -381,7 +381,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                 <Field label="MOC reference (Management of Change)">
                   <input value={moc} onChange={(e) => setMoc(e.target.value)} placeholder="MOC-2026-0142"
                     title="The Management of Change number authorizing this work. PSM requires it before covered processes are changed."
-                    className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm font-mono bg-[var(--color-surface)]" />
+                    className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm font-display tabular-nums bg-[var(--color-surface)]" />
                 </Field>
                 <Field label="Target completion">
                   <input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)}
@@ -490,7 +490,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                       className="w-28 px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-xs bg-[var(--color-surface)]" />
                     <input value={r.budget} onChange={(e) => setBudgetRows(rows(budgetRows, i, { budget: e.target.value }))}
                       placeholder="Budget (USD)" inputMode="decimal"
-                      className="w-32 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm font-mono tabular-nums bg-[var(--color-surface)]" />
+                      className="w-32 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm font-display tabular-nums bg-[var(--color-surface)]" />
                     <button onClick={() => setBudgetRows(budgetRows.filter((_, j) => j !== i))} className="text-[var(--color-text-faint)] hover:text-rose-600 p-1"><X className="w-3.5 h-3.5" /></button>
                   </div>
                 ))}

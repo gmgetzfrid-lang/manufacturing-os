@@ -108,15 +108,15 @@ export function QuickLookCard({ look, goalAt, noteOf, fmt, onOpen, onClose }: {
                     const fin = s.percent >= 100;
                     return (
                       <tr key={s.id} className={`border-t border-[var(--color-border)] align-top ${s.isThis ? "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]" : ""}`}>
-                        <td className="px-2 py-1 font-mono tabular-nums text-[11px] whitespace-nowrap">{fmt.DTs(s.start)}</td>
-                        <td className="px-2 py-1 font-mono tabular-nums text-[11px] whitespace-nowrap hidden sm:table-cell">{fmt.DTs(s.finish)}</td>
+                        <td className="px-2 py-1 font-display tabular-nums text-[11px] whitespace-nowrap">{fmt.DTs(s.start)}</td>
+                        <td className="px-2 py-1 font-display tabular-nums text-[11px] whitespace-nowrap hidden sm:table-cell">{fmt.DTs(s.finish)}</td>
                         <td className="px-2 py-1">
                           {s.isThis ? <b className="text-[var(--color-text)]">{s.name}</b> : link(s, fin ? "text-[var(--color-text-faint)] line-through" : "font-semibold text-[var(--color-text)]")}
-                          {s.isThis && <span className="ml-1.5 rounded border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 py-px text-[11px] font-black uppercase text-[var(--color-text)]">This step</span>}
-                          {s.isNext && <span className="ml-1.5 rounded bg-slate-800 px-1 py-px text-[11px] font-black uppercase text-white dark:bg-slate-200 dark:text-slate-900">Next</span>}
+                          {s.isThis && <span className="ml-1.5 rounded border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 py-px text-[11px] font-black text-[var(--color-text)]">This step</span>}
+                          {s.isNext && <span className="ml-1.5 rounded bg-slate-800 px-1 py-px text-[11px] font-black text-white dark:bg-slate-200 dark:text-slate-900">Next</span>}
                         </td>
                         <td className="px-2 py-1 hidden sm:table-cell text-[11px] text-[var(--color-text-muted)]">{s.who}</td>
-                        <td className="px-2 py-1 text-right font-mono tabular-nums text-[11px]">{fin ? "✓" : `${s.percent}%`}</td>
+                        <td className="px-2 py-1 text-right font-display tabular-nums text-[11px]">{fin ? "✓" : `${s.percent}%`}</td>
                       </tr>
                     );
                   })}
@@ -148,7 +148,7 @@ export function QuickLookCard({ look, goalAt, noteOf, fmt, onOpen, onClose }: {
               {above.map((l, i) => (
                 <li key={l.id} className="flex items-baseline gap-2 text-[12.5px]" style={{ paddingLeft: i * 10 }}>
                   <span className="min-w-0 flex-1 truncate text-[var(--color-text)]">{l.name}</span>
-                  <span className="shrink-0 text-[var(--color-text-muted)]">done by <b className="font-mono text-[var(--color-text)]">{Number.isFinite(l.finish) ? fmt.DTs(l.finish) : "-"}</b> · {l.percent}%</span>
+                  <span className="shrink-0 text-[var(--color-text-muted)]">done by <b className="font-display tabular-nums text-[var(--color-text)]">{Number.isFinite(l.finish) ? fmt.DTs(l.finish) : "-"}</b> · {l.percent}%</span>
                 </li>
               ))}
             </ul>

@@ -81,7 +81,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
           <button
             onClick={() => setShowMore((v) => !v)}
             aria-expanded={showMore}
-            className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] text-[13px] font-semibold transition-colors ${showMore || filter.statuses.length || filter.groupIds.length || filter.shifts.length ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text)] hover:bg-[var(--color-border)]"}`}
+            className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] text-[13px] font-semibold transition-colors ${showMore || filter.statuses.length || filter.groupIds.length || filter.shifts.length ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}
           >
             {(() => { const n = filter.statuses.length + filter.groupIds.length + filter.shifts.length + [filter.criticalOnly, filter.behindOnly, filter.overdueOnly, filter.notStartedOnly, filter.blockedOnly, !!filter.added?.length].filter(Boolean).length + (filter.units?.length ?? 0) + (filter.types?.length ?? 0); return <><SlidersHorizontal className="w-3.5 h-3.5" /> Filter{n > 0 ? ` (${n})` : ""}</>; })()}
           </button>

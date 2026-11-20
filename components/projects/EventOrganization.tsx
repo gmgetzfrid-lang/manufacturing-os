@@ -10,10 +10,10 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Check, Loader2, Plus, X } from "lucide-react";
 import { defaultRoles, loadOrg, orgStanding, saveOrg, type OrgRole } from "@/lib/eventOrganization";
 
-const field = "w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[13px] text-[var(--color-text)] disabled:opacity-70";
-const label = "text-[12px] font-semibold text-[var(--color-text-muted)]";
-const btn = "inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
-const pri = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-black whitespace-nowrap disabled:opacity-50";
+const field = "w-full h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[14px] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 disabled:opacity-70";
+const label = "text-[13px] font-semibold text-[var(--color-text-muted)]";
+const btn = "inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
+const pri = "inline-flex items-center justify-center gap-1.5 h-9 px-4 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-semibold hover:bg-[var(--color-accent-hover)] whitespace-nowrap disabled:opacity-50";
 
 export default function EventOrganization({ projectId, canManage, actor, people }: {
   projectId: string; canManage: boolean; actor: { email: string | null };
@@ -48,24 +48,37 @@ export default function EventOrganization({ projectId, canManage, actor, people 
 
   return (
     <Card as="section" pad={false} className="overflow-hidden" label="Event organization"
-      action={<span className={`text-[12px] font-bold whitespace-nowrap ${!recorded ? "text-amber-800 dark:text-amber-300" : all ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}`}>
-        {!recorded ? "Not recorded yet" : `${st.filled} of ${st.required} required roles named`}
+      action={<span className="inline-flex items-center gap-3">
+        <span className={`inline-flex items-center gap-1.5 text-[13px] font-semibold whitespace-nowrap ${!recorded ? "text-[var(--state-held)]" : all ? "text-[var(--color-text)]" : "text-[var(--state-overdue)]"}`} data-event-organization>
+          <span aria-hidden className="w-2 h-2 rounded-full" style={{ background: !recorded ? "var(--state-held)" : all ? "var(--state-released)" : "var(--state-overdue)" }} />
+          {!recorded ? "Not recorded yet" : `${st.filled} of ${st.required} required roles named`}
+        </span>
+        {recorded && !editing && canManage && <button type="button" onClick={() => setEditing(true)} className={btn}>Edit roles</button>}
       </span>}>
-      <p className="px-4 sm:px-5 -mt-1 pb-3 text-[13px] text-[var(--color-text-muted)] border-b border-[var(--color-border)]" data-event-organization>The roles this event requires and who fills each.</p>
-      {err && <div role="alert" className="mx-4 sm:mx-5 mt-3 text-[13px] font-semibold text-rose-800 dark:text-rose-300">{err}</div>}
+      {err && <div role="alert" className="mx-4 sm:mx-5 mt-3 text-[14px] font-semibold text-[var(--state-overdue)]">{err}</div>}
       {recorded && !editing ? (
-        <>
-          <ul className="px-4 sm:px-5 py-1 divide-y divide-[var(--color-border)]">
-            {roles.map((r) => (
-              <li key={r.id} className="py-2 flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-[13.5px]">
-                <b className="min-w-[180px] text-[var(--color-text)]">{r.role}</b>
-                <span className={r.person.trim() ? "text-[var(--color-text)]" : r.required ? "font-bold text-rose-700 dark:text-rose-400" : "text-[var(--color-text-muted)]"}>{r.person.trim() || (r.required ? "Not named (required)" : "Not named")}</span>
-                {r.does && <span className="basis-full text-[12px] text-[var(--color-text-muted)]">{r.does}</span>}
-              </li>
-            ))}
-          </ul>
-          {canManage && <div className="px-4 sm:px-5 pb-4"><button type="button" onClick={() => setEditing(true)} className={btn}>Edit roles</button></div>}
-        </>
+        // The roles this event requires and who fills each: a ruled table.
+        <table className="w-full text-[15px]">
+          <thead className="max-sm:hidden bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+            <tr className="border-b border-[var(--color-border)]">
+              <th scope="col" className="font-semibold px-4 h-10 w-[28%]">Role</th>
+              <th scope="col" className="font-semibold px-4 w-[22%]">Who</th>
+              <th scope="col" className="font-semibold px-4">Responsible for</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--color-border)]">
+            {roles.map((r) => {
+              const named = r.person.trim();
+              return (
+                <tr key={r.id} className="align-top max-sm:flex max-sm:flex-wrap max-sm:gap-x-3 max-sm:px-4 max-sm:py-2.5">
+                  <th scope="row" className="sm:px-4 sm:py-2.5 text-left font-semibold text-[var(--color-text)] max-sm:flex-1">{r.role}</th>
+                  <td className={`sm:px-4 sm:py-2.5 ${named ? "text-[var(--color-text)]" : r.required ? "font-semibold text-[var(--state-overdue)]" : "text-[var(--color-text-muted)]"}`}>{named || (r.required ? "Not named (required)" : "Not named")}</td>
+                  <td className="sm:px-4 sm:py-2.5 text-[14px] text-[var(--color-text-muted)] max-sm:basis-full">{r.does}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       ) : (<>
       <div className="hidden md:grid grid-cols-[minmax(0,1.1fr)_minmax(0,1.4fr)_minmax(0,1fr)_76px_32px] gap-2 px-4 sm:px-5 pt-3">
         <span className={label}>Role</span><span className={label}>Responsible for</span><span className={label}>Who</span><span className={label}>Required</span><span />
@@ -73,11 +86,11 @@ export default function EventOrganization({ projectId, canManage, actor, people 
       <ul className="px-4 sm:px-5 py-2 space-y-2 max-md:divide-y max-md:divide-[var(--color-border)]">
         {roles.map((r) => (
           <li key={r.id} className="grid gap-2 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1.4fr)_minmax(0,1fr)_76px_32px] md:items-center max-md:pt-2">
-            <input aria-label="Role" disabled={!canManage} value={r.role} onChange={(e) => change(r.id, { role: e.target.value })} placeholder="Role" className={`${field} font-bold`} />
+            <input aria-label="Role" disabled={!canManage} value={r.role} onChange={(e) => change(r.id, { role: e.target.value })} placeholder="Role" className={`${field} font-semibold`} />
             <input aria-label="Responsible for" disabled={!canManage} value={r.does} onChange={(e) => change(r.id, { does: e.target.value })} placeholder="What this role is responsible for" className={field} />
-            <input aria-label={`Who fills ${r.role || "this role"}`} list="eo-people" disabled={!canManage} value={r.person} onChange={(e) => change(r.id, { person: e.target.value })} placeholder={r.required ? "Name (required)" : "Name"} className={`${field} ${r.required && !r.person.trim() ? "border-rose-400" : ""}`} />
-            <label className="inline-flex items-center gap-1.5 text-[12.5px] text-[var(--color-text)]"><input type="checkbox" disabled={!canManage} checked={r.required} onChange={(e) => change(r.id, { required: e.target.checked })} className="w-4 h-4" /><span className="md:hidden">Required</span></label>
-            {canManage ? <button type="button" aria-label={`Remove ${r.role || "role"}`} onClick={() => remove(r.id)} className="justify-self-start md:justify-self-center text-[var(--color-text-muted)] hover:text-rose-600"><X className="w-4 h-4" /></button> : <span />}
+            <input aria-label={`Who fills ${r.role || "this role"}`} list="eo-people" disabled={!canManage} value={r.person} onChange={(e) => change(r.id, { person: e.target.value })} placeholder={r.required ? "Name (required)" : "Name"} className={`${field} ${r.required && !r.person.trim() ? "!border-[var(--state-overdue)]" : ""}`} />
+            <label className="inline-flex items-center gap-1.5 text-[14px] text-[var(--color-text)]"><input type="checkbox" disabled={!canManage} checked={r.required} onChange={(e) => change(r.id, { required: e.target.checked })} className="w-4 h-4" /><span className="md:hidden">Required</span></label>
+            {canManage ? <button type="button" aria-label={`Remove ${r.role || "role"}`} onClick={() => remove(r.id)} className="justify-self-start md:justify-self-center w-8 h-8 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button> : <span />}
           </li>
         ))}
       </ul>
@@ -86,7 +99,7 @@ export default function EventOrganization({ projectId, canManage, actor, people 
         {canManage && <button type="button" onClick={add} className={btn}><Plus className="w-4 h-4" /> Add a role</button>}
         {canManage && <button type="button" disabled={busy || (!dirty && recorded)} onClick={() => void save()} className={pri}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} {recorded ? "Save changes" : "Save as this event's organization"}</button>}
         {recorded && <button type="button" onClick={() => { setEditing(false); setDirty(false); void loadOrg(projectId).then((r) => { if (r) setRoles(r); }).catch((e) => setErr((e as Error).message)); }} className={btn}>Cancel</button>}
-        <span className="text-[12px] text-[var(--color-text-muted)]">{!recorded ? "This is the starting list. Nothing counts until you save it." : st.missing.length ? `Not named: ${st.missing.join(", ")}.` : "Every required role has a name."}</span>
+        <span className="text-[13px] text-[var(--color-text-muted)]">{!recorded ? "This is the starting list. Nothing counts until you save it." : st.missing.length ? `Not named: ${st.missing.join(", ")}.` : "Every required role has a name."}</span>
       </div>
       </>)}
     </Card>

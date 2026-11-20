@@ -662,9 +662,9 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
                 <span className="block mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]">Work order #</span>
                 <div className="flex flex-wrap items-center gap-1.5">
                   <input value={foundEdit.wo} onChange={(e) => { setFoundEdit({ ...foundEdit, wo: e.target.value }); setFoundMsg(null); }} aria-label="Work order number" placeholder="e.g. 310990"
-                    className="h-9 w-36 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 font-mono text-[12.5px] text-[var(--color-text)]" />
+                    className="h-9 w-36 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 font-display tabular-nums text-[12.5px] text-[var(--color-text)]" />
                   {!m.workOrderRef?.trim() && wo && foundEdit.wo.trim() !== wo && (
-                    <button type="button" onClick={() => setFoundEdit({ ...foundEdit, wo })} className="h-8 px-3 rounded-lg bg-[var(--color-surface-2)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-border)]">Same as the task: {wo}</button>
+                    <button type="button" onClick={() => setFoundEdit({ ...foundEdit, wo })} className="h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Same as the task: {wo}</button>
                   )}
                 </div>
               </div>
@@ -706,7 +706,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           {/* The one orange: quiet while something else is open with its own Save (a history entry, what was found). */}
           {main && (
-            <button type="button" onClick={() => open(main.a)} className={`inline-flex items-center gap-1 h-9 px-4 rounded-lg text-[13px] font-bold ${fixing || foundEdit ? "bg-[var(--color-surface-2)] text-[var(--color-text)] hover:bg-[var(--color-border)]" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"}`}>
+            <button type="button" onClick={() => open(main.a)} className={`inline-flex items-center gap-1 h-9 px-4 rounded-lg text-[13px] font-bold ${fixing || foundEdit ? "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"}`}>
               {main.icon}{main.label}
             </button>
           )}

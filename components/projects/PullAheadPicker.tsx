@@ -194,7 +194,7 @@ export function PullAheadPicker({ items, onLists, next, shiftHours, picked, coun
                       </div>
                       <div className="mt-0.5 text-[11.5px] text-[var(--color-text-muted)] break-words">
                         {r.path.slice(0, -1).join(" › ") || r.parentName}
-                        {r.leaf.workOrderRef ? <> · WO <span className="font-mono">{r.leaf.workOrderRef}</span></> : null}
+                        {r.leaf.workOrderRef ? <> · WO <span className="font-display tabular-nums">{r.leaf.workOrderRef}</span></> : null}
                         {!scope && r.leaf.responsibleParty ? <> · {r.leaf.responsibleParty}</> : null}
                       </div>
                       <div className="mt-0.5 text-[11.5px] text-[var(--color-text-muted)]">

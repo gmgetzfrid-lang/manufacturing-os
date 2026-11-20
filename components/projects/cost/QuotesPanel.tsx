@@ -289,7 +289,7 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
                   </button>
                   <span className="font-bold text-[var(--color-text)] truncate">{doc.vendorName ?? doc.fileName ?? "Invoice"}</span>
                   <PreviewButton file={fileOfDoc(doc)} />
-                  {doc.docNumber && <span className="font-mono text-[11px] text-[var(--color-text-muted)]">{doc.docNumber}</span>}
+                  {doc.docNumber && <span className="font-display tabular-nums text-[11px] text-[var(--color-text-muted)]">{doc.docNumber}</span>}
                   {doc.docDate && <span className="text-[11px] text-[var(--color-text-muted)]">{doc.docDate}</span>}
                   {doc.totalAmount != null && <span className="font-black tabular-nums text-[var(--color-text)]">{fmtMoney(doc.totalAmount, doc.currency ?? "USD")}</span>}
                   <StatusChip status={doc.status} />
@@ -633,10 +633,10 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
                               <span className="ml-1.5 text-[13px] font-semibold px-1.5 py-0.5 rounded border border-rose-500/50 bg-rose-500/10 text-rose-700 dark:text-rose-300">do not use</span>
                             )}
                             {s?.best && !awarded && (
-                              <span className="ml-1.5 text-[11px] font-black uppercase text-[var(--color-text)]" title="Highest weighted value score - not automatically the winner; you decide.">best value</span>
+                              <span className="ml-1.5 text-[11px] font-black text-[var(--color-text)]" title="Highest weighted value score - not automatically the winner; you decide.">Best value</span>
                             )}
-                            {isAwarded && <span className="ml-1.5 inline-flex items-center gap-0.5 text-[11px] font-black uppercase text-emerald-700 dark:text-emerald-300"><Trophy className="w-2.5 h-2.5" /> awarded</span>}
-                            {isDeclined && <span className="ml-1.5 text-[11px] font-bold uppercase text-[var(--color-text-faint)]">not selected</span>}
+                            {isAwarded && <span className="ml-1.5 inline-flex items-center gap-0.5 text-[11px] font-black text-emerald-700 dark:text-emerald-300"><Trophy className="w-2.5 h-2.5" /> Awarded</span>}
+                            {isDeclined && <span className="ml-1.5 text-[11px] font-bold text-[var(--color-text-faint)]">Not selected</span>}
                             {bidTools(doc)}
                           </td>
                           <td className="px-3 py-2 text-right font-black tabular-nums text-[var(--color-text)]">{fmtMoney(e.total)}</td>
@@ -850,7 +850,7 @@ function CorrectForm({ doc, actor, groups, onDone, onCancel, setErr }: {
       <label className="block">
         <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Total</span>
         <input value={total} onChange={(e) => setTotal(e.target.value)} inputMode="decimal" placeholder="e.g. 182,000"
-          className="mt-0.5 block h-8 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-mono tabular-nums" />
+          className="mt-0.5 block h-8 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-display tabular-nums" />
       </label>
       <label className="block">
         <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Vendor</span>

@@ -43,13 +43,16 @@ import { loadShiftRecords, type ShiftRecord } from "@/lib/shiftRecord";
 import { companyOf, handsAt, manpowerSummary, shiftCounts, type ManpowerSettings, type ShiftCount } from "@/lib/manpower";
 import PostEventReview from "@/components/projects/PostEventReview";
 import LoadingBlock from "@/components/ui/LoadingBlock";
-import { Card } from "@/components/ui/PageHero";
+import { Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
+import { bandSeg, bandSegItem } from "@/components/admin/band";
+import HelpTooltip from "@/components/ui/HelpTooltip";
 import FileThumb from "@/components/ui/FileThumb";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import { tryUpload } from "@/lib/uploadRetry";
 import { fileSize } from "@/components/projects/cost/FilePreview";
 
 const money = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
+const upper = (x: string) => (x ? x[0].toUpperCase() + x.slice(1) : x);
 
 type PssrList = { list: Checklist; satisfied: number; applicable: number };
 
@@ -150,10 +153,10 @@ export function PathSteps({ rows }: { rows: PathRow[] }) {
             <div className={`min-w-0 flex-1 ${last ? "" : "pb-4"}`}>
               <div className="flex items-start gap-2 flex-wrap">
                 <div className="min-w-0 flex-1 basis-48">
-                  <div className={`text-[14px] leading-snug ${r.state === "todo" ? "font-semibold text-[var(--color-text-muted)]" : "font-bold text-[var(--color-text)]"}`}>
-                    {r.title}{r.state === "next" && <span className="text-[12px] font-bold text-[var(--color-text)]"> · next</span>}
+                  <div className={`text-[15px] leading-snug font-semibold ${r.state === "todo" ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}>
+                    {r.title}{r.state === "next" && <span className="ml-2 text-[13px] font-semibold text-[var(--color-text-muted)]">Next</span>}
                   </div>
-                  {r.detail && <div className="text-[13px] text-[var(--color-text-muted)] leading-snug">{r.detail}</div>}
+                  {r.detail && <div className="mt-0.5 text-[14px] text-[var(--color-text-muted)] leading-snug">{r.detail}</div>}
                 </div>
                 {r.action && <div className="shrink-0">{r.action}</div>}
               </div>
@@ -331,9 +334,10 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
     said.current?.(closeOpenOf({ phases, pssrs, settings, items, snap }));
   }, [ms, pssrs, settings, items, snap, phases]);
 
-  const btn = "inline-flex items-center gap-1 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
-  const pri = "inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-extrabold whitespace-nowrap hover:bg-[var(--color-accent-hover)] shadow-[0_10px_22px_-12px_var(--color-accent)] disabled:opacity-50";
-  const quiet = "inline-flex items-center gap-1.5 h-9 px-2.5 rounded-lg text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap";
+  // A secondary button, the one main (filled) button, and a link-style action.
+  const btn = `${heroQuiet} whitespace-nowrap`;
+  const pri = `${heroPrimary} !h-9 whitespace-nowrap`;
+  const quiet = "inline-flex items-center h-9 text-[14px] text-[var(--color-accent-text)] hover:underline whitespace-nowrap disabled:opacity-50";
   // One main next step, the only orange button: schedule a phase that has
   // none, else upload the PSSR that's missing, else Mark complete once
   // everything is clear.
@@ -347,22 +351,22 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
 
   // The close-out's two pages, and its two reports: the first card.
   const nav = (
-    <Card pad={false} className="px-3 sm:px-4 py-2.5 flex items-center gap-2 flex-wrap">
-      <div className="flex gap-1 flex-wrap" role="tablist" aria-label="Close-out">
+    <div className="flex items-center gap-2 flex-wrap">
+      <div className={bandSeg} role="tablist" aria-label="Close-out">
         {([["steps", "Steps to close"], ["review", "Post-event review"]] as const).map(([id, name]) => (
           <button key={id} type="button" role="tab" aria-selected={view === id} onClick={() => setView(id)} data-closeout-view={id}
-            className={`h-9 px-3.5 rounded-lg text-[13px] font-bold whitespace-nowrap transition-colors ${view === id ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>{name}</button>
+            className={bandSegItem(view === id)}>{name}</button>
         ))}
       </div>
       <div className="flex-1" />
-      <div className="flex gap-1 flex-wrap">
-        <button type="button" onClick={() => onTab("reports:asbuilt")} className={quiet}><FileText className="w-4 h-4 text-[var(--color-text-muted)]" /> As-built schedule</button>
-        <button type="button" onClick={() => onTab("reports:closeout")} className={quiet}><FileText className="w-4 h-4 text-[var(--color-text-muted)]" /> Close-out report</button>
+      <div className="flex gap-2 flex-wrap">
+        <button type="button" onClick={() => onTab("reports:asbuilt")} className={btn}><FileText className="w-4 h-4 text-[var(--color-text-muted)]" /> As-built schedule</button>
+        <button type="button" onClick={() => onTab("reports:closeout")} className={btn}><FileText className="w-4 h-4 text-[var(--color-text-muted)]" /> Close-out report</button>
       </div>
-    </Card>
+    </div>
   );
   if (view === "review") return (
-    <div className="space-y-4">{nav}
+    <div className="space-y-6">{nav}
       <PostEventReview orgId={orgId} projectId={projectId} projectName={projectName} tz={tz} times={times} phases={phases} milestones={ms} log={log} notes={notes ?? []} records={records ?? new Map()} money={money0}
         canManage={canManage} actor={actor} onReload={reload} onTab={onTab} stepsLeft={left} onSteps={() => setView("steps")} />
     </div>
@@ -373,16 +377,17 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
   const nextAt = oks.findIndex((o) => o === false);
   const stateAt = (i: number): PathRow["state"] => (oks[i] ? "done" : i === nextAt ? "next" : "todo");
   const pssrRows = phases.length ? (
-    <div className="mt-2 space-y-1">
+    <div className="mt-2 divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
       {phases.map((p) => {
         const x = phasePssr(p.id);
         const ok = x.notNeeded || listOk(x.list);
         return (
-          <div key={p.id} className="flex items-center gap-2 flex-wrap text-[13px] min-h-9">
-            <span className="min-w-0 flex-1 basis-40 text-[var(--color-text)]">
-              {ok && <Check className="inline w-3.5 h-3.5 mr-1 -mt-0.5 text-emerald-700 dark:text-emerald-400" />}
-              <b>{p.name}</b>: <span className="text-[var(--color-text-muted)]">{x.notNeeded ? "not needed" : x.list ? `${x.list.list.title}, ${x.list.satisfied} of ${x.list.applicable} items done${x.list.list.status === "complete" ? ", complete" : ""}` : "not uploaded"}</span>
+          <div key={p.id} className="flex items-center gap-x-3 gap-y-1 flex-wrap text-[14px] min-h-11 py-1">
+            <span className="w-24 shrink-0 font-semibold text-[var(--color-text)]">
+              {ok && <Check className="inline w-3.5 h-3.5 mr-1 -mt-0.5 text-[var(--state-released)]" />}
+              {p.name}
             </span>
+            <span className="min-w-0 flex-1 basis-32 text-[var(--color-text-muted)]">{x.notNeeded ? "Not needed" : x.list ? `${x.list.list.title}: ${x.list.satisfied} of ${x.list.applicable} items done${x.list.list.status === "complete" ? ", complete" : ""}` : "Not uploaded"}</span>
             {x.list && <button type="button" onClick={() => onTab("quality")} className={btn}>Open</button>}
             {!x.list && !x.notNeeded && canManage && <>
               <button type="button" onClick={() => { setErr(null); setUploading(p.id); }} className={main === "pssr" && firstPssrMissing?.id === p.id ? pri : btn}><UploadCloud className="w-4 h-4" /> Upload</button>
@@ -393,12 +398,12 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
         );
       })}
       {untied.map((x) => (
-        <label key={x.list.id} className="flex items-center gap-2 flex-wrap text-[13px] min-h-9">
-          <span className="min-w-0 flex-1 basis-40 text-[var(--color-text)]"><b>{x.list.title}</b> <span className="text-[var(--color-text-muted)]">· uploaded before the phases: which phase is it?</span></span>
+        <label key={x.list.id} className="flex items-center gap-x-3 gap-y-1 flex-wrap text-[14px] min-h-11 py-1">
+          <span className="min-w-0 flex-1 basis-40 text-[var(--color-text)]"><span className="font-semibold">{x.list.title}</span> <span className="block text-[13px] text-[var(--color-text-muted)]">Uploaded before the phases. Which phase is it?</span></span>
           {canManage && (
             <select value="" aria-label={`Phase for ${x.list.title}`} disabled={!!busy}
               onChange={(e) => { const id = e.target.value; if (id) void run("pssr", () => saveCloseoutSettings(projectId, { pssrByPhase: { [id]: { checklistId: x.list.id, notNeeded: false } } })); }}
-              className="h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[13px]">
+              className="h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px] font-semibold">
               <option value="">Pick the phase</option>
               {phases.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
@@ -408,18 +413,21 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
     </div>
   ) : null;
   const workRows = phases.length ? (
-    <ul className="mt-1.5 space-y-1 text-[13px] text-[var(--color-text)]">
+    <ul className="mt-2 divide-y divide-[var(--color-border)] border-y border-[var(--color-border)] text-[14px] text-[var(--color-text)]">
       {phaseWork.map(({ p, w }) => (
-        <li key={p.id} className="flex items-center gap-2 flex-wrap min-h-7">
-          <span className="min-w-0 flex-1 basis-56">
-            {w.total === 0 ? <b>{noScheduleWords(p, now, tz)}.</b>
-              : w.allDone ? <><b>{p.name}</b>: done {w.finishedAt != null ? when(w.finishedAt) : ""}{w.finishedAt != null && w.plannedFinish != null ? <span className={w.hoursAfterPlan != null && w.hoursAfterPlan >= 0.5 ? "text-rose-700 dark:text-rose-400 font-semibold" : "text-[var(--color-text-muted)]"}>, {vsPlanWords(w.hoursAfterPlan)}</span> : null}<span className="text-[var(--color-text-muted)]"> · {w.done} of {w.total} steps</span></>
-                : <><b>{p.name}</b>: <span className="text-[var(--color-text-muted)]">{w.done} of {w.total} steps done</span></>}
-          </span>
+        <li key={p.id} className="flex items-center gap-x-3 gap-y-0.5 flex-wrap min-h-11 py-1">
+          <span className="w-24 shrink-0 font-semibold">{p.name}</span>
+          {w.total === 0 ? <span className="min-w-0 flex-1 basis-40 text-[var(--state-held)] font-semibold">{upper(noScheduleWords(p, now, tz).replace(`${p.name}: `, ""))}</span>
+            : w.allDone ? <>
+              <span className="min-w-0 flex-1 basis-44">Done {w.finishedAt != null ? when(w.finishedAt) : ""}</span>
+              {w.finishedAt != null && w.plannedFinish != null && <span className={`sm:w-40 ${w.hoursAfterPlan != null && w.hoursAfterPlan >= 0.5 ? "text-[var(--state-overdue)] font-semibold" : "text-[var(--color-text-muted)]"}`}>{vsPlanWords(w.hoursAfterPlan)}</span>}
+              <span className="sm:w-28 sm:text-right font-display tabular-nums text-[var(--color-text-muted)]">{w.done}/{w.total} steps</span>
+            </>
+              : <span className="min-w-0 flex-1 basis-40 text-[var(--color-text-muted)]"><span className="font-display tabular-nums">{w.done}/{w.total}</span> steps done</span>}
           {w.total === 0 && canManage && <button type="button" onClick={() => importFor(p)} className={main === "import" && p.id === unscheduled[0]?.id ? pri : btn}><UploadCloud className="w-4 h-4" /> Import {p.name}&rsquo;s schedule</button>}
         </li>
       ))}
-      {!allWorkDone && projectStatus !== "completed" && <li className="text-[var(--color-text-muted)]">You can close out the finished phases now (their PSSR, turnover documents).</li>}
+      {!allWorkDone && projectStatus !== "completed" && <li className="py-2 text-[var(--color-text-muted)]">Close out the finished phases now.</li>}
     </ul>
   ) : null;
   const steps: PathRow[] = [
@@ -432,25 +440,25 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
       children: workRows,
     },
     phases.length ? {
-      state: stateAt(1), title: "PSSR (pre-startup safety review), each phase",
-      detail: pssrs === undefined ? "Checking…" : "Each phase starts up on its own: upload its PSSR (PDF), read into items you check off, or mark it not needed.",
+      state: stateAt(1), title: <>PSSR for each phase <HelpTooltip>Pre-startup safety review. Each phase starts up on its own, so each has its own PSSR. Upload it as a PDF: it is saved to the project&rsquo;s documents and read into items you check off. Or mark it not needed.</HelpTooltip></>,
+      detail: pssrs === undefined ? "Checking…" : "Upload each phase's PSSR, or mark it not needed.",
       children: pssrRows,
     } : {
-      state: stateAt(1), title: "PSSR (pre-startup safety review)",
+      state: stateAt(1), title: <>PSSR <HelpTooltip>Pre-startup safety review. Upload it as a PDF: it is saved to the project&rsquo;s documents and read into items you check off. Or mark it not needed for this job.</HelpTooltip></>,
       detail: pssrNotNeeded ? "Not needed for this job." : pssr === undefined ? "Checking…" : pssr ? `${pssr.list.title}: ${pssr.satisfied} of ${pssr.applicable} items done${pssr.list.status === "complete" ? ", complete" : ""}`
-        : "Upload the PSSR (PDF): saved to the project's documents and read into items you check off. Or mark it not needed for this job.",
+        : "Upload the PSSR, or mark it not needed.",
       action: pssrNotNeeded ? (canManage ? <button type="button" disabled={!!busy} onClick={() => void run("pssr", () => saveCloseoutSettings(projectId, { pssr: null }))} className={quiet}>Needed after all</button> : null)
         : pssr ? <button type="button" onClick={() => onTab("quality")} className={btn}>Open <ArrowRight className="w-3.5 h-3.5" /></button>
-          : canManage ? <span className="flex gap-1.5 flex-wrap">
+          : canManage ? <span className="flex items-center gap-3 flex-wrap">
             <button type="button" onClick={() => { setErr(null); setUploading("all"); }} className={main === "pssr" ? pri : btn}><UploadCloud className="w-4 h-4" /> Upload PSSR</button>
             <button type="button" disabled={!!busy} onClick={() => void run("pssr", () => saveCloseoutSettings(projectId, { pssr: "not_needed" }))} className={quiet}>Not needed</button>
           </span> : null,
     },
     {
-      state: stateAt(2), title: "Turnover documents",
-      detail: !items ? "Checking…" : items.length === 0 ? "No documents set for this job yet." : `${inCount} of ${required.length} required in. You pick what this job needs.`,
+      state: stateAt(2), title: <>Turnover documents {items && items.length > 0 && <HelpTooltip>Switch off the documents this job doesn&rsquo;t need. Attach each one as it comes in, then accept it.</HelpTooltip>}</>,
+      detail: !items ? "Checking…" : items.length === 0 ? "None set for this job yet." : `${inCount} of ${required.length} required in`,
       children: items && (
-        <div className="mt-2 divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
+        <div className="mt-2 divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
           {/* Where attached files go: asked once, picked by the person, changeable here. */}
           {home && items.length > 0 && (
             <div className="py-2">
@@ -467,7 +475,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
             <div className="py-2 flex items-center gap-2 flex-wrap">
               {items.length === 0 && <button type="button" disabled={!!busy} onClick={() => void run("seed", async () => { const r = await seedTurnoverItems({ orgId, projectId, jobKind, actor }); return { ok: r.ok, error: r.error }; })} className={btn}>Start from the usual list</button>}
               <input value={newDoc} onChange={(e) => setNewDoc(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && newDoc.trim()) { const n = newDoc.trim(); setNewDoc(""); void run("add", async () => { const r = await addTurnoverItem({ orgId, projectId, name: n, required: true, actor }); return { ok: r.ok, error: r.error }; }); } }}
-                placeholder="Add a document this job needs" aria-label="Add a document this job needs" className="h-9 flex-1 min-w-40 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px]" />
+                placeholder="Add a document this job needs" aria-label="Add a document this job needs" className="h-9 flex-1 min-w-40 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[14px] placeholder:text-[var(--color-text-faint)] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40" />
               <button type="button" disabled={!newDoc.trim() || !!busy} onClick={() => { const n = newDoc.trim(); setNewDoc(""); void run("add", async () => { const r = await addTurnoverItem({ orgId, projectId, name: n, required: true, actor }); return { ok: r.ok, error: r.error }; }); }} className={btn}><Plus className="w-3.5 h-3.5" /> Add</button>
             </div>
           )}
@@ -478,98 +486,124 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
       action: <button type="button" onClick={() => onTab("quality")} className={btn}>Open</button> },
     { state: stateAt(4), title: "Change orders", detail: !snap ? "Checking…" : snap.openChangeOrders === 0 ? "None waiting on a decision" : `${snap.openChangeOrders} waiting on a decision`,
       action: snap && snap.openChangeOrders > 0 ? <button type="button" onClick={() => onTab("costs")} className={btn}>Decide <ArrowRight className="w-3.5 h-3.5" /></button> : null },
-    { state: stateAt(5), title: "Final cost", detail: money0 ? `${money(invoiced)} invoiced${money0.afe != null ? ` of ${money(money0.afe)} AFE` : ""}. Post the last invoices before closing.` : "Checking…",
+    { state: stateAt(5), title: <>Final cost <HelpTooltip>Post the last invoices on Costs before closing.</HelpTooltip></>, detail: money0 ? `${money(invoiced)} invoiced${money0.afe != null ? ` of ${money(money0.afe)} AFE` : ""}` : "Checking…",
       action: <button type="button" onClick={() => onTab("costs")} className={btn}>Invoices</button> },
     { state: stateAt(6), title: "Lessons & findings", detail: "Keep what this job taught for next time.",
       action: <button type="button" onClick={onLessons} className={btn}>Review</button> },
     ...(projectStatus !== "completed" ? [{
       state: (left === 0 && allWorkDone ? "next" : "todo") as PathRow["state"], title: "Mark the project complete",
       detail: !canManage ? "The project owner marks it complete."
-        : unscheduled.length > 0 ? <span className="font-semibold text-amber-800 dark:text-amber-300">{joinNames(unscheduled.map((p) => p.name))} {unscheduled.length === 1 ? "has" : "have"} no schedule yet: complete the project only if {unscheduled.length === 1 ? "it isn't" : "they aren't"} going ahead.</span>
-          : left > 0 ? `${left} step${left === 1 ? "" : "s"} still open: you can complete anyway.` : "Everything above is clear.",
+        : unscheduled.length > 0 ? <span className="font-semibold text-[var(--state-held)]">{joinNames(unscheduled.map((p) => p.name))} {unscheduled.length === 1 ? "has" : "have"} no schedule. Complete only if {unscheduled.length === 1 ? "it isn't" : "they aren't"} going ahead.</span>
+          : left > 0 ? `${left} step${left === 1 ? "" : "s"} still open. You can complete anyway.` : "Everything above is clear.",
       action: canManage ? <button type="button" onClick={onComplete} className={main === "complete" ? pri : btn}><Check className="w-4 h-4" /> Mark project complete</button> : null,
     }] : [{ state: "done" as const, title: "Project complete", detail: "The project is marked complete." }]),
   ];
 
+  const afeWord = pickedPhase ? "phase budget" : money0?.afe != null ? "AFE" : "budget";
+  const lateBy = (fin: number, plan: number) => Math.round(((fin - plan) / 3_600_000) * 10) / 10;
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {nav}
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] items-start">
-        {/* To close this project: every step as one path. */}
-        <Card label="To close the project" action={<span className="text-[12px] font-semibold text-[var(--color-text-muted)]">{left === 0 ? "All clear" : `${left} left`}</span>}>
-          {readFailed.length > 0 && (
-            <div role="alert" className="mb-3 text-[13px] font-semibold text-rose-700 dark:text-rose-300 flex flex-wrap items-center gap-x-3">
-              <span>Couldn&apos;t load {readFailed.join(", ")}. What&apos;s shown may be missing items.</span>
-              <button type="button" onClick={reload} className="text-[var(--color-accent-text)] font-bold hover:underline">Try again</button>
-            </div>
-          )}
-          {err && <div role="alert" className="mb-3 text-[13px] font-semibold text-rose-700 dark:text-rose-300 whitespace-pre-line">{err}</div>}
-          <PathSteps rows={steps} />
-        </Card>
+      {/* To close this project: every step as one path. */}
+      <Card label="To close the project" action={<span className="text-[14px] font-semibold text-[var(--color-text-muted)]">{left === 0 ? "All clear" : `${left} left`}</span>}>
+        {readFailed.length > 0 && (
+          <div role="alert" className="mb-3 text-[14px] font-semibold text-[var(--state-overdue)] flex flex-wrap items-center gap-x-3">
+            <span>Couldn&apos;t load {readFailed.join(", ")}. What&apos;s shown may be missing items.</span>
+            <button type="button" onClick={reload} className="font-normal text-[var(--color-accent-text)] hover:underline">Try again</button>
+          </div>
+        )}
+        {err && <div role="alert" className="mb-3 text-[14px] font-semibold text-[var(--state-overdue)] whitespace-pre-line">{err}</div>}
+        <PathSteps rows={steps} />
+      </Card>
 
-        {/* How the job did */}
-        <Card label="How the job did" action={phases.length > 0 ? (
-          <span className="inline-flex rounded-lg bg-[var(--color-surface-2)] p-0.5" role="group" aria-label="Phase">
-            {[{ id: null as string | null, name: "All" }, ...phases.map((p) => ({ id: p.id as string | null, name: p.name }))].map((p) => (
-              <button key={p.id ?? "all"} type="button" aria-pressed={phasePick === p.id} onClick={() => setPhasePick(p.id)}
-                className={`h-8 px-2.5 rounded-md text-[12px] font-bold whitespace-nowrap ${phasePick === p.id ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{p.name}</button>
-            ))}
-          </span>
-        ) : undefined}>
-          {stats ? (
-            <div className="space-y-4">
-              {pickedPhase && <div className="text-[13px] text-[var(--color-text-muted)]">{pickedPhase.name} · {phaseDates(pickedPhase).replace(" – ", " to ")} · {pickedPhase.share}% of the {money0?.afe != null ? "AFE" : "budget"}</div>}
-              {stats.noSchedule && pickedPhase ? (
-                <p className="text-[13px] text-amber-900 dark:text-amber-200">
-                  <b>{noScheduleWords(pickedPhase, now, tz)}.</b> Nothing to measure until its schedule is imported.
-                </p>
-              ) : (
-                <>
-                  {stats.missing.length > 0 && (
-                    <p className="text-[13px] text-amber-900 dark:text-amber-200">
-                      <b>{stats.missing.map((p) => noScheduleWords(p, now, tz)).join("; ")}.</b> The figures below cover only {phases.filter((p) => !stats.missing.some((x) => x.id === p.id)).map((p) => p.name).join(", ")}.
-                    </p>
-                  )}
-                  <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2.5 text-[13px]">
+      {/* How the job did: its numbers as a ruled table, then each phase. */}
+      <Card label="How the job did" action={phases.length > 0 ? (
+        <span className={bandSeg} role="group" aria-label="Phase">
+          {[{ id: null as string | null, name: "All" }, ...phases.map((p) => ({ id: p.id as string | null, name: p.name }))].map((p) => (
+            <button key={p.id ?? "all"} type="button" aria-pressed={phasePick === p.id} onClick={() => setPhasePick(p.id)} className={bandSegItem(phasePick === p.id)}>{p.name}</button>
+          ))}
+        </span>
+      ) : undefined}>
+        {stats ? (
+          <div className="space-y-5">
+            {pickedPhase && <div className="text-[14px] text-[var(--color-text-muted)]">{phaseDates(pickedPhase).replace(" – ", " to ")}, {pickedPhase.share}% of the {money0?.afe != null ? "AFE" : "budget"}</div>}
+            {stats.noSchedule && pickedPhase ? (
+              <p className="text-[15px] text-[var(--color-text)]">
+                <span className="font-semibold text-[var(--state-held)]">{upper(noScheduleWords(pickedPhase, now, tz))}.</span> Nothing to measure until its schedule is imported.
+              </p>
+            ) : (
+              <>
+                {stats.missing.length > 0 && (
+                  <p className="text-[14px] text-[var(--color-text)]">
+                    <span className="font-semibold text-[var(--state-held)]">{stats.missing.map((p) => upper(noScheduleWords(p, now, tz))).join("; ")}.</span> These figures cover only {phases.filter((p) => !stats.missing.some((x) => x.id === p.id)).map((p) => p.name).join(", ")}.
+                  </p>
+                )}
+                <table className="w-full text-[15px]">
+                  <tbody className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
                     {stats.missing.length > 0
                       ? <Fact k="Finish" v="Not finished" s={`${stats.missing.map((p) => p.name).join(", ")} not scheduled`} tone="warn" />
                       : <Fact k={stats.finishedAt != null ? "Finished" : "Planned finish"} v={stats.finishedAt != null ? short(stats.finishedAt) : stats.plannedFinish != null ? short(stats.plannedFinish) : "-"}
                         tone={stats.finishedAt != null && stats.plannedFinish != null && stats.finishedAt - stats.plannedFinish >= 1_800_000 ? "bad" : undefined}
-                        s={stats.finishedAt != null && stats.plannedFinish != null ? `${vsPlanWords(Math.round(((stats.finishedAt - stats.plannedFinish) / 3_600_000) * 10) / 10)} (${short(stats.plannedFinish)})` : !pickedPhase && phases.length > 0 ? `${stats.phasesDone} of ${phases.length} phases done` : `${stats.actualPct}% done, plan ${stats.plannedPct}%`} />}
+                        s={stats.finishedAt != null && stats.plannedFinish != null ? `${upper(vsPlanWords(lateBy(stats.finishedAt, stats.plannedFinish)))} (${short(stats.plannedFinish)})` : !pickedPhase && phases.length > 0 ? `${stats.phasesDone} of ${phases.length} phases done` : `${stats.actualPct}% done, plan ${stats.plannedPct}%`} />}
                     <Fact k="Steps" v={`${stats.done} of ${stats.steps}`} s={`${Math.round(stats.hours).toLocaleString("en-US")} h of work`} />
-                    <Fact k="Added work" v={`${stats.added.count} added`} s={stats.added.count ? `${stats.added.steps} step${stats.added.steps === 1 ? "" : "s"}, +${stats.added.hours} h of work` : "nothing added to the plan"} />
-                    <Fact k={pickedPhase ? "Phase budget" : money0?.afe != null ? "AFE" : "Budget"} v={money(stats.budget)} s={`budget lines ${money(stats.lines.reduce((a, l) => a + l.budget, 0))}`} />
-                    <Fact k="Spent" v={money(stats.spent)} s={stats.budget ? `${Math.round((stats.spent / stats.budget) * 100)}% of the ${pickedPhase ? "phase budget" : money0?.afe != null ? "AFE" : "budget"}` : "no budget"} />
-                    <Fact k={stats.budget - stats.spent >= 0 ? "Left" : "Over"} v={money(Math.abs(stats.budget - stats.spent))} tone={stats.budget - stats.spent >= 0 ? "good" : "bad"} s={stats.budget - stats.spent >= 0 ? "invoices still to come?" : "over the budget"} />
-                  </dl>
-                  {!pickedPhase && phases.length > 0 ? (
-                    // All phases: each phase against its own plan, never merged into one line.
-                    <div className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
-                      {perPhase.map(({ p, ps, ids }) => (
-                        <div key={p.id} className="py-3 space-y-2">
-                          <div className="flex items-baseline gap-2 flex-wrap">
-                            <b className="text-[14px] text-[var(--color-text)]">{p.name}</b>
-                            <span className="text-[12px] text-[var(--color-text-muted)]">{phaseDates(p).replace(" – ", " to ")}</span>
-                          </div>
-                          <div className={`text-[13px] ${ps.noSchedule ? "text-amber-800 dark:text-amber-300" : "text-[var(--color-text)]"}`}>
-                            {ps.noSchedule ? `${noScheduleWords(p, now, tz)}.`
-                              : ps.finishedAt != null ? <>Done {when(ps.finishedAt)}{ps.plannedFinish != null ? <>, <span className={ps.finishedAt - ps.plannedFinish >= 1_800_000 ? "font-semibold text-rose-700 dark:text-rose-400" : ""}>{vsPlanWords(Math.round(((ps.finishedAt - ps.plannedFinish) / 3_600_000) * 10) / 10)}</span> (plan {when(ps.plannedFinish)})</> : null}.</>
-                                : `${ps.actualPct}% done, plan by now ${ps.plannedPct}%, ${ps.done} of ${ps.steps} steps.`}
-                          </div>
-                          {ps.shifts.length > 0 && <Progress stats={ps} tz={tz} look={look} lookById={lookById} ids={ids} loading={!look} records={records} mp={mp} />}
-                        </div>
-                      ))}
-                      {perPhase.length > 1 && <WholeManpower shifts={perPhase.flatMap((x) => x.ps.shifts)} records={records} mp={mp} />}
+                    <Fact k="Added work" v={`${stats.added.count} added`} s={stats.added.count ? `${stats.added.steps} step${stats.added.steps === 1 ? "" : "s"}, +${stats.added.hours} h of work` : "Nothing added to the plan"} />
+                    <Fact k={pickedPhase ? "Phase budget" : money0?.afe != null ? "AFE" : "Budget"} v={money(stats.budget)} s={`Budget lines ${money(stats.lines.reduce((a, l) => a + l.budget, 0))}`} />
+                    <Fact k="Spent" v={money(stats.spent)} s={stats.budget ? `${Math.round((stats.spent / stats.budget) * 100)}% of the ${afeWord}` : "No budget"} />
+                    <Fact k={stats.budget - stats.spent >= 0 ? "Left" : "Over"} v={money(Math.abs(stats.budget - stats.spent))} tone={stats.budget - stats.spent >= 0 ? "good" : "bad"} s={stats.budget - stats.spent >= 0 ? "Invoices may still come in" : "Over the budget"} />
+                  </tbody>
+                </table>
+                {!pickedPhase && phases.length > 0 ? (
+                  // All phases: each phase against its own plan, never merged into one line.
+                  <div className="space-y-4">
+                    <div>
+                      <h3 className="font-display text-[17px] font-semibold text-[var(--color-text)] mb-1.5">Each phase against its own plan</h3>
+                      <table className="w-full text-[15px]">
+                        <thead className="text-[13px] text-[var(--color-text-muted)] text-left">
+                          <tr className="border-b border-[var(--color-border-strong)]">
+                            <th scope="col" className="font-semibold py-2 pr-4">Phase</th>
+                            <th scope="col" className="font-semibold py-2 pr-4 hidden md:table-cell">Dates</th>
+                            <th scope="col" className="font-semibold py-2 pr-4 hidden sm:table-cell">Plan finish</th>
+                            <th scope="col" className="font-semibold py-2 pr-4">Finished</th>
+                            <th scope="col" className="font-semibold py-2 text-right">Against plan</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[var(--color-border)]">
+                          {perPhase.map(({ p, ps }) => {
+                            const lateH = ps.finishedAt != null && ps.plannedFinish != null ? lateBy(ps.finishedAt, ps.plannedFinish) : null;
+                            return (
+                              <tr key={p.id} className="align-top">
+                                <th scope="row" className="py-2.5 pr-4 text-left font-semibold text-[var(--color-text)] whitespace-nowrap">{p.name}</th>
+                                <td className="py-2.5 pr-4 hidden md:table-cell text-[var(--color-text-muted)] whitespace-nowrap">{phaseDates(p).replace(" – ", " to ")}</td>
+                                <td className="py-2.5 pr-4 hidden sm:table-cell text-[var(--color-text)] whitespace-nowrap">{ps.plannedFinish != null ? short(ps.plannedFinish) : "-"}</td>
+                                <td className="py-2.5 pr-4 text-[var(--color-text)]">
+                                  {ps.noSchedule ? <span className="text-[var(--state-held)] font-semibold">No schedule yet</span>
+                                    : ps.finishedAt != null ? short(ps.finishedAt)
+                                      : <span className="text-[var(--color-text-muted)]"><span className="font-display tabular-nums text-[var(--color-text)]">{ps.actualPct}%</span> done, plan by now {ps.plannedPct}%</span>}
+                                </td>
+                                <td className={`py-2.5 text-right whitespace-nowrap font-display tabular-nums font-semibold ${lateH != null && lateH >= 0.5 ? "text-[var(--state-overdue)]" : "text-[var(--color-text)]"}`}>
+                                  {lateH == null ? "-" : Math.abs(lateH) < 0.5 ? "On plan" : `${Math.abs(lateH)} h ${lateH > 0 ? "late" : "early"}`}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     </div>
-                  ) : stats.shifts.length > 0 && <Progress stats={stats} tz={tz} look={look} lookById={lookById} ids={phaseIds} loading={!look} records={records} mp={mp} />}
-                </>
-              )}
-              {stats.lines.length > 0 && <div className="pt-3 border-t border-[var(--color-border)]"><LinesChart rows={stats.lines} cur="USD" bare /></div>}
-            </div>
-          ) : <LoadingBlock what="how the job did" className="border-0 p-0" />}
-        </Card>
-      </div>
+                    <div className="flex flex-wrap gap-2">
+                      {perPhase.filter(({ ps }) => ps.shifts.length > 0).map(({ p, ps, ids }) => (
+                        <Progress key={p.id} name={p.name} stats={ps} tz={tz} look={look} lookById={lookById} ids={ids} loading={!look} records={records} mp={mp} />
+                      ))}
+                    </div>
+                    {perPhase.length > 1 && <WholeManpower shifts={perPhase.flatMap((x) => x.ps.shifts)} records={records} mp={mp} />}
+                  </div>
+                ) : stats.shifts.length > 0 && <Progress stats={stats} tz={tz} look={look} lookById={lookById} ids={phaseIds} loading={!look} records={records} mp={mp} />}
+              </>
+            )}
+            {stats.lines.length > 0 && <div className="pt-4 border-t border-[var(--color-border)]"><LinesChart rows={stats.lines} cur="USD" bare /></div>}
+          </div>
+        ) : <LoadingBlock what="how the job did" className="border-0 p-0" />}
+      </Card>
       {uploading && (
         <Modal onClose={() => setUploading(null)} size="lg">
           <ModalHeader icon={UploadCloud} title={uploading === "all" ? "Upload the PSSR" : `Upload ${phases.find((p) => p.id === uploading)?.name ?? "the phase"}'s PSSR`} subtitle="Filed where you pick, then read into checklist items. You check them before anything is kept." onClose={() => setUploading(null)} />
@@ -587,7 +621,9 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
 
 /** One plan's progress, shift by shift, and why it slipped (the steps in
  *  `ids`, else all). */
-function Progress({ stats, tz, look, lookById, ids, loading, records, mp }: {
+function Progress({ name, stats, tz, look, lookById, ids, loading, records, mp }: {
+  /** The phase's name, in a project of phases. */
+  name?: string;
   stats: ReturnType<typeof phaseStats>; tz: string; look: LookBack | null; lookById: Map<string, StepLook>; ids: Set<string> | null; loading: boolean;
   records: Map<string, ShiftRecord> | null; mp: ManpowerSettings | null;
 }) {
@@ -597,26 +633,29 @@ function Progress({ stats, tz, look, lookById, ids, loading, records, mp }: {
   const counts = useMemo(() => (records ? shiftCounts(records, stats.shifts.filter((r) => r.start <= now).map((r) => ({ kind: r.kind, dayKey: r.dayKey, start: r.start, end: Math.min(r.end, now) })), mp) : []), [records, stats.shifts, mp, now]);
   const steps = useMemo(() => (look?.steps ?? []).filter((x) => !ids || ids.has(x.id)), [look, ids]);
   const late = stats.finishedAt != null && stats.plannedFinish != null && stats.finishedAt - stats.plannedFinish > 3_600_000;
+  const what = `${name ? `${name}: s` : "S"}hift by shift${late || stats.actualPct < stats.plannedPct ? ", and why it slipped" : ""}`;
   if (!open) return (
-    <button type="button" onClick={() => setOpen(true)} aria-expanded={false} data-progress-open
-      className="w-full flex items-center gap-2 rounded-lg border border-[var(--color-border)] px-3 h-10 text-left text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
-      <span className="min-w-0 flex-1">{late || stats.actualPct < stats.plannedPct ? "Shift by shift, and why it slipped" : "Shift by shift"}</span>
-      <ChevronDown className="w-4 h-4 text-[var(--color-text-muted)]" />
+    <button type="button" onClick={() => setOpen(true)} aria-expanded={false} data-progress-open className={`${heroQuiet} max-w-full`}>
+      <span className="min-w-0 truncate">{what}</span>
+      <ChevronDown className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" />
     </button>
   );
   return (
-    <>
-      <button type="button" onClick={() => setOpen(false)} aria-expanded data-progress-open
-        className="w-full flex items-center gap-2 rounded-lg px-3 h-9 text-left text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
-        <span className="min-w-0 flex-1">Hide the shift-by-shift story</span>
-        <ChevronUp className="w-4 h-4 text-[var(--color-text-muted)]" />
+    <div className="basis-full w-full min-w-0 space-y-3">
+      <button type="button" onClick={() => setOpen(false)} aria-expanded data-progress-open className={`${heroQuiet} max-w-full`}>
+        <span className="min-w-0 truncate">{what}</span>
+        <ChevronUp className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" />
       </button>
       <div>
-        <div className="text-[13px] font-bold text-[var(--color-text)]">Against the original plan, shift by shift</div>
-        <ul className="mt-1 mb-2 space-y-0.5 text-[11.5px] leading-snug text-[var(--color-text-muted)]">
-          {chartKey(stats, tz).map((k) => <li key={k}>{k}</li>)}
-          <li>Past the plan&rsquo;s finish, anything short of 100% is late, in red.</li>
-        </ul>
+        <div className="mb-2 flex items-center gap-1.5 text-[15px] font-semibold text-[var(--color-text)]">
+          Against the original plan, shift by shift
+          <HelpTooltip>
+            <ul className="space-y-1">
+              {chartKey(stats, tz).map((k) => <li key={k}>{k}</li>)}
+              <li>Past the plan&rsquo;s finish, anything short of 100% is late, in red.</li>
+            </ul>
+          </HelpTooltip>
+        </div>
         <div className="divide-y divide-[var(--color-border)]/60">
           {stats.shifts.map((r) => {
             const red = behindAt(r);
@@ -643,7 +682,7 @@ function Progress({ stats, tz, look, lookById, ids, loading, records, mp }: {
       </div>
       <SlipStory stats={stats} tz={tz} look={look} lookById={lookById} setbacks={(look?.setbacks ?? []).filter((x) => !ids || ids.has(x.id))} steps={steps} loading={loading} counts={counts} mp={mp} />
       <ManpowerLook shifts={stats.shifts} records={records} settings={mp} steps={steps} tz={tz} now={now} />
-    </>
+    </div>
   );
 }
 
@@ -708,18 +747,17 @@ function SlipStory({ stats, tz, look, lookById, setbacks, steps, loading, counts
   const behindCauses = [...groups.values()].sort((a, b) => b.hours - a.hours).slice(0, 5);
   const byCause = (["hold", "longer", "crew", "late-start", "replanned", "discovery"] as CauseKind[]).map((c) => ({ c, h: Math.round(steps.reduce((a, x) => a + (x.lost[c] ?? 0), 0) * 10) / 10, n: steps.filter((x) => (x.lost[c] ?? 0) > 0).length })).filter((x) => x.h > 0);
   const maxH = Math.max(1, ...byCause.map((x) => x.h));
-  const head = "text-[13px] font-bold text-[var(--color-text)] mt-3";
+  const head = "text-[14px] font-semibold text-[var(--color-text)] mt-3";
   return (
     <div className="pt-3 border-t border-[var(--color-border)]">
-      <div className="text-[14px] font-bold text-[var(--color-text)]">{late ? "Why it finished late" : "Where it slipped"}</div>
+      <div className="font-display text-[17px] font-semibold text-[var(--color-text)]">{late ? "Why it finished late" : "Where it slipped"}</div>
       <ul className="mt-1 space-y-0.5 text-[12px] text-[var(--color-text)] leading-snug">
         {slipWords(stats, tz).map((w) => <li key={w}>{w}</li>)}
       </ul>
       {loading && <div className="mt-2 text-[11.5px] text-[var(--color-text-muted)]">Reading what was recorded on each step…</div>}
       {drivers.length > 0 && (
         <>
-          <div className={head}>What set the finish</div>
-          <div className="text-[11.5px] text-[var(--color-text-muted)]">The last step done, back through what each waited on (its links). These lost time of their own:</div>
+          <div className={`${head} flex items-center gap-1.5`}>What set the finish <HelpTooltip>The last step done, back through what each waited on (its links). These steps lost time of their own.</HelpTooltip></div>
           <ol className="divide-y divide-[var(--color-border)]/60">{drivers.map((x) => <Cause key={x.id} x={x} />)}</ol>
           {waited.length > 0 && <div className="text-[11.5px] text-[var(--color-text-muted)] leading-snug">Waited on them: {waited.map((x) => x.name).join(", ")}.</div>}
         </>
@@ -755,8 +793,7 @@ function SlipStory({ stats, tz, look, lookById, setbacks, steps, loading, counts
       )}
       {byCause.length > 0 && (
         <>
-          <div className={head}>Where the time went</div>
-          <div className="text-[11px] text-[var(--color-text-muted)] mb-1">Hours each step lost of its own, by cause (waiting on the work before it isn&rsquo;t counted again). Steps run side by side, so these add up to more than the finish&rsquo;s slip.</div>
+          <div className={`${head} flex items-center gap-1.5 mb-1`}>Where the time went <HelpTooltip>Hours each step lost of its own, by cause (waiting on the work before it isn&rsquo;t counted again). Steps run side by side, so these add up to more than the finish&rsquo;s slip.</HelpTooltip></div>
           <div className="space-y-1">{byCause.map((x) => (
             <div key={x.c} className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto] gap-2 items-center text-[11.5px]">
               <span className="text-[var(--color-text)] leading-tight">{CAUSE_LABEL[x.c]}</span>
@@ -782,38 +819,50 @@ function WholeManpower({ shifts, records, mp }: { shifts: ReturnType<typeof phas
   }, [shifts, records, mp, now]);
   if (!sum || sum.counted === 0) return null;
   const n0 = (x: number) => Math.round(x).toLocaleString("en-US");
+  const cells: Array<{ k: string; v: string; s?: string }> = [
+    { k: "Man-hours", v: n0(sum.totalMH), s: sum.directMH + sum.indirectMH > 0 ? `${n0(sum.directMH)} direct, ${n0(sum.indirectMH)} indirect` : undefined },
+    { k: "Peak on site", v: String(sum.peak?.n ?? 0), s: sum.cost != null ? `${money(sum.cost)} at the bid rates` : undefined },
+    { k: "Recordables", v: String(sum.incidents.recordable), s: sum.recordableRate != null ? `Rate ${sum.recordableRate.toFixed(2)} per 200,000 h` : undefined },
+    { k: "Shifts counted", v: `${sum.counted} of ${sum.shifts}`, s: sum.carried ? `${sum.carried} carried over, not checked` : undefined },
+  ];
   return (
-    <div className="py-3 text-[13px] leading-snug">
-      <b className="text-[var(--color-text)]">Whole project manpower: </b>
-      <span className="text-[var(--color-text-muted)]">
-        {n0(sum.totalMH)} man-hours{sum.directMH + sum.indirectMH > 0 ? ` (${n0(sum.directMH)} direct, ${n0(sum.indirectMH)} indirect)` : ""}, peak {sum.peak?.n ?? 0} on site
-        {sum.cost != null ? `, ${money(sum.cost)} at the bid rates` : ""}.
-        {" "}{sum.incidents.recordable} recordable{sum.incidents.recordable === 1 ? "" : "s"}{sum.recordableRate != null ? `, rate ${sum.recordableRate.toFixed(2)} per 200,000 man-hours` : ""}.
-        {" "}Counted on {sum.counted} of {sum.shifts} shifts{sum.carried ? `, ${sum.carried} carried over, not checked` : ""}.
-      </span>
+    <div>
+      <h3 className="font-display text-[17px] font-semibold text-[var(--color-text)] mb-1.5">Manpower, whole project</h3>
+      <dl className="grid grid-cols-2 lg:grid-cols-4 border-y border-[var(--color-border)]">
+        {cells.map((c, i) => (
+          <div key={c.k} className={`py-2.5 pr-4 border-[var(--color-border)] ${i % 2 ? "pl-4 border-l" : ""} ${i >= 2 ? "max-lg:border-t lg:pl-4 lg:border-l" : ""}`}>
+            <dt className="text-[13px] text-[var(--color-text-muted)]">{c.k}</dt>
+            <dd className="font-display text-[22px] leading-tight font-semibold tabular-nums text-[var(--color-text)]">{c.v}</dd>
+            {c.s && <dd className="text-[13px] text-[var(--color-text-muted)]">{c.s}</dd>}
+          </div>
+        ))}
+      </dl>
     </div>
   );
 }
 
 /** One line of how the job did: the name, the figure, what backs it. */
 function Fact({ k, v, s, tone }: { k: string; v: string; s: string; tone?: "good" | "bad" | "warn" }) {
+  const color = tone === "good" ? "text-[var(--state-released)]" : tone === "bad" ? "text-[var(--state-overdue)]" : tone === "warn" ? "text-[var(--state-held)]" : "text-[var(--color-text)]";
   return (
-    <>
-      <dt className="text-[var(--color-text-muted)]">{k}</dt>
-      <dd className="min-w-0">
-        <b className={tone === "good" ? "text-emerald-700 dark:text-emerald-400" : tone === "bad" ? "text-rose-700 dark:text-rose-400" : tone === "warn" ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text)]"}>{v}</b>
-        <span className="text-[var(--color-text-muted)]"> · {s}</span>
-      </dd>
-    </>
+    <tr className="align-top">
+      <th scope="row" className="w-32 sm:w-40 py-2.5 pr-4 text-left text-[14px] font-normal text-[var(--color-text-muted)]">{k}</th>
+      <td className="py-2.5 pr-4">
+        <span className={`font-display text-[17px] font-semibold tabular-nums whitespace-nowrap ${color}`}>{v}</span>
+        <span className="sm:hidden block text-[13px] text-[var(--color-text-muted)]">{s}</span>
+      </td>
+      <td className="py-2.5 hidden sm:table-cell text-[14px] text-[var(--color-text-muted)] w-[55%]">{s}</td>
+    </tr>
   );
 }
 
-const STATUS: Record<TurnoverItem["status"], { word: string; cls: string }> = {
-  open: { word: "Needed", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)]" },
-  received: { word: "Received", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)]" },
-  accepted: { word: "Accepted", cls: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" },
-  rejected: { word: "Rejected", cls: "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300" },
-  waived: { word: "Waived", cls: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" },
+// A quiet status tag: a dot in the status color and the word.
+const STATUS: Record<TurnoverItem["status"], { word: string; dot: string }> = {
+  open: { word: "Needed", dot: "var(--state-held)" },
+  received: { word: "Received", dot: "var(--color-text-faint)" },
+  accepted: { word: "Accepted", dot: "var(--state-released)" },
+  rejected: { word: "Rejected", dot: "var(--state-overdue)" },
+  waived: { word: "Waived", dot: "var(--color-border-strong)" },
 };
 
 /** One turnover document: needed for this job or not, where it stands,
@@ -831,34 +880,38 @@ function TurnoverRow({ it, canManage, busy, onRequired, onAccept, onFile }: { it
     finally { setSending(null); }
   };
   const drag = useFileDrag((fs) => { void send(fs[0]); }, !canAttach || busy || !!sending);
-  const st = it.required ? STATUS[it.status] : { word: "Not for this job", cls: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" };
+  const st = it.required ? STATUS[it.status] : { word: "Not for this job", dot: "var(--color-border-strong)" };
+  const small = "shrink-0 inline-flex items-center h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
   return (
     <div {...drag.bind} className={`${drag.ring}`}>
-    <div className={`px-3 py-2 flex items-center gap-2.5 text-[12.5px] ${it.required ? "" : "opacity-60"}`}>
+    <div className={`py-2 flex items-center gap-3 text-[14px] ${it.required ? "" : "opacity-60"}`}>
       <button type="button" role="switch" aria-checked={it.required} aria-label={`${it.name} needed for this job`} disabled={!canManage || busy} onClick={onRequired}
         className={`relative w-9 h-5 rounded-full shrink-0 transition-colors ${it.required ? "bg-[var(--color-text)]" : "bg-[var(--color-border-strong)]"} disabled:opacity-60`}>
         <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-[var(--color-surface)] shadow transition-all ${it.required ? "left-[18px]" : "left-0.5"}`} />
       </button>
       <span className="min-w-0 flex-1 break-words leading-snug text-[var(--color-text)]" title={it.description ?? undefined}>{it.name}</span>
-      <span className={`shrink-0 text-[11px] font-black px-2 py-0.5 rounded-full ${st.cls}`}>{busy || sending ? <Loader2 className="w-3 h-3 animate-spin inline" /> : st.word}</span>
+      <span className="shrink-0 inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)] whitespace-nowrap">
+        {busy || sending ? <Loader2 className="w-3 h-3 animate-spin" /> : <span aria-hidden className="w-2 h-2 rounded-full" style={{ background: st.dot }} />}
+        {st.word}
+      </span>
       {canAttach && (
         <>
           <input ref={file} type="file" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void send(f); if (file.current) file.current.value = ""; }} />
-          <button type="button" disabled={busy || !!sending} onClick={() => file.current?.click()} className="shrink-0 h-7 px-2.5 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Attach</button>
+          <button type="button" disabled={busy || !!sending} onClick={() => file.current?.click()} className={small}>Attach</button>
         </>
       )}
       {canManage && it.required && it.status === "received" && (
-        <button type="button" disabled={busy} onClick={onAccept} className="shrink-0 h-7 px-2.5 rounded-lg border border-emerald-500/60 text-[12px] font-bold text-emerald-800 dark:text-emerald-300 hover:bg-emerald-500/10">Accept</button>
+        <button type="button" disabled={busy} onClick={onAccept} className={small}>Accept</button>
       )}
     </div>
-    {drag.over && <div className="px-3 pb-2 text-[12px] font-bold text-[var(--color-text)]">{drag.say}</div>}
+    {drag.over && <div className="pb-2 text-[13px] font-semibold text-[var(--color-text)]">{drag.say}</div>}
     {(sending || failed) && (
-      <div className="px-3 pb-2 flex items-center gap-2 text-[12px]">
+      <div className="pb-2 flex items-center gap-2 text-[13px]">
         <FileThumb file={(sending ?? failed!.file)} size={28} />
         <span className="min-w-0 flex-1 truncate text-[var(--color-text)]">{(sending ?? failed!.file).name} <span className="text-[var(--color-text-muted)]">· {fileSize((sending ?? failed!.file).size)}</span>
           {sending ? <span className="text-[var(--color-text-muted)]"> · attaching…</span> : <span className="block font-semibold text-rose-700 dark:text-rose-300 truncate">{failed!.error}</span>}
         </span>
-        {failed && !sending && <button type="button" onClick={() => void send(failed.file)} className="shrink-0 h-7 px-2.5 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Try again</button>}
+        {failed && !sending && <button type="button" onClick={() => void send(failed.file)} className={small}>Try again</button>}
       </div>
     )}
     </div>

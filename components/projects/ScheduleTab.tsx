@@ -68,7 +68,7 @@ export type ScheduleMode = "plan" | "today" | "work" | "reports";
 const NO_PHASES: ProjectPhase[] = [];
 
 // A quiet button on a white card; the one orange action is heroPrimary.
-const QUIET = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-[10px] bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)] disabled:opacity-50 transition-colors";
+const QUIET = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
 // The Plan list: this many rows, then "Show N more".
 const ROW_STEP = 60;
 
@@ -812,7 +812,7 @@ function MilestoneRow({ m, depth = 0, info, fresh, canEdit, busy, onSetStatus, o
         : <Flag className="w-4 h-4 mt-0.5 text-[var(--color-text-faint)] shrink-0" />}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-x-2 gap-y-0.5 flex-wrap">
-          {m.wbs && <span className="font-mono text-[11px] text-[var(--color-text-faint)] shrink-0">{m.wbs}</span>}
+          {m.wbs && <span className="font-display tabular-nums text-[11px] text-[var(--color-text-faint)] shrink-0">{m.wbs}</span>}
           <span className={`text-[14px] min-w-0 break-words sm:truncate ${m.isSummary ? "font-extrabold" : "font-semibold"} ${effStatus === "completed" && !m.isSummary ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}>{m.name}</span>
           <StatusChip status={effStatus} />
           <span className="text-[12px] font-bold tabular-nums text-[var(--color-text-muted)]" title={isParent ? "Rolled up from sub-tasks" : "% complete"}>{effPct}%</span>
@@ -829,7 +829,7 @@ function MilestoneRow({ m, depth = 0, info, fresh, canEdit, busy, onSetStatus, o
           {typeof m.durationHours === "number" && m.durationHours > 0 && (
             <span className="tabular-nums">· {m.durationHours}h</span>
           )}
-          {m.workOrderRef && <span className="font-mono">· WO {m.workOrderRef}</span>}
+          {m.workOrderRef && <span className="font-display tabular-nums">· WO {m.workOrderRef}</span>}
           {(m.responsibleParty || m.responsibleOrg) && (
             <span>· {[m.responsibleParty, m.responsibleOrg].filter(Boolean).join(" / ")}</span>
           )}
@@ -838,13 +838,13 @@ function MilestoneRow({ m, depth = 0, info, fresh, canEdit, busy, onSetStatus, o
             <>
               <ArrowRight className="w-3 h-3 text-[var(--color-text-faint)]" />
               <span className={slipDays > 0 ? "text-rose-700 dark:text-rose-300 font-semibold" : "text-emerald-700 dark:text-emerald-300"}>
-                actual {actual.toLocaleDateString()}{slipDays !== 0 && ` (${slipDays > 0 ? "+" : ""}${slipDays}d)`}
+                actual {actual.toLocaleDateString("en-US", { month: "short", day: "numeric" })}{slipDays !== 0 && ` (${slipDays > 0 ? "+" : ""}${slipDays}d)`}
               </span>
             </>
           )}
           {overdue && !actual && <span className="text-rose-700 dark:text-rose-300 font-bold">overdue</span>}
           {m.linkedRevisionLabel && (
-            <span className="font-mono">· {m.linkedRevisionLabel}</span>
+            <span className="font-display tabular-nums">· {m.linkedRevisionLabel}</span>
           )}
         </div>
         {m.description && <div className="mt-1 text-[12px] text-[var(--color-text)] whitespace-pre-wrap line-clamp-2">{m.description}</div>}
@@ -862,7 +862,7 @@ function MilestoneRow({ m, depth = 0, info, fresh, canEdit, busy, onSetStatus, o
                 <button
                   onClick={() => onSetStatus(m.id!, "completed")}
                   disabled={busy}
-                  className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg text-[12px] font-semibold text-[var(--color-text)] bg-[var(--color-surface-2)] hover:bg-[var(--color-border)] disabled:opacity-40 transition-colors"
+                  className="inline-flex items-center gap-1 h-8 px-2.5 rounded-md text-[12px] font-semibold text-[var(--color-text)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 transition-colors"
                   title="Mark complete"
                 >
                   <Check className="w-3 h-3" /> Done
@@ -1058,13 +1058,13 @@ function AddMilestoneForm({
           <span className={lbl}>Hours of work</span>
           <input value={hours} onChange={(e) => setHours(e.target.value)} inputMode="decimal" placeholder="e.g. 6"
             title="Real hours this step takes - what the shift report weighs it by. Leave blank if unknown."
-            className={`${inp} w-full font-mono`} />
+            className={`${inp} w-full font-display tabular-nums`} />
         </label>
         <label>
           <span className={lbl}>Weight</span>
           <input value={weight} onChange={(e) => setWeight(e.target.value)} placeholder="1"
             title="How much this step counts in the % complete when it has no hours - a big scope worth 3× a small one gets weight 3. Leave 1 when unsure."
-            className={`${inp} w-full font-mono`} />
+            className={`${inp} w-full font-display tabular-nums`} />
         </label>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-4 gap-2">

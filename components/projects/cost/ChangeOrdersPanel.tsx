@@ -207,7 +207,7 @@ function CoRow({ co, canManage, busy, partyName, accountLabel, accounts, decide,
   return (
     <li className={`px-4 py-2.5 text-xs ${!isOpen && co.status !== "approved" ? "opacity-60" : ""}`}>
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="font-mono text-[11px] font-black text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{co.coNumber}</span>
+        <span className="font-display tabular-nums text-[11px] font-black text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{co.coNumber}</span>
         <span className="font-bold text-[var(--color-text)]">{co.title}</span>
         <span className={`font-black tabular-nums ${co.amount < 0 ? "text-emerald-700 dark:text-emerald-300" : "text-[var(--color-text)]"}`}>
           {co.amount < 0 ? `credit ${fmtMoney(Math.abs(co.amount))}` : fmtMoney(co.amount)}
@@ -216,7 +216,7 @@ function CoRow({ co, canManage, busy, partyName, accountLabel, accounts, decide,
           title="Reason codes score both sides: scope gaps land on the contractor's record, design errors and owner requests on ours.">
           {CO_REASON_LABEL[co.reasonCode]}
         </span>
-        <span className={`text-[11px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${
+        <span className={`text-[11px] font-black px-1.5 py-0.5 rounded border ${
           co.status === "approved" ? "border-emerald-500/40 bg-emerald-500/[0.07] text-emerald-700 dark:text-emerald-300"
           : co.status === "proposed" ? "border-amber-500/40 bg-amber-500/[0.07] text-amber-700 dark:text-amber-300"
           : "border-[var(--color-border)] text-[var(--color-text-faint)]"}`}>
@@ -262,7 +262,7 @@ function CoRow({ co, canManage, busy, partyName, accountLabel, accounts, decide,
           partyName, accountLabel,
           co.description,
           co.createdByName ? `proposed by ${co.createdByName}` : null,
-          co.decidedByName ? `${co.status} by ${co.decidedByName}${co.decidedAt ? ` on ${new Date(co.decidedAt).toLocaleDateString()}` : ""}` : null,
+          co.decidedByName ? `${co.status} by ${co.decidedByName}${co.decidedAt ? ` on ${new Date(co.decidedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}` : null,
           co.decisionNote ? `“${co.decisionNote}”` : null,
         ].filter(Boolean).join(" · ")}
       </div>
@@ -331,7 +331,7 @@ function ProposeForm({ orgId, projectId, actor, accounts, parties, onDone, onCan
         <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What changed? (title)" autoFocus
           className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs col-span-2" />
         <input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="Amount (− = credit)" inputMode="decimal"
-          className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-mono tabular-nums" />
+          className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-display tabular-nums" />
         <select value={reason} onChange={(e) => setReason(e.target.value as CoReason)}
           className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
           {(Object.keys(CO_REASON_LABEL) as CoReason[]).map((r) => (

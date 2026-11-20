@@ -252,7 +252,7 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
             <span className={lbl}>Work order # <span className="normal-case tracking-normal font-normal text-[11.5px] text-[var(--color-text-muted)]">(required)</span></span>
             <div className="flex flex-wrap items-center gap-1.5">
               <input value={wo} onChange={(e) => { setWo(e.target.value); setNoWo(false); setMsg(null); }} placeholder="e.g. 310990" aria-label="Work order number"
-                className={`${inp} w-36 font-mono`} />
+                className={`${inp} w-36 font-display tabular-nums`} />
               {taskWo && (
                 <button type="button" aria-pressed={!noWo && wo.trim() === taskWo} onClick={() => { setWo(taskWo); setNoWo(false); setMsg(null); }}
                   className={chip(!noWo && wo.trim() === taskWo)}>Same as the task: {taskWo}</button>
@@ -273,7 +273,7 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
                   <CrewPicker value={r.crew} onChange={(v) => setRows(rows.map((x, j) => (j === i ? { ...x, crew: v } : x)))} crews={crews} className="w-40" />
                   <span className="inline-flex items-center gap-1">
                     <input value={r.hours} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, hours: e.target.value.replace(/[^0-9.]/g, "").slice(0, 5) } : x)))} inputMode="decimal" placeholder="hrs" aria-label="Hours"
-                      className={`${inp} w-14 text-right font-mono`} />
+                      className={`${inp} w-14 text-right font-display tabular-nums`} />
                     <span className="text-[var(--color-text-muted)]">h</span>
                   </span>
                   {rows.length > 1 && <button type="button" onClick={() => setRows(rows.filter((_, j) => j !== i))} aria-label="Remove this step" className="w-7 h-7 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><Trash2 className="w-3.5 h-3.5" /></button>}
@@ -354,7 +354,7 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
           </div>
           {msg && <div role="alert" className="font-semibold text-rose-700 dark:text-rose-400">{msg}</div>}
           <div className="flex items-center justify-end gap-2 pt-1">
-            <button type="button" onClick={onClose} className="h-9 px-3 rounded-lg bg-[var(--color-surface-2)] font-semibold hover:bg-[var(--color-border)]">Cancel</button>
+            <button type="button" onClick={onClose} className="h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] font-semibold hover:bg-[var(--color-surface-2)]">Cancel</button>
             <button type="button" onClick={() => void save()} disabled={busy}
               className="h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
               {busy ? "Adding…" : "Add to the schedule"}

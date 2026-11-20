@@ -16,6 +16,8 @@
 import { activeOnly } from "@/lib/activeMilestones";
 import { Card } from "@/components/ui/PageHero";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import HelpTooltip from "@/components/ui/HelpTooltip";
+import { bandSeg, bandSegItem } from "@/components/admin/band";
 import {
   Plus, X, Loader2, Check, ChevronDown, ChevronRight,
   Landmark, HardHat, AlertTriangle, Ban,
@@ -208,8 +210,8 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
     <div className="space-y-4">
       {preview && <FilePreviewModal file={preview} onClose={() => setPreview(null)} />}
       {/* ── Sub-tabs: one job per screen; what just happened, under them ── */}
-      <Card pad={false} className="p-1.5">
-      <div className="flex items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div>
+      <div className={bandSeg} role="group" aria-label="Costs">
         <SubTab active={view === "overview"} onClick={() => setView("overview")} icon={<LayoutDashboard className="w-3.5 h-3.5" />} label="Overview" />
         <SubTab active={view === "contractors"} onClick={() => { setAsked(null); setView("contractors"); }} icon={<HardHat className="w-3.5 h-3.5" />} label="Contractors" />
         <SubTab active={view === "budget"} onClick={() => setView("budget")} icon={<Landmark className="w-3.5 h-3.5" />} label="Budget" count={accounts.length} />
@@ -218,18 +220,18 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         <SubTab active={view === "changes"} onClick={() => setView("changes")} icon={<GitPullRequestArrow className="w-3.5 h-3.5" />} label="Change orders" />
       </div>
       {err && (
-        <div role="alert" className="mx-2 mt-1.5 mb-1 flex items-center gap-2 text-[13px] font-bold text-rose-700 dark:text-rose-300">
+        <div role="alert" className="mt-2 flex items-center gap-2 text-[14px] font-semibold text-[var(--state-overdue)]">
           <span className="min-w-0 flex-1">{err}</span>
           <button onClick={() => setErr(null)} aria-label="Dismiss" className="shrink-0 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
         </div>
       )}
       {notice && (
-        <div role="status" className="mx-2 mt-1.5 mb-1 flex items-center gap-2 text-[13px] font-bold text-emerald-800 dark:text-emerald-300">
-          <Check className="w-4 h-4 shrink-0" /> <span className="min-w-0 flex-1">{notice}</span>
+        <div role="status" className="mt-2 flex items-center gap-2 text-[14px] font-semibold text-[var(--color-text)]">
+          <Check className="w-4 h-4 shrink-0 text-[var(--state-released)]" /> <span className="min-w-0 flex-1">{notice}</span>
           <button onClick={() => setNotice(null)} aria-label="Dismiss" className="shrink-0 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
         </div>
       )}
-      </Card>
+      </div>
 
       {view === "overview" && (<>
       {phaseMoney && (
@@ -313,17 +315,15 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
 
       {view === "budget" && (<>
       {/* ── Budget basis + build-from-document ── */}
-      <Card pad={false} className="overflow-hidden" label="Budget basis"
+      <Card pad={false} className="overflow-hidden" label={<>Budget basis <HelpTooltip>
+          <b>AFE</b> (what&apos;s authorized), then <b>budget lines</b> (how it&apos;s split, by contractor or scope), then <b>quotes and POs</b> (awarded, committed), then <b>invoices</b> (spent). Each can be changed; every change is kept with why.
+        </HelpTooltip></>}
         action={canManage && !importing && accounts.length > 0 ? (
           <button onClick={() => setShowDrop((v) => !v)}
             className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
             <FileUp className="w-3.5 h-3.5" /> Read a revised AFE or budget sheet
           </button>
         ) : undefined}>
-        {/* How the money is tracked, in one line. */}
-        <div className="px-4 sm:px-5 text-[12px] text-[var(--color-text-muted)]">
-          <b className="text-[var(--color-text)]">AFE</b> (what&apos;s authorized) → <b className="text-[var(--color-text)]">Budget lines</b> (how it&apos;s split, by contractor or scope) → <b className="text-[var(--color-text)]">Quotes / POs</b> (awarded, committed) → <b className="text-[var(--color-text)]">Invoices</b> (spent). Each can be changed; every change is kept with why.
-        </div>
         <AfeCard orgId={orgId} projectId={projectId} afe={basis} linesTotal={rollup.budget} cur={cur} canManage={canManage} actor={actor}
           fileOf={(id) => fileOfDoc(id ? docs.find((d) => d.id === id) : null)}
           onSaved={(msg) => { setNotice(msg); void refresh(); }} />
@@ -444,13 +444,10 @@ function SubTab({ active, onClick, icon, label, count, attention }: {
   active: boolean; onClick: () => void; icon: React.ReactNode; label: string; count?: number; attention?: boolean;
 }) {
   return (
-    <button onClick={onClick} aria-pressed={active}
-      className={`shrink-0 inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-[13px] font-bold transition-colors ${
-        active ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+    <button type="button" onClick={onClick} aria-pressed={active} className={bandSegItem(active)}>
       {icon} {label}
       {count != null && count > 0 && (
-        <span className={`text-[11px] font-black tabular-nums px-1.5 rounded-full ${
-          active ? "bg-[var(--color-surface)]/20" : attention ? "bg-amber-500/15 text-amber-700 dark:text-amber-300" : "bg-[var(--color-surface-2)]"}`}>{badgeText(count)}</span>
+        <span className={`text-[12px] font-semibold tabular-nums ${attention ? "text-[var(--state-held)]" : "text-[var(--color-text-muted)]"}`}>{badgeText(count)}</span>
       )}
     </button>
   );
@@ -549,7 +546,7 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
         <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
           {entries.map((e) => (
             <li key={e.id} className={`px-3 py-2 flex flex-wrap items-center gap-2 text-xs ${e.status === "void" ? "opacity-50" : ""}`}>
-              <span className={`shrink-0 text-[11px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${
+              <span className={`shrink-0 text-[11px] font-black px-1.5 py-0.5 rounded border ${
                 e.entryType === "commitment" ? "text-[var(--color-text)] dark:text-[var(--color-text)] border-[var(--color-border-strong)] bg-[var(--color-surface-2)]"
                 : e.entryType === "actual" ? "text-[var(--color-text)] dark:text-[var(--color-text)] border-[var(--color-border-strong)] bg-[var(--color-surface-2)]"
                 : "text-amber-700 dark:text-amber-300 border-amber-500/40 bg-amber-500/10"}`}>
@@ -557,7 +554,7 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
               </span>
               <span className={`font-black tabular-nums ${e.status === "void" ? "line-through" : ""} text-[var(--color-text)]`}>{fmtMoney(e.amount, cur)}</span>
               <span className="text-[var(--color-text-muted)] truncate">
-                {e.entryDate ? new Date(e.entryDate).toLocaleDateString() : "-"}
+                {e.entryDate ? new Date(e.entryDate).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "-"}
                 {e.reference ? ` · ${e.reference}` : ""}
                 {e.description ? ` · ${e.description}` : ""}
                 {e.createdByName ? ` · ${e.createdByName}` : ""}
@@ -640,7 +637,7 @@ function EntryForm({ orgId, projectId, accountId, defaultParty, parties, actor, 
         ))}
       </div>
       <input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="Amount" inputMode="decimal"
-        className="h-8 w-28 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-mono tabular-nums" />
+        className="h-8 w-28 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-display tabular-nums" />
       <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
         className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs [color-scheme:light] dark:[color-scheme:dark]" />
       {parties.length > 0 && (
@@ -650,7 +647,7 @@ function EntryForm({ orgId, projectId, accountId, defaultParty, parties, actor, 
         </select>
       )}
       <input value={ref} onChange={(e) => setRef(e.target.value)} placeholder="PO / invoice #"
-        className="h-8 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-mono" />
+        className="h-8 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-display tabular-nums" />
       <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Description"
         className="h-8 flex-1 min-w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
       <button onClick={() => void submit()} disabled={saving}
@@ -752,7 +749,7 @@ function PartiesPanel({ orgId, projectId, actor, parties, canManage, onChanged }
             <option value="internal">internal</option>
           </select>
           <input value={trade} onChange={(e) => setTrade(e.target.value)} placeholder="Trade (piping, E&I…)" className="h-8 w-36 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
-          <input value={contract} onChange={(e) => setContract(e.target.value)} placeholder="Contract value" inputMode="decimal" className="h-8 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-mono tabular-nums" />
+          <input value={contract} onChange={(e) => setContract(e.target.value)} placeholder="Contract value" inputMode="decimal" className="h-8 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-display tabular-nums" />
           <button onClick={() => void add()} disabled={saving} className="h-8 inline-flex items-center gap-1 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[11px] font-black hover:bg-[var(--color-surface-2)] disabled:opacity-50">
             {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Add
           </button>
@@ -812,7 +809,7 @@ function PartyEditor({ orgId, projectId, actor, party, onCancel, onSaved }: {
         <label className="block"><span className={label}>Trade</span>
           <input value={trade} onChange={(e) => setTrade(e.target.value)} placeholder="Piping, E&I…" className={`mt-0.5 ${field}`} /></label>
         <label className="block"><span className={label}>Contract value</span>
-          <input value={contract} onChange={(e) => setContract(e.target.value)} inputMode="decimal" className={`mt-0.5 ${field} font-mono tabular-nums`} /></label>
+          <input value={contract} onChange={(e) => setContract(e.target.value)} inputMode="decimal" className={`mt-0.5 ${field} font-display tabular-nums`} /></label>
         <span className="hidden sm:block" />
         <label className="block"><span className={label}>Contact name</span>
           <input value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="Who you call" className={`mt-0.5 ${field}`} /></label>

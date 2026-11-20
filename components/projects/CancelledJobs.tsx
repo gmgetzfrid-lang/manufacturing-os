@@ -84,7 +84,7 @@ export function CancelledJobsList({ jobs, canEdit, userId, userEmail, onChanged 
         <div key={j.m.id} className="px-3 py-2 flex items-start gap-3">
           <div className="flex-1 min-w-0 text-[12.5px] space-y-0.5">
             <div className="text-[var(--color-text)]">
-              {j.m.workOrderRef && <span className="font-mono font-bold">WO {j.m.workOrderRef} · </span>}
+              {j.m.workOrderRef && <span className="font-display tabular-nums font-bold">WO {j.m.workOrderRef} · </span>}
               <b className="break-words">{j.m.name}</b>
               {j.crumbs.length > 0 && <span className="text-[11px] text-[var(--color-text-muted)]"> · {j.crumbs.join(" › ")}</span>}
               {j.steps > 1 && <span className="text-[11px] text-[var(--color-text-muted)]"> · {j.steps} steps</span>}

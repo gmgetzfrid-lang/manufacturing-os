@@ -212,7 +212,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       setExtendOpen(null);
       await refresh();
       setMsg(expiresAt
-        ? `${l.companyName}'s link now works through ${new Date(expiresAt).toLocaleDateString()}. Same link, nothing to resend.`
+        ? `${l.companyName}'s link now works through ${new Date(expiresAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}. Same link, nothing to resend.`
         : `${l.companyName}'s link no longer expires.`);
     } catch (e) { setMsg((e as Error).message); }
     finally { setBusy(null); }
@@ -337,7 +337,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
               <div className="flex items-center gap-2 flex-wrap">
                 <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                 <span className="text-[14px] font-bold text-[var(--color-text)]">{p.label}</span>
-                <span className="text-[13px] text-[var(--color-text-muted)]">Rev {p.revLabel ?? "-"} · {p.company ?? "external"}{p.submittedAt ? ` · ${new Date(p.submittedAt).toLocaleDateString()}` : ""}</span>
+                <span className="text-[13px] text-[var(--color-text-muted)]">Rev {p.revLabel ?? "-"} · {p.company ?? "external"}{p.submittedAt ? ` · ${new Date(p.submittedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}</span>
                 {canManage && (
                   <span className="ml-auto flex items-center gap-1.5">
                     <button onClick={() => void approve(p)} disabled={busy === p.docId} className="inline-flex items-center gap-1 h-9 px-3 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[13px] font-bold disabled:opacity-50">
@@ -373,9 +373,9 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-bold text-[var(--color-text)]">{l.companyName}</span>
                 {l.allowAutoSupersede && <span className="inline-flex items-center gap-0.5 text-[11px] font-bold text-[var(--color-text)] dark:text-[var(--color-text)]"><ShieldCheck className="w-3 h-3" /> trusted</span>}
-                <span className="text-[var(--color-text-faint)]">{l.submissionCount} submission{l.submissionCount === 1 ? "" : "s"}{l.expiresAt && !isExpired(l.expiresAt) ? ` · expires ${new Date(l.expiresAt).toLocaleDateString()}` : ""}{l.revokedAt ? " · REVOKED" : ""}</span>
+                <span className="text-[var(--color-text-faint)]">{l.submissionCount} submission{l.submissionCount === 1 ? "" : "s"}{l.expiresAt && !isExpired(l.expiresAt) ? ` · expires ${new Date(l.expiresAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}{l.revokedAt ? " · REVOKED" : ""}</span>
                 {l.expiresAt && isExpired(l.expiresAt) && !l.revokedAt && (
-                  <span className="text-[11px] font-black uppercase text-rose-700 dark:text-rose-300">expired {new Date(l.expiresAt).toLocaleDateString()}</span>
+                  <span className="text-[11px] font-black text-rose-700 dark:text-rose-300">expired {new Date(l.expiresAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
                 )}
                 {!l.revokedAt && (
                   <span className="ml-auto flex items-center gap-1 flex-wrap">

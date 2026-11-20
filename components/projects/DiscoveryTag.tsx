@@ -31,7 +31,7 @@ export default function DiscoveryTag({ m, tz, className = "" }: { m: Milestone; 
   const tip = discoveryTip(m, tz);
   if (!d || !tip) return null;
   return (
-    <span title={tip} className={`inline-block whitespace-nowrap rounded border px-1 py-px text-[11px] font-bold uppercase tracking-wide leading-none align-middle ${ADDED_TONE[kindOf(d)]} ${className}`}>
+    <span title={tip} className={`inline-block whitespace-nowrap rounded border px-1.5 py-0.5 text-[12px] font-semibold leading-none align-middle ${ADDED_TONE[kindOf(d)]} ${className}`}>
       {ADDED[kindOf(d)].word}
     </span>
   );

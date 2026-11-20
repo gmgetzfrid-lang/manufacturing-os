@@ -27,6 +27,7 @@
 
 import { useEscapeClose } from "@/hooks/useEscapeClose";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { bandSeg, bandSegItem } from "@/components/admin/band";
 import { badgeText } from "@/lib/badge";
 import { createPortal } from "react-dom";
 import {
@@ -165,7 +166,7 @@ interface Props {
 }
 
 // A quiet button on the white card; the one orange one is Email / Print.
-const QUIET = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-[10px] bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)] disabled:opacity-50 transition-colors";
+const QUIET = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
 
 const NONE_CANCELLED: CancelledJob[] = [];
 /** "Project / turnaround lead"; for a plain project, "Project lead". */
@@ -1021,10 +1022,10 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           by note, Email / Print, More) over which shift it is; Report or
           Meeting, and the rest, fold into More. */}
       <div className="px-3 sm:px-4 pt-3 pb-2.5 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap rounded-t-2xl bg-[var(--color-surface)]">
-        {!meetingFixed && <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-[10px] p-0.5 gap-0.5" role="tablist" aria-label="Meeting">
+        {!meetingFixed && <div className={bandSeg} role="tablist" aria-label="Meeting">
           {MEETINGS.map(({ id, label, Icon }) => (
             <button key={id} role="tab" aria-selected={meeting === id} onClick={() => { setMeetingPick(id); setPresenting(null); }}
-              className={`inline-flex items-center gap-1 h-8 px-2.5 rounded-lg text-[12px] font-semibold transition-colors ${meeting === id ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+              className={bandSegItem(meeting === id)}>
               <Icon className="w-3 h-3" /> {label}
             </button>
           ))}
@@ -1032,11 +1033,11 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
 
         {/* The report, or the meeting's agenda (attendance, the safety topic, what the next shift picks up). */}
         {meeting === "turnover" && agendaList.length > 0 && (
-          <div className="max-md:hidden inline-flex items-center bg-[var(--color-surface-2)] rounded-[10px] p-0.5 gap-0.5" role="tablist" aria-label="Report or meeting">
+          <div className={`max-md:hidden ${bandSeg}`} role="tablist" aria-label="Report or meeting">
             {([["report", "Report"], ["meeting", "Meeting"]] as const).map(([id, label]) => (
               <button key={id} type="button" role="tab" aria-selected={(id === "meeting") === inMeetingView}
                 onClick={() => { setScreenState(id); setPresenting(null); }}
-                className={`h-8 px-3 rounded-lg text-[13px] font-semibold transition-colors ${(id === "meeting") === inMeetingView ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                className={bandSegItem((id === "meeting") === inMeetingView)}>
                 {label}
               </button>
             ))}
@@ -1047,8 +1048,8 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           // Which shift: its own row on a phone, under the actions.
           <div className="flex flex-wrap items-center gap-1.5 max-md:order-2 max-md:w-full">
             {(!meetingFixed || agendaList.length > 0) && <span className="max-md:hidden mx-0.5 w-px h-4 bg-[var(--color-border)]" />}
-            <button onClick={() => pick(previousShift(shift, tz, times))} className="w-9 h-9 shrink-0 inline-flex items-center justify-center rounded-[10px] hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Previous shift" aria-label="Previous shift"><ChevronLeft className="w-4 h-4" /></button>
-            <div className="inline-flex shrink-0 items-center bg-[var(--color-surface-2)] rounded-[10px] p-0.5 gap-0.5">
+            <button onClick={() => pick(previousShift(shift, tz, times))} className="w-9 h-9 shrink-0 inline-flex items-center justify-center rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]" title="Previous shift" aria-label="Previous shift"><ChevronLeft className="w-4 h-4" /></button>
+            <div className={`${bandSeg} shrink-0`} role="group" aria-label="Which shift">
               {(["day", "night"] as const).map((k) => (
                 // The shift handing over, and the one it hands to: Day → Night
                 // is the day's report and the plan for that night. A phone
@@ -1056,18 +1057,18 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
                 <button key={k} onClick={() => setSel({ dayKey: shift.dayKey, kind: k })} aria-pressed={shift.kind === k}
                   aria-label={k === "day" ? "Day \u2192 Night" : "Night \u2192 Day"}
                   title={k === "day" ? "The day shift's report, and the plan for the night shift after it" : "The night shift's report, and the plan for the day shift after it"}
-                  className={`inline-flex items-center gap-1 h-8 px-2.5 rounded-lg text-[12.5px] font-semibold ${shift.kind === k ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                  className={bandSegItem(shift.kind === k)}>
                   {k === "day" ? <Sun className="w-3 h-3" /> : <Moon className="w-3 h-3" />} {k === "day" ? "Day" : "Night"}<span className="max-sm:hidden">{k === "day" ? " \u2192 Night" : " \u2192 Day"}</span>
                 </button>
               ))}
             </div>
             <input type="date" value={shift.dayKey} onChange={(e) => { if (e.target.value) setSel({ dayKey: e.target.value, kind: shift.kind }); }}
               aria-label="Which day's shift"
-              className="h-9 min-w-0 w-[138px] max-md:flex-1 max-md:w-auto text-[13px] rounded-[10px] px-2.5 bg-[var(--color-surface-2)] text-[var(--color-text)] border border-transparent focus:border-[var(--color-border-strong)]" title="Which day's shift to close" />
-            <button onClick={() => pick(nextShift(shift, tz, times))} className="w-9 h-9 shrink-0 inline-flex items-center justify-center rounded-[10px] hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Next shift" aria-label="Next shift"><ChevronRight className="w-4 h-4" /></button>
+              className="h-9 min-w-0 w-[142px] max-md:flex-1 max-md:w-auto text-[14px] font-semibold rounded-md px-2.5 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border-strong)] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40" title="Which day's shift to close" />
+            <button onClick={() => pick(nextShift(shift, tz, times))} className="w-9 h-9 shrink-0 inline-flex items-center justify-center rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]" title="Next shift" aria-label="Next shift"><ChevronRight className="w-4 h-4" /></button>
             {/* Back to the shift on now: only once another one is picked. */}
             {/* (On a phone it's in More, so the row stays one row.) */}
-            {ownSel != null && <button onClick={() => setSel(null)} className="max-md:hidden h-9 text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2.5 rounded-[10px] hover:bg-[var(--color-surface-2)]">Current shift</button>}
+            {ownSel != null && <button onClick={() => setSel(null)} className={`${QUIET} max-md:hidden`}>Current shift</button>}
           </div>
         )}
 
@@ -1079,7 +1080,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           <div className="contents">
             {timesSaved === false && (
               <button onClick={() => setShowTimes((v) => !v)} aria-expanded={showTimes} title="The day / night split is a guess until the shift times are saved"
-                className={`${QUIET} max-md:hidden text-rose-700 dark:text-rose-300`}>
+                className={`${QUIET} max-md:hidden !text-[var(--state-overdue)]`}>
                 <Settings2 className="w-3.5 h-3.5" /> Set shift times
               </button>
             )}
@@ -1255,7 +1256,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
                   <button key={x.who ?? "__all"} type="button" aria-pressed={on} onClick={() => setCrewPick(x.who)}
                     className={`shrink-0 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${on ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
                     {x.who ?? "All"}
-                    {x.who && <span className="font-mono opacity-60">{x.steps}</span>}
+                    {x.who && <span className="font-display tabular-nums opacity-60">{x.steps}</span>}
                   </button>
                 );
               })}
@@ -1538,7 +1539,7 @@ function CopyUpdate({ doc, meeting, lh, stamps, primary }: { primary?: boolean; 
     <>
       <button onClick={open}
         className={primary
-          ? "inline-flex items-center gap-1.5 h-10 px-4 rounded-xl text-[14px] font-extrabold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] shadow-[0_12px_24px_-12px_var(--color-accent)]"
+          ? "inline-flex items-center gap-1.5 h-9 px-4 rounded-md text-[15px] font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] shadow-[0_1px_0_rgb(0_0_0/0.12)]"
           : QUIET}
         title="The short update: copy it into an email, or print it - see it first">
         <Mail className="w-3.5 h-3.5" /> Email / Print
@@ -2062,13 +2063,13 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   // Without a plan, steps can still be pulled forward one by one.
   const addButton = ho?.openPicker && !goals.byPlan ? (
     <button type="button" onClick={ho.openPicker}
-      className="inline-flex items-center gap-1.5 h-9 rounded-[10px] bg-[var(--color-surface-2)] px-3 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)] print:hidden">
+      className="inline-flex items-center gap-1.5 h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden">
       <Zap className="w-3.5 h-3.5" /> Add work for the {next.kind} shift
     </button>
   ) : null;
   const planButton = np?.open ? (
     <button type="button" onClick={np.open}
-      className="inline-flex items-center gap-1.5 h-9 rounded-[10px] bg-[var(--color-surface-2)] px-3 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)] print:hidden">
+      className="inline-flex items-center gap-1.5 h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden">
       <ListChecks className="w-3.5 h-3.5" /> {goals.byPlan ? `Change the ${next.kind} plan` : `Plan the ${next.kind} shift`}
     </button>
   ) : null;
@@ -2099,7 +2100,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   });
   const afterButton = after?.open && afterNext ? (
     <button type="button" onClick={after.open}
-      className="inline-flex items-center gap-1.5 h-9 rounded-[10px] bg-[var(--color-surface-2)] px-3 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)] print:hidden">
+      className="inline-flex items-center gap-1.5 h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden">
       <ListChecks className="w-3.5 h-3.5" /> {after.report.goals.byPlan ? `Change the ${afterNext.kind} plan` : `Plan the ${afterNext.kind} shift`}
     </button>
   ) : null;
@@ -2237,7 +2238,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
           {!print && o.thisPlan?.open && (
             <div className="flex flex-wrap items-center gap-2">
               <button type="button" onClick={o.thisPlan.open}
-                className="inline-flex items-center gap-1.5 h-9 rounded-[10px] bg-[var(--color-surface-2)] px-3 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)] print:hidden">
+                className="inline-flex items-center gap-1.5 h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden">
                 <ListChecks className="w-3.5 h-3.5" /> {o.thisPlan.plan ? "Change this shift's plan" : "Plan this shift"}
               </button>
               <span className="text-[11.5px] text-[var(--color-text-muted)]">{o.thisPlan.plan ? `${planSetText(o.thisPlan.plan, c) ?? "Planned."} The update's "Work to be completed" is this plan.` : "The work after the meeting. Not set: the update lists the schedule's work for the shift."}</span>
@@ -2379,7 +2380,7 @@ function FollowUpsBox({ open, edit, T, onAdd, onDone }: {
         <div className="flex gap-2">
           <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") add(); }} placeholder="Add a follow-up item"
             aria-label="Add a follow-up item" className="flex-1 min-w-0 h-9 px-2.5 rounded-[10px] border border-transparent bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text)] focus:bg-[var(--color-surface)] focus:border-[var(--color-border-strong)]" />
-          <button type="button" onClick={add} disabled={!text.trim()} className="h-9 px-3 rounded-[10px] bg-[var(--color-surface-2)] text-[var(--color-text)] hover:bg-[var(--color-border)] text-[13px] font-semibold disabled:opacity-50">Add</button>
+          <button type="button" onClick={add} disabled={!text.trim()} className="h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[13px] font-semibold disabled:opacity-50">Add</button>
         </div>
       )}
     </div>
@@ -2438,7 +2439,7 @@ function discoverySection(shift: ShiftWindow, c: Ctx, list: Discovery[], onAdd?:
         )}
         {!print && onAdd && (
           <button type="button" onClick={onAdd}
-            className="inline-flex items-center gap-1.5 h-9 rounded-[10px] bg-[var(--color-surface-2)] px-3 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)] print:hidden">
+            className="inline-flex items-center gap-1.5 h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden">
             <Plus className="w-3.5 h-3.5" /> Add discovery or added scope
           </button>
         )}
@@ -2464,10 +2465,10 @@ function DiscoveryList({ list, c, print, now = false }: { list: Discovery[]; c: 
           {list.map((d) => (
             <div key={d.record.id} className="px-3 py-2 text-[12.5px] space-y-0.5">
               <div className="flex items-start justify-between gap-2">
-                <b className="break-words">{d.task?.name}{d.task?.workOrderRef && <span className="ml-1.5 font-mono text-[11px] text-[var(--color-text-muted)]">WO {d.task.workOrderRef}</span>}</b>
-                <span className="shrink-0 font-mono text-[11px] text-[var(--color-text-muted)]">{c.DTs(d.record.foundAt)}</span>
+                <b className="break-words">{d.task?.name}{d.task?.workOrderRef && <span className="ml-1.5 font-display tabular-nums text-[11px] text-[var(--color-text-muted)]">WO {d.task.workOrderRef}</span>}</b>
+                <span className="shrink-0 font-display tabular-nums text-[11px] text-[var(--color-text-muted)]">{c.DTs(d.record.foundAt)}</span>
               </div>
-              <div className="break-words"><b className="text-[11px] uppercase tracking-wide text-[var(--color-text-muted)] mr-1">{ADDED[kindOf(d.record)].word}</b>{d.record.what}</div>
+              <div className="break-words"><b className="text-[11px] text-[var(--color-text-muted)] mr-1">{ADDED[kindOf(d.record)].word}</b>{d.record.what}</div>
               {d.steps.map((m) => <div key={m.id} className="text-[11.5px] text-[var(--color-text-muted)] break-words">{discoveryStepLine(m, c.hrs)}</div>)}
               <div className={`text-[11.5px] ${impactCls(d)}`}>{impactOf(d)}</div>
             </div>
@@ -2484,8 +2485,8 @@ function DiscoveryList({ list, c, print, now = false }: { list: Discovery[]; c: 
           <tbody>
             {list.map((d) => (
               <tr key={d.record.id} className="border-b border-slate-100 dark:border-slate-800 align-top">
-                <td className={`${cell} font-mono text-[11px] whitespace-nowrap`}>{c.DTs(d.record.foundAt)}</td>
-                <td className={`${cell} font-semibold break-words`}>{d.task?.name}{d.task?.workOrderRef && <div className="font-mono font-normal text-[11px] text-[var(--color-text-muted)]">WO {d.task.workOrderRef}</div>}</td>
+                <td className={`${cell} font-display tabular-nums text-[11px] whitespace-nowrap`}>{c.DTs(d.record.foundAt)}</td>
+                <td className={`${cell} font-semibold break-words`}>{d.task?.name}{d.task?.workOrderRef && <div className="font-display tabular-nums font-normal text-[11px] text-[var(--color-text-muted)]">WO {d.task.workOrderRef}</div>}</td>
                 <td className={`${cell} break-words`}><div className="text-[12px] font-semibold text-[var(--color-text-muted)]">{ADDED[kindOf(d.record)].word}</div>{d.record.what}{d.record.approvedBy && <div className="text-[11px] text-[var(--color-text-muted)]">Approved by {d.record.approvedBy}</div>}</td>
                 <td className={`${cell} break-words`}>{d.steps.map((m) => <div key={m.id}>{discoveryStepLine(m, c.hrs)}</div>)}</td>
                 <td className={`${cell} break-words ${impactCls(d)}`}>{impactOf(d)}</td>
@@ -3017,11 +3018,11 @@ function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehea
           </div>
           <div className={print ? "text-[11px] text-slate-700" : "mt-0.5 text-[12px] text-[var(--color-text-muted)]"}>
             {print ? <>{when} · </> : null}as of {c.T(meeting === "turnover" ? asOf : now)} {tzAbbrev(c.tz, now)}
-            {crew && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-black uppercase ${print ? "border border-slate-700 text-slate-900" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>{crew} only</span>}
-            {criticalOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-black uppercase ${print ? "border border-rose-700 text-rose-900" : "bg-rose-200 text-rose-950"}`}>Critical path only</span>}
-            {addedOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-black uppercase ${print ? "border border-slate-700 text-slate-900" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>Discovery &amp; added only</span>}
-            {classOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-black uppercase ${print ? "border border-slate-700 text-slate-900" : "bg-slate-200 text-slate-950"}`}>{classOnly} only</span>}
-            {rehearsal && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-black uppercase ${print ? "border border-amber-700 text-amber-800" : "bg-amber-400 text-slate-900"}`}>Rehearsal: shift not started</span>}
+            {crew && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-black ${print ? "border border-slate-700 text-slate-900" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>{crew} only</span>}
+            {criticalOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-black ${print ? "border border-rose-700 text-rose-900" : "bg-rose-200 text-rose-950"}`}>Critical path only</span>}
+            {addedOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-black ${print ? "border border-slate-700 text-slate-900" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>Discovery &amp; added only</span>}
+            {classOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-black ${print ? "border border-slate-700 text-slate-900" : "bg-slate-200 text-slate-950"}`}>{classOnly} only</span>}
+            {rehearsal && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-black ${print ? "border border-amber-700 text-amber-800" : "bg-amber-400 text-slate-900"}`}>Rehearsal: shift not started</span>}
             {historyNote && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-bold ${print ? "border border-slate-500 text-slate-700" : "bg-[var(--color-surface-2)] text-[var(--color-text)]"}`}>Earlier shift: {historyNote}</span>}
           </div>
         </div>
@@ -3155,7 +3156,7 @@ function WhyBehind({ why, c, print }: { why: BehindWhy; c: Ctx; print: boolean }
       <div className={`mt-1.5 flex flex-wrap gap-1.5 ${small}`}>
         {labelHours(why).map((x) => (
           <span key={x.short} className={`rounded-full border px-2 py-0.5 font-bold ${tag(x.flag)}`}>
-            {x.short[0].toUpperCase() + x.short.slice(1)} <span className="font-mono">{h(x.hours)}</span>
+            {x.short[0].toUpperCase() + x.short.slice(1)} <span className="font-display tabular-nums">{h(x.hours)}</span>
           </span>
         ))}
       </div>
@@ -3173,7 +3174,7 @@ function WhyBehind({ why, c, print }: { why: BehindWhy; c: Ctx; print: boolean }
                   {t.waiting && <div className="text-[var(--color-text-muted)] break-words">{t.waiting}</div>}
                   {t.split && <div className={`${small} text-[var(--color-text-faint)]`}>{t.split}</div>}
                 </div>
-                <span className={`shrink-0 font-bold font-mono tabular-nums ${l.flag ? "text-rose-700 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>{h(ch.hours)}</span>
+                <span className={`shrink-0 font-bold font-display tabular-nums ${l.flag ? "text-rose-700 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>{h(ch.hours)}</span>
               </li>
             );
           })}
@@ -3298,7 +3299,7 @@ function StatusLine({ tags, print }: { tags: TagT[]; print?: boolean }) {
 type NumTone = "rose" | "amber" | "slate";
 /** The order on the list: a plain number — colour is for problems. */
 function Num({ n }: { n: number; tone?: NumTone }) {
-  return <span className="inline-block min-w-[14px] text-right font-mono text-[12px] text-slate-500 dark:text-slate-400 tabular-nums">{n}</span>;
+  return <span className="inline-block min-w-[14px] text-right font-display text-[12px] text-slate-500 dark:text-slate-400 tabular-nums">{n}</span>;
 }
 
 function Box() {
@@ -3339,11 +3340,11 @@ function GroupTitle({ title }: { title: string }) {
 /** "25% · goal 100%": where it is, a thin bar, and the shift's goal marked. */
 function Progress({ right, print }: { right: string; print?: boolean }) {
   const m = /^(\d+)%(?: · goal (\d+)%)?$/.exec(right.trim());
-  if (!m) return <span className={`font-mono font-semibold text-slate-700 dark:text-slate-200 ${print ? "text-[8pt]" : "text-[12px]"}`}>{right}</span>;
+  if (!m) return <span className={`font-display tabular-nums font-semibold text-slate-700 dark:text-slate-200 ${print ? "text-[8pt]" : "text-[12px]"}`}>{right}</span>;
   const pct = Math.min(100, +m[1]), goal = m[2] != null ? Math.min(100, +m[2]) : null;
   return (
     <span className="inline-flex flex-col items-end gap-1">
-      <span className={`font-mono font-semibold text-slate-900 dark:text-slate-100 whitespace-nowrap ${print ? "text-[8pt]" : "text-[12px]"}`}>
+      <span className={`font-display tabular-nums font-semibold text-slate-900 dark:text-slate-100 whitespace-nowrap ${print ? "text-[8pt]" : "text-[12px]"}`}>
         {pct}%{goal != null && <span className="font-normal text-slate-500 dark:text-slate-400"> → {goal}%</span>}
       </span>
       <span className={`relative block h-1 rounded-full bg-slate-200 dark:bg-slate-700 ${print ? "w-16" : "w-20"}`} aria-hidden>
@@ -3488,7 +3489,7 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
                     </td>
                     {hasWhen && <td className={`${cell} text-slate-700 dark:text-slate-300 break-words`}>{r.when}</td>}
                     {hasWho && <td className={`${cell} font-medium text-slate-900 dark:text-slate-100 truncate`} title={r.who}>{r.who}</td>}
-                    {hasWo && <td className={`${cell} font-mono text-slate-500 dark:text-slate-400 truncate ${print ? "text-[7.5pt]" : "text-[11.5px]"}`}>{r.wo}</td>}
+                    {hasWo && <td className={`${cell} font-display tabular-nums text-slate-500 dark:text-slate-400 truncate ${print ? "text-[7.5pt]" : "text-[11.5px]"}`}>{r.wo}</td>}
                     <td className={`${cell} text-right`}><Progress right={r.right} print={print} /></td>
                   </tr>
                   {/* The meeting's decision on this step — its own full-width line. */}
@@ -3529,8 +3530,8 @@ function DoneLines({ x, stamps, T, print, onEdit }: { x: DoneTask; stamps: boole
     const lead = [l.wo ? `WO ${l.wo}` : "", stamps && l.time != null ? T(l.time) : ""].filter(Boolean).join(" ");
     return (
       <div className="mt-0.5 first:mt-0">
-        <span className={`mr-1.5 font-black uppercase tracking-wide text-slate-500 dark:text-slate-400 ${small}`}>{label}</span>
-        {lead && <span className={`font-mono text-slate-600 dark:text-slate-300 mr-1.5 ${print ? "text-[7.5pt]" : "text-[11.5px]"}`}>{lead}</span>}
+        <span className={`mr-1.5 font-black text-slate-500 dark:text-slate-400 ${small}`}>{label}</span>
+        {lead && <span className={`font-display tabular-nums text-slate-600 dark:text-slate-300 mr-1.5 ${print ? "text-[7.5pt]" : "text-[11.5px]"}`}>{lead}</span>}
         <span>{l.name}</span>
         {l.critical && <span className={`ml-1.5 font-bold text-rose-700 dark:text-rose-400 ${small}`}>critical path</span>}
         {l.discovery && <span className={`ml-1.5 font-bold text-[var(--color-text)] ${small}`}>{l.discovery}</span>}
@@ -3568,8 +3569,8 @@ function DoneTasks({ rows, print, stamps = false, T, sort, onEdit }: { rows: Don
           {rows.map((x) => (
             <div key={x.ids.join(",")} data-sort-id={x.key} className={`group/sort px-3 py-2 text-[12.5px] space-y-0.5 ${moving(x.key) ? "opacity-40" : ""}`}>
               <div className="flex items-start justify-between gap-2">
-                <b className="text-[var(--color-text)] break-words"><Grip props={grip([x.key], x.task)} />{x.task}{x.critical && <CriticalTag />}{x.woShown && <span className="ml-1.5 font-mono font-semibold text-[11px] text-[var(--color-text-muted)]">{/^\d+ WOs$/.test(x.woShown) ? x.woShown : `WO ${x.woShown}`}</span>}</b>
-                {x.vs.text && <b className={`shrink-0 font-mono text-[12px] ${vsCls(x.vs.tone)}`}>{x.vs.text}</b>}
+                <b className="text-[var(--color-text)] break-words"><Grip props={grip([x.key], x.task)} />{x.task}{x.critical && <CriticalTag />}{x.woShown && <span className="ml-1.5 font-display tabular-nums font-semibold text-[11px] text-[var(--color-text-muted)]">{/^\d+ WOs$/.test(x.woShown) ? x.woShown : `WO ${x.woShown}`}</span>}</b>
+                {x.vs.text && <b className={`shrink-0 font-display tabular-nums text-[12px] ${vsCls(x.vs.tone)}`}>{x.vs.text}</b>}
               </div>
               {pctLine(x) && <div className="text-[11px] text-[var(--color-text-muted)]">{pctLine(x)}</div>}
               <div className="text-[var(--color-text)] break-words"><DoneLines x={x} stamps={stamps} T={T} print={false} onEdit={onEdit} /></div>
@@ -3592,11 +3593,11 @@ function DoneTasks({ rows, print, stamps = false, T, sort, onEdit }: { rows: Don
             {rows.map((x) => (
               <tr key={x.ids.join(",")} data-sort-id={x.key} className={`group/sort border-b border-slate-100 dark:border-slate-800 align-top ${moving(x.key) ? "opacity-40" : ""}`}>
                 <td className={`${cell} font-semibold break-words`}><Grip props={grip([x.key], x.task)} />{x.task}{x.critical && <CriticalTag print={print} />}{pctLine(x) && <div className={`font-normal text-slate-500 dark:text-slate-400 ${print ? "text-[7.5pt]" : "text-[11px]"}`}>{pctLine(x)}</div>}</td>
-                {hasWo && <td className={`${cell} font-mono text-[11px] break-words`}>{x.woShown.split(/,\s*/).map((w, i) => <span key={i} className="block">{w}</span>)}</td>}
+                {hasWo && <td className={`${cell} font-display tabular-nums text-[11px] break-words`}>{x.woShown.split(/,\s*/).map((w, i) => <span key={i} className="block">{w}</span>)}</td>}
                 <td className={`${cell} break-words`}><DoneLines x={x} stamps={stamps} T={T} print={print} onEdit={onEdit} /></td>
                 <td className={`${cell} text-[11.5px] text-[var(--color-text-muted)] break-words`}>{x.who}</td>
                 <td className={`${cell} font-bold break-words ${resultCls(x.result.tone)}`}>{x.result.text}{whyLine(x)}</td>
-                <td className={`${cell} text-right font-mono font-bold whitespace-nowrap ${vsCls(x.vs.tone)}`}>{x.vs.text}</td>
+                <td className={`${cell} text-right font-display tabular-nums font-bold whitespace-nowrap ${vsCls(x.vs.tone)}`}>{x.vs.text}</td>
               </tr>
             ))}
           </tbody>
@@ -3620,7 +3621,7 @@ function SimpleTable({ head, rows, print }: { head: string[]; rows: Array<{ id: 
         <tbody>
           {rows.map((r) => (
             <tr key={r.id} className="border-t border-slate-200 dark:border-slate-700/60 align-top">
-              {r.cells.map((c, i) => <td key={i} className={`${cell} ${i === 0 ? "" : "whitespace-nowrap font-mono text-[11px] print:text-[10.5px]"}`}>{c}</td>)}
+              {r.cells.map((c, i) => <td key={i} className={`${cell} ${i === 0 ? "" : "whitespace-nowrap font-display tabular-nums text-[11px] print:text-[10.5px]"}`}>{c}</td>)}
             </tr>
           ))}
         </tbody>

@@ -798,7 +798,7 @@ function Taught(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBui
             return (
               <li key={l.id} className={`py-2.5 ${out ? "opacity-60" : ""}`} data-lesson={l.id}>
                 <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                  <span className="rounded bg-[var(--color-surface-2)] px-1.5 text-[11px] font-black uppercase tracking-wide text-[var(--color-text-muted)]">{AREA_WORD[l.area]}</span>
+                  <span className="rounded bg-[var(--color-surface-2)] px-1.5 text-[11px] font-black text-[var(--color-text-muted)]">{AREA_WORD[l.area]}</span>
                   <b className="order-last basis-full sm:order-none sm:basis-0 sm:flex-1 min-w-0 text-[13.5px] text-[var(--color-text)]">{l.title}</b>
                   {!out && <span className={`text-[12px] font-bold ${(effects[l.id] ?? 0) >= 0.5 ? "text-emerald-700 dark:text-emerald-400" : (effects[l.id] ?? 0) <= -0.5 ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-muted)]"}`}>{effectWord(effects[l.id])}</span>}
                   {p.canEdit && <button type="button" onClick={() => skip(l.id, !out)} className="text-[12px] font-bold text-[var(--color-accent-text)] hover:underline cursor-pointer">{out ? "Put back" : "Leave out"}</button>}
@@ -820,7 +820,7 @@ function Taught(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBui
             {[...moving, ...(allRisks ? still : [])].map((r) => (
               <li key={r.id} className="py-2" data-risk={r.id}>
                 <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                  <span className="rounded bg-[var(--color-surface-2)] px-1.5 text-[11px] font-black uppercase tracking-wide text-[var(--color-text-muted)]">{r.kind === "found" ? "Found" : "Ran long"}</span>
+                  <span className="rounded bg-[var(--color-surface-2)] px-1.5 text-[11px] font-black text-[var(--color-text-muted)]">{r.kind === "found" ? "Found" : "Ran long"}</span>
                   <b className="order-last basis-full sm:order-none sm:basis-0 sm:flex-1 min-w-0 text-[13px] text-[var(--color-text)]">{r.where}</b>
                   <span className={`text-[12px] font-bold ${r.finishH >= 0.5 ? "text-rose-700 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>{r.finishH >= 0.5 ? `finish ${r1(r.finishH)} h later` : "no change to the finish"}</span>
                 </div>

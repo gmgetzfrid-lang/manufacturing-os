@@ -41,7 +41,7 @@ import { typeLabel, unitLabel } from "@/lib/woClass";
 import MoreMenu from "@/components/ui/MoreMenu";
 
 // A quiet button on the white card; the one orange one is New work order.
-const QUIET = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-[10px] bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)] disabled:opacity-50 transition-colors";
+const QUIET = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
 // The list: this many work orders, then "Show N more".
 const WO_STEP = 40;
 
@@ -273,7 +273,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
         {(() => {
           const ALL = [["all", "All"], ["open", "Open"], ["critical", "Critical path"], ["behind", "Behind"], ["notStarted", "Not started"], ["held", "Held"], ["done", "Done"], ["added", "Discovery & added"]] as const;
           const UP_FRONT: Show[] = ["all", "open", "behind", "held"];
-          const chip = (on: boolean) => `h-9 px-3 rounded-full text-[13px] font-semibold ${on ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text)] hover:bg-[var(--color-border)]"}`;
+          const chip = (on: boolean) => `h-9 px-3 rounded-full text-[13px] font-semibold ${on ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
           const folded = ALL.filter(([k]) => !UP_FRONT.includes(k));
           const pickedFolded = !showCancelled && !UP_FRONT.includes(show) ? ALL.find(([k]) => k === show) : undefined;
           return (
@@ -294,7 +294,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
                   Cancelled <span className="tabular-nums opacity-80">{cancelledShown.length}</span>
                 </button>
               )}
-              <MoreMenu label="More filters" triggerClass="inline-flex items-center gap-1 h-9 px-3 rounded-full text-[13px] font-semibold bg-[var(--color-surface-2)] text-[var(--color-text)] hover:bg-[var(--color-border)]"
+              <MoreMenu label="More filters" triggerClass="inline-flex items-center gap-1 h-9 px-3 rounded-full text-[13px] font-semibold border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                 items={[
                   ...folded.map(([k, l]) => ({ icon: <span aria-hidden className="w-4 text-center tabular-nums text-[11px]">{found.filter(is(k)).length}</span>, label: l, current: !showCancelled && show === k, onClick: () => { setShow(k); setShowCancelled(false); } })),
                   { icon: <Ban className="w-4 h-4" />, label: `Cancelled (${cancelled.length})`, current: showCancelled, line: true, onClick: () => setShowCancelled(true) },
@@ -387,7 +387,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
                     </span>
                     <div className="flex-1 min-w-0">
                       <div className="flex flex-wrap items-baseline gap-x-2">
-                        <span className={`font-mono text-[12.5px] font-bold ${o.wo ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{o.wo ? `WO ${o.wo}` : "No WO"}</span>
+                        <span className={`font-display tabular-nums text-[12.5px] font-bold ${o.wo ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{o.wo ? `WO ${o.wo}` : "No WO"}</span>
                         <span className="text-[14px] font-bold text-[var(--color-text)] break-words">{o.owner.name}{o.also?.map((x) => <span key={x.id} className="text-[var(--color-text-muted)]"> · {x.name}</span>)}</span>
                       </div>
                       {!isOpen && detailsOf(o)}
@@ -396,7 +396,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
                       <span className={`text-[12px] font-bold ${stTone}`}>{st.word}</span>
                       <span className="text-[13px] font-bold tabular-nums text-[var(--color-text)]">{o.pct}%</span>
                       {o.standing !== "done" && Math.abs(o.hours) >= 0.1 && (
-                        <span className={`font-mono text-[11px] font-bold ${o.hours < 0 ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>{o.hours > 0 ? "+" : "−"}{Math.abs(o.hours)} h</span>
+                        <span className={`font-display tabular-nums text-[11px] font-bold ${o.hours < 0 ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>{o.hours > 0 ? "+" : "−"}{Math.abs(o.hours)} h</span>
                       )}
                     </div>
                   </div>

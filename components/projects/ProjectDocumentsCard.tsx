@@ -8,10 +8,11 @@
 // gives managers attach/remove — with doc_added / doc_removed activity
 // (two enum values that existed since day one and were never written).
 
+import HelpTooltip from "@/components/ui/HelpTooltip";
 import { Card } from "@/components/ui/PageHero";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Search, Plus, X, Loader2, ExternalLink } from "lucide-react";
+import { Search, Plus, X, Loader2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
 interface LinkedDoc {
@@ -145,21 +146,21 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
   };
 
   return (
-    <Card pad={false} className="overflow-hidden" label={`Project documents · ${rows.length}`}
+    <Card pad={false} className="overflow-hidden" label={<>Project documents <span className="text-[var(--color-text-muted)] font-medium tabular-nums">{rows.length}</span></>}
       action={canManage ? (
         <button
           onClick={() => { setAttachOpen((v) => !v); setQ(""); setResults([]); }}
           aria-expanded={attachOpen}
-          className={`inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-[13px] font-bold whitespace-nowrap transition-colors ${attachOpen ? "border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"}`}
+          className={`inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md text-[14px] font-semibold whitespace-nowrap transition-colors ${attachOpen ? "border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"}`}
         >
           <Plus className="w-3.5 h-3.5" /> Attach<span className="max-sm:hidden"> document</span>
         </button>
       ) : undefined}>
 
-      {err && <div role="alert" className="mx-4 sm:mx-5 mb-2 text-[13px] font-bold text-rose-700 dark:text-rose-300">{err}</div>}
+      {err && <div role="alert" className="mx-4 sm:mx-5 mt-3 text-[14px] font-semibold text-[var(--state-overdue)]">{err}</div>}
 
       {attachOpen && canManage && (
-        <div className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)]/40">
+        <div className="px-4 sm:px-5 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
           <div className="relative">
             <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
             <input
@@ -168,19 +169,19 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
               placeholder="Search documents by number or title…"
               autoFocus
               aria-label="Search documents"
-              className="h-10 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-8 pr-2 text-[14px] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+              className="h-10 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-8 pr-2 text-[15px] focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none"
             />
           </div>
-          {searching && <div className="mt-1.5 text-[11px] text-[var(--color-text-faint)]">Searching…</div>}
-          {!searching && q.trim().length >= 2 && results.length === 0 && <div className="mt-1.5 text-[11px] text-[var(--color-text-faint)]">No documents match &ldquo;{q.trim()}&rdquo;.</div>}
+          {searching && <div className="mt-1.5 text-[13px] text-[var(--color-text-muted)]">Searching…</div>}
+          {!searching && q.trim().length >= 2 && results.length === 0 && <div className="mt-1.5 text-[13px] text-[var(--color-text-muted)]">No documents match &ldquo;{q.trim()}&rdquo;.</div>}
           {results.length > 0 && (
-            <ul className="mt-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)] overflow-hidden">
+            <ul className="mt-1.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)] overflow-hidden">
               {results.filter((r) => !rows.some((x) => x.docId === r.id)).map((r) => (
                 <li key={r.id}>
                   <button
                     onClick={() => void attach(r)}
                     disabled={busy === r.id}
-                    className="w-full text-left px-3 py-2 text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
+                    className="w-full text-left px-3 py-2 text-[14px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
                   >
                     {r.label}
                   </button>
@@ -192,46 +193,57 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
       )}
 
       {loading ? (
-        <div className="px-4 sm:px-5 pb-4 flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Loading the project&apos;s documents…</div>
+        <div className="px-4 sm:px-5 py-4 flex items-center gap-2 text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Loading the project&apos;s documents…</div>
       ) : rows.length === 0 ? (
-        <div className="px-4 sm:px-5 pb-4 text-[14px] text-[var(--color-text-muted)]">
-          No documents linked yet. Checking a document out under this project links it automatically{canManage ? ", or use Attach document above" : ""}.
+        <div className="px-4 sm:px-5 py-4 text-[15px] text-[var(--color-text-muted)]">
+          None linked yet. <HelpTooltip>A document checked out under this project links itself here{canManage ? ". Attach document links one by hand" : ""}.</HelpTooltip>
         </div>
       ) : (
-        <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
-          {rows.map((r) => {
-            const badge = SOURCE_BADGE[r.source] ?? SOURCE_BADGE.manual;
-            return (
-              <li key={r.linkId} className="px-4 sm:px-5 py-2.5 flex items-center gap-3 hover:bg-[var(--color-surface-2)]/40 transition-colors">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[14px] font-bold text-[var(--color-text)] truncate">{r.label}</span>
-                    {r.rev && <span className="text-[11px] font-mono text-[var(--color-text-muted)]">Rev {r.rev}</span>}
-                    {r.status && <span className="text-[13px] font-semibold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{r.status}</span>}
-                    <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded border ${badge.cls}`} title={badge.hint}>{badge.label}</span>
-                  </div>
-                  {r.lastSeenAt && <div className="text-[11px] text-[var(--color-text-faint)] mt-0.5">last activity {new Date(r.lastSeenAt).toLocaleDateString()}</div>}
-                </div>
-                {r.libraryId && (
-                  <Link href={`/documents/${r.libraryId}?doc=${r.docId}`} className="shrink-0 inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline">
-                    <ExternalLink className="w-3 h-3" /> Open
-                  </Link>
-                )}
-                {canManage && (
-                  <button
-                    onClick={() => void detach(r)}
-                    disabled={busy === r.linkId}
-                    title={r.source === "checkout" ? "Remove (it will re-link on the next checkout under this project)" : "Remove from project"}
-                    aria-label={`Remove ${r.label} from the project`}
-                    className="shrink-0 p-1 rounded text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-500/10 transition-colors disabled:opacity-40"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </li>
-            );
-          })}
-        </ul>
+        <table className="w-full text-[15px]">
+          <thead className="max-sm:hidden bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+            <tr className="border-y border-[var(--color-border)]">
+              <th scope="col" className="font-semibold px-4 h-10">Document</th>
+              <th scope="col" className="font-semibold px-4 w-[80px]">Rev</th>
+              <th scope="col" className="font-semibold px-4 hidden md:table-cell">Status</th>
+              <th scope="col" className="font-semibold px-4 hidden md:table-cell">Linked by</th>
+              <th scope="col" className="font-semibold px-4 hidden lg:table-cell">Last activity</th>
+              <th scope="col" className="px-4 w-[1%]"><span className="sr-only">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--color-border)]">
+            {rows.map((r) => {
+              const badge = SOURCE_BADGE[r.source] ?? SOURCE_BADGE.manual;
+              const href = r.libraryId ? `/documents/${r.libraryId}?doc=${r.docId}` : null;
+              return (
+                <tr key={r.linkId} className="hover:bg-[var(--color-surface-2)] align-top max-sm:flex max-sm:flex-wrap max-sm:items-center max-sm:gap-x-3 max-sm:px-4 max-sm:py-2.5">
+                  <td className="sm:px-4 sm:py-3 max-sm:flex-1 min-w-0">
+                    {href ? <Link href={href} className="font-display font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{r.label}</Link>
+                      : <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{r.label}</span>}
+                    {r.status && <div className="md:hidden text-[13px] text-[var(--color-text-muted)]">{r.status}</div>}
+                  </td>
+                  <td className="sm:px-4 sm:py-3 font-display tabular-nums text-[14px] text-[var(--color-text)] max-sm:text-[var(--color-text-muted)]">{r.rev ? <><span className="sm:hidden">Rev </span>{r.rev}</> : "-"}</td>
+                  <td className="px-4 py-3 hidden md:table-cell text-[14px] text-[var(--color-text)]">{r.status || "-"}</td>
+                  <td className="px-4 py-3 hidden md:table-cell text-[14px] text-[var(--color-text)]" title={badge.hint}>{badge.label}</td>
+                  <td className="px-4 py-3 hidden lg:table-cell text-[14px] text-[var(--color-text-muted)] whitespace-nowrap">{r.lastSeenAt ? new Date(r.lastSeenAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "-"}</td>
+                  <td className="sm:px-4 sm:py-2 whitespace-nowrap">
+                    {canManage && (
+                      <button
+                        type="button"
+                        onClick={() => void detach(r)}
+                        disabled={busy === r.linkId}
+                        title={r.source === "checkout" ? "Remove (it will re-link on the next checkout under this project)" : "Remove from project"}
+                        aria-label={`Remove ${r.label} from the project`}
+                        className="w-9 h-9 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)] transition-colors disabled:opacity-40"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       )}
     </Card>
   );

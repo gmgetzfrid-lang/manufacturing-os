@@ -90,7 +90,7 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
             <span className={`${print ? "text-base" : "text-[13px]"} text-[var(--color-text-faint)] font-bold`}>%</span>
           </div>
           <Bar pct={r.pctComplete} done={r.pctComplete === 100} />
-          <div className="text-[11px] text-[var(--color-text-muted)] font-mono mt-1">{r.done} / {r.totalLeaves} tasks</div>
+          <div className="text-[11px] text-[var(--color-text-muted)] font-display tabular-nums mt-1">{r.done} / {r.totalLeaves} tasks</div>
         </Card>}
 
         {byPhase ? null : st.state === "finished" ? (
@@ -118,7 +118,7 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
             <span className={`${print ? "text-base" : "text-[13px]"} text-[var(--color-text-faint)] font-bold`}>%</span>
           </div>
           <Bar pct={r.pctHours} />
-          <div className="text-[11px] text-[var(--color-text-muted)] font-mono mt-1">{Math.round(r.earnedHours)} / {Math.round(r.plannedHours)} h</div>
+          <div className="text-[11px] text-[var(--color-text-muted)] font-display tabular-nums mt-1">{Math.round(r.earnedHours)} / {Math.round(r.plannedHours)} h</div>
         </Card>
 
         {!byPhase && st.state !== "finished" && <Card print={print}>
@@ -187,7 +187,7 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
         <Health print={print} icon={<AlertTriangle className="w-4 h-4" />} tone="rose" label="Blocked" value={r.blocked} />
         <Health print={print} icon={<AlertTriangle className="w-4 h-4" />} tone="rose" label="Overdue" value={r.overdue} />
         <span className="ml-auto inline-flex items-center gap-2 print:hidden">
-          <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)]">
+          <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
             <Printer className="w-3.5 h-3.5" /> Print / export
           </button>
         </span>
@@ -204,14 +204,14 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
           <ul className="divide-y divide-[var(--color-border)]">
             {r.blockers.map((b) => (
               <li key={b.id} className="px-4 py-2.5 flex items-start gap-3">
-                <span className={`mt-0.5 shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] print:text-[9px] font-black uppercase tracking-wider border ${b.status === "blocked" ? "bg-rose-100 dark:bg-rose-900/40 text-rose-800 dark:text-rose-300 border-rose-200 dark:border-rose-800" : "bg-amber-100 dark:bg-amber-900/40 text-amber-900 dark:text-amber-200 border-amber-200 dark:border-amber-800"}`}>
+                <span className={`mt-0.5 shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] print:text-[9px] font-black border ${b.status === "blocked" ? "bg-rose-100 dark:bg-rose-900/40 text-rose-800 dark:text-rose-300 border-rose-200 dark:border-rose-800" : "bg-amber-100 dark:bg-amber-900/40 text-amber-900 dark:text-amber-200 border-amber-200 dark:border-amber-800"}`}>
                   {b.status === "blocked" ? "Blocked" : "On hold"}
                 </span>
                 <div className="flex-1 min-w-0">
                   <div className="text-[13px] font-semibold text-[var(--color-text)]">{b.name}{b.group && <span className="text-[var(--color-text-faint)] font-normal"> · {b.group}</span>}</div>
                   <div className="text-[12px] text-[var(--color-text-muted)]">{b.reason ? b.reason : <span className="italic text-[var(--color-text-faint)]">no reason given</span>}</div>
                 </div>
-                <div className="text-[11px] text-[var(--color-text-faint)] font-mono shrink-0">{fmtDate(b.plannedAt, tz)}</div>
+                <div className="text-[11px] text-[var(--color-text-faint)] font-display tabular-nums shrink-0">{fmtDate(b.plannedAt, tz)}</div>
               </li>
             ))}
           </ul>
@@ -227,7 +227,7 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
               <div key={g.id} className="px-4 py-2.5 flex items-center gap-3">
                 <div className="w-40 shrink-0 min-w-0">
                   <div className="text-[13px] font-bold text-[var(--color-text)] truncate">{g.name}</div>
-                  <div className="text-[11px] print:text-[10px] text-[var(--color-text-faint)] font-mono">{fmtDate(g.start, tz)} – {fmtDate(g.finish, tz)}</div>
+                  <div className="text-[11px] print:text-[10px] text-[var(--color-text-faint)] font-display tabular-nums">{fmtDate(g.start, tz)} – {fmtDate(g.finish, tz)}</div>
                 </div>
                 <div className="flex-1">
                   <Bar pct={g.pctComplete} done={g.pctComplete === 100} />

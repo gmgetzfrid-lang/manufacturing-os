@@ -21,11 +21,11 @@ import Link from "next/link";
 import {
   Loader2, AlertTriangle, Pause, Play,
   CheckCircle2, XCircle, Archive as ArchiveIcon, Layers, Send, Settings2,
-  User as UserIcon, Users, FileText, Activity as ActivityIcon,
-  ExternalLink, Hash, Trash2, Plus, Flag, X, Download, Target, ShieldCheck, Pencil, CircleDollarSign, Package,
+  Users, FileText, Activity as ActivityIcon,
+  Hash, Trash2, Plus, Flag, X, Download, Target, ShieldCheck, Pencil, CircleDollarSign, Package, Lock,
   UploadCloud, ClipboardList, Sun, FileBarChart, RotateCcw, ListChecks,
 } from "lucide-react";
-import { PageHero, PageBody, Card, StepLine, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
+import { PageHero, PageBody, Card, StepLine, heroPrimary, heroQuiet, type HeroFact } from "@/components/ui/PageHero";
 import { listMilestones } from "@/lib/milestones";
 import { phaseStandings, standingOf, lateWords, type PhaseStanding } from "@/lib/phaseStanding";
 import { phaseDates } from "@/lib/projectPhases";
@@ -110,7 +110,7 @@ const tabOf = (t: string | null | undefined): Tab | null => (t === "schedule" ? 
  *  a phone's action bar. */
 const FRAME = "mx-auto w-full max-w-[1800px] px-2 sm:px-4 lg:px-5 pt-2 sm:pt-4 pb-24";
 /** The Project menu's dots on a phone's band. */
-const BAND_ICON = "inline-flex items-center justify-center w-10 h-10 -mr-2 rounded-[10px] text-[var(--color-ink-fg)] hover:bg-[var(--color-ink-2)]";
+const BAND_ICON = "inline-flex items-center justify-center w-10 h-10 -mr-2 rounded-md text-[var(--color-text)] hover:bg-[var(--color-surface)]";
 /** "Phase 1", "Phase 1 and Phase 2", "A, B and C". */
 const joinWords = (xs: string[]) => (xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
 
@@ -439,7 +439,7 @@ export default function ProjectDetailPage() {
           <p role="alert" className="text-[14px] text-[var(--color-text)]">
             {error === "Project not found" || !error ? "This project wasn't found. It may have been deleted, or you're not on it." : `Couldn't load the project: ${error}`}
           </p>
-          <div className="mt-3 flex gap-4 text-[13px] font-bold">
+          <div className="mt-3 flex gap-4 text-[15px]">
             {error && error !== "Project not found" && <button onClick={() => void refresh()} className="text-[var(--color-accent-text)] hover:underline">Try again</button>}
             <Link href="/projects" className="text-[var(--color-accent-text)] hover:underline">All projects</Link>
           </div>
@@ -450,8 +450,6 @@ export default function ProjectDetailPage() {
 
   // ── The band's answer: what matters about this project right now ──
   const when = (iso: string | number) => { const t = typeof iso === "number" ? iso : Date.parse(iso); return `${fmtInTz(t, tz, { weekday: "short", month: "short", day: "numeric" })}, ${clockLabel(t, tz)}`; };
-  const muted = (s: string) => <span className="text-[var(--color-ink-muted)]">{s}</span>;
-  const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
   const statusWord = project.status[0].toUpperCase() + project.status.slice(1);
   const running = standings?.find((s) => s.state === "running") ?? null;
   const upcoming = standings?.find((s) => s.state === "not started") ?? null;
@@ -459,29 +457,51 @@ export default function ProjectDetailPage() {
   const unscheduled = state?.unscheduled ?? [];
   // A phase or the whole job, in words: "Phase 2 is 45% done."
   const who = (s: PhaseStanding) => (s.id === "all" ? "The work" : s.name);
+  const h1 = (n: number) => Math.round(Math.abs(n) * 10) / 10;
+  // The answer is one statement; the numbers behind it are facts beside it.
+  const st = standings ?? [];
+  const stepsDone = st.reduce((a, s) => a + s.done, 0), stepsAll = st.reduce((a, s) => a + s.steps, 0);
+  // How the finish went against the plan: the phase that finished last.
+  const lastDone = st.filter((s) => s.state === "finished" && s.finishedAt).sort((a, b) => Date.parse(b.finishedAt!) - Date.parse(a.finishedAt!))[0];
+  const finishFact = (): HeroFact | null => {
+    const l = lastDone?.lateHours;
+    if (l == null) return null;
+    return l >= 0.5 ? { label: "Hours late", value: h1(l), tone: "bad" } : l <= -0.5 ? { label: "Hours early", value: h1(l), tone: "good" } : { label: "Finish", value: "On time", tone: "good" };
+  };
+  const stepsFact: HeroFact | null = stepsAll ? { label: "Steps", value: `${stepsDone}/${stepsAll}` } : null;
   let answer: React.ReactNode = project.name;
   let sub: React.ReactNode = project.status === "cancelled" && project.cancelledReason ? `Cancelled: ${project.cancelledReason}` : null;
+  let facts: Array<HeroFact | null> = [];
   if (project.status === "cancelled") answer = "Cancelled.";
   else if (project.status === "archived") answer = "Archived.";
-  else if (project.status === "completed") answer = workDone ? <>Work done. {muted("Project complete.")}</> : "Marked complete.";
+  else if (project.status === "completed") { answer = workDone ? "Project complete." : "Marked complete."; facts = [stepsFact, finishFact()]; }
   else if (!standings || !stepRows) answer = project.name;
   else if (noSchedule) { answer = "No schedule yet."; sub = "Import it on Plan to track the work."; }
   else if (workDone) {
-    answer = !close ? "Work done."
-      : close.open.length ? <>Work done. {muted(`${plural(close.open.length, "thing")} left to close.`)}</>
-        : <>Work done. {muted("Ready to close.")}</>;
+    answer = "Work done.";
+    facts = [stepsFact, finishFact(), close ? { label: "Left to close", value: close.open.length, tone: close.open.length ? "warn" : "good" } : null];
   } else if (state?.scheduledDone && unscheduled.length) {
-    answer = <>{joinWords(standings.filter((s) => s.state === "finished").map((s) => s.name))} done. {muted(`${joinWords(unscheduled.map((p) => p.name))} ${unscheduled.length === 1 ? "has" : "have"} no schedule yet.`)}</>;
+    answer = `${joinWords(st.filter((s) => s.state === "finished").map((s) => s.name))} done.`;
+    sub = `${joinWords(unscheduled.map((p) => p.name))} ${unscheduled.length === 1 ? "has" : "have"} no schedule yet.`;
+    facts = [stepsFact, finishFact()];
   } else if (running) {
-    const gap = Math.round(Math.abs(running.gapHours) * 10) / 10;
-    answer = <>{who(running)} is {running.pct}% done. {muted(running.standing === "behind" ? `${gap} h behind plan.` : running.standing === "ahead" ? `${gap} h ahead of plan.` : "On plan.")}</>;
+    answer = `${who(running)} is ${running.pct}% done.`;
     const late = lateWords(running.lateHours);
-    sub = [running.overdue ? `${plural(running.overdue, "step")} overdue.` : "", running.forecastFinish ? `Forecast end ${when(running.forecastFinish)}${late ? `, ${late}` : ""}.` : ""].filter(Boolean).join(" ") || null;
+    sub = running.forecastFinish ? `Forecast end ${when(running.forecastFinish)}${late ? `, ${late}` : ""}.` : null;
+    facts = [
+      { label: "Plan by now", value: `${running.planPct}%` },
+      running.standing === "behind" ? { label: "Hours behind", value: h1(running.gapHours), tone: "bad" }
+        : running.standing === "ahead" ? { label: "Hours ahead", value: h1(running.gapHours), tone: "good" } : { label: "Pace", value: "On plan" },
+      { label: "Overdue", value: running.overdue, tone: running.overdue ? "bad" : undefined },
+      { label: "Steps", value: `${running.done}/${running.steps}` },
+    ];
   } else if (upcoming) {
-    answer = <>{who(upcoming)} starts {upcoming.plannedStart ? when(upcoming.plannedStart).split(",").slice(0, 2).join(",") : "soon"}. {muted(`${plural(upcoming.steps, "step")} planned.`)}</>;
+    answer = `${who(upcoming)} starts ${upcoming.plannedStart ? when(upcoming.plannedStart).split(",").slice(0, 2).join(",") : "soon"}.`;
+    facts = [{ label: "Steps planned", value: upcoming.steps }];
   }
-  else if (standings.length && standings.every((s) => s.state === "finished")) answer = "Work done.";
+  else if (st.length && st.every((s) => s.state === "finished")) { answer = "Work done."; facts = [stepsFact, finishFact()]; }
   if (project.status === "paused" && !sub) sub = canManage ? "Paused. Resume it from the Project menu." : "Paused.";
+  const heroFacts = facts.filter((f): f is HeroFact => !!f);
 
   // The phases, joined by one line: each with how it finished (or where it
   // stands), then the close-out.
@@ -489,15 +509,23 @@ export default function ProjectDetailPage() {
     const ph = phases.find((p) => p.id === s.id);
     const late = lateWords(s.lateHours);
     const bad = (s.state === "finished" && (s.lateHours ?? 0) >= 0.5) || (s.state === "running" && s.standing === "behind");
-    const where = s.state === "finished" ? <><span className="max-sm:hidden">Done {s.finishedAt ? when(s.finishedAt) : ""}{late ? " · " : ""}</span>{late ?? (s.finishedAt ? "" : "Done")}</>
-      : s.state === "running" ? <>{s.pct}% done{s.standing === "behind" ? <span className="max-sm:hidden"> · {Math.round(Math.abs(s.gapHours) * 10) / 10} h behind</span> : null}</>
-        : s.state === "not started" ? <>Not started</> : <>No schedule yet</>;
+    const red = "font-semibold text-[var(--state-overdue)]";
+    // One fact a line: the dates, when it finished (or where it stands), how late.
+    const where = s.state === "finished" ? <>
+        {s.finishedAt && <span className="block max-sm:hidden">Done {when(s.finishedAt)}</span>}
+        <span className={`block ${bad ? red : ""}`}>{late ?? "Done"}</span>
+      </>
+      : s.state === "running" ? <>
+        <span className="block">{s.pct}% done</span>
+        {s.standing === "behind" && <span className={`block max-sm:hidden ${red}`}>{h1(s.gapHours)} h behind</span>}
+      </>
+        : s.state === "not started" ? <span className="block">Not started</span> : <span className="block">No schedule yet</span>;
     return {
       label: s.id === "all" ? "Work" : s.name,
       state: (s.state === "finished" ? "done" : s.state === "running" ? "now" : "next") as "done" | "now" | "next",
       note: <>
         {ph && <span className="block max-sm:hidden">{phaseDates(ph).replace(" – ", " to ")}</span>}
-        <span className={`block ${ph ? "sm:mt-1" : ""} ${bad ? "font-semibold text-rose-200" : ""}`}>{where}</span>
+        {where}
       </>,
     };
   });
@@ -572,9 +600,17 @@ export default function ProjectDetailPage() {
           by one line; the phase picker and the Project menu; the tabs. */}
       <PageHero
         back={{ onClick: goBack, label: "Back to projects" }}
-        kicker={<span title={project.name}>{project.name} · {statusWord}{project.visibility === "private" ? " · Private" : ""}</span>}
+        kicker={<span className="flex items-center gap-3 min-w-0" title={project.name}>
+          <span className="truncate">{project.name}</span>
+          <span className="shrink-0 inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]">
+            <span aria-hidden className="w-2 h-2 rounded-full" style={{ background: project.status === "paused" ? "var(--state-held)" : project.status === "completed" ? "var(--state-released)" : project.status === "active" ? "var(--color-text-faint)" : "var(--color-border-strong)" }} />
+            {statusWord}
+          </span>
+          {project.visibility === "private" && <span className="shrink-0 max-sm:hidden inline-flex items-center gap-1 text-[13px]"><Lock className="w-3 h-3" /> Private</span>}
+        </span>}
         title={answer}
         sub={sub}
+        facts={heroFacts}
         primary={primary}
         tools={<>
           {phases.length > 0 && (isScheduleTab(tab) || tab === "costs") && (
@@ -591,17 +627,17 @@ export default function ProjectDetailPage() {
             <span className="max-md:hidden inline-flex items-center gap-2">
               <PresenceIndicator resourceType="project" resourceId={project.id} userId={uid} userName={userEmail?.split("@")[0]} role={activeRole || undefined} />
               <WatchButton orgId={project.orgId} userId={uid} resourceType="project" resourceId={project.id}
-                className="!h-9 !px-3 !rounded-[10px] !text-[13px] !font-semibold !border-[var(--color-ink-line)] !bg-[var(--color-ink-2)] !text-[var(--color-ink-fg)] hover:!bg-[var(--color-ink-line)]" />
+                className="!h-9 !px-3 !rounded-md !text-[14px] !font-semibold !border-[var(--color-border-strong)] !bg-[var(--color-surface)] !text-[var(--color-text)] hover:!bg-[var(--color-surface-2)]" />
             </span>
           )}
           {projectMenu}
         </>}
       >
         {actionError && (
-          <div role="alert" className="mb-4 flex items-start gap-2 text-[13px] font-semibold text-rose-200">
+          <div role="alert" className="mb-4 flex items-start gap-2 text-[14px] font-semibold text-[var(--state-overdue)]">
             <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
             <span className="flex-1">{actionError}</span>
-            <button onClick={() => setActionError(null)} className="shrink-0 p-1 rounded text-[var(--color-ink-muted)] hover:text-white" aria-label="Dismiss">
+            <button type="button" onClick={() => setActionError(null)} className="shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]" aria-label="Dismiss">
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
@@ -613,19 +649,19 @@ export default function ProjectDetailPage() {
         )}
         {/* TABS: the five for running the job, then the project's records.
             The records sit under More, with the one open in sight. */}
-        <div className="mt-6 sm:mt-7 flex items-end border-b border-[var(--color-ink-line)]">
+        <div className="mt-6 sm:mt-7 flex items-end border-b border-[var(--color-border-strong)]">
           <nav aria-label="Project" className="min-w-0 flex items-end gap-5 sm:gap-7 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {MAIN_TABS.map((t) => (
               <TabButton key={t.id} active={tab === t.id} onClick={() => setTab(t.id)}>{t.label}</TabButton>
             ))}
             {RECORD_TABS.filter((t) => t.id === tab).map((t) => (
               <TabButton key={t.id} active onClick={() => setTab(t.id)}>
-                {t.label}{t.id === "documents" && checkouts.length > 0 && <span className="text-[11px] text-[var(--color-ink-muted)]">{checkouts.length}</span>}
+                {t.label}{t.id === "documents" && checkouts.length > 0 && <span className="text-[13px] font-medium tabular-nums text-[var(--color-text-muted)]">{checkouts.length}</span>}
               </TabButton>
             ))}
           </nav>
           <span className="shrink-0 self-center ml-4 sm:ml-6">
-            <MoreMenu label="More" triggerClass="inline-flex items-center justify-center gap-1 h-10 text-[14px] font-semibold text-[var(--color-ink-muted)] hover:text-white"
+            <MoreMenu label="More" triggerClass="inline-flex items-center justify-center gap-1 h-10 px-2 -mx-2 rounded-md text-[15px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]"
               items={RECORD_TABS.map((t) => ({ icon: <t.icon className="w-4 h-4" />, label: t.label, current: tab === t.id, onClick: () => setTab(t.id) }))} />
           </span>
           <div className="ml-auto pl-2 self-center shrink-0 max-sm:hidden">
@@ -739,7 +775,7 @@ export default function ProjectDetailPage() {
         )}
         {tab === "intake" && !canManage && (
           <Card label="Intake">
-            <p className="text-[14px] font-bold text-[var(--color-text)]">The project owner and Document Control run intake.</p>
+            <p className="text-[15px] text-[var(--color-text)]">The project owner and Document Control run intake.</p>
             <p className="text-[13px] text-[var(--color-text-muted)] mt-1">Approved contractor revisions show up under Documents.</p>
           </Card>
         )}
@@ -829,21 +865,21 @@ export default function ProjectDetailPage() {
           {/* The reason being typed is kept on this device until it's saved. */}
           <ReasonDraft key={pendingStatus} draftKey={`project-status:${project.id}:${pendingStatus}`} value={statusReason} set={setStatusReason}
             onEscape={() => { if (!transitionBusy && !reviewOpen) { setPendingStatus(null); setStatusReason(""); setActionError(null); } }} />
-          <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
+          <div className="w-full max-w-md bg-[var(--color-surface)] rounded-lg shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
             <div className="px-6 py-4 border-b border-[var(--color-border)] relative pr-12">
               <button onClick={() => { setPendingStatus(null); setStatusReason(""); setActionError(null); }} disabled={transitionBusy} aria-label="Close"
                 className="absolute top-3 right-3 p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                 <X className="w-4 h-4" />
               </button>
-              <div className="text-sm font-black text-[var(--color-text)]">
+              <h2 className="font-display text-[19px] font-semibold text-[var(--color-text)]">
                 {pendingStatus === "cancelled" ? "Cancel project" :
                  pendingStatus === "completed" ? "Mark project complete" :
                  pendingStatus === "archived" ? "Archive project" :
                  pendingStatus === "paused" ? "Pause project" :
                  canReopen(project.status) ? "Reopen project" :
                  "Resume project"}
-              </div>
-              <div className="text-xs text-[var(--color-text-muted)] mt-1">
+              </h2>
+              <div className="text-[14px] text-[var(--color-text-muted)] mt-1">
                 {pendingStatus === "cancelled" || pendingStatus === "completed" || pendingStatus === "archived"
                   ? "Every active checkout on this project will be released."
                   : pendingStatus === "active" && canReopen(project.status)
@@ -858,8 +894,8 @@ export default function ProjectDetailPage() {
             {/* Closeout gates — what a finished job should have closed out.
                 Warnings, not walls: the owner can complete anyway, on the record. */}
             {pendingStatus === "completed" && !gates && (
-              <div className="px-6 pt-4 text-xs text-[var(--color-text-muted)]">
-                {gatesFailed ? <span className="font-bold text-amber-700 dark:text-amber-300">Couldn&apos;t check what&apos;s still open. You can still complete it.</span> : <><Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1.5" />Checking what&apos;s still open…</>}
+              <div className="px-6 pt-4 text-[14px] text-[var(--color-text-muted)]">
+                {gatesFailed ? <span className="font-semibold text-[var(--state-held)]">Couldn&apos;t check what&apos;s still open. You can still complete it.</span> : <><Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1.5" />Checking what&apos;s still open…</>}
               </div>
             )}
             {pendingStatus === "completed" && gates && (() => {
@@ -872,17 +908,17 @@ export default function ProjectDetailPage() {
               const failed = gateLines.filter((g) => !g.ok).length;
               return (
                 <div className="px-6 pt-4">
-                  <div className="text-[12px] font-semibold text-[var(--color-text-muted)] mb-1.5">Closeout gates</div>
-                  <ul className="space-y-1">
+                  <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Closeout gates</div>
+                  <ul className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
                     {gateLines.map((g, i) => (
-                      <li key={i} className={`flex items-center gap-2 text-xs font-bold ${g.ok ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"}`}>
-                        {g.ok ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0" /> : <AlertTriangle className="w-3.5 h-3.5 shrink-0" />}
+                      <li key={i} className="flex items-center gap-2 py-1.5 text-[14px] text-[var(--color-text)]">
+                        {g.ok ? <CheckCircle2 className="w-4 h-4 shrink-0 text-[var(--state-released)]" /> : <AlertTriangle className="w-4 h-4 shrink-0 text-[var(--state-held)]" />}
                         {g.text}
                       </li>
                     ))}
                   </ul>
                   {failed > 0 && (
-                    <div className="mt-2 text-[11px] text-[var(--color-text-muted)]">
+                    <div className="mt-2 text-[13px] text-[var(--color-text-muted)]">
                       You can complete anyway. The open items stay on the record and in the report.
                     </div>
                   )}
@@ -898,25 +934,25 @@ export default function ProjectDetailPage() {
                 onChange={(e) => setStatusReason(e.target.value)}
                 autoFocus
                 rows={3}
-                className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+                className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-md text-[15px] bg-[var(--color-surface)] resize-y focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none"
                 placeholder={pendingStatus === "cancelled" ? "Why is this project being cancelled?" : "Optional note for the audit log"}
               />
-              {actionError && <div className="mt-2 text-xs text-red-600">{actionError}</div>}
+              {actionError && <div className="mt-2 text-[14px] font-semibold text-[var(--state-overdue)]">{actionError}</div>}
             </div>
             <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
-              <button onClick={() => { setPendingStatus(null); setStatusReason(""); setActionError(null); }} disabled={transitionBusy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
+              <button onClick={() => { setPendingStatus(null); setStatusReason(""); setActionError(null); }} disabled={transitionBusy} className="h-9 px-3.5 rounded-md text-[14px] font-semibold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
               {pendingStatus === "completed" && (reviewLeft ?? 0) > 0 ? (
                 <>
-                  <button onClick={handleTransition} disabled={transitionBusy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-60">
+                  <button onClick={handleTransition} disabled={transitionBusy} className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md text-[14px] font-semibold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] disabled:opacity-60">
                     {transitionBusy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                     Complete anyway
                   </button>
-                  <button onClick={() => setReviewOpen(true)} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]">
+                  <button onClick={() => setReviewOpen(true)} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-md text-[14px] font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]">
                     Finish the review
                   </button>
                 </>
               ) : (
-                <button onClick={handleTransition} disabled={transitionBusy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
+                <button onClick={handleTransition} disabled={transitionBusy} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-md text-[14px] font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
                   {transitionBusy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   Confirm
                 </button>
@@ -979,8 +1015,8 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
       type="button"
       onClick={onClick}
       aria-current={active ? "page" : undefined}
-      className={`shrink-0 h-10 text-[14px] inline-flex items-center gap-1.5 border-b-2 whitespace-nowrap transition-colors ${
-        active ? "border-white text-white font-bold" : "border-transparent text-[var(--color-ink-muted)] font-semibold hover:text-white"
+      className={`shrink-0 h-11 text-[15px] font-semibold inline-flex items-center gap-1.5 border-b-[3px] whitespace-nowrap transition-colors ${
+        active ? "border-[var(--color-accent)] text-[var(--color-text)]" : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)]"
       }`}
     >
       {children}
@@ -992,7 +1028,7 @@ function DocumentsTab({ checkouts }: { checkouts: CheckoutWithDoc[] }) {
   if (checkouts.length === 0) {
     return (
       <Card label="Checked out to this project">
-        <p className="text-[14px] text-[var(--color-text-muted)]">No documents checked out to this project yet. Check one out from its library.</p>
+        <p className="text-[15px] text-[var(--color-text-muted)]">None yet. Check a document out from its library.</p>
       </Card>
     );
   }
@@ -1001,54 +1037,57 @@ function DocumentsTab({ checkouts }: { checkouts: CheckoutWithDoc[] }) {
   return (
     <>
       {active.length > 0 && (
-        <Card label={`Checked out now · ${active.length}`} pad={false} className="overflow-hidden">
-          <div className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
-            {active.map((c) => <CheckoutLine key={c.id} c={c} />)}
-          </div>
+        <Card label={<>Checked out now <span className="text-[var(--color-text-muted)] font-medium tabular-nums">{active.length}</span></>} pad={false} className="overflow-hidden">
+          <CheckoutTable rows={active} />
         </Card>
       )}
       {released.length > 0 && (
-        <Card label={`Checked out before · ${released.length}`} pad={false} className="overflow-hidden">
-          <div className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
-            {released.map((c) => <CheckoutLine key={c.id} c={c} historical />)}
-          </div>
+        <Card label={<>Checked out before <span className="text-[var(--color-text-muted)] font-medium tabular-nums">{released.length}</span></>} pad={false} className="overflow-hidden">
+          <CheckoutTable rows={released} historical />
         </Card>
       )}
     </>
   );
 }
 
-function CheckoutLine({ c, historical }: { c: CheckoutWithDoc; historical?: boolean }) {
+/** Checkouts as a ruled table: the drawing, who has it, how, since when. */
+function CheckoutTable({ rows, historical }: { rows: CheckoutWithDoc[]; historical?: boolean }) {
+  const router = useRouter();
   return (
-    <div className={`px-4 sm:px-5 py-3 hover:bg-[var(--color-surface-2)] transition-colors ${historical ? "opacity-70" : ""}`}>
-      <div className="flex items-center gap-3">
-        <FileText className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
-        <div className="flex-1 min-w-0">
-          <div className="flex flex-wrap items-baseline gap-x-2">
-            <span className="font-mono text-[14px] font-bold text-[var(--color-text)] truncate">{c.docNumber || "-"}</span>
-            <span className="text-[13px] text-[var(--color-text-muted)] truncate">{c.docTitle}</span>
-            {c.libraryName && <span className="text-[12px] text-[var(--color-text-faint)]">in {c.libraryName}</span>}
-          </div>
-          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-[var(--color-text-muted)]">
-            <span className="inline-flex items-center gap-1"><UserIcon className="w-3 h-3" />{c.userName}</span>
-            <span className="text-[11px] font-bold uppercase tracking-wide">{c.mode}</span>
-            <span>{historical ? `Released ${formatRelative(c.releasedAt ?? c.endedAt)}` : `Since ${formatRelative(c.startedAt)}`}</span>
-            {c.releasedReason && <span className="text-[var(--color-text-faint)] italic">{c.releasedReason}</span>}
-          </div>
-          {(c.purpose || c.note) && (
-            <div className="mt-1 text-[12px] text-[var(--color-text-muted)] italic line-clamp-1">&ldquo;{c.purpose || c.note}&rdquo;</div>
-          )}
-        </div>
-        <Link
-          href={`/documents/${c.libraryId}?doc=${c.documentId}`}
-          className="w-9 h-9 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
-          title="Open document"
-          aria-label={`Open ${c.docNumber || "document"}`}
-        >
-          <ExternalLink className="w-4 h-4" />
-        </Link>
-      </div>
-    </div>
+    <table className="w-full text-[15px]">
+      <thead className="max-sm:hidden bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+        <tr className="border-b border-[var(--color-border)]">
+          <th scope="col" className="font-semibold px-4 h-10">Document</th>
+          <th scope="col" className="font-semibold px-4 hidden lg:table-cell">Library</th>
+          <th scope="col" className="font-semibold px-4">Who</th>
+          <th scope="col" className="font-semibold px-4 hidden md:table-cell">Mode</th>
+          <th scope="col" className="font-semibold px-4 whitespace-nowrap">{historical ? "Released" : "Since"}</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-[var(--color-border)]">
+        {rows.map((c) => {
+          const href = `/documents/${c.libraryId}?doc=${c.documentId}`;
+          const note = c.purpose || c.note || (historical ? c.releasedReason : null);
+          return (
+            <tr key={c.id} className="hover:bg-[var(--color-surface-2)] cursor-pointer align-top max-sm:flex max-sm:flex-wrap max-sm:gap-x-3 max-sm:px-4 max-sm:py-3"
+              onClick={(e) => { if (!(e.target as HTMLElement).closest("a, button")) router.push(href); }}>
+              <td className="sm:px-4 sm:py-3 max-sm:basis-full min-w-0">
+                <Link href={href} className="font-display font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{c.docNumber || "-"}</Link>
+                {c.docTitle && <div className="text-[13px] text-[var(--color-text-muted)] line-clamp-1">{c.docTitle}</div>}
+                {note && <div className="text-[13px] text-[var(--color-text-muted)] line-clamp-1 md:hidden">{note}</div>}
+              </td>
+              <td className="px-4 py-3 hidden lg:table-cell text-[14px] text-[var(--color-text)]">{c.libraryName || "-"}</td>
+              <td className="sm:px-4 sm:py-3 text-[14px] text-[var(--color-text)] max-sm:text-[13px] max-sm:text-[var(--color-text-muted)]">
+                {c.userName || "-"}
+                {note && <div className="max-md:hidden text-[13px] text-[var(--color-text-muted)] line-clamp-1">{note}</div>}
+              </td>
+              <td className="px-4 py-3 hidden md:table-cell text-[14px] text-[var(--color-text)] capitalize">{c.mode}</td>
+              <td className="sm:px-4 sm:py-3 text-[14px] text-[var(--color-text-muted)] whitespace-nowrap max-sm:text-[13px]">{formatRelative(historical ? (c.releasedAt ?? c.endedAt) : c.startedAt)}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }
 
@@ -1074,14 +1113,14 @@ function ActivityTab({
             placeholder="Share an update or ask a question…"
             aria-label="Comment"
             rows={2}
-            className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-[14px] bg-[var(--color-surface)] resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+            className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-md text-[15px] bg-[var(--color-surface)] resize-y focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none"
           />
           <div className="mt-2 flex items-center justify-end">
             {/* Orange once there's something to post. */}
             <button
               onClick={onPost}
               disabled={!commentDraft.trim() || posting}
-              className={`inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg text-[13px] font-bold disabled:opacity-50 ${commentDraft.trim() ? "text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}
+              className={`inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md text-[14px] font-semibold disabled:opacity-50 ${commentDraft.trim() ? "text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)]"}`}
             >
               {posting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
               Post comment
@@ -1098,7 +1137,7 @@ function ActivityTab({
         />
         {timeline.length > shown && (
           <button type="button" onClick={() => setShown((n) => n + 40)}
-            className="mt-3 w-full h-10 rounded-lg text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+            className={`mt-3 ${heroQuiet}`}>
             Show {Math.min(40, timeline.length - shown)} more of {timeline.length - shown}
           </button>
         )}
@@ -1191,20 +1230,20 @@ function MembersTab({
     <Card label="Add member">
       <div className="flex flex-col sm:flex-row gap-2">
         <input value={addEmail} onChange={(e) => setAddEmail(e.target.value)} placeholder="user@example.com" aria-label="Email"
-          className="flex-1 h-10 px-3 border border-[var(--color-border-strong)] rounded-lg text-[14px] bg-[var(--color-surface)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
+          className="flex-1 h-10 px-3 border border-[var(--color-border-strong)] rounded-md text-[15px] bg-[var(--color-surface)] focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none" />
         <Select value={addRole} onChange={(e) => setAddRole(e.target.value as ProjectMemberRole)} aria-label="Permission">
           {MEMBER_ROLES.map((r) => <option key={r.role} value={r.role}>{r.label}</option>)}
         </Select>
       </div>
       <input value={addResp} onChange={(e) => setAddResp(e.target.value)} placeholder="What they're responsible for (optional)" aria-label="Responsibility"
-        className="mt-2 w-full h-10 px-3 border border-[var(--color-border-strong)] rounded-lg text-[14px] bg-[var(--color-surface)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
+        className="mt-2 w-full h-10 px-3 border border-[var(--color-border-strong)] rounded-md text-[15px] bg-[var(--color-surface)] focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none" />
       <div className="mt-2 flex justify-end">
         {/* Orange once there's someone to add: the event organization's Save may be the orange one until then. */}
-        <button onClick={addByEmail} disabled={busy || !addEmail.trim()} className={`inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg text-[13px] font-bold disabled:opacity-50 ${addEmail.trim() ? "text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>
+        <button onClick={addByEmail} disabled={busy || !addEmail.trim()} className={`inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md text-[14px] font-semibold disabled:opacity-50 ${addEmail.trim() ? "text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)]"}`}>
           {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Add member
         </button>
       </div>
-      {error && <div role="alert" className="mt-2 text-[13px] text-rose-700 dark:text-rose-400">{error}</div>}
+      {error && <div role="alert" className="mt-2 text-[14px] font-semibold text-[var(--state-overdue)]">{error}</div>}
     </Card>
   );
 
@@ -1216,88 +1255,94 @@ function MembersTab({
           onDone={(note) => { setTransferTo(undefined); setTransferNote(note ?? "Ownership transferred."); onAdded(); }} />
       )}
 
-      <Card label={`Members · ${members.length}`} pad={false} className="overflow-hidden"
+      <Card label={<>Members <span className="text-[var(--color-text-muted)] font-medium tabular-nums">{members.length}</span></>} pad={false} className="overflow-hidden"
         action={canTransfer ? (
-          <span className="flex items-center gap-2">
-            {transferNote && <span role="status" className="text-[12px] font-semibold text-emerald-700 dark:text-emerald-400">{transferNote}</span>}
-            <button onClick={() => setTransferTo(null)} title="Hand the project to someone else and choose what you become"
-              className="inline-flex items-center h-8 px-2.5 rounded-lg text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+          <span className="flex items-center gap-3">
+            {transferNote && <span role="status" className="text-[13px] font-semibold text-[var(--state-released)]">{transferNote}</span>}
+            <button type="button" onClick={() => setTransferTo(null)} title="Hand the project to someone else and choose what you become" className={heroQuiet}>
               Transfer ownership
             </button>
           </span>
         ) : undefined}>
-        <div className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
-          {members.map((m) => {
-            const isOwner = m.role === "owner" || m.userId === project.ownerUserId;
-            const canRemove = canManage && !isOwner;
-            const respDraft = editingResp[m.userId];
-            return (
-              <div key={m.id} className="px-4 sm:px-5 py-3 flex items-start gap-3 group">
-                <div className="p-2 bg-[var(--color-surface-2)] rounded-full text-[var(--color-text)] mt-0.5"><UserIcon className="w-4 h-4" /></div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[14px] font-bold text-[var(--color-text)] truncate">{m.userName || m.userEmail || m.userId.slice(0, 8)}</span>
+        <table className="w-full text-[15px]">
+          <thead className="max-sm:hidden bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+            <tr className="border-b border-[var(--color-border)]">
+              <th scope="col" className="font-semibold px-4 h-10">Member</th>
+              <th scope="col" className="font-semibold px-4 w-[150px]">Permission</th>
+              <th scope="col" className="font-semibold px-4 hidden md:table-cell">Responsible for</th>
+              <th scope="col" className="px-4 w-[1%]"><span className="sr-only">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--color-border)]">
+            {members.map((m) => {
+              const isOwner = m.role === "owner" || m.userId === project.ownerUserId;
+              const canRemove = canManage && !isOwner;
+              const respDraft = editingResp[m.userId];
+              const who = m.userName || m.userEmail || m.userId.slice(0, 8);
+              const resp = canManage ? (
+                respDraft !== undefined ? (
+                  <div className="flex items-center gap-2">
+                    <input autoFocus value={respDraft} aria-label={`What ${who} is responsible for`}
+                      onChange={(e) => setEditingResp((p) => ({ ...p, [m.userId]: e.target.value }))}
+                      onKeyDown={(e) => { if (e.key === "Enter") void saveResp(m); if (e.key === "Escape") setEditingResp((p) => { const n = { ...p }; delete n[m.userId]; return n; }); }}
+                      placeholder="What is this member responsible for?"
+                      className="flex-1 min-w-0 h-9 px-3 border border-[var(--color-border-strong)] rounded-md text-[14px] bg-[var(--color-surface)] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40" />
+                    <button type="button" onClick={() => void saveResp(m)} className="h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Save</button>
+                  </div>
+                ) : (
+                  <button type="button" onClick={() => setEditingResp((p) => ({ ...p, [m.userId]: m.responsibility ?? "" }))}
+                    className="text-left text-[14px] text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
+                    {m.responsibility ? m.responsibility : <span className="text-[var(--color-accent-text)] hover:underline">Add responsibility</span>}
+                  </button>
+                )
+              ) : m.responsibility ? <span className="text-[14px] text-[var(--color-text)]">{m.responsibility}</span> : <span className="text-[var(--color-text-faint)]">-</span>;
+              return (
+                <tr key={m.id} className="group align-top max-sm:flex max-sm:flex-wrap max-sm:items-center max-sm:gap-x-3 max-sm:px-4 max-sm:py-3">
+                  <td className="sm:px-4 sm:py-3 max-sm:flex-1 max-sm:min-w-0">
+                    <div className="font-semibold text-[var(--color-text)] truncate">{who}</div>
+                    {m.userEmail && m.userEmail !== who && <div className="text-[13px] text-[var(--color-text-muted)] truncate">{m.userEmail}</div>}
+                  </td>
+                  <td className="sm:px-4 sm:py-3">
                     {canManage && !isOwner ? (
                       <select value={m.role} disabled={roleBusy === m.userId} onChange={(e) => void setRole(m, e.target.value as ProjectMemberRole)}
-                        aria-label={`Permission for ${m.userName || m.userEmail || "member"}`} title={MEMBER_ROLES.find((r) => r.role === m.role)?.help}
-                        className="h-7 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[11.5px] font-bold text-[var(--color-text)] disabled:opacity-60">
+                        aria-label={`Permission for ${who}`} title={MEMBER_ROLES.find((r) => r.role === m.role)?.help}
+                        className="h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px] font-semibold text-[var(--color-text)] disabled:opacity-60">
                         {MEMBER_ROLES.map((r) => <option key={r.role} value={r.role}>{r.label}</option>)}
                       </select>
                     ) : (
-                      <span className={`text-[11px] font-bold uppercase px-1.5 py-0.5 rounded ${isOwner || m.role === "co_owner" ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : m.role === "collaborator" ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>{roleLabel(isOwner ? "owner" : m.role)}</span>
+                      <span className="inline-flex h-9 items-center text-[14px] font-semibold text-[var(--color-text)]">{roleLabel(isOwner ? "owner" : m.role)}</span>
                     )}
-                  </div>
-                  {m.userEmail && <div className="text-[13px] text-[var(--color-text-muted)] truncate">{m.userEmail}</div>}
-                  {canManage ? (
-                    respDraft !== undefined ? (
-                      <div className="mt-1 flex items-center gap-1.5">
-                        <input autoFocus value={respDraft}
-                          onChange={(e) => setEditingResp((p) => ({ ...p, [m.userId]: e.target.value }))}
-                          onKeyDown={(e) => { if (e.key === "Enter") void saveResp(m); if (e.key === "Escape") setEditingResp((p) => { const n = { ...p }; delete n[m.userId]; return n; }); }}
-                          placeholder="What is this member responsible for?"
-                          className="flex-1 px-2 py-1 border border-[var(--color-accent-ring)] rounded text-xs focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
-                        <button onClick={() => void saveResp(m)} className="text-[11px] font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)] px-1.5">Save</button>
-                      </div>
-                    ) : (
-                      <button onClick={() => setEditingResp((p) => ({ ...p, [m.userId]: m.responsibility ?? "" }))}
-                        className="mt-1 text-left text-xs text-[var(--color-text-muted)] hover:text-[var(--color-accent-text)] transition-colors inline-flex items-center gap-1">
-                        <Target className="w-3 h-3 text-[var(--color-text-faint)]" />
-                        {m.responsibility ? <span className="italic">{m.responsibility}</span> : <span className="text-[var(--color-text-faint)]">Add responsibility…</span>}
-                      </button>
-                    )
-                  ) : m.responsibility ? (
-                    <div className="mt-1 text-xs text-[var(--color-text-muted)] inline-flex items-center gap-1"><Target className="w-3 h-3 text-[var(--color-text-faint)]" /><span className="italic">{m.responsibility}</span></div>
-                  ) : null}
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  {canTransfer && !isOwner && (
-                    <button onClick={() => setTransferTo(m.userId)} title="Hand the project to this member"
-                      className="text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-1.5 py-1 rounded hover:bg-[var(--color-surface-2)] whitespace-nowrap">
-                      Make owner
-                    </button>
-                  )}
-                  {canRemove && (
-                    <button
-                      onClick={async () => {
-                        if (!(await appConfirm({ message: `Remove ${m.userEmail || m.userName || m.userId} from this project?`, tone: "danger", confirmLabel: "Remove" }))) return;
-                        try {
-                          await removeMember({ projectId: project.id!, orgId: project.orgId, userId: m.userId, userName: m.userName ?? undefined, userEmail: m.userEmail ?? undefined, actorUserId, actorEmail });
-                          onAdded();
-                        } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
-                      }}
-                      title="Remove from project"
-                      aria-label={`Remove ${m.userName || m.userEmail || "member"}`}
-                      // Shown on hover with a mouse; always there on a touch screen.
-                      className="opacity-60 sm:opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 transition-opacity p-1.5 pointer-coarse:p-2.5 rounded-md text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-500/10"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+                  </td>
+                  <td className="hidden max-sm:block max-sm:basis-full max-sm:pt-1.5 md:table-cell md:px-4 md:py-3">{resp}</td>
+                  <td className="sm:px-4 sm:py-3 whitespace-nowrap sm:text-right max-sm:basis-full">
+                    <span className="inline-flex items-center gap-2">
+                      {canTransfer && !isOwner && (
+                        <button type="button" onClick={() => setTransferTo(m.userId)} title="Hand the project to this member" className="text-[14px] text-[var(--color-accent-text)] hover:underline">
+                          Make owner
+                        </button>
+                      )}
+                      {canRemove && (
+                        <button type="button"
+                          onClick={async () => {
+                            if (!(await appConfirm({ message: `Remove ${m.userEmail || m.userName || m.userId} from this project?`, tone: "danger", confirmLabel: "Remove" }))) return;
+                            try {
+                              await removeMember({ projectId: project.id!, orgId: project.orgId, userId: m.userId, userName: m.userName ?? undefined, userEmail: m.userEmail ?? undefined, actorUserId, actorEmail });
+                              onAdded();
+                            } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+                          }}
+                          title="Remove from project"
+                          aria-label={`Remove ${who}`}
+                          className="w-9 h-9 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)]">
+                          <X className="w-4 h-4" />
+                        </button>
+                      )}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </Card>
       {addCard}
     </>
@@ -1316,6 +1361,6 @@ function formatRelative(ts: Timestamp | undefined): string {
     if (hr < 24) return `${hr}h ago`;
     const days = Math.floor(hr / 24);
     if (days < 7) return `${days}d ago`;
-    return d.toLocaleDateString();
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric", ...(d.getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }) });
   } catch { return "-"; }
 }

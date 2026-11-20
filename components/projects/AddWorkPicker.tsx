@@ -75,7 +75,7 @@ export default function AddWorkPicker({ day: when, tz, milestones, onPick, onNew
         {shown.map((m) => (
           <button key={m.id} type="button" onClick={() => onPick(m)}
             className="w-full text-left px-4 py-2.5 hover:bg-[var(--color-surface-2)] border-t border-[var(--color-border)] first:border-t-0">
-            {m.parentId && <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-faint)] truncate">{parentName.get(m.parentId)}</div>}
+            {m.parentId && <div className="text-[11px] font-semibold text-[var(--color-text-faint)] truncate">{parentName.get(m.parentId)}</div>}
             <div className="text-[13px] font-semibold text-[var(--color-text)] break-words">{m.name}{wo(m) && <span className="ml-1.5 font-normal text-[var(--color-text-muted)]">WO {wo(m)}</span>}</div>
           </button>
         ))}

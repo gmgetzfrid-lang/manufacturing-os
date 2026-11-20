@@ -177,7 +177,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="block">
               <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">MOC reference</span>
-              <input value={moc} onChange={(e) => setMoc(e.target.value)} className="mt-1 w-full h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm font-mono focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
+              <input value={moc} onChange={(e) => setMoc(e.target.value)} className="mt-1 w-full h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm font-display tabular-nums focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
             </label>
             <label className="block">
               <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Target completion</span>

@@ -75,7 +75,7 @@ export function ShipBar({ shippedAt, shippedBy, tries, canShip, busy, err, onShi
         <span className="flex-1 min-w-[200px]"><b>Report locked</b> {when(shippedAt)}{shippedBy ? ` by ${shippedBy}` : ""}{tries ? ` · ${tries} step${tries === 1 ? "" : "s"} asked to try` : ""}. It can&apos;t be changed.</span>
         {canShip && (
           <button onClick={() => { void appConfirm({ message: `Unlock the ${label} report? It can be changed again until it's locked.`, confirmLabel: "Unlock" }).then((ok) => { if (ok) onUnship(); }); }} disabled={busy}
-            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)] disabled:opacity-50">
+            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Unlock className="w-3.5 h-3.5" />} Unlock to edit
           </button>
         )}
@@ -90,7 +90,7 @@ export function ShipBar({ shippedAt, shippedBy, tries, canShip, busy, err, onShi
       <Unlock className="w-3.5 h-3.5 shrink-0" />
       <span className="flex-1 min-w-[200px]">Open: this report can still be changed{tries ? ` (${tries} asked to try)` : ""}. Lock it when the turnover is done.</span>
       {canShip ? (
-        <button onClick={onShip} disabled={busy} className="inline-flex items-center gap-1.5 h-9 rounded-[10px] bg-[var(--color-surface-2)] hover:bg-[var(--color-border)] text-[var(--color-text)] px-3 text-[13px] font-semibold disabled:opacity-50">
+        <button onClick={onShip} disabled={busy} className="inline-flex items-center gap-1.5 h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] px-3 text-[13px] font-semibold disabled:opacity-50">
           {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />} Lock report
         </button>
       ) : <span className="text-[12px]">Only someone who can edit the schedule can lock it.</span>}

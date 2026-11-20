@@ -399,7 +399,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
       {!open ? (
         // One quiet button until it's wanted: the work stays on screen.
         <button type="button" onClick={() => setOpen(true)} title="Type or say what happened on the job. You check every line before it saves."
-          className="inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)] transition-colors">
+          className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
           <NotebookPen className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" /> Update by note
         </button>
       ) : (

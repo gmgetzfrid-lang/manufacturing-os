@@ -29,7 +29,7 @@ import { nameKey, plainName, scheduleId, sameEquipmentId, linkedLabel, checkNew,
 import { splitTag } from "@/lib/codebook";
 
 const btn = "inline-flex items-center justify-center gap-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[13px] font-bold px-3.5 h-10 shadow-sm disabled:opacity-50";
-const quiet = "inline-flex items-center justify-center gap-1.5 rounded-[10px] bg-[var(--color-surface-2)] hover:bg-[var(--color-border)] text-[13px] font-semibold text-[var(--color-text)] px-3 h-10 disabled:opacity-50";
+const quiet = "inline-flex items-center justify-center gap-1.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)] px-3 h-10 disabled:opacity-50";
 const LBL = "block text-[13px] font-semibold text-[var(--color-text-muted)]";
 // A suggestion read off the work order: ringed in ink, a tap links it.
 const hit = "w-full flex items-center gap-2 rounded-xl border-2 border-[var(--color-text)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] px-3 min-h-12 text-left";
@@ -40,7 +40,7 @@ function AssetText({ a }: { a: PickAsset }) {
   const id = a.code?.trim() || (a.tag.match(/\(([^)]+)\)/)?.[1] ?? "");
   return (
     <span className="flex-1 min-w-0">
-      <span className="block text-[13.5px] text-[var(--color-text)]"><b className="font-mono">{plainName(a.tag)}</b>{id ? <span className="font-mono text-[var(--color-text-muted)]"> ({id})</span> : <span className="text-[11px] text-[var(--color-text-muted)]"> · no ID</span>}</span>
+      <span className="block text-[13.5px] text-[var(--color-text)]"><b className="font-display tabular-nums">{plainName(a.tag)}</b>{id ? <span className="font-display tabular-nums text-[var(--color-text-muted)]"> ({id})</span> : <span className="text-[11px] text-[var(--color-text-muted)]"> · no ID</span>}</span>
       {a.description?.trim() && <span className="block text-[12px] text-[var(--color-text-muted)] truncate">{a.description.trim()}</span>}
     </span>
   );
@@ -233,7 +233,7 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
                 {shown.map((u) => (
                   <li key={u.code}>
                     <button type="button" disabled={!!busy} onClick={() => void pickUnit(u)} className="w-full flex items-center gap-2 px-3 min-h-11 text-left text-[13.5px] hover:bg-[var(--color-surface-2)]">
-                      <span className="font-mono text-[12px] text-[var(--color-text-muted)] w-8 shrink-0">{u.code}</span>
+                      <span className="font-display tabular-nums text-[12px] text-[var(--color-text-muted)] w-8 shrink-0">{u.code}</span>
                       <span className="flex-1 min-w-0 font-semibold text-[var(--color-text)]">{u.label}</span>
                       {busy === `unit:${u.code}` && <Loader2 className="w-4 h-4 animate-spin" />}
                     </button>
@@ -269,7 +269,7 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
         <ModalBody className="space-y-3">
           <p className="text-[14px] font-bold text-[var(--color-text)]">Add equipment to the unit</p>
           <label className="block"><span className={LBL}>Name</span>
-            <input autoFocus value={adding.tag} onChange={(e) => { const tag = e.target.value; setAdding({ ...adding, tag, code: adding.touched ? adding.code : idFor(tag) }); }} className={`${field} mt-1 font-mono uppercase`} placeholder="V-7" />
+            <input autoFocus value={adding.tag} onChange={(e) => { const tag = e.target.value; setAdding({ ...adding, tag, code: adding.touched ? adding.code : idFor(tag) }); }} className={`${field} mt-1 font-display tabular-nums`} placeholder="V-7" />
           </label>
           {units.length > 1 && (
             <label className="block"><span className={LBL}>Unit</span>
@@ -279,7 +279,7 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
             </label>
           )}
           <label className="block"><span className={LBL}>ID</span>
-            <input value={adding.code} onChange={(e) => setAdding({ ...adding, code: e.target.value.toUpperCase(), touched: true })} className={`${field} mt-1 font-mono`} placeholder={`${adding.unit}10.19`} />
+            <input value={adding.code} onChange={(e) => setAdding({ ...adding, code: e.target.value.toUpperCase(), touched: true })} className={`${field} mt-1 font-display tabular-nums`} placeholder={`${adding.unit}10.19`} />
             <span className="block mt-1 text-[11.5px] text-[var(--color-text-muted)]">
               {suggested ? (adding.code.trim() === suggested ? `From the schedule's Equipment column for ${owner.workOrderRef ? `WO ${owner.workOrderRef}` : "this work order"}.` : `The schedule's Equipment column says ${suggested}.`)
                 : "Type its ID as the plant numbers it. It isn't worked out from the name: the number after the point isn't the tag's number."}
@@ -346,12 +346,12 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
             </button>
             {twoAnswers && guessHit && (
               <p className="border-l-2 border-amber-500 pl-3 py-1 text-[12.5px] text-amber-900 dark:text-amber-200" data-two-answers>
-                The work order&apos;s name says <b>{equipmentLabel(guessHit)}</b>. Its equipment number <b className="font-mono">{fromSchedule}</b> is <b>{equipmentLabel(idHit)}</b>. One of the two is wrong on the work order: pick the one it is on.
+                The work order&apos;s name says <b>{equipmentLabel(guessHit)}</b>. Its equipment number <b className="font-display tabular-nums">{fromSchedule}</b> is <b>{equipmentLabel(idHit)}</b>. One of the two is wrong on the work order: pick the one it is on.
               </p>
             )}
             {idNameDiffers && !twoAnswers && (
               <div className="border-l-2 border-amber-500 pl-3 py-1 space-y-1.5 text-[12.5px] text-amber-900 dark:text-amber-200">
-                <p>The work order&apos;s equipment number is <b className="font-mono">{fromSchedule}</b>. The equipment list has that number as <b>{plainName(idHit.tag)}</b>; this work order calls it <b>{guess}</b>.</p>
+                <p>The work order&apos;s equipment number is <b className="font-display tabular-nums">{fromSchedule}</b>. The equipment list has that number as <b>{plainName(idHit.tag)}</b>; this work order calls it <b>{guess}</b>.</p>
                 {drawn.length > 0 && (
                   <ul className="space-y-0.5">
                     {drawn.map((d) => <li key={`${d.documentId}|${d.tag}`} className="break-words"><b>{d.sheet}</b> prints <b>{d.tag}</b>{d.name ? ` ${d.name}` : ""}</li>)}
@@ -397,7 +397,7 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
         )}
         {want && !wantHere && (
           <div className="border-t border-[var(--color-border)] pt-3 space-y-2">
-            <p className="text-[12.5px] text-[var(--color-text)]"><b className="font-mono">{want}</b> isn&apos;t in {units.length === 1 ? `${units[0].label}'s` : "the units'"} list.</p>
+            <p className="text-[12.5px] text-[var(--color-text)]"><b className="font-display tabular-nums">{want}</b> isn&apos;t in {units.length === 1 ? `${units[0].label}'s` : "the units'"} list.</p>
             {elsewhere.length > 0 && <p className="text-[12px] text-[var(--color-text-muted)]">{elsewhere.map((a) => `${equipmentLabel(a)} on ${unitLabel(a.unitCode)}`).join(", ")} {elsewhere.length === 1 ? "is a different piece" : "are different pieces"}: not this unit&apos;s.</p>}
             {isAdmin
               ? <button type="button" disabled={!!busy} onClick={() => startAdd(want)} className={btn}><Plus className="w-4 h-4" /> Add {want} to {units.length === 1 ? units[0].label : "the unit"}</button>

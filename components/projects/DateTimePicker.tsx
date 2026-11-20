@@ -80,7 +80,7 @@ export default function DateTimePicker({ label, value, onChange, tz, times, plan
   const sh = Number.isFinite(t) ? shiftAt(t, tz, times) : null;
   const chip = (on: boolean, empty: boolean) => `inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border text-[13px] font-semibold disabled:opacity-50 ${on ? "border-[var(--color-text)] ring-1 ring-[var(--color-text)] bg-[var(--color-surface)]" : empty ? "border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"}`;
   // Quick picks: a quiet fill, not another box.
-  const small = "h-7 px-2.5 rounded-lg bg-[var(--color-surface-2)] text-[12px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)] disabled:opacity-50";
+  const small = "h-7 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
 
   return (
     <div className="space-y-1.5">
@@ -183,7 +183,7 @@ function TimeSheet({ title, hm, start, onSet, onClose }: { title: string; hm: st
           {bad ? "Type it with its a or p: 1130p" : "Spin to the time, then Set. Or type it: 1130p"}
         </div>
         <div className="flex gap-2">
-          <button type="button" onClick={onClose} className="flex-1 h-11 rounded-xl bg-[var(--color-surface-2)] text-[14px] font-semibold hover:bg-[var(--color-border)]">Cancel</button>
+          <button type="button" onClick={onClose} className="flex-1 h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold hover:bg-[var(--color-surface-2)]">Cancel</button>
           <button type="button" onClick={set} disabled={bad} className="flex-[2] h-11 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">Set {shown}</button>
         </div>
       </div>

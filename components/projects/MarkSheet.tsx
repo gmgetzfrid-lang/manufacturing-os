@@ -92,7 +92,7 @@ export default function MarkSheet({ names, status, tz, times, now: clockNow, ahe
           </label>
           {msg && <div role="alert" className="font-semibold text-rose-700 dark:text-rose-400">{msg}</div>}
           <div className="flex items-center justify-end gap-2">
-            <button type="button" onClick={onClose} className="h-9 px-3 rounded-lg bg-[var(--color-surface-2)] font-semibold hover:bg-[var(--color-border)]">Cancel</button>
+            <button type="button" onClick={onClose} className="h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] font-semibold hover:bg-[var(--color-surface-2)]">Cancel</button>
             <button type="button" onClick={() => void save()} disabled={busy}
               className="h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
               {busy ? "Saving…" : `Mark ${word}`}

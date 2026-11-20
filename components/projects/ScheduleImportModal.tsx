@@ -483,7 +483,7 @@ export default function ScheduleImportModal({
                       return (
                         <div key={k} className={`flex items-center gap-2 ${cfg.include ? "" : "opacity-50"}`}>
                           <input type="checkbox" checked={cfg.include} onChange={(e) => setColConfig((p) => ({ ...p, [k]: { ...cfg, include: e.target.checked } }))} className="w-3.5 h-3.5 accent-[var(--color-text)] shrink-0" title="Include this column" />
-                          <span className="font-mono text-[11px] text-[var(--color-text-muted)] w-28 truncate shrink-0" title={k}>{k}</span>
+                          <span className="font-display tabular-nums text-[11px] text-[var(--color-text-muted)] w-28 truncate shrink-0" title={k}>{k}</span>
                           <ArrowRight className="w-3 h-3 text-slate-300 shrink-0" />
                           <input
                             value={cfg.rename}
@@ -544,17 +544,17 @@ export default function ScheduleImportModal({
                                 </span>
                               )}
                             </div>
-                            {r.externalRef && <div className="text-[11px] font-mono text-[var(--color-text-faint)] truncate">{r.externalRef}</div>}
+                            {r.externalRef && <div className="text-[11px] font-display tabular-nums text-[var(--color-text-faint)] truncate">{r.externalRef}</div>}
                           </td>
                           <td className="px-3 py-1.5 text-[var(--color-text)]">
                             <CalIcon className="inline w-3 h-3 mr-1 text-[var(--color-text-faint)]" />
                             {humanDate(r.plannedAt, tz)}
                           </td>
-                          <td className="px-3 py-1.5 text-[11px] font-mono text-[var(--color-text-muted)] truncate">
+                          <td className="px-3 py-1.5 text-[11px] font-display tabular-nums text-[var(--color-text-muted)] truncate">
                             {r.parentExternalRef ? r.parentExternalRef.split(":")[1] : <span className="text-slate-300">-</span>}
                           </td>
-                          <td className="px-3 py-1.5 text-[var(--color-text)] font-mono">{r.outlineLevel ?? <span className="text-slate-300">-</span>}</td>
-                          <td className="px-3 py-1.5 text-[var(--color-text)] font-mono">{r.percentComplete != null ? `${Math.round(r.percentComplete)}%` : <span className="text-slate-300">-</span>}</td>
+                          <td className="px-3 py-1.5 text-[var(--color-text)] font-display tabular-nums">{r.outlineLevel ?? <span className="text-slate-300">-</span>}</td>
+                          <td className="px-3 py-1.5 text-[var(--color-text)] font-display tabular-nums">{r.percentComplete != null ? `${Math.round(r.percentComplete)}%` : <span className="text-slate-300">-</span>}</td>
                         </tr>
                       ))}
                       {moreCount > 0 && (
@@ -659,7 +659,7 @@ export default function ScheduleImportModal({
 function FormatBadge({ label, hint }: { label: string; hint: string }) {
   return (
     <div className="inline-flex flex-col items-center gap-0.5 px-2.5 py-1 rounded-md bg-[var(--color-surface)] border border-[var(--color-border)]">
-      <span className="text-[11px] font-mono font-black text-[var(--color-text)]">{label}</span>
+      <span className="text-[11px] font-display tabular-nums font-black text-[var(--color-text)]">{label}</span>
       <span className="text-[11px] text-[var(--color-text-muted)]">{hint}</span>
     </div>
   );
@@ -703,7 +703,7 @@ function XmlExportGuide({ filename, format }: { filename: string; format: "mspro
               Open <code className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-800 text-[11px]">{filename || "your schedule"}</code> in Microsoft Project.
             </Step>
             <Step n={2}>
-              <b>File → Save As</b> (or <kbd className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-800">F12</kbd>) → choose <b>XML Format (*.xml)</b> and save.
+              <b>File → Save As</b> (or <kbd className="font-display tabular-nums bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-800">F12</kbd>) → choose <b>XML Format (*.xml)</b> and save.
             </Step>
             <Step n={3}>
               Drag that new <code className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-800 text-[11px]">.xml</code> file right here. It imports with all dependencies, resources, and exact dates.
@@ -786,7 +786,7 @@ function StatCell({ label, value, tone }: { label: string; value: string; tone: 
   return (
     <div className={`rounded-md border px-2 py-1 ${cls}`}>
       <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">{label}</div>
-      <div className="font-mono font-bold text-[12px]">{value}</div>
+      <div className="font-display tabular-nums font-bold text-[12px]">{value}</div>
     </div>
   );
 }

@@ -116,18 +116,28 @@ export default function QualityTab({ orgId, projectId, canManage, canEditPunch, 
 
   return (
     <div className="space-y-4">
-      <Card label="Quality">
-        <p className="text-[14px] text-[var(--color-text)]">
-          <b className={punchOpen ? "text-amber-800 dark:text-amber-300" : ""}>{punchOpen ? `${punchOpen} punch item${punchOpen === 1 ? "" : "s"} open` : "Punch list clear"}</b>
-          <span className="text-[var(--color-text-muted)]"> · {tp.required ? `turnover ${tp.accepted} of ${tp.required} accepted` : "no turnover items set"} · {lists.length ? `${lists.length} checklist${lists.length === 1 ? "" : "s"}, ${lists.filter((c) => c.status === "complete").length} complete` : "no checklists yet"}</span>
-        </p>
+      {/* Where quality stands: one ruled cell a number, before the three lists. */}
+      <div>
+        <dl className="grid grid-cols-3 border-y border-[var(--color-border-strong)]">
+          {([
+            ["Punch items open", String(punchOpen), punchOpen ? "text-[var(--state-held)]" : "text-[var(--color-text)]", punchOpen ? null : "Clear"],
+            ["Turnover accepted", tp.required ? `${tp.accepted}/${tp.required}` : "-", "text-[var(--color-text)]", tp.required ? null : "None set"],
+            ["Checklists complete", lists.length ? `${lists.filter((c) => c.status === "complete").length}/${lists.length}` : "-", "text-[var(--color-text)]", lists.length ? null : "None yet"],
+          ] as Array<[string, string, string, string | null]>).map(([k, v, tone, note], i) => (
+            <div key={k} className={`py-2.5 pr-3 ${i ? "pl-4 border-l border-[var(--color-border-strong)]" : ""}`}>
+              <dt className="text-[13px] text-[var(--color-text-muted)]">{k}</dt>
+              <dd className={`font-display text-[24px] leading-tight font-semibold tabular-nums ${tone}`}>{v}</dd>
+              {note && <dd className="text-[13px] text-[var(--color-text-muted)]">{note}</dd>}
+            </div>
+          ))}
+        </dl>
         {err && (
-          <div role="alert" className="mt-2 flex items-center gap-2 text-[13px] font-bold text-rose-700 dark:text-rose-300">
+          <div role="alert" className="mt-2 flex items-center gap-2 text-[14px] font-semibold text-[var(--state-overdue)]">
             <span className="min-w-0 flex-1">{err}</span>
             <button onClick={() => setErr(null)} aria-label="Dismiss" className="shrink-0 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
           </div>
         )}
-      </Card>
+      </div>
 
       <ChecklistsSection orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}
         checklists={checklists} onChanged={() => void refresh()} setErr={setErr} announce={announce} />
@@ -141,7 +151,7 @@ export default function QualityTab({ orgId, projectId, canManage, canEditPunch, 
 }
 
 const quietBtn = "inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
-const fieldCls = "h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs";
+const fieldCls = "h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[14px] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40";
 
 // ── Checklists ───────────────────────────────────────────────────────────
 
@@ -153,14 +163,14 @@ function ChecklistsSection({ orgId, projectId, canManage, actor, checklists, onC
   const [showNew, setShowNew] = useState(false);
   const none = checklists.filter((c) => c.status !== "void").length === 0;
   return (
-    <div className="bg-[var(--color-surface)] rounded-2xl overflow-hidden shadow-[var(--shadow-card)]">
-      <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
+    <section className="bg-[var(--color-surface)] rounded-lg overflow-hidden border border-[var(--color-border)]">
+      <div className="px-4 sm:px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-2.5">
         <ClipboardCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Checklists: PSSR, MI, QA/QC</span>
+        <h2 className="min-w-0 font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Checklists: PSSR, MI, QA/QC</h2>
         {canManage && (
           // Orange only while there's none yet and the form isn't open.
           <button onClick={() => setShowNew((v) => !v)} aria-expanded={showNew}
-            className={`ml-auto inline-flex items-center gap-1 h-9 px-3 rounded-lg text-[13px] font-bold transition-colors ${none && !showNew ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : showNew ? "bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border-strong)]" : "border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+            className={`ml-auto shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md text-[14px] font-semibold transition-colors ${none && !showNew ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : showNew ? "bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border-strong)]" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
             <Plus className="w-3 h-3" /> New checklist
           </button>
         )}
@@ -187,7 +197,7 @@ function ChecklistsSection({ orgId, projectId, canManage, actor, checklists, onC
           ))}
         </div>
       )}
-    </div>
+    </section>
   );
 }
 
@@ -502,7 +512,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
         <span className="text-xs font-black text-[var(--color-text)]">{checklist.title}</span>
         <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">{CHECKLIST_KIND_LABEL[checklist.kind]}</span>
         {checklist.status === "complete" && (
-          <span className="inline-flex items-center gap-0.5 text-[11px] font-black uppercase text-emerald-700 dark:text-emerald-300"><ShieldCheck className="w-3 h-3" /> complete</span>
+          <span className="inline-flex items-center gap-0.5 text-[11px] font-black text-emerald-700 dark:text-emerald-300"><ShieldCheck className="w-3 h-3" /> Complete</span>
         )}
         {progress && checklist.status === "open" && (
           <span className="ml-auto text-[11px] font-bold tabular-nums text-[var(--color-text-muted)]">
@@ -746,18 +756,18 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, p
   };
 
   return (
-    <div className="bg-[var(--color-surface)] rounded-2xl overflow-hidden shadow-[var(--shadow-card)]">
-      <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
+    <section className="bg-[var(--color-surface)] rounded-lg overflow-hidden border border-[var(--color-border)]">
+      <div className="px-4 sm:px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-2.5 flex-wrap">
         <PackageCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Turnover package: QA/QC sign-off</span>
+        <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Turnover package: QA/QC sign-off</h2>
         {progress.required > 0 && (
-          <span className="text-[11px] font-bold tabular-nums text-[var(--color-text-muted)]">
-            {progress.accepted}/{progress.required} accepted{progress.received > 0 ? ` · ${progress.received} awaiting review` : ""}
+          <span className="text-[13px] tabular-nums text-[var(--color-text-muted)]">
+            {progress.accepted}/{progress.required} accepted{progress.received > 0 ? `, ${progress.received} awaiting review` : ""}
           </span>
         )}
         {canManage && (
           <button onClick={() => void seed()} disabled={busy != null}
-            className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
+            className="ml-auto inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
             title={`Adds the required contents for a ${jobKind ?? "standard"} job (existing items are kept).`}>
             {busy === "seed" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Seed required contents
           </button>
@@ -819,7 +829,7 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, p
               <div className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
                 {[
                   it.description,
-                  it.reviewedByName ? `${it.status} by ${it.reviewedByName}${it.reviewedAt ? ` on ${new Date(it.reviewedAt).toLocaleDateString()}` : ""}` : null,
+                  it.reviewedByName ? `${it.status} by ${it.reviewedByName}${it.reviewedAt ? ` on ${new Date(it.reviewedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}` : null,
                   it.reviewNote ? `“${it.reviewNote}”` : null,
                 ].filter(Boolean).join(" · ")}
               </div>
@@ -846,7 +856,7 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, p
           </button>
         </div>
       )}
-    </div>
+    </section>
   );
 }
 
@@ -1020,12 +1030,12 @@ function PunchSection({ orgId, projectId, canManage, actor, items, parties, peop
   };
 
   return (
-    <div className="bg-[var(--color-surface)] rounded-2xl overflow-hidden shadow-[var(--shadow-card)]">
-      <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
+    <section className="bg-[var(--color-surface)] rounded-lg overflow-hidden border border-[var(--color-border)]">
+      <div className="px-4 sm:px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-2.5">
         <ListChecks className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Punch list</span>
+        <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Punch list</h2>
         {open.length > 0 && (
-          <span className="ml-auto text-[11px] font-black px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40">{open.length} open</span>
+          <span className="ml-auto inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]"><span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-held)]" />{open.length} open</span>
         )}
       </div>
 
@@ -1076,10 +1086,10 @@ function PunchSection({ orgId, projectId, canManage, actor, items, parties, peop
                 {where && <span className="text-[11px] text-[var(--color-text-muted)]">{where}</span>}
                 {it.dueDate && it.status === "open" && (
                   <span className={`text-[11px] font-bold ${overdue ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>
-                    due {new Date(it.dueDate + "T00:00:00").toLocaleDateString()}{overdue ? ", overdue" : ""}
+                    due {new Date(it.dueDate + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}{overdue ? ", overdue" : ""}
                   </span>
                 )}
-                {it.status === "void" && <span className="text-[11px] font-black uppercase text-[var(--color-text-faint)]">void</span>}
+                {it.status === "void" && <span className="text-[11px] font-black text-[var(--color-text-faint)]">Void</span>}
                 {it.createdByName && <span className="text-[11px] text-[var(--color-text-faint)]">by {it.createdByName}</span>}
                 {canManage && it.status === "open" && busy !== it.id && (
                   <span className="ml-auto flex items-center gap-1">
@@ -1103,7 +1113,7 @@ function PunchSection({ orgId, projectId, canManage, actor, items, parties, peop
           })}
         </ul>
       )}
-    </div>
+    </section>
   );
 }
 

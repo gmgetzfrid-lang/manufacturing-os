@@ -124,7 +124,7 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
             <FileText className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
             <div className="flex-1 min-w-0">
               <div className="text-[14px] font-bold text-[var(--color-text)] truncate">
-                <span className="font-mono">{r.docNumber || "-"}</span>
+                <span className="font-display tabular-nums">{r.docNumber || "-"}</span>
                 {r.docTitle && <span className="ml-2 text-[var(--color-text-muted)] font-medium">{r.docTitle}</span>}
               </div>
               <div className="text-[12px] text-[var(--color-text-muted)]">

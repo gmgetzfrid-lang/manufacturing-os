@@ -148,7 +148,7 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
     <div className="px-4 pt-3 pb-2.5 border-b border-[var(--color-border)]">
       <div className="flex items-start gap-2">
         <span className="pt-0.5 text-[13px] leading-snug font-semibold text-[var(--color-text-muted)] flex-1 min-w-0">{dayLabel}{all.length > 1 ? ` · ${onDay.length} of ${all.length} steps ${band ? "this shift" : "this day"}` : ""}</span>
-        {wos.length > 0 && <span className="pt-0.5 font-mono text-[11.5px] font-semibold text-[var(--color-text-muted)] shrink-0">WO {wos.join(", ")}</span>}
+        {wos.length > 0 && <span className="pt-0.5 font-display tabular-nums text-[11.5px] font-semibold text-[var(--color-text-muted)] shrink-0">WO {wos.join(", ")}</span>}
         {onClose && <button type="button" onClick={onClose} aria-label="Close" className="-mr-1.5 w-8 h-8 shrink-0 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>}
       </div>
       <div className="mt-1 flex items-start gap-2">
@@ -162,7 +162,7 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
             <span className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-text)]" style={{ width: `${Math.min(100, taskPct)}%` }} />
             {taskPlan != null && <span className="absolute -top-[3px] w-0.5 h-3 bg-rose-700" style={{ left: `calc(${Math.min(100, taskPlan)}% - 1px)` }} />}
           </span>
-          {Math.abs(taskHours) >= 0.1 && <b className={`font-mono whitespace-nowrap ${taskHours < 0 ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>{taskHours > 0 ? "+" : "−"}{Math.abs(taskHours)} h</b>}
+          {Math.abs(taskHours) >= 0.1 && <b className={`font-display tabular-nums whitespace-nowrap ${taskHours < 0 ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>{taskHours > 0 ? "+" : "−"}{Math.abs(taskHours)} h</b>}
         </div>
       )}
     </div>
@@ -217,7 +217,7 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
           </span>
           <span className="shrink-0 flex flex-col items-end gap-0.5">
             <span className={`rounded-md border px-1 text-[11px] font-bold tabular-nums ${pct >= 100 ? "text-emerald-700 bg-emerald-50 border-emerald-200 dark:text-emerald-300 dark:bg-emerald-950/40 dark:border-emerald-800" : pct > 0 ? "text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]" : "text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]"}`}>{pct}%</span>
-            {Math.abs(h) >= 0.1 && m.status !== "completed" && <span className={`font-mono text-[11px] font-bold ${h < 0 ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>{h > 0 ? "+" : "−"}{Math.abs(h)} h</span>}
+            {Math.abs(h) >= 0.1 && m.status !== "completed" && <span className={`font-display tabular-nums text-[11px] font-bold ${h < 0 ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>{h > 0 ? "+" : "−"}{Math.abs(h)} h</span>}
           </span>
           {/* A step opens to its card: start, %, finish, history. */}
           <ChevronRight className={`w-3.5 h-3.5 mt-1 shrink-0 text-[var(--color-text-faint)] transition-transform ${isOpen ? "rotate-90" : ""}`} aria-hidden />
@@ -244,7 +244,7 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
             return (
               <React.Fragment key={m.id ?? m.name}>
                 {d !== prev && Number.isFinite(startMsOf(m)) && (
-                  <li className={`px-3 pt-2.5 pb-1 text-[11px] font-extrabold uppercase tracking-[0.14em] ${d === dayKey ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+                  <li className={`px-3 pt-2.5 pb-1 text-[11px] font-extrabold tracking-[0.14em] ${d === dayKey ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
                     {fmtInTz(startMsOf(m), tz, { weekday: "short", month: "short", day: "numeric" })}{d === dayKey ? " · today" : ""}
                   </li>
                 )}

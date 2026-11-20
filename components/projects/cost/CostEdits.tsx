@@ -55,7 +55,7 @@ export function AfeCard({ orgId, projectId, afe, linesTotal, cur, canManage, act
         {a.chargeAccount && (
           <div>
             <div className={label}>Charge account</div>
-            <div className="text-[13px] font-mono text-[var(--color-text)]">{a.chargeAccount}</div>
+            <div className="text-[13px] font-display tabular-nums text-[var(--color-text)]">{a.chargeAccount}</div>
           </div>
         )}
         <div>
@@ -86,7 +86,7 @@ export function AfeCard({ orgId, projectId, afe, linesTotal, cur, canManage, act
                 <li key={i} className="px-3 py-1.5 flex flex-wrap gap-x-2">
                   <span className="text-[var(--color-text-muted)] w-24 shrink-0">{h.at ? dateOf(h.at) : "Original"}</span>
                   <span className="font-bold tabular-nums text-[var(--color-text)]">{h.authorized != null ? fmtMoney(h.authorized, cur) : "-"}</span>
-                  {h.afeNumber && <span className="font-mono text-[var(--color-text-muted)]">{h.afeNumber}</span>}
+                  {h.afeNumber && <span className="font-display tabular-nums text-[var(--color-text-muted)]">{h.afeNumber}</span>}
                   {h.note && <span className="text-[var(--color-text)]">· {h.note}</span>}
                   {h.by && <span className="text-[var(--color-text-faint)]">· {h.by}</span>}
                   {fileOf(h.docId) && <PreviewButton file={fileOf(h.docId)} label="Document" />}
@@ -135,9 +135,9 @@ function AfeEditor({ orgId, projectId, afe, actor, cur, onCancel, onSaved }: {
   return (
     <div {...drag.bind} className={`rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] p-3 space-y-3 ${drag.ring}`}>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <div><label className={label} htmlFor="afe-num">AFE number</label><input id="afe-num" value={num} onChange={(e) => setNum(e.target.value)} className={`${field} font-mono`} placeholder="25008" /></div>
-        <div><label className={label} htmlFor="afe-amt">Authorized amount ({cur})</label><input id="afe-amt" value={amt} onChange={(e) => setAmt(e.target.value)} inputMode="decimal" className={`${field} font-mono tabular-nums`} placeholder="1250000" /></div>
-        <div><label className={label} htmlFor="afe-acct">Charge account</label><input id="afe-acct" value={acct} onChange={(e) => setAcct(e.target.value)} className={`${field} font-mono`} /></div>
+        <div><label className={label} htmlFor="afe-num">AFE number</label><input id="afe-num" value={num} onChange={(e) => setNum(e.target.value)} className={`${field} font-display tabular-nums`} placeholder="25008" /></div>
+        <div><label className={label} htmlFor="afe-amt">Authorized amount ({cur})</label><input id="afe-amt" value={amt} onChange={(e) => setAmt(e.target.value)} inputMode="decimal" className={`${field} font-display tabular-nums`} placeholder="1250000" /></div>
+        <div><label className={label} htmlFor="afe-acct">Charge account</label><input id="afe-acct" value={acct} onChange={(e) => setAcct(e.target.value)} className={`${field} font-display tabular-nums`} /></div>
       </div>
       <div>
         <label className={label} htmlFor="afe-note">What changed</label>
@@ -208,7 +208,7 @@ export function LineEditor({ orgId, projectId, account, parties, actor, onCancel
     <div className="rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] p-3 space-y-3" onClick={(e) => e.stopPropagation()}>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <div className="lg:col-span-2"><label className={label} htmlFor={`ln-${account.id}`}>Budget line</label><input id={`ln-${account.id}`} value={name} onChange={(e) => setName(e.target.value)} className={field} /></div>
-        <div><label className={label} htmlFor={`lb-${account.id}`}>Budget ({cur})</label><input id={`lb-${account.id}`} value={budget} onChange={(e) => setBudget(e.target.value)} inputMode="decimal" className={`${field} font-mono tabular-nums`} /></div>
+        <div><label className={label} htmlFor={`lb-${account.id}`}>Budget ({cur})</label><input id={`lb-${account.id}`} value={budget} onChange={(e) => setBudget(e.target.value)} inputMode="decimal" className={`${field} font-display tabular-nums`} /></div>
         <div>
           <label className={label} htmlFor={`lt-${account.id}`}>Type</label>
           <select id={`lt-${account.id}`} value={type} onChange={(e) => setType(e.target.value)} className={field}>
@@ -275,7 +275,7 @@ export function EntryRevise({ orgId, projectId, entry, cur, actor, onDone, onCan
   };
   return (
     <div className="w-full mt-1.5 flex flex-wrap items-end gap-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] p-2">
-      <div><label className={label} htmlFor={`ea-${entry.id}`}>New amount ({cur})</label><input id={`ea-${entry.id}`} value={amt} onChange={(e) => setAmt(e.target.value)} inputMode="decimal" className={`${field} w-36 font-mono tabular-nums`} /></div>
+      <div><label className={label} htmlFor={`ea-${entry.id}`}>New amount ({cur})</label><input id={`ea-${entry.id}`} value={amt} onChange={(e) => setAmt(e.target.value)} inputMode="decimal" className={`${field} w-36 font-display tabular-nums`} /></div>
       <div className="flex-1 min-w-[12rem]"><label className={label} htmlFor={`ew-${entry.id}`}>Why</label><input id={`ew-${entry.id}`} value={note} onChange={(e) => setNote(e.target.value)} className={field} placeholder="e.g. Revised quote 11/02" /></div>
       <button type="button" onClick={() => void save()} disabled={busy} className={primary}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save</button>
       <button type="button" onClick={onCancel} disabled={busy} aria-label="Cancel" className="p-2 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
