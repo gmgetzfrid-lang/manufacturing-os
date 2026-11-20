@@ -86,11 +86,11 @@ export function PageHero({
             {sub && <p className="mt-2 text-[15px] leading-snug text-[var(--color-text-muted)] max-w-[70ch]">{sub}</p>}
           </div>
           {facts && facts.length > 0 && (
-            <dl className="flex max-sm:w-full max-sm:border-t max-sm:border-[var(--color-border-strong)] max-sm:pt-3">
+            <dl className="grid grid-flow-col auto-cols-fr max-sm:w-full max-sm:border-t max-sm:border-[var(--color-border-strong)] max-sm:pt-3">
               {facts.slice(0, 4).map((f, i) => (
-                <div key={i} className="px-5 max-sm:first:pl-0 sm:border-l border-[var(--color-border-strong)] max-sm:[&+&]:border-l flex flex-col justify-center min-w-[96px]">
-                  <dt className="text-[13px] text-[var(--color-text-muted)] whitespace-nowrap">{f.label}</dt>
-                  <dd className={`font-display text-[28px] leading-none mt-1 font-semibold tabular-nums ${tone(f.tone)}`}>{f.value}</dd>
+                <div key={i} className="min-w-0 px-3 sm:px-5 max-sm:first:pl-0 sm:border-l max-sm:[&+&]:border-l border-[var(--color-border-strong)] flex flex-col justify-center sm:min-w-[96px]">
+                  <dt className="text-[13px] text-[var(--color-text-muted)] truncate">{f.label}</dt>
+                  <dd className={`font-display text-[22px] sm:text-[28px] leading-none mt-1 font-semibold tabular-nums truncate ${tone(f.tone)}`}>{f.value}</dd>
                 </div>
               ))}
             </dl>
