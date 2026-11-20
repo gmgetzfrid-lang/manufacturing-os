@@ -4235,7 +4235,7 @@ export default function LibraryExplorerPage() {
                 <Card
                   label={<>Map <span className="font-sans text-[14px] font-normal text-[var(--color-text-muted)]">{mapFolder.name}, its files and the equipment on each</span></>}
                   action={
-                    <button type="button" onClick={() => setMapOpen(false)} className={heroQuiet}>
+                    <button type="button" onClick={() => setMapOpen(() => false)} className={heroQuiet}>
                       <X className="w-4 h-4" /> Hide map
                     </button>
                   }
