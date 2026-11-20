@@ -136,6 +136,9 @@ export function useTicketNotifications() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [notifs, setNotifs] = useState<NotificationRow[]>([]);
   const [loading, setLoading] = useState(true);
+  // Why the feed couldn't be read (null when it was): surfaces say so
+  // instead of showing "nothing needs you".
+  const [loadError, setLoadError] = useState<string | null>(null);
   // Unique per hook instance so multiple consumers (sidebar/bell/inbox) don't
   // collide on the same realtime channel name.
   const channelId = useId().replace(/[^a-z0-9]/gi, '');
@@ -149,17 +152,21 @@ export function useTicketNotifications() {
     }
 
     const fetchAll = async () => {
+      const problems: string[] = [];
+      const note = (e: { message?: string } | null | undefined) => { if (e?.message) problems.push(e.message); };
       try {
         // 1) My tickets, scoped by role (same visibility rules as the portal).
         let list: Ticket[] = [];
         if (isManagementRole(roles) || isEngineerRole(roles) || roles.includes('DocCtrl')) {
-          const { data } = await supabase.from('tickets').select('*').eq('org_id', activeOrgId).neq('status', 'CLOSED').order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP);
+          const { data, error } = await supabase.from('tickets').select('*').eq('org_id', activeOrgId).neq('status', 'CLOSED').order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP);
+          note(error);
           list = (data || []).map((r) => fromDbTicket(r as Record<string, unknown>));
         } else if (roles.includes('Drafter')) {
           const [assigned, pool] = await Promise.all([
             supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('assigned_drafter_id', uid).order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP),
             supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('status', 'PENDING_ASSIGNMENT').order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP),
           ]);
+          note(assigned.error); note(pool.error);
           const map = new Map<string, Ticket>();
           for (const row of [...(assigned.data || []), ...(pool.data || [])]) {
             const t = fromDbTicket(row as Record<string, unknown>);
@@ -167,14 +174,15 @@ export function useTicketNotifications() {
           }
           list = Array.from(map.values());
         } else {
-          const { data } = await supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('requester_id', uid).neq('status', 'CLOSED').order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP);
+          const { data, error } = await supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('requester_id', uid).neq('status', 'CLOSED').order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP);
+          note(error);
           list = (data || []).map((r) => fromDbTicket(r as Record<string, unknown>));
         }
 
         // 2) My unread in-app notifications (the bell's events), scoped to the
         //    active workspace.
         let n = await listMyNotifications({ onlyUnread: true, limit: 50, orgId: activeOrgId })
-          .catch(() => [] as NotificationRow[]);
+          .catch((e: Error) => { note(e); return [] as NotificationRow[]; });
 
         // 3) Reconcile stale workflow alerts. A workflow notification (one that
         //    carries metadata.action) means "this ticket entered state X —
@@ -193,13 +201,16 @@ export function useTicketNotifications() {
         );
         if (workflowRows.length > 0) {
           const refIds = Array.from(new Set(workflowRows.map((r) => r.resourceId as string)));
-          const { data: liveRows } = await supabase
+          const { data: liveRows, error: liveErr } = await supabase
             .from('tickets').select('id, status').eq('org_id', activeOrgId).in('id', refIds);
+          // Without the live statuses nothing can be called stale: a failed
+          // read must never clear real alerts.
+          if (liveErr) { note(liveErr); }
           const statusById = new Map<string, string>();
           for (const row of (liveRows || []) as Array<{ id: string; status: string }>) {
             statusById.set(row.id, row.status);
           }
-          const staleIds = workflowRows
+          const staleIds = liveErr ? [] : workflowRows
             .filter((r) => statusById.get(r.resourceId as string) !== (r.metadata!.status as string))
             .map((r) => r.id);
           if (staleIds.length > 0) {
@@ -209,10 +220,10 @@ export function useTicketNotifications() {
           }
         }
 
-        if (alive) { setTickets(list); setNotifs(n); setLoading(false); }
+        if (alive) { setTickets(list); setNotifs(n); setLoading(false); setLoadError(problems.length ? problems[0] : null); }
       } catch (e) {
         console.error('Attention feed fetch failed', e);
-        if (alive) setLoading(false);
+        if (alive) { setLoading(false); setLoadError((e as Error)?.message || "It didn't load."); }
       }
     };
 
@@ -318,6 +329,8 @@ export function useTicketNotifications() {
     /** Per-sidebar-section counts so each nav item badges only ITS own items. */
     sectionCounts,
     loading,
+    /** Why the feed couldn't be read, or null. */
+    loadError,
     // Re-exported so the bell can mark notification rows read without another import.
     markRead,
     // Scoped to the active workspace so "mark all read" clears only this

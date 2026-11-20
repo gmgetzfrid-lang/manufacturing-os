@@ -229,7 +229,7 @@ export default function InboxPage() {
                 <ul className="space-y-1.5">
                   {data.markupRequestsToMe.slice(0, 6).map((mr) => (
                     <li key={mr.id} className="text-xs">
-                      <Link href={`/documents`} className="text-[var(--color-text)] hover:underline font-bold">
+                      <Link href={mr.libraryId ? `/documents/${mr.libraryId}?doc=${mr.documentId}` : `/documents`} className="text-[var(--color-text)] hover:underline font-bold">
                         {mr.documentNumber || mr.documentTitle || mr.documentId.slice(0, 8)}
                       </Link>
                       {mr.requestedByName && <span className="text-[var(--color-text-muted)]"> · from {mr.requestedByName}</span>}

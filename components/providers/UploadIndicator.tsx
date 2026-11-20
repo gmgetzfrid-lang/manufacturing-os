@@ -80,12 +80,42 @@ export default function UploadIndicator() {
       return next;
     });
 
-  const list = Object.values(items).sort((a, b) => a._t - b._t);
-  if (list.length === 0) return null;
+  const all = Object.values(items).sort((a, b) => a._t - b._t);
+  // Many failures at once (a big batch on a bad connection) fold into one
+  // card with one Try again, so the corner doesn't fill up.
+  const failed = all.filter((u) => u.status === "error");
+  const grouped = failed.length > 3;
+  const list = grouped ? all.filter((u) => u.status !== "error") : all;
+  if (all.length === 0) return null;
 
   return (
     <CornerPortal>
       <div className="flex flex-col gap-2 w-72 pointer-events-auto">
+      {grouped && (
+        <div className="bg-[var(--color-surface)] rounded-xl shadow-lg border border-[var(--color-border)] px-3 py-2.5">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+            <span className="text-xs font-bold text-[var(--color-text)] flex-1">{failed.length} files didn&apos;t upload</span>
+            <button onClick={() => failed.forEach((u) => dismiss(u.id))} className="p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] shrink-0" aria-label="Close">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <details className="mt-1">
+            <summary className="text-[11px] text-[var(--color-text-muted)] cursor-pointer">Show them</summary>
+            <ul className="mt-1 max-h-40 overflow-y-auto space-y-0.5">
+              {failed.map((u) => (
+                <li key={u.id} className="text-[11px] text-[var(--color-text)] truncate" title={u.error}>{u.name}{u.error ? <span className="text-rose-700 dark:text-rose-400">: {u.error}</span> : null}</li>
+              ))}
+            </ul>
+          </details>
+          {failed.some((u) => u.retry) && (
+            <button type="button" onClick={() => failed.forEach((u) => u.retry?.())}
+              className="mt-2 h-8 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12px] font-black hover:bg-[var(--color-accent-hover)]">
+              Try them again
+            </button>
+          )}
+        </div>
+      )}
       {list.map((u) => (
         <div key={u.id} className="bg-[var(--color-surface)] rounded-xl shadow-lg border border-[var(--color-border)] px-3 py-2.5 animate-in slide-in-from-bottom-2 fade-in">
           <div className="flex items-center gap-2">

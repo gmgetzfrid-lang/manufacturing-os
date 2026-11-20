@@ -14,8 +14,9 @@
 //     </ModalFooter>
 //   </Modal>
 
-import React, { useEffect } from "react";
+import React from "react";
 import { createPortal } from "react-dom";
+import { useEscapeClose } from "@/hooks/useEscapeClose";
 import { X } from "lucide-react";
 
 const SIZES = {
@@ -44,14 +45,9 @@ export function Modal({
   className?: string;
   children: React.ReactNode;
 }) {
-  useEffect(() => {
-    if (!dismissable) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [dismissable, onClose]);
+  // Escape closes the dialog on top only: a dialog opened over another
+  // closes first (one shared stack with every other dialog).
+  useEscapeClose(onClose, dismissable);
 
   // Modals are interaction-driven, so the document always exists by the
   // time one renders; the guard only protects an SSR edge case.

@@ -22,8 +22,9 @@ export const STATE_CONFIG: Record<WhiteboardState, {
   chip: string;
   dot: string;
 }> = {
-  pending:   { label: "Pending",   hex: "#64748b", chip: "bg-slate-100 text-slate-700 border-slate-200", dot: "bg-slate-400" },
-  drafting:  { label: "Drafting",  hex: "#2563eb", chip: "bg-blue-100 text-blue-700 border-blue-200",     dot: "bg-blue-500" },
+  // Only red, amber and green carry meaning; the rest is ink.
+  pending:   { label: "Pending",   hex: "#94a3b8", chip: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]", dot: "bg-[var(--color-text-faint)]" },
+  drafting:  { label: "Drafting",  hex: "#334155", chip: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border-strong)]",     dot: "bg-[var(--color-text)]" },
   executing: { label: "Executing", hex: "#d97706", chip: "bg-amber-100 text-amber-800 border-amber-200",  dot: "bg-amber-500" },
   completed: { label: "Completed", hex: "#16a34a", chip: "bg-emerald-100 text-emerald-700 border-emerald-200", dot: "bg-emerald-500" },
   blocked:   { label: "Blocked",   hex: "#dc2626", chip: "bg-rose-100 text-rose-700 border-rose-200",      dot: "bg-rose-500" },

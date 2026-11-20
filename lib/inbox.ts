@@ -33,6 +33,8 @@ export interface InboxSnapshot {
   markupRequestsToMe: Array<{
     id: string;
     documentId: string;
+    /** The document's library, so the link opens the document itself. */
+    libraryId?: string | null;
     projectId?: string | null;
     documentNumber?: string | null;
     documentTitle?: string | null;
@@ -227,6 +229,12 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
         createdAt: String(r.created_at),
       }))
     : [];
+  if (markupRequestsToMe.length) {
+    const ids = [...new Set(markupRequestsToMe.map((m) => m.documentId))];
+    const { data: libs } = await supabase.from("documents").select("id, library_id").in("id", ids);
+    const libOf = new Map(((libs ?? []) as Array<{ id: string; library_id: string | null }>).map((d) => [d.id, d.library_id]));
+    for (const m of markupRequestsToMe) (m as { libraryId?: string | null }).libraryId = libOf.get(m.documentId) ?? null;
+  }
 
   const myProjectIds = new Set<string>(
     projectsRes.status === "fulfilled"

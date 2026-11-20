@@ -111,8 +111,11 @@ export default function DashboardGrid() {
     return () => { alive = false; };
   }, [uid]);
 
+  // The layout is always kept on this device; say so when the account copy
+  // didn't save (it then won't follow you to another device).
+  const [saveErr, setSaveErr] = useState<string | null>(null);
   const persist = useCallback((next: DashboardConfig) => {
-    if (uid) void saveDashboardConfig(uid, next);
+    if (uid) void saveDashboardConfig(uid, next).then(setSaveErr);
   }, [uid]);
 
   const mutate = useCallback((next: DashboardConfig) => {
@@ -303,6 +306,7 @@ export default function DashboardGrid() {
         <h1 className="sr-only">{greeting}{firstName ? `, ${firstName}` : ""}</h1>
         <div className="min-w-0 text-[12.5px] text-[var(--color-text-muted)]">
           <span className="font-semibold uppercase tracking-[0.12em] text-[11px] text-[var(--color-text-faint)]">{dateLine}</span>
+          {saveErr && <p role="alert" className="mt-1 border-l-2 border-amber-500 pl-2 text-[12.5px] text-amber-800 dark:text-amber-300">Your layout is saved on this device only. The account copy didn&apos;t save: {saveErr}</p>}
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <button

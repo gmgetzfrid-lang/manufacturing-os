@@ -14,6 +14,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, HelpCircle, Info, X } from "lucide-react";
+import { readDraft, clearDraft } from "@/hooks/useDraft";
 import { Modal, ModalFooter } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 
@@ -82,15 +83,21 @@ export function DialogHost() {
     };
   }, []);
 
+  // A reason typed into a prompt survives a reload or leaving the page
+  // (not when the prompt edits an existing value). Cleared once answered.
+  const draftKey = current && current.kind === "prompt" && !current.defaultValue
+    ? `prompt:${current.title ?? ""}|${typeof current.message === "string" ? current.message : ""}|${current.placeholder ?? ""}`
+    : null;
   const settle = useCallback(
     (value: boolean | string | null) => {
       if (!current) return;
+      if (draftKey) clearDraft(draftKey);
       if (current.kind === "alert") current.resolve();
       else if (current.kind === "confirm") current.resolve(value === true);
       else current.resolve(typeof value === "string" ? value : null);
       setQueue((q) => q.slice(1));
     },
-    [current]
+    [current, draftKey]
   );
 
   if (!current) return null;
@@ -132,7 +139,12 @@ export function DialogHost() {
                 key={current.id}
                 ref={inputRef}
                 autoFocus
-                defaultValue={current.defaultValue}
+                defaultValue={(draftKey && readDraft<string>(draftKey)) || current.defaultValue}
+                onInput={(e) => {
+                  if (!draftKey) return;
+                  const v = (e.target as HTMLInputElement).value;
+                  try { if (v.trim()) localStorage.setItem(`draft:${draftKey}`, JSON.stringify(v)); else clearDraft(draftKey); } catch { /* private mode */ }
+                }}
                 placeholder={current.placeholder}
                 className="mt-3 w-full h-9 px-3 text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]"
               />

@@ -246,17 +246,21 @@ export async function loadDashboardConfig(uid: string): Promise<DashboardConfig>
   return defaultDashboard();
 }
 
-export async function saveDashboardConfig(uid: string, config: DashboardConfig): Promise<void> {
+/** Saves the layout on this device at once, then to the account. Returns
+ *  why the account save failed (null when it worked), so the page can say
+ *  the layout is only on this device. */
+export async function saveDashboardConfig(uid: string, config: DashboardConfig): Promise<string | null> {
   // Local first so the change is instant and durable even if the DB write
   // can't land (e.g. the column hasn't been migrated yet).
   writeLocal(uid, config);
   try {
-    await supabase.from("users").upsert({
+    const { error } = await supabase.from("users").upsert({
       id: uid,
       dashboard_config: config,
       updated_at: new Date().toISOString(),
     });
-  } catch {
-    /* best-effort — localStorage already has it */
+    return error ? error.message : null;
+  } catch (e) {
+    return (e as Error)?.message || "It didn't save.";
   }
 }

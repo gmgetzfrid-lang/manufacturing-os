@@ -54,7 +54,7 @@ function CenterPanel({
   filter: AttnFilter;
   onFilter: (f: AttnFilter) => void;
 }) {
-  const { items, markRead, markAllRead, loading } = useTicketNotifications();
+  const { items, markRead, markAllRead, loading, loadError } = useTicketNotifications();
   const [markingAll, setMarkingAll] = useState(false);
 
   // Escape closes just the center (capture — the same trick every overlay in
@@ -141,6 +141,11 @@ function CenterPanel({
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto p-4">
+          {loadError && (
+            <p role="alert" className="mx-3 mt-3 border-l-2 border-rose-500 pl-2 text-[12.5px] text-rose-800 dark:text-rose-300">
+              Some of this couldn&apos;t load, so the list may be missing items: {loadError}
+            </p>
+          )}
           {loading && items.length === 0 ? (
             <LoadingBlock what="notifications" rows={4} />
           ) : (

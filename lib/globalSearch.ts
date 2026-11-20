@@ -124,7 +124,7 @@ export async function globalSearch({ orgId, query, perKindLimit = 5 }: GlobalSea
         title: t.number,
         subtitle: t.subject || t.recipient_name || undefined,
         badge: t.status ?? undefined,
-        href: "/transmittals",
+        href: `/transmittals?t=${String(t.id)}`,
       });
     }
   }
