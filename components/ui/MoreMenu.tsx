@@ -5,6 +5,7 @@
 
 import React, { useEffect, useState } from "react";
 import { MoreHorizontal } from "lucide-react";
+import { useEscapeClose } from "@/hooks/useEscapeClose";
 
 export type MoreItem = { icon: React.ReactNode; label: string; onClick: () => void | Promise<void>; tone?: "good" | "bad"; line?: boolean; current?: boolean };
 
@@ -19,12 +20,12 @@ export default function MoreMenu({ items, label = "More", triggerClass, iconOnly
   useEffect(() => {
     if (!open) return;
     const away = (e: MouseEvent | TouchEvent) => { if (box.current && !box.current.contains(e.target as Node)) setOpen(false); };
-    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
     document.addEventListener("mousedown", away);
     document.addEventListener("touchstart", away);
-    document.addEventListener("keydown", esc);
-    return () => { document.removeEventListener("mousedown", away); document.removeEventListener("touchstart", away); document.removeEventListener("keydown", esc); };
+    return () => { document.removeEventListener("mousedown", away); document.removeEventListener("touchstart", away); };
   }, [open]);
+  // Escape closes the open menu first, not the screen or dialog under it.
+  useEscapeClose(() => setOpen(false), open);
   return (
     <div ref={box} className="relative">
       <button type="button" aria-haspopup="menu" aria-expanded={open} aria-label={iconOnly ? label : undefined} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setToLeft(r.right >= 232); setOpen((o) => !o); }}

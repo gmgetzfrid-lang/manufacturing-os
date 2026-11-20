@@ -15,6 +15,7 @@ import { supabase } from "@/lib/supabase";
 import { resolveFileUrl } from "@/lib/storage";
 import type { DocumentRecord } from "@/types/schema";
 import dynamic from "next/dynamic";
+import { vDim, vPanel, vKicker, vTitle, vIcon, vClose } from "@/components/viewers/viewerChrome";
 // react-pdf is heavy; load the diff engine only when a compare opens.
 const PdfRevisionDiff = dynamic(() => import("@/components/viewers/PdfRevisionDiff"), { ssr: false });
 
@@ -143,76 +144,75 @@ export default function CompareRevisionsModal({
   const optionLabel = (v: VersionOption) =>
     `Rev ${v.revisionLabel}${v.id === doc.currentVersionId ? " · current" : ""}${v.createdAt ? ` · ${v.createdAt.slice(0, 10)}` : ""}`;
 
-  const selectCls = "bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-100 outline-none focus:border-[var(--color-border-strong)] max-w-[220px]";
+  const selectCls = "h-9 bg-[var(--color-ink-2)] border border-[var(--color-border)] rounded-[10px] px-2 text-[13px] font-semibold text-[var(--color-text)] outline-none focus:border-[var(--color-border-strong)] max-w-[220px]";
 
   // PORTAL to <body>: this modal is opened from inside the Inspector drawer,
   // whose slide-in transform makes it the containing block for fixed
   // positioning — without the portal, "fixed inset-0" fills the ~640px drawer
   // instead of the screen.
   return createPortal(
-    <div className="fixed inset-0 z-[220] bg-slate-900/80 backdrop-blur-sm animate-in fade-in flex flex-col p-4">
-      <div className="flex-1 min-h-0 bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden flex flex-col shadow-2xl animate-in fade-in zoom-in-95">
-        {/* Title + version pickers */}
-        <div className="px-4 py-2.5 flex items-center justify-between gap-3 bg-slate-800 border-b border-slate-700 shrink-0 flex-wrap">
-          <div className="flex items-center gap-2 text-xs min-w-0">
-            <GitCompare className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-            <span className="font-black text-slate-200 uppercase tracking-widest shrink-0">Compare revisions</span>
-            <span className="text-slate-500 truncate">{doc.documentNumber || doc.title || doc.name}</span>
+    <div className="fixed inset-0 z-[220]">
+      <div className={vDim} onClick={onClose} />
+      <div className={vPanel} role="dialog" aria-modal="true" aria-label="Compare revisions">
+        {/* Which drawing, then the two revisions */}
+        <div className="px-4 sm:px-5 pt-3.5 pb-3 flex items-start gap-3 shrink-0">
+          <div className="min-w-0 flex-1">
+            <div className={vKicker}>Compare revisions</div>
+            <div className={vTitle}>{doc.documentNumber || doc.title || doc.name}</div>
           </div>
-
-          <div className="flex items-center gap-2 text-xs">
-            <label className="flex items-center gap-1.5">
-              <span className="text-red-300 font-bold">Base</span>
-              <select value={baseId ?? ""} onChange={(e) => pick("base", e.target.value)} className={selectCls} disabled={loading}>
-                {versions.map((v) => <option key={v.id} value={v.id}>{optionLabel(v)}</option>)}
-              </select>
-            </label>
-            <button onClick={swap} disabled={!baseId || !compareId} className="p-1.5 rounded-lg text-slate-300 hover:text-[var(--color-accent-hover)] hover:bg-slate-700 disabled:opacity-40" title="Swap base and compare">
-              <ArrowLeftRight className="w-4 h-4" />
-            </button>
-            <label className="flex items-center gap-1.5">
-              <span className="text-emerald-300 font-bold">Compare</span>
-              <select value={compareId ?? ""} onChange={(e) => pick("compare", e.target.value)} className={selectCls} disabled={loading}>
-                {versions.map((v) => <option key={v.id} value={v.id}>{optionLabel(v)}</option>)}
-              </select>
-            </label>
-            {offloadedCount > 0 && (
-              <span className="inline-flex items-center gap-1 text-[11px] text-slate-400" title="Revisions shed to the cold archive (or without a server file) can't be compared until restored">
-                <Archive className="w-3 h-3" /> {offloadedCount} archived off-server excluded
-              </span>
-            )}
-            <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-700" title="Close">
-              <X className="w-4 h-4" />
-            </button>
-          </div>
+          <button aria-label="Close" onClick={onClose} className={vClose} title="Close">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="px-4 sm:px-5 pb-3 flex items-center gap-2 flex-wrap shrink-0 border-b border-[var(--color-border)]">
+          <label className="flex items-center gap-1.5 text-[12px]">
+            <span className="text-rose-300 font-bold">Base</span>
+            <select value={baseId ?? ""} onChange={(e) => pick("base", e.target.value)} className={selectCls} disabled={loading}>
+              {versions.map((v) => <option key={v.id} value={v.id}>{optionLabel(v)}</option>)}
+            </select>
+          </label>
+          <button onClick={swap} disabled={!baseId || !compareId} className={vIcon} title="Swap base and compare" aria-label="Swap base and compare">
+            <ArrowLeftRight className="w-4 h-4" />
+          </button>
+          <label className="flex items-center gap-1.5 text-[12px]">
+            <span className="text-emerald-300 font-bold">Compare</span>
+            <select value={compareId ?? ""} onChange={(e) => pick("compare", e.target.value)} className={selectCls} disabled={loading}>
+              {versions.map((v) => <option key={v.id} value={v.id}>{optionLabel(v)}</option>)}
+            </select>
+          </label>
+          {offloadedCount > 0 && (
+            <span className="inline-flex items-center gap-1 text-[12px] text-[var(--color-text-muted)]">
+              <Archive className="w-3.5 h-3.5" /> {offloadedCount} older revision{offloadedCount === 1 ? " is" : "s are"} in the offline archive, not shown
+            </span>
+          )}
         </div>
 
         {/* Body */}
         <div className="flex-1 min-h-0 relative">
           {loading ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400">
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-[var(--color-text-muted)]">
               <Loader2 className="w-8 h-8 animate-spin text-[var(--color-text-muted)] mb-2" />
-              <span className="text-xs font-mono">Loading revisions…</span>
+              <span className="text-xs">Loading revisions…</span>
             </div>
           ) : error ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-red-400">
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-rose-300">
               <AlertTriangle className="w-10 h-10 mb-2 opacity-60" />
-              <span className="text-sm font-bold">Could not load revisions</span>
-              <span className="text-xs font-mono mt-1 max-w-md text-center text-red-300/70">{error}</span>
+              <span className="text-sm font-bold">The revisions didn&apos;t load.</span>
+              <span className="text-xs mt-1 max-w-md text-center text-[var(--color-text-muted)]">{error}</span>
             </div>
           ) : versions.length < 2 ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 px-8 text-center">
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-[var(--color-text-muted)] px-8 text-center">
               <GitCompare className="w-10 h-10 mb-3 opacity-40" />
-              <span className="text-sm font-bold text-slate-300">Need two revisions on the server to compare</span>
+              <span className="text-sm font-bold text-[var(--color-text)]">Need two revisions on the server to compare</span>
               <span className="text-xs mt-1 max-w-md">
                 {versions.length === 1 ? "Only one revision is available. " : "No revisions with files are available. "}
                 {offloadedCount > 0 && `${offloadedCount} older revision${offloadedCount === 1 ? " was" : "s were"} archived off the server for space - restore from the offline archive to compare against them.`}
               </span>
             </div>
           ) : !baseVersion || !compareVersion || !urls ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400">
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-[var(--color-text-muted)]">
               <Loader2 className="w-8 h-8 animate-spin text-[var(--color-text-muted)] mb-2" />
-              <span className="text-xs font-mono">Resolving files…</span>
+              <span className="text-xs">Opening the files…</span>
             </div>
           ) : (
             <PdfRevisionDiff
