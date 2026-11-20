@@ -106,12 +106,12 @@ export default function SignupPage() {
   return (
     <div className="min-h-dvh bg-slate-950 flex flex-col items-center justify-center p-4 relative overflow-hidden">
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-slate-950 to-black z-0" />
-      <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-orange-900/50 to-transparent z-10" />
+      <div className="absolute top-0 left-0 right-0 h-px z-10 bg-[var(--color-text)]" />
 
       <div className="w-full max-w-lg relative z-20">
         {/* Header */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 bg-gradient-to-br from-orange-500 to-orange-700 rounded-2xl mb-4 shadow-lg shadow-orange-900/40 ring-1 ring-white/10">
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl mb-4 shadow-lg ring-1 ring-white/10 bg-[var(--color-text)]">
             <Layout className="w-7 h-7 text-white" />
           </div>
           <h1 className="text-3xl font-black text-white tracking-tight">ManufacturingOS</h1>
@@ -158,7 +158,7 @@ export default function SignupPage() {
                     <div className="relative">
                       <Building2 className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                       <input type="text" value={formData.companyName} onChange={(e) => setFormData({...formData, companyName: e.target.value})}
-                        className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-bold focus:ring-2 focus:ring-orange-500 focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
+                        className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-bold focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
                         placeholder="Acme Manufacturing Inc." required />
                     </div>
                   </div>
@@ -170,7 +170,7 @@ export default function SignupPage() {
                     <div className="relative">
                       <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                       <input type="text" value={formData.displayName} onChange={(e) => setFormData({...formData, displayName: e.target.value})}
-                        className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-orange-500 focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
+                        className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
                         placeholder="John Doe" required />
                     </div>
                   </div>
@@ -180,7 +180,7 @@ export default function SignupPage() {
                     <div className="relative">
                       <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                       <input type="email" value={formData.email} onChange={(e) => setFormData({...formData, email: e.target.value})}
-                        className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-orange-500 focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
+                        className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
                         placeholder="name@company.com" required />
                     </div>
                   </div>
@@ -190,7 +190,7 @@ export default function SignupPage() {
                     <div className="relative">
                       <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                       <input type="password" value={formData.password} onChange={(e) => setFormData({...formData, password: e.target.value})}
-                        className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-orange-500 focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
+                        className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
                         placeholder="Create a strong password" minLength={6} required />
                     </div>
                   </div>
@@ -200,13 +200,13 @@ export default function SignupPage() {
                     <div className="relative">
                       <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                       <input type="password" value={formData.confirmPassword} onChange={(e) => setFormData({...formData, confirmPassword: e.target.value})}
-                        className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-orange-500 focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
+                        className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
                         placeholder="Repeat your password" minLength={6} required />
                     </div>
                   </div>
 
                   <button type="submit" disabled={loading}
-                    className="w-full py-4 bg-orange-600 hover:bg-orange-500 text-white font-bold rounded-xl shadow-lg transition-all flex items-center justify-center disabled:opacity-70 disabled:cursor-not-allowed mt-2">
+                    className="w-full py-4 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] font-bold rounded-xl shadow-lg transition-all flex items-center justify-center disabled:opacity-70 disabled:cursor-not-allowed mt-2">
                     {loading ? (
                       <><Loader2 className="w-5 h-5 animate-spin mr-2" /> Creating Workspace...</>
                     ) : (
@@ -244,8 +244,8 @@ export default function SignupPage() {
                         <p className="text-sm text-red-700 font-medium">{error}</p>
                       </div>
                     )}
-                    <div className="mb-6 p-4 bg-blue-50 border border-blue-100 rounded-xl">
-                      <p className="text-sm text-blue-800 font-medium">Your account will be created by your organization&rsquo;s Admin. This form notifies them of your request.</p>
+                    <div className="mb-6 p-4 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl">
+                      <p className="text-sm text-[var(--color-text)] font-medium">Your account will be created by your organization&rsquo;s Admin. This form notifies them of your request.</p>
                     </div>
                     <form onSubmit={handleRequestAccess} className="space-y-5">
                       <div>
@@ -253,7 +253,7 @@ export default function SignupPage() {
                         <div className="relative">
                           <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                           <input type="text" value={requestData.displayName} onChange={(e) => setRequestData({...requestData, displayName: e.target.value})}
-                            className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-orange-500 focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
+                            className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
                             placeholder="John Doe" required />
                         </div>
                       </div>
@@ -262,7 +262,7 @@ export default function SignupPage() {
                         <div className="relative">
                           <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                           <input type="email" value={requestData.email} onChange={(e) => setRequestData({...requestData, email: e.target.value})}
-                            className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-orange-500 focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
+                            className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
                             placeholder="name@company.com" required />
                         </div>
                       </div>
@@ -271,12 +271,12 @@ export default function SignupPage() {
                         <div className="relative">
                           <Building2 className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                           <input type="text" value={requestData.orgName} onChange={(e) => setRequestData({...requestData, orgName: e.target.value})}
-                            className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-orange-500 focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
+                            className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
                             placeholder="Acme Manufacturing Inc." required />
                         </div>
                       </div>
                       <button type="submit" disabled={loading}
-                        className="w-full py-4 bg-orange-600 hover:bg-orange-500 text-white font-bold rounded-xl shadow-lg transition-all flex items-center justify-center disabled:opacity-70 disabled:cursor-not-allowed">
+                        className="w-full py-4 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] font-bold rounded-xl shadow-lg transition-all flex items-center justify-center disabled:opacity-70 disabled:cursor-not-allowed">
                         {loading ? (
                           <><Loader2 className="w-5 h-5 animate-spin mr-2" /> Sending Request...</>
                         ) : (
@@ -294,7 +294,7 @@ export default function SignupPage() {
         <div className="text-center mt-6">
           <p className="text-sm text-slate-500">
             Already have an account?{' '}
-            <Link href="/" className="text-orange-500 hover:text-orange-400 font-bold">Sign In</Link>
+            <Link href="/" className="text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] font-bold">Sign In</Link>
           </p>
         </div>
       </div>

@@ -58,8 +58,8 @@ export default function RevertConfirmModal({
     <div className="fixed inset-0 z-[210] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
-          <div className="p-2 bg-purple-100 rounded-lg">
-            <RotateCcw className="w-5 h-5 text-purple-700" />
+          <div className="p-2 bg-[var(--color-surface-2)] rounded-lg">
+            <RotateCcw className="w-5 h-5 text-[var(--color-text-muted)]" />
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-black text-[var(--color-text)]">Revert to Rev {targetVersion.revisionLabel}</div>
@@ -84,7 +84,7 @@ export default function RevertConfirmModal({
           </div>
 
           <div>
-            <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Reason *</label>
+            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Reason *</label>
             <textarea
               value={reason}
               onChange={(e) => setReason(e.target.value)}
@@ -95,7 +95,7 @@ export default function RevertConfirmModal({
           </div>
 
           <div>
-            <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">MOC Reference</label>
+            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">MOC Reference</label>
             <input
               value={mocRef}
               onChange={(e) => setMocRef(e.target.value)}
@@ -119,7 +119,7 @@ export default function RevertConfirmModal({
           <button
             onClick={() => void submit()}
             disabled={busy}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-60"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60"
           >
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
             {busy ? "Reverting…" : "Confirm Revert"}

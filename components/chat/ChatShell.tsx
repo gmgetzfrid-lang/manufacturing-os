@@ -658,12 +658,12 @@ export default function ChatShell() {
               <PanelLeftOpen className="w-4 h-4" />
             </button>
           )}
-          <ScopeIcon className={`w-4 h-4 shrink-0 ${scope === "internet" ? "text-sky-600" : scope === "tools" ? "text-violet-600" : "text-orange-600"}`} />
+          <ScopeIcon className={`w-4 h-4 shrink-0 ${scope === "internet" ? "text-[var(--color-text-muted)]" : scope === "tools" ? "text-[var(--color-text-muted)]" : "text-[var(--color-text-muted)]"}`} />
           <div className="min-w-0 flex-1">
             <div className="text-sm font-black text-[var(--color-text)] truncate">{active?.title || "New conversation"}</div>
           </div>
           {streaming && (
-            <button onClick={stop} className="hidden sm:inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full border border-[var(--color-border)] text-[10px] font-black text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+            <button onClick={stop} className="hidden sm:inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full border border-[var(--color-border)] text-[11px] font-black text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
               <Square className="w-3 h-3" /> Stop
             </button>
           )}
@@ -734,7 +734,7 @@ export default function ChatShell() {
               answerMode={pickedMode} onAnswerMode={pickMode}
               skills={skills} pickedSkills={pickedSkills} onPickSkills={pickSkills}
             />
-            <p className="mt-1.5 px-1 text-[10px] text-[var(--color-text-faint)] truncate">
+            <p className="mt-1.5 px-1 text-[11px] text-[var(--color-text-faint)] truncate">
               {scope === "library" && useWeb
                 ? "Documents first - they govern. Web is on: every web statement links to the page it came from."
                 : SCOPE_META[scope].hint}

@@ -106,7 +106,7 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
         >
           <Bell className="w-4 h-4" />
           {unread > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-orange-500 text-white text-[10px] font-black ring-2 ring-white">
+            <span className="absolute -top-0.5 -right-0.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)] text-[11px] font-black ring-2 ring-white">
               {unread > 99 ? "99+" : unread}
             </span>
           )}
@@ -120,7 +120,7 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
           <Bell className={`w-5 h-5 ${collapsed ? "" : "mr-3"} text-slate-300 group-hover:text-white`} />
           {!collapsed && <span className="text-sm font-medium">Notifications</span>}
           {unread > 0 && (
-            <span className={`${collapsed ? "absolute top-1 right-1" : "ml-auto"} inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-orange-500 text-white text-[10px] font-black`}>
+            <span className={`${collapsed ? "absolute top-1 right-1" : "ml-auto"} inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)] text-[11px] font-black`}>
               {unread > 99 ? "99+" : unread}
             </span>
           )}
@@ -132,7 +132,7 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
             <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface-2)]">
               <div>
                 <div className="text-sm font-black text-[var(--color-text)]">Notifications</div>
-                <div className="text-[10px] text-[var(--color-text-muted)]">{unread > 0 ? `${unread} need${unread === 1 ? "s" : ""} attention` : "All caught up"}</div>
+                <div className="text-[11px] text-[var(--color-text-muted)]">{unread > 0 ? `${unread} need${unread === 1 ? "s" : ""} attention` : "All caught up"}</div>
               </div>
               <div className="flex items-center gap-3">
                 {hasNotifRows && (
@@ -166,19 +166,19 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
                 <ul className="divide-y divide-[var(--color-border)]">
                   {items.map((item) => {
                     const Icon = KIND_ICON[item.kind] ?? Bell;
-                    const tone = item.actionRequired ? "bg-orange-50 text-orange-700 border-orange-200" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]";
+                    const tone = item.actionRequired ? "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]";
                     return (
                       <li key={item.key}>
                         <Link href={item.link} onClick={() => void onItemClick(item)}>
-                          <div className={`px-4 py-3 flex items-start gap-3 ${item.actionRequired ? "bg-orange-50/30" : ""} hover:bg-[var(--color-surface-2)] cursor-pointer`}>
+                          <div className={`px-4 py-3 flex items-start gap-3 ${item.actionRequired ? "bg-[var(--color-surface-2)]" : ""} hover:bg-[var(--color-surface-2)] cursor-pointer`}>
                             <div className={`shrink-0 w-8 h-8 rounded-lg border flex items-center justify-center ${tone}`}>
                               <Icon className="w-4 h-4" />
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="text-xs font-bold text-[var(--color-text)] truncate">{item.title}</div>
                               {item.subtitle && <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 line-clamp-2">{item.subtitle}</div>}
-                              <div className="text-[10px] text-[var(--color-text-faint)] mt-1 flex items-center gap-2">
-                                {item.actionRequired && <span className="font-black uppercase tracking-wider text-orange-600">Action needed</span>}
+                              <div className="text-[11px] text-[var(--color-text-faint)] mt-1 flex items-center gap-2">
+                                {item.actionRequired && <span className="font-black uppercase tracking-wider text-[var(--color-text)]">Action needed</span>}
                                 <time dateTime={item.when}>{formatTime(item.when)}</time>
                               </div>
                             </div>

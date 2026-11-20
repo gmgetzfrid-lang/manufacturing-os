@@ -60,14 +60,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           <div
             key={toast.id}
             className="
-              pointer-events-auto w-80 p-4 rounded-xl shadow-lg border animate-in slide-in-from-right-full fade-in duration-300
+ pointer-events-auto w-80 p-4 rounded-xl shadow-lg border animate-in slide-in-from-right-full fade-in duration-300
               flex items-start gap-3 bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text)]
             "
           >
             <div className={`mt-0.5 shrink-0 
               ${toast.type === "success" ? "text-green-600" : ""}
               ${toast.type === "error" ? "text-red-600" : ""}
-              ${toast.type === "info" ? "text-blue-600" : ""}
+              ${toast.type === "info" ? "text-[var(--color-text)]" : ""}
               ${toast.type === "warning" ? "text-amber-600" : ""}
             `}>
               {toast.type === "success" && <CheckCircle className="w-5 h-5" />}

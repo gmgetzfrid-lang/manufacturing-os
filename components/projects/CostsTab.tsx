@@ -230,7 +230,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
 
       {view === "overview" && (<>
       {phaseMoney && (
-        <div className="rounded-2xl border-2 border-[var(--color-accent)]/40 bg-[var(--color-surface)] px-4 py-3">
+        <div className="rounded-2xl border-2 border-[var(--color-border-strong)] bg-[var(--color-surface)] px-4 py-3">
           <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">{phaseMoney.phase.name} · {phaseMoney.phase.share}% of the {basis?.authorized != null ? "AFE" : "budget"}</div>
           <div className="mt-1 grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[["Phase budget", phaseMoney.s.budget], ["Committed", phaseMoney.s.committed], ["Spent", phaseMoney.s.spent], [phaseMoney.s.budget - phaseMoney.s.spent >= 0 ? "Left" : "Over", Math.abs(phaseMoney.s.budget - phaseMoney.s.spent)]].map(([k, v]) => (
@@ -266,12 +266,12 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       {/* ── Burn bar: spent (solid) + committed (hatched ghost) vs budget ── */}
       {rollup.budget > 0 && (
         <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
-          <div className="flex items-center justify-between text-[10px] font-bold text-[var(--color-text-muted)] mb-1.5">
+          <div className="flex items-center justify-between text-[11px] font-bold text-[var(--color-text-muted)] mb-1.5">
             <span>Budget burn (estimated from quotes × schedule progress)</span>
             <span className="tabular-nums">{fmtMoney(outlook.estimatedToDate, cur)} est. to date · {fmtMoney(rollup.committed, cur)} quoted · {fmtMoney(rollup.budget, cur)} budget</span>
           </div>
           <div className="relative h-2.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-            <div className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-accent)]/25 transition-all duration-700" style={{ width: `${commitPct}%` }} />
+            <div className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-surface-2)] transition-all duration-700" style={{ width: `${commitPct}%` }} />
             <div className={`absolute inset-y-0 left-0 rounded-full transition-all duration-700 ${burnPct >= 100 ? "bg-rose-500" : "bg-[image:var(--brand-gradient)]"}`} style={{ width: `${burnPct}%` }} />
           </div>
         </div>
@@ -326,7 +326,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       {/* ── Budget basis + build-from-document ── */}
       <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
         <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
-          <FileCheck2 className="w-4 h-4 text-[var(--color-accent)]" />
+          <FileCheck2 className="w-4 h-4 text-[var(--color-text-muted)]" />
           <span className="text-sm font-bold text-[var(--color-text)]">Budget basis</span>
           {canManage && !importing && accounts.length > 0 && (
             <button onClick={() => setShowDrop((v) => !v)}
@@ -390,9 +390,9 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
         <button onClick={() => setShowParties((v) => !v)} className="w-full px-4 py-3 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
           {showParties ? <ChevronDown className="w-4 h-4 text-[var(--color-text-faint)]" /> : <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)]" />}
-          <HardHat className="w-4 h-4 text-[var(--color-accent)]" />
+          <HardHat className="w-4 h-4 text-[var(--color-text-muted)]" />
           <span className="text-sm font-bold text-[var(--color-text)]">Contractors &amp; vendors</span>
-          <span className="text-[10px] font-mono text-[var(--color-text-muted)]">{parties.length}</span>
+          <span className="text-[11px] font-mono text-[var(--color-text-muted)]">{parties.length}</span>
         </button>
         {showParties && (
           <PartiesPanel orgId={orgId} projectId={projectId} actor={actor} parties={parties} canManage={canManage} onChanged={() => void refresh()} />
@@ -420,9 +420,9 @@ export function OutlookCard({ outlook: o, rollup, cur, authorized, onQuotes }: {
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 space-y-2">
       <div className="flex items-center gap-2">
-        <Gauge className="w-4 h-4 text-[var(--color-accent)]" />
+        <Gauge className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-sm font-bold text-[var(--color-text)]">Where this job lands</span>
-        <span className="text-[10px] text-[var(--color-text-muted)]">from awarded quotes and schedule progress - no invoices needed</span>
+        <span className="text-[11px] text-[var(--color-text-muted)]">from awarded quotes and schedule progress - no invoices needed</span>
       </div>
       <ul className="text-xs text-[var(--color-text)] space-y-1">
         <li>
@@ -451,7 +451,7 @@ export function OutlookCard({ outlook: o, rollup, cur, authorized, onQuotes }: {
           </li>
         )}
         {o.quoted > 0 && unquoted > 0 && (
-          <li className="text-[10px] text-[var(--color-text-muted)]">
+          <li className="text-[11px] text-[var(--color-text-muted)]">
             {unquoted} budget line{unquoted === 1 ? " has" : "s have"} no awarded quote - {unquoted === 1 ? "it's" : "they're"} forecast at budget.
           </li>
         )}
@@ -469,7 +469,7 @@ function SubTab({ active, onClick, icon, label, count, attention }: {
         active ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
       {icon} {label}
       {count != null && count > 0 && (
-        <span className={`text-[10px] font-black tabular-nums px-1.5 rounded-full ${
+        <span className={`text-[11px] font-black tabular-nums px-1.5 rounded-full ${
           active ? "bg-white/20" : attention ? "bg-amber-500/15 text-amber-700 dark:text-amber-300" : "bg-[var(--color-surface-2)]"}`}>{count}</span>
       )}
     </button>
@@ -485,7 +485,7 @@ function BasisLine({ basis, budget, spent, cur, onOpen }: {
   const gap = auth != null ? auth - budget : null;
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2.5 flex items-center gap-x-3 gap-y-1 flex-wrap text-[11px] text-[var(--color-text-muted)]">
-      <FileCheck2 className="w-4 h-4 text-[var(--color-accent)]" />
+      <FileCheck2 className="w-4 h-4 text-[var(--color-text-muted)]" />
       {basis.afeNumber && <span className="font-black text-[var(--color-text)]">{basis.afeNumber}</span>}
       {auth != null && <span><span className="font-black tabular-nums text-[var(--color-text)]">{fmtMoney(auth, cur)}</span> authorized</span>}
       {auth != null && gap != null && Math.abs(gap) >= 1 && (
@@ -510,9 +510,9 @@ function StatCard({ icon, label, value, sub, tone }: {
   tone: "accent" | "sky" | "violet" | "emerald" | "rose";
 }) {
   const tones: Record<string, string> = {
-    accent: "text-[var(--color-accent)] bg-[var(--color-accent-soft)]",
-    sky: "text-sky-600 bg-sky-500/10",
-    violet: "text-violet-600 bg-violet-500/10",
+    accent: "text-[var(--color-accent)] bg-[var(--color-surface-2)]",
+    sky: "text-[var(--color-text)] bg-[var(--color-surface-2)]",
+    violet: "text-[var(--color-text)] bg-[var(--color-surface-2)]",
     emerald: "text-emerald-600 bg-emerald-500/10",
     rose: "text-rose-600 bg-rose-500/10",
   };
@@ -523,7 +523,7 @@ function StatCard({ icon, label, value, sub, tone }: {
         <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">{label}</span>
       </div>
       <div className="mt-2 text-lg font-black tabular-nums text-[var(--color-text)] truncate">{value}</div>
-      {sub && <div className="text-[10px] font-bold text-[var(--color-text-muted)] mt-0.5">{sub}</div>}
+      {sub && <div className="text-[11px] font-bold text-[var(--color-text-muted)] mt-0.5">{sub}</div>}
     </div>
   );
 }
@@ -553,14 +553,14 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
       {canManage && (
         <div className="flex items-end gap-3 flex-wrap pt-2">
           <label className="block">
-            <span className="text-[9px] font-black uppercase tracking-wider text-[var(--color-text-muted)]" title="Earned value = budget × the pinned task's % complete">Pin to schedule task (for EV)</span>
+            <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]" title="Earned value = budget × the pinned task's % complete">Pin to schedule task (for EV)</span>
             <select value={pinDraft} onChange={(e) => void savePin(e.target.value)}
               className="mt-0.5 h-8 w-64 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
               <option value="">Not pinned</option>
               {milestones.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.pct}%)</option>)}
             </select>
           </label>
-          <div className="text-[10px] text-[var(--color-text-muted)] pb-1.5">
+          <div className="text-[11px] text-[var(--color-text-muted)] pb-1.5">
             Committed {fmtMoney(r.committed, cur)} · Actual {fmtMoney(r.actual, cur)}{r.adjustments !== 0 ? ` · Adjustments ${fmtMoney(r.adjustments, cur)}` : ""}
           </div>
         </div>
@@ -576,9 +576,9 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
         <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
           {entries.map((e) => (
             <li key={e.id} className={`px-3 py-2 flex flex-wrap items-center gap-2 text-xs ${e.status === "void" ? "opacity-50" : ""}`}>
-              <span className={`shrink-0 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${
-                e.entryType === "commitment" ? "text-sky-700 dark:text-sky-300 border-sky-500/40 bg-sky-500/10"
-                : e.entryType === "actual" ? "text-violet-700 dark:text-violet-300 border-violet-500/40 bg-violet-500/10"
+              <span className={`shrink-0 text-[11px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${
+                e.entryType === "commitment" ? "text-[var(--color-text)] dark:text-[var(--color-text)] border-[var(--color-border-strong)] bg-[var(--color-surface-2)]"
+                : e.entryType === "actual" ? "text-[var(--color-text)] dark:text-[var(--color-text)] border-[var(--color-border-strong)] bg-[var(--color-surface-2)]"
                 : "text-amber-700 dark:text-amber-300 border-amber-500/40 bg-amber-500/10"}`}>
                 {e.entryType}
               </span>
@@ -589,7 +589,7 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
                 {e.description ? ` · ${e.description}` : ""}
                 {e.createdByName ? ` · ${e.createdByName}` : ""}
               </span>
-              {e.status === "void" && <span className="text-[9px] font-black text-[var(--color-text-faint)]">VOID</span>}
+              {e.status === "void" && <span className="text-[11px] font-black text-[var(--color-text-faint)]">VOID</span>}
               {canManage && e.status !== "void" && (
                 <button
                   onClick={async () => {
@@ -600,7 +600,7 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
                     if (!res.ok) setErr(res.error ?? "Couldn't void the entry."); else onChanged();
                   }}
                   disabled={busy === e.id}
-                  className="ml-auto shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-500/10 transition-colors"
+                  className="ml-auto shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-500/10 transition-colors"
                   title="Void (financial records are never deleted)"
                 >
                   <Ban className="w-3 h-3" /> Void
@@ -608,7 +608,7 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
               )}
               {canManage && e.status !== "void" && revising !== e.id && (
                 <button onClick={() => setRevising(e.id)} title="A revised quote, PO or invoice: the old amount stays on the record, struck through"
-                  className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                  className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                   Change amount
                 </button>
               )}
@@ -659,7 +659,7 @@ function EntryForm({ orgId, projectId, accountId, parties, actor, onDone, setErr
       <div className="inline-flex items-center rounded-lg border border-[var(--color-border)] p-0.5 gap-0.5">
         {ENTRY_TYPES.map((t) => (
           <button key={t.v} onClick={() => setType(t.v)} title={t.hint}
-            className={`px-2 py-1 rounded-md text-[10px] font-black transition-colors ${type === t.v ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
+            className={`px-2 py-1 rounded-md text-[11px] font-black transition-colors ${type === t.v ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
             {t.label}
           </button>
         ))}
@@ -744,24 +744,24 @@ function PartiesPanel({ orgId, projectId, actor, parties, canManage, onChanged }
             <li key={p.id} className={`rounded-xl border border-[var(--color-border)] px-3 py-2 ${p.status === "inactive" ? "opacity-60" : ""}`}>
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold text-[var(--color-text)] truncate">{p.name}</span>
-                {p.kind && <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">{p.kind}</span>}
-                {p.status === "inactive" && <span className="text-[9px] font-bold text-[var(--color-text-faint)]">inactive</span>}
+                {p.kind && <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">{p.kind}</span>}
+                {p.status === "inactive" && <span className="text-[11px] font-bold text-[var(--color-text-faint)]">inactive</span>}
                 {canManage && (
                   <span className="ml-auto flex items-center gap-1 shrink-0">
                     <button onClick={() => setEditing(p.id)} title="Change the name, kind, trade or contact"
-                      className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                      className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                       <Pencil className="w-3 h-3" /> Edit
                     </button>
                     <button onClick={() => void setStatus(p, p.status === "inactive" ? "active" : "inactive")} disabled={busyId === p.id}
                       title={p.status === "inactive" ? "Put them back on the job's pick lists" : "Off the job: they stay on everything already recorded, but aren't offered for new entries"}
-                      className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+                      className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
                       {busyId === p.id ? <Loader2 className="w-3 h-3 animate-spin" /> : p.status === "inactive" ? <RotateCcw className="w-3 h-3" /> : <Ban className="w-3 h-3" />}
                       {p.status === "inactive" ? "Reactivate" : "Deactivate"}
                     </button>
                   </span>
                 )}
               </div>
-              <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
+              <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
                 {[p.trade, p.contractValue != null ? `contract ${fmtMoney(p.contractValue)}` : null, p.contactName, p.contactEmail].filter(Boolean).join(" · ") || "-"}
               </div>
             </li>
@@ -802,7 +802,7 @@ function PartyEditor({ orgId, projectId, actor, party, onCancel, onSaved }: {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const field = "h-8 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs";
-  const label = "text-[9px] font-black uppercase tracking-wider text-[var(--color-text-muted)]";
+  const label = "text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]";
 
   const save = async () => {
     if (!name.trim()) { setError("Name is required."); return; }
@@ -823,7 +823,7 @@ function PartyEditor({ orgId, projectId, actor, party, onCancel, onSaved }: {
   };
 
   return (
-    <div className="rounded-xl border border-[var(--color-accent-ring)]/50 bg-[var(--color-accent-soft)]/30 p-3 space-y-2">
+    <div className="rounded-xl border border-[var(--color-accent-ring)]/50 bg-[var(--color-surface-2)] p-3 space-y-2">
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
         <label className="block sm:col-span-2"><span className={label}>Company name</span>
           <input value={name} onChange={(e) => setName(e.target.value)} className={`mt-0.5 ${field}`} /></label>

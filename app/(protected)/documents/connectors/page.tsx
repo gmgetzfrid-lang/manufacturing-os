@@ -110,7 +110,7 @@ export default function ConnectorChecksPage() {
     { id: "oneway", label: "Only one side shows it", n: rows.oneway.length, Icon: Split, what: "One sheet shows lines to or from another, and the other shows none back. A connector is missing on one of them." },
   ];
   const cur = TABS.find((t) => t.id === view)!;
-  const chip = (on: boolean) => `shrink-0 inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border text-[12.5px] font-bold transition-colors ${on ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
+  const chip = (on: boolean) => `shrink-0 inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border text-[12.5px] font-bold transition-colors ${on ? "border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
 
   return (
     <PageShell width="work">

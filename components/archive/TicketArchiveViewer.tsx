@@ -118,11 +118,11 @@ export default function TicketArchiveViewer({
     <div className="fixed inset-0 z-[200] bg-slate-950/80 backdrop-blur-sm flex flex-col p-4 sm:p-8">
       <div className="mx-auto w-full max-w-5xl flex-1 min-h-0 rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl flex flex-col overflow-hidden">
         <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
-          <FileText className="w-4 h-4 text-sky-600 shrink-0" />
+          <FileText className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
           <div className="text-sm font-black text-[var(--color-text)] truncate">
             View {ticketLabel || "ticket"} from archive{archiveId ? <span className="font-mono font-normal text-[var(--color-text-muted)]"> · {archiveId}</span> : null}
           </div>
-          <span className="ml-auto text-[10px] text-emerald-600 inline-flex items-center gap-1"><ShieldCheck className="w-3 h-3" /> in-browser only</span>
+          <span className="ml-auto text-[11px] text-emerald-600 inline-flex items-center gap-1"><ShieldCheck className="w-3 h-3" /> in-browser only</span>
           <button onClick={() => { revoke(); onClose(); }} className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-5 h-5" /></button>
         </div>
 
@@ -133,7 +133,7 @@ export default function TicketArchiveViewer({
               onDragLeave={() => setDragging(false)}
               onDrop={onDrop}
               onClick={() => inputRef.current?.click()}
-              className={`w-full max-w-lg rounded-2xl border-2 border-dashed p-10 text-center cursor-pointer transition-colors ${dragging ? "border-sky-400 bg-sky-50" : "border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]"}`}
+              className={`w-full max-w-lg rounded-2xl border-2 border-dashed p-10 text-center cursor-pointer transition-colors ${dragging ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]" : "border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]"}`}
             >
               <input ref={inputRef} type="file" accept=".zip,application/zip" className="hidden"
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); }} />
@@ -166,8 +166,8 @@ export default function TicketArchiveViewer({
                     <div key={c.id || i} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2.5">
                       <div className="flex items-center gap-2 mb-1">
                         <span className="text-[11px] font-bold text-[var(--color-text)]">{c.user || "Unknown"}</span>
-                        {c.type && c.type !== "General" && <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">{c.type}{c.category ? `: ${c.category}` : ""}</span>}
-                        <span className="ml-auto text-[10px] text-[var(--color-text-faint)]">{fmtDate(c.date)}</span>
+                        {c.type && c.type !== "General" && <span className="text-[11px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">{c.type}{c.category ? `: ${c.category}` : ""}</span>}
+                        <span className="ml-auto text-[11px] text-[var(--color-text-faint)]">{fmtDate(c.date)}</span>
                       </div>
                       <div className="text-[12px] text-[var(--color-text)] whitespace-pre-wrap">{c.text}</div>
                     </div>
@@ -194,7 +194,7 @@ export default function TicketArchiveViewer({
                   <div className="px-2.5 py-1.5 border-b border-[var(--color-border)] flex items-center gap-2 bg-[var(--color-surface-2)]">
                     <Eye className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                     <span className="text-[11px] font-bold text-[var(--color-text)] truncate flex-1">{preview.name}</span>
-                    <a href={preview.url} download={preview.name} className="text-[10px] font-bold text-sky-600 inline-flex items-center gap-1"><Download className="w-3 h-3" /> Save</a>
+                    <a href={preview.url} download={preview.name} className="text-[11px] font-bold text-[var(--color-accent)] inline-flex items-center gap-1"><Download className="w-3 h-3" /> Save</a>
                   </div>
                   <div className="bg-[var(--color-surface-2)] grid place-items-center max-h-[40vh] overflow-auto">
                     {preview.kind === "pdf" ? (
@@ -203,7 +203,7 @@ export default function TicketArchiveViewer({
                       // eslint-disable-next-line @next/next/no-img-element -- in-memory object URL
                       <img src={preview.url} alt={preview.name} className="max-w-full max-h-[40vh] object-contain" />
                     ) : (
-                      <a href={preview.url} download={preview.name} className="m-6 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-sky-600"><Download className="w-3.5 h-3.5" /> Download {preview.name}</a>
+                      <a href={preview.url} download={preview.name} className="m-6 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)]"><Download className="w-3.5 h-3.5" /> Download {preview.name}</a>
                     )}
                   </div>
                 </div>

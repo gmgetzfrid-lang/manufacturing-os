@@ -274,7 +274,7 @@ export default function DashboardGrid() {
   if (!loaded || !config) {
     return (
       <div className="h-full w-full flex items-center justify-center">
-        <Loader2 className="w-8 h-8 text-[var(--color-accent)] animate-spin" />
+        <Loader2 className="w-8 h-8 text-[var(--color-text-muted)] animate-spin" />
       </div>
     );
   }
@@ -293,12 +293,6 @@ export default function DashboardGrid() {
 
   return (
     <div className="relative min-h-full">
-      {/* Ambient light — two soft accent blooms so the canvas breathes instead
-          of sitting flat. Fixed cost, pointer-transparent, theme-aware. */}
-      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-[420px] overflow-hidden">
-        <div className="absolute -top-40 left-[8%] w-[34rem] h-[34rem] rounded-full blur-3xl opacity-[0.14] dark:opacity-[0.18]" style={{ background: "radial-gradient(closest-side, var(--color-accent), transparent 70%)" }} />
-        <div className="absolute -top-52 right-[4%] w-[30rem] h-[30rem] rounded-full blur-3xl opacity-[0.10] dark:opacity-[0.14]" style={{ background: "radial-gradient(closest-side, var(--color-accent-2), transparent 70%)" }} />
-      </div>
 
       <div className="relative p-4 sm:p-6 lg:px-10 max-w-[1720px] mx-auto">
       {/* Onboarding — admins of a fresh org see the setup checklist HERE,
@@ -322,7 +316,7 @@ export default function DashboardGrid() {
             onClick={() => { setEditing((v) => !v); setResizing(null); setDrag(null); }}
             className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-sm ${
               editing
-                ? "bg-[var(--color-accent)] text-white hover:opacity-90 shadow-lg shadow-orange-500/25"
+                ? "bg-[var(--color-accent)] text-white hover:opacity-90 shadow-lg "
                 : "bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
             }`}
           >
@@ -333,8 +327,8 @@ export default function DashboardGrid() {
 
       {/* Edit-mode helper strip */}
       {editing && (
-        <div className="mb-4 flex items-center gap-2 rounded-xl border border-dashed border-[var(--color-accent)]/50 bg-[var(--color-accent-soft)] px-3 py-2 text-[12px] font-semibold text-[var(--color-text)]" style={{ animation: "rise 0.25s var(--ease-fluid) both" }}>
-          <Sparkles className="w-4 h-4 text-[var(--color-accent)] shrink-0" />
+        <div className="mb-4 flex items-center gap-2 rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface-2)] px-3 py-2 text-[12px] font-semibold text-[var(--color-text)]" style={{ animation: "rise 0.25s var(--ease-fluid) both" }}>
+          <Sparkles className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
           <span className="flex-1 min-w-0">
             {isMobile
               // Phones can't drag or resize — telling them to reads as broken.
@@ -418,7 +412,7 @@ export default function DashboardGrid() {
             <div
               aria-hidden
               style={{ gridColumn: `${drag.x + 1} / span ${drag.w}`, gridRow: `${drag.y + 1} / span ${drag.h}`, zIndex: 5 }}
-              className="rounded-2xl border-2 border-dashed border-[var(--color-accent)] bg-[var(--color-accent)]/10 pointer-events-none transition-all"
+              className="rounded-2xl border-2 border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface-2)] pointer-events-none transition-all"
             />
           )}
 
@@ -471,20 +465,20 @@ export default function DashboardGrid() {
                     className={`absolute -bottom-1 -right-1 w-6 h-6 z-20 cursor-nwse-resize touch-none flex items-end justify-end p-1 ${isResizingThis ? "scale-110" : ""}`}
                     title="Drag to resize"
                   >
-                    <span className="block w-4 h-4 rounded-br-lg rounded-tl-sm bg-[var(--color-accent)] shadow-md border border-white/60" style={{ clipPath: "polygon(100% 0, 100% 100%, 0 100%)" }} />
+                    <span className="block w-4 h-4 rounded-br-lg rounded-tl-sm bg-[var(--color-surface-2)] shadow-md border border-white/60" style={{ clipPath: "polygon(100% 0, 100% 100%, 0 100%)" }} />
                   </div>
                 )}
 
                 {/* Live size badge while resizing. */}
                 {isResizingThis && (
-                  <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 px-2 py-0.5 rounded-md bg-[var(--color-accent)] text-white text-[11px] font-black tabular-nums shadow pointer-events-none">
+                  <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 px-2 py-0.5 rounded-md bg-[var(--color-surface-2)] text-[var(--color-text)] text-[11px] font-black tabular-nums shadow pointer-events-none">
                     {liveW} × {liveH}
                   </div>
                 )}
 
                 {/* Drag hint chip (edit mode, idle). */}
                 {editing && !isDragging && !isResizingThis && (
-                  <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 px-1.5 py-0.5 rounded-md bg-black/35 backdrop-blur text-white/90 text-[10px] font-bold inline-flex items-center gap-1 opacity-0 group-hover/tile:opacity-100 transition-opacity pointer-events-none">
+                  <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 px-1.5 py-0.5 rounded-md bg-black/35 backdrop-blur text-white/90 text-[11px] font-bold inline-flex items-center gap-1 opacity-0 group-hover/tile:opacity-100 transition-opacity pointer-events-none">
                     <Move className="w-3 h-3" /> drag
                   </div>
                 )}

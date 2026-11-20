@@ -114,13 +114,13 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
     } catch (e) { setUpError((e as Error).message); } finally { setCreating(false); }
   };
 
-  const fieldCls = "text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] px-2.5 py-1.5 outline-none focus:border-[var(--color-accent)]";
+  const fieldCls = "text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] px-2.5 py-1.5 outline-none focus:border-[var(--color-border-strong)]";
 
   return (
     <div className="fixed inset-0 z-[520] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4" onClick={onClose}>
       <div className="w-full max-w-xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden flex flex-col max-h-[82vh]" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3">
-          <FileText className="w-5 h-5 text-orange-600" />
+          <FileText className="w-5 h-5 text-[var(--color-text-muted)]" />
           <div className="flex-1 min-w-0">
             <div className="text-sm font-bold text-[var(--color-text)]">Link a drawing</div>
             <div className="text-[11px] text-[var(--color-text-muted)]">Reference an existing document, or upload a new one</div>
@@ -157,7 +157,7 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
                     <FileText className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
                     <div className="min-w-0 flex-1">
                       <div className="text-xs font-bold text-[var(--color-text)] truncate">{r.document_number || r.title || r.name || "Document"}</div>
-                      <div className="text-[10px] text-[var(--color-text-muted)] truncate">{r.title || r.name || ""}{r.rev ? ` · Rev ${r.rev}` : ""}</div>
+                      <div className="text-[11px] text-[var(--color-text-muted)] truncate">{r.title || r.name || ""}{r.rev ? ` · Rev ${r.rev}` : ""}</div>
                     </div>
                     {linking === r.id ? <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" /> : <Check className="w-4 h-4 text-emerald-600 opacity-60 sm:opacity-0 group-hover:opacity-100 shrink-0" />}
                   </button>
@@ -168,7 +168,7 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
         ) : (
           <div className="flex-1 overflow-y-auto p-5 space-y-3">
             <div className="space-y-1">
-              <label className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Library</label>
+              <label className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Library</label>
               <div className="flex items-center gap-2">
                 <select value={upLibraryId} onChange={(e) => { setUpLibraryId(e.target.value); setFolderId(""); }} className={`${fieldCls} flex-1`}>
                   <option value="">Choose a library…</option>
@@ -179,7 +179,7 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
             </div>
 
             <div className="space-y-1">
-              <label className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Folder</label>
+              <label className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Folder</label>
               <div className="flex items-center gap-2">
                 <select value={folderId} onChange={(e) => setFolderId(e.target.value)} disabled={!upLibraryId} className={`${fieldCls} flex-1 disabled:opacity-50`}>
                   <option value="">{upLibraryId ? "Library root" : "Pick a library first"}</option>
@@ -190,17 +190,17 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
             </div>
 
             <div className="space-y-1">
-              <label className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">PDF</label>
+              <label className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">PDF</label>
               <input type="file" accept="application/pdf" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="block w-full text-xs text-[var(--color-text-muted)] file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-[var(--color-surface-2)] file:text-[var(--color-text)] file:text-xs file:font-bold" />
             </div>
 
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
-                <label className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Document number *</label>
+                <label className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Document number *</label>
                 <input value={docNum} onChange={(e) => setDocNum(e.target.value)} placeholder="e.g. ISO-C7-001" className={`${fieldCls} w-full`} />
               </div>
               <div className="space-y-1">
-                <label className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Title</label>
+                <label className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Title</label>
                 <input value={docTitle} onChange={(e) => setDocTitle(e.target.value)} placeholder="optional" className={`${fieldCls} w-full`} />
               </div>
             </div>
@@ -208,7 +208,7 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
             {upError && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">{upError}</div>}
 
             <div className="flex justify-end pt-1">
-              <button onClick={createAndLink} disabled={creating || !upLibraryId || !file || !docNum.trim()} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-bold disabled:opacity-40 disabled:cursor-not-allowed">
+              <button onClick={createAndLink} disabled={creating || !upLibraryId || !file || !docNum.trim()} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-xs font-bold disabled:opacity-40 disabled:cursor-not-allowed">
                 {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Create &amp; link
               </button>
             </div>

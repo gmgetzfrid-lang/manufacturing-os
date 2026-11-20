@@ -45,9 +45,9 @@ const label = "block text-[12px] font-semibold text-[var(--color-text-muted)] mb
 
 const KIND_TONE: Record<FindingFields["kind"], string> = {
   problem: "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-900",
-  lesson: "bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-900",
+  lesson: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)] dark:border-[var(--color-border)]",
   material: "bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-900",
-  missed_scope: "bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-950/40 dark:text-violet-300 dark:border-violet-900",
+  missed_scope: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)] dark:border-[var(--color-border)]",
 };
 export function KindChip({ kind }: { kind: FindingFields["kind"] }) {
   return <span className={`inline-block shrink-0 rounded border px-1.5 py-px text-[12px] font-semibold ${KIND_TONE[kind]}`}>{KIND_WORD[kind]}</span>;
@@ -187,7 +187,7 @@ function Chips<T extends string>({ value, options, word, onPick, name }: { value
       {options.map((o) => (
         <button key={o} type="button" role="radio" aria-checked={o === value} onClick={() => onPick(o)}
           className={`min-h-[32px] rounded-lg border px-2.5 text-[12.5px] font-semibold ${o === value
-            ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-text)]"
+            ? "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]"
             : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
           {word(o)}
         </button>
@@ -239,7 +239,7 @@ export function FindingEditor({ value, onChange, equipment, unitLabel, autoGuess
             return (
               <button key={c} type="button" aria-pressed={on} onClick={() => toggleCat(c)}
                 className={`min-h-[36px] rounded-lg border px-3 text-[13px] font-semibold inline-flex items-center gap-1 ${on
-                  ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-text)]"
+                  ? "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]"
                   : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
                 {on && <Check className="w-3.5 h-3.5" />}{c}
               </button>
@@ -640,7 +640,7 @@ function AddRow({ orgId, projectId, projectType, equipment, unit, actor, onDone,
     } finally { setBusy(false); }
   };
   return (
-    <div className="rounded-lg border border-[var(--color-accent)] bg-[var(--color-surface)] px-3 py-2.5 space-y-2">
+    <div className="rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-2.5 space-y-2">
       <div className="text-[12px] font-bold text-[var(--color-text)]">New finding</div>
       <FindingEditor value={v} onChange={setV} equipment={equipment} unitLabel={unit?.label ?? null} autoGuess />
       <div className="flex flex-wrap gap-1.5">

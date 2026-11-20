@@ -92,7 +92,7 @@ export default function PathBar({ library, segments, onNavigate, onDropItems }: 
     },
   });
   const dropRing = (key: string) =>
-    dropOn === key ? " bg-blue-50/80 dark:bg-blue-950/40 ring-2 ring-blue-400 text-[var(--color-text)]" : "";
+    dropOn === key ? " bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] ring-2 ring-[var(--color-border-strong)] text-[var(--color-text)]" : "";
 
   return (
     <nav className="flex items-center text-xs font-medium text-[var(--color-text-muted)] overflow-hidden min-w-0" aria-label="Folder path">

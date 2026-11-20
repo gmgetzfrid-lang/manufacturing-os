@@ -57,7 +57,7 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden shadow-sm mb-4">
       <button onClick={() => setOpen((v) => !v)} className="w-full px-4 py-2.5 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
         {open ? <ChevronDown className="w-4 h-4 text-[var(--color-text-faint)]" /> : <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)]" />}
-        <Sparkles className="w-4 h-4 text-[var(--color-accent)]" />
+        <Sparkles className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-sm font-bold text-[var(--color-text)]">Health</span>
         {health.score != null && (
           <span className="text-[12px] font-black tabular-nums" style={{ color: scoreBandColor(health.score) }}>
@@ -106,11 +106,11 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
                 {shown.map((it) => (
                   <li key={it.id}>
                     <Link href={it.href}
-                      className="group flex items-start gap-2 rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 hover:border-[var(--color-accent-ring)] hover:bg-[var(--color-accent-soft)]/30 transition-colors">
-                      <ArrowRight className="w-3.5 h-3.5 mt-0.5 text-[var(--color-accent)] shrink-0 group-hover:translate-x-0.5 transition-transform" />
+                      className="group flex items-start gap-2 rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 hover:border-[var(--color-accent-ring)] hover:bg-[var(--color-surface-2)] transition-colors">
+                      <ArrowRight className="w-3.5 h-3.5 mt-0.5 text-[var(--color-text-muted)] shrink-0 group-hover:translate-x-0.5 transition-transform" />
                       <span className="min-w-0">
                         <span className="block text-xs font-bold text-[var(--color-text)]">{it.title}</span>
-                        <span className="block text-[10px] text-[var(--color-text-muted)]">{it.payoff}</span>
+                        <span className="block text-[11px] text-[var(--color-text-muted)]">{it.payoff}</span>
                       </span>
                     </Link>
                   </li>
@@ -118,7 +118,7 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
               </ul>
             )}
             {items.length > 4 && (
-              <button onClick={() => setShowAll((v) => !v)} className="mt-1.5 text-[10px] font-bold text-[var(--color-accent)] hover:underline">
+              <button onClick={() => setShowAll((v) => !v)} className="mt-1.5 text-[11px] font-bold text-[var(--color-accent)] hover:underline">
                 {showAll ? "Show fewer" : `Show all ${items.length}`}
               </button>
             )}

@@ -543,7 +543,7 @@ function GraphPageInner() {
           {rawQuery.trim().length > 2 && (
             <button onClick={() => void runAsk()} disabled={asking}
               title="Search what your documents say"
-              className="absolute right-6 top-1/2 -translate-y-1/2 inline-flex items-center gap-1 text-[10px] font-black text-violet-700 hover:text-violet-600 disabled:opacity-50">
+              className="absolute right-6 top-1/2 -translate-y-1/2 inline-flex items-center gap-1 text-[11px] font-black text-violet-700 hover:text-violet-600 disabled:opacity-50">
               {asking ? <Loader2 className="w-3 h-3 animate-spin" /> : <>Ask <CornerDownLeft className="w-3 h-3" /></>}
             </button>
           )}
@@ -557,7 +557,7 @@ function GraphPageInner() {
 
         <button onClick={() => { setPathMode((v) => !v); setPathEnds({ from: null, to: null }); }}
           title="Pick two things and see how they connect"
-          className={`inline-flex items-center gap-1.5 px-2 py-1.5 rounded-full border text-[10px] font-black ${
+          className={`inline-flex items-center gap-1.5 px-2 py-1.5 rounded-full border text-[11px] font-black ${
             pathMode ? "border-cyan-400 text-cyan-700 bg-cyan-50 dark:bg-cyan-950/40"
                      : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"
           }`}>
@@ -569,7 +569,7 @@ function GraphPageInner() {
           {LENSES.map((l) => (
             <button key={l.key} title={l.title}
               onClick={() => patchSettings({ hiddenTypes: l.hidden, showLibraryEdges: l.libEdges })}
-              className={`px-2.5 py-1.5 text-[10px] font-black transition-colors ${activeLens === l.key
+              className={`px-2.5 py-1.5 text-[11px] font-black transition-colors ${activeLens === l.key
                 ? "bg-violet-600 text-white"
                 : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
               {l.label}
@@ -579,7 +579,7 @@ function GraphPageInner() {
 
         {focusNode && (
           <button onClick={() => setFocusId(null)}
-            className="inline-flex items-center gap-1.5 px-2 py-1.5 rounded-full border border-violet-400 bg-violet-50 dark:bg-violet-950/40 text-[10px] font-black text-violet-700">
+            className="inline-flex items-center gap-1.5 px-2 py-1.5 rounded-full border border-violet-400 bg-violet-50 dark:bg-violet-950/40 text-[11px] font-black text-violet-700">
             <Maximize2 className="w-3.5 h-3.5" />
             Focused: {focusNode.label.slice(0, 18)} · {settings.localDepth} hop{settings.localDepth === 1 ? "" : "s"}
             <X className="w-3 h-3" />
@@ -587,14 +587,14 @@ function GraphPageInner() {
         )}
 
         {view && !layered && (view.foldedTotal > 0 || openHubs.size > 0) && (
-          <span className="inline-flex items-center gap-1.5 text-[10px] font-bold text-[var(--color-text-muted)]">
+          <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-text-muted)]">
             {view.foldedTotal > 0 && <>{view.foldedTotal} documents folded into {view.folded.size} hub{view.folded.size === 1 ? "" : "s"} - click a hub to open it</>}
             {openHubs.size > 0 && <button onClick={() => setOpenHubs(new Set())} className="rounded-full border border-[var(--color-border-strong)] px-2 py-0.5 hover:bg-[var(--color-surface-2)]">Fold again</button>}
             {view.foldedTotal > 0 && <button onClick={() => patchSettings({ foldLeaves: false })} className="rounded-full border border-[var(--color-border-strong)] px-2 py-0.5 hover:bg-[var(--color-surface-2)]">Unfold all</button>}
           </span>
         )}
         {view && (
-          <span className="text-[10px] font-mono text-[var(--color-text-faint)] ml-auto">
+          <span className="text-[11px] font-mono text-[var(--color-text-faint)] ml-auto">
             {view.nodes.length} nodes · {view.edges.length} links
             {view.ghosts.length > 0 && ` · ${view.ghosts.length} proposed`}
           </span>
@@ -674,7 +674,7 @@ function GraphPageInner() {
                 }`}>
                 <Lightbulb className="w-3.5 h-3.5 text-violet-600" /> Insights
                 {insights && insights.orphans.length > 0 && (
-                  <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-700 text-[9px] font-black">
+                  <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-700 text-[11px] font-black">
                     {insights.orphans.length}
                   </span>
                 )}
@@ -690,7 +690,7 @@ function GraphPageInner() {
                     ]).map((t) => (
                       <button key={t.key}
                         onClick={() => { setInsightTab(t.key); if (t.key === "orphans") patchSettings({ hideUnlinked: false }); }}
-                        className={`flex-1 inline-flex items-center justify-center gap-1 px-2 py-2 text-[10px] font-black uppercase tracking-wide ${
+                        className={`flex-1 inline-flex items-center justify-center gap-1 px-2 py-2 text-[11px] font-black uppercase tracking-wide ${
                           insightTab === t.key ? `${t.tone} border-b-2 border-current` : "text-[var(--color-text-faint)]"
                         }`}>
                         <t.icon className="w-3 h-3" /> {t.label} <span className="font-mono font-normal">{t.count}</span>
@@ -706,7 +706,7 @@ function GraphPageInner() {
                         </div>
                       ) : (
                         <>
-                          <div className="text-[10px] text-[var(--color-text-muted)] px-1.5 pb-1">
+                          <div className="text-[11px] text-[var(--color-text-muted)] px-1.5 pb-1">
                             Floating with no equipment, unit, project or link - no context yet.
                           </div>
                           {insights.orphans.slice(0, 100).map((n) => (
@@ -718,7 +718,7 @@ function GraphPageInner() {
                             </button>
                           ))}
                           {insights.orphans.length > 100 && (
-                            <div className="text-[10px] text-[var(--color-text-faint)] px-1.5 py-1">…and {insights.orphans.length - 100} more</div>
+                            <div className="text-[11px] text-[var(--color-text-faint)] px-1.5 py-1">…and {insights.orphans.length - 100} more</div>
                           )}
                         </>
                       )
@@ -729,7 +729,7 @@ function GraphPageInner() {
                         <div className="text-[11px] text-[var(--color-text-muted)] p-2">Hubs appear once nodes collect 3+ connections.</div>
                       ) : (
                         <>
-                          <div className="text-[10px] text-[var(--color-text-muted)] px-1.5 pb-1">
+                          <div className="text-[11px] text-[var(--color-text-muted)] px-1.5 pb-1">
                             The most-referenced nodes. Touch one and the blast radius is wide.
                           </div>
                           {insights.hubs.map((h) => (
@@ -737,7 +737,7 @@ function GraphPageInner() {
                               className="w-full flex items-center gap-1.5 px-1.5 py-1 rounded-lg hover:bg-[var(--color-surface-2)] text-left">
                               <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: NODE_COLORS[h.node.type] }} />
                               <span className="flex-1 min-w-0 text-[11px] font-bold text-[var(--color-text)] truncate">{h.node.label}</span>
-                              <span className="shrink-0 text-[10px] font-mono text-amber-700">{h.degree}</span>
+                              <span className="shrink-0 text-[11px] font-mono text-amber-700">{h.degree}</span>
                             </button>
                           ))}
                         </>
@@ -751,7 +751,7 @@ function GraphPageInner() {
                         </div>
                       ) : (
                         <>
-                          <div className="text-[10px] text-[var(--color-text-muted)] px-1.5 pb-1">
+                          <div className="text-[11px] text-[var(--color-text-muted)] px-1.5 pb-1">
                             One thin line holding two clusters together. Click to light it up.
                           </div>
                           {insights.bridges.map((b) => (
@@ -760,11 +760,11 @@ function GraphPageInner() {
                               <div className="flex items-center gap-1.5 min-w-0">
                                 <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: NODE_COLORS[b.a.type] }} />
                                 <span className="text-[11px] font-bold text-[var(--color-text)] truncate">{b.a.label}</span>
-                                <span className="text-[10px] text-amber-600 font-black shrink-0">↔</span>
+                                <span className="text-[11px] text-amber-600 font-black shrink-0">↔</span>
                                 <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: NODE_COLORS[b.b.type] }} />
                                 <span className="text-[11px] font-bold text-[var(--color-text)] truncate">{b.b.label}</span>
                               </div>
-                              <div className="text-[10px] text-[var(--color-text-faint)] mt-0.5">
+                              <div className="text-[11px] text-[var(--color-text-faint)] mt-0.5">
                                 Only link between clusters of {b.sideA} and {b.sideB} nodes
                               </div>
                             </button>
@@ -782,7 +782,7 @@ function GraphPageInner() {
               <div className="absolute bottom-3 right-3 w-72 max-w-[calc(100%-1.5rem)] rounded-xl border border-cyan-300 dark:border-cyan-900 bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl p-3 space-y-2 z-10">
                 <div className="flex items-center gap-1.5">
                   <Route className="w-3.5 h-3.5 text-cyan-600" />
-                  <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text)] flex-1">Connection path</span>
+                  <span className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text)] flex-1">Connection path</span>
                   <button onClick={() => { setPathMode(false); setPathEnds({ from: null, to: null }); }}
                     aria-label="Close" className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
                     <X className="w-3.5 h-3.5" />
@@ -801,21 +801,21 @@ function GraphPageInner() {
                   </div>
                 ) : (
                   <div className="space-y-1">
-                    <div className="text-[10px] text-[var(--color-text-muted)]">
+                    <div className="text-[11px] text-[var(--color-text-muted)]">
                       {(path?.hops.length ?? 1) - 1} hop{(path?.hops.length ?? 2) - 1 === 1 ? "" : "s"} apart
                     </div>
                     {path?.hops.map((h, i) => (
                       <div key={h.node.id} className="flex items-center gap-1.5">
                         <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: NODE_COLORS[h.node.type] }} />
                         <span className="flex-1 min-w-0 text-[11px] font-bold text-[var(--color-text)] truncate">{h.node.label}</span>
-                        {i > 0 && <span className="shrink-0 text-[9px] text-cyan-700">{h.via}</span>}
+                        {i > 0 && <span className="shrink-0 text-[11px] text-cyan-700">{h.via}</span>}
                       </div>
                     ))}
                   </div>
                 )}
                 {pathEnds.from && (
                   <button onClick={() => setPathEnds({ from: null, to: null })}
-                    className="text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+                    className="text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
                     Start over
                   </button>
                 )}
@@ -824,7 +824,7 @@ function GraphPageInner() {
 
             {/* Hints + truncation */}
             <div className="absolute bottom-2 inset-x-3 text-center space-y-1 pointer-events-none">
-              <div className="text-[10px] font-bold text-[var(--color-text-faint)]">
+              <div className="text-[11px] font-bold text-[var(--color-text-faint)]">
                 {settings.mode === "3d"
                   ? "drag to orbit · shift-drag or right-drag to pan · scroll to zoom · double-click to open"
                   : settings.mode === "map"
@@ -832,7 +832,7 @@ function GraphPageInner() {
                     : "scroll or pinch to zoom · drag to pan · drag a node to move it · double-click to open"}
               </div>
               {(graph?.truncations ?? []).map((t) => (
-                <div key={t} className="inline-flex items-center gap-1 text-[10px] text-amber-700 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 rounded-full px-2 py-0.5">
+                <div key={t} className="inline-flex items-center gap-1 text-[11px] text-amber-700 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 rounded-full px-2 py-0.5">
                   <Info className="w-3 h-3" /> {t}
                 </div>
               ))}
@@ -840,7 +840,7 @@ function GraphPageInner() {
 
             {view.ghosts.length > 0 && (
               <Link href="/admin/proposed-links"
-                className="absolute bottom-3 left-3 inline-flex items-center gap-1 text-[10px] font-black text-amber-700 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 rounded-full px-2 py-1 hover:bg-amber-100 z-10">
+                className="absolute bottom-3 left-3 inline-flex items-center gap-1 text-[11px] font-black text-amber-700 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 rounded-full px-2 py-1 hover:bg-amber-100 z-10">
                 <Sparkles className="w-3 h-3" />
                 {view.ghosts.length} dashed connection{view.ghosts.length === 1 ? "" : "s"} awaiting review
               </Link>
@@ -855,7 +855,7 @@ function GraphPageInner() {
                   <Quote className="w-3.5 h-3.5 mt-0.5 text-violet-600 shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="text-xs font-black text-[var(--color-text)] break-words">{answer.question}</div>
-                    <div className="text-[10px] text-[var(--color-text-faint)] mt-0.5">
+                    <div className="text-[11px] text-[var(--color-text-faint)] mt-0.5">
                       {answer.hits.length > 0
                         ? `${answer.hits.length} passage${answer.hits.length === 1 ? "" : "s"} · ${answer.nodeIds.length} node${answer.nodeIds.length === 1 ? "" : "s"} lit up`
                         : "No matches"}
@@ -881,7 +881,7 @@ function GraphPageInner() {
                             const n = view?.nodes.find((x) => x.id === `asset:${a.assetId}`);
                             if (n) { handleSelect(n); setHighlight({ ids: [n.id], nonce: Date.now() }); }
                           }}
-                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-[var(--color-border-strong)] text-[10px] font-black text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                           <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: NODE_COLORS.asset }} />
                           {a.tag}
                           <span className="text-[var(--color-text-faint)]">{a.count}</span>
@@ -893,7 +893,7 @@ function GraphPageInner() {
                   {answer.hits.map((h, i) => (
                     <div key={`${h.knowledgeDocumentId}-${h.page}-${i}`}
                       className="rounded-lg bg-[var(--color-surface-2)] px-2 py-1.5">
-                      <div className="flex items-center gap-1 text-[10px] font-black text-[var(--color-text)]">
+                      <div className="flex items-center gap-1 text-[11px] font-black text-[var(--color-text)]">
                         <span className="truncate">{h.documentName}</span>
                         <span className="ml-auto shrink-0 text-[var(--color-text-faint)]">p.{h.page}</span>
                       </div>
@@ -902,7 +902,7 @@ function GraphPageInner() {
                         {h.snippet.replace(/<\/?b>/g, "")}
                       </div>
                       <Link href={`/knowledge/${h.libraryId}?doc=${h.knowledgeDocumentId}&page=${h.page}`}
-                        className="inline-flex items-center gap-1 text-[10px] font-black text-violet-700 hover:text-violet-600 mt-1">
+                        className="inline-flex items-center gap-1 text-[11px] font-black text-violet-700 hover:text-violet-600 mt-1">
                         Open at page {h.page} <ArrowUpRight className="w-3 h-3" />
                       </Link>
                     </div>
@@ -920,7 +920,7 @@ function GraphPageInner() {
               <div className="absolute bottom-3 right-3 w-72 max-w-[calc(100%-1.5rem)] rounded-xl border border-emerald-300 dark:border-emerald-900 bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl p-3 space-y-2 z-10">
                 <div className="flex items-center gap-1.5">
                   <Link2 className="w-3.5 h-3.5 text-emerald-600" />
-                  <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text)] flex-1">Draw a connection</span>
+                  <span className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text)] flex-1">Draw a connection</span>
                   <button onClick={() => setConnect(null)} aria-label="Done connecting"
                     className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
                     <X className="w-3.5 h-3.5" />
@@ -943,7 +943,7 @@ function GraphPageInner() {
                     From <b className="text-[var(--color-text)]">{connect.from.label}</b> - click the node to connect it to.
                   </div>
                 )}
-                <div className="text-[10px] text-[var(--color-text-faint)]">
+                <div className="text-[11px] text-[var(--color-text-faint)]">
                   Document ↔ document or document ↔ equipment makes a LINK. Equipment ↔ equipment or
                   unit ↔ unit makes a FLOW - the first feeds the second, drawn on the Process lens.
                 </div>

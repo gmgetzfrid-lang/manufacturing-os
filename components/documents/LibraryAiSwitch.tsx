@@ -30,10 +30,10 @@ export default function LibraryAiSwitch({ orgId, libraryId, libraryName, exclude
   return (
     <span className="inline-flex flex-col gap-0.5">
       <button onClick={() => void flip()} disabled={!canChange || busy} title={canChange ? (excluded ? "Click to allow AI again" : "Click to never send this library to AI") : "Only Admin and Doc Control can change this"}
-        className={`inline-flex items-center gap-1 rounded-full border font-bold disabled:opacity-60 ${compact ? "px-1.5 py-0.5 text-[10px]" : "px-2.5 py-1 text-xs"} ${excluded ? "border-rose-300 bg-rose-50 text-rose-700" : "border-emerald-300 bg-emerald-50 text-emerald-700"}`}>
+        className={`inline-flex items-center gap-1 rounded-full border font-bold disabled:opacity-60 ${compact ? "px-1.5 py-0.5 text-[11px]" : "px-2.5 py-1 text-xs"} ${excluded ? "border-rose-300 bg-rose-50 text-rose-700" : "border-emerald-300 bg-emerald-50 text-emerald-700"}`}>
         {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Icon className="w-3 h-3" />} {excluded ? "Never sent to AI" : "AI may read"}
       </button>
-      {note && <span className={`text-[10px] ${/migration|could not|denied|only/i.test(note) ? "text-red-700" : "text-[var(--color-text-muted)]"}`}>{note}</span>}
+      {note && <span className={`text-[11px] ${/migration|could not|denied|only/i.test(note) ? "text-red-700" : "text-[var(--color-text-muted)]"}`}>{note}</span>}
     </span>
   );
 }

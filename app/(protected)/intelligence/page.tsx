@@ -239,7 +239,7 @@ export default function IntelligencePage() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
               <div className="flex items-center justify-between mb-3">
-                <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)] flex items-center gap-1.5">
+                <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] flex items-center gap-1.5">
                   <GitPullRequest className="w-3.5 h-3.5" /> Waiting on you
                 </div>
               </div>
@@ -261,7 +261,7 @@ export default function IntelligencePage() {
               )}
               {s.chunksTotal > 0 && s.chunksEmbedded < s.chunksTotal && !!s.embeddingKey && (
                 <Link href="/knowledge" className="mt-2 flex items-center gap-3 rounded-xl border border-[var(--color-border)] p-3 hover:border-[var(--color-border-strong)] transition-colors">
-                  <Gauge className="w-5 h-5 text-violet-600" />
+                  <Gauge className="w-5 h-5 text-[var(--color-text-muted)]" />
                   <div className="flex-1">
                     <div className="text-sm font-bold text-[var(--color-text)]">Meaning index {coveragePct}% built</div>
                     <div className="text-[11px] text-[var(--color-text-muted)]">{s.chunksEmbedded} of {s.chunksTotal} passages embedded - finish it from the library page.</div>
@@ -272,7 +272,7 @@ export default function IntelligencePage() {
             </div>
 
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-              <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)] flex items-center gap-1.5 mb-3">
+              <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] flex items-center gap-1.5 mb-3">
                 <MessageSquare className="w-3.5 h-3.5" /> Recent questions
               </div>
               {!s.countsKnown ? (
@@ -283,7 +283,7 @@ export default function IntelligencePage() {
                 </div>
               ) : s.recentAsks.length === 0 ? (
                 <p className="text-xs text-[var(--color-text-muted)]">
-                  Nobody has asked anything yet. <Link className="font-bold text-violet-700 hover:underline" href="/assistant">Ask the first question</Link> - try &ldquo;what do we have on E-101?&rdquo;
+                  Nobody has asked anything yet. <Link className="font-bold text-[var(--color-accent)] hover:underline" href="/assistant">Ask the first question</Link> - try &ldquo;what do we have on E-101?&rdquo;
                 </p>
               ) : (
                 <ul className="space-y-2">
@@ -293,7 +293,7 @@ export default function IntelligencePage() {
                           older rows were backfilled as one-turn threads under their own id. */}
                       <Link href={`/assistant?thread=${a.threadId ?? a.id}`} className="block rounded-lg px-2 py-1.5 -mx-2 hover:bg-[var(--color-surface-2)] transition-colors">
                         <div className="text-xs font-bold text-[var(--color-text)] truncate">{a.question}</div>
-                        <div className="text-[10px] text-[var(--color-text-faint)]">{a.userName ?? "someone"} · {new Date(a.at).toLocaleString()}</div>
+                        <div className="text-[11px] text-[var(--color-text-faint)]">{a.userName ?? "someone"} · {new Date(a.at).toLocaleString()}</div>
                       </Link>
                     </li>
                   ))}
@@ -325,7 +325,7 @@ function StatusCard({ ok, title, okText, fixText, href, cta, pending }: {
       <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
         <div className="flex items-center gap-1.5 mb-1.5">
           <span className="w-4 h-4 rounded-full bg-[var(--color-surface-2)] animate-pulse" />
-          <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">{title}</span>
+          <span className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">{title}</span>
         </div>
         <div className="h-3 w-3/4 rounded bg-[var(--color-surface-2)] animate-pulse" />
       </div>
@@ -339,7 +339,7 @@ function StatusCard({ ok, title, okText, fixText, href, cta, pending }: {
         {ok
           ? <CheckCircle2 className="w-4 h-4 text-emerald-600" />
           : <XCircle className="w-4 h-4 text-amber-600" />}
-        <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">{title}</span>
+        <span className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">{title}</span>
       </div>
       <p className={`text-xs ${ok ? "text-[var(--color-text)]" : "font-bold text-amber-800 dark:text-amber-300"}`}>
         {ok ? okText : fixText}
@@ -358,7 +358,7 @@ function JumpCard({ href, icon: Icon, title, body }: {
 }) {
   return (
     <Link href={href} className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 hover:border-[var(--color-border-strong)] hover:shadow-sm transition-all">
-      <Icon className="w-5 h-5 text-violet-600 mb-2" />
+      <Icon className="w-5 h-5 text-[var(--color-text-muted)] mb-2" />
       <div className="text-sm font-black text-[var(--color-text)]">{title}</div>
       <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">{body}</p>
     </Link>

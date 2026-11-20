@@ -124,7 +124,7 @@ export default function QualityTab({ orgId, projectId, canManage, canEditPunch, 
   );
 }
 
-const quietBtn = "inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
+const quietBtn = "inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
 const fieldCls = "h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs";
 
 // ── Checklists ───────────────────────────────────────────────────────────
@@ -138,9 +138,9 @@ function ChecklistsSection({ orgId, projectId, canManage, actor, checklists, onC
   return (
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
-        <ClipboardCheck className="w-4 h-4 text-[var(--color-accent)]" />
+        <ClipboardCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-sm font-bold text-[var(--color-text)]">Checklists - PSSR, MI, QA/QC</span>
-        <span className="text-[10px] text-[var(--color-text-muted)]">The system reads them, works out what applies, and tracks the gaps.</span>
+        <span className="text-[11px] text-[var(--color-text-muted)]">The system reads them, works out what applies, and tracks the gaps.</span>
         {canManage && (
           <button onClick={() => setShowNew((v) => !v)}
             className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] transition-colors">
@@ -297,7 +297,7 @@ export function NewChecklistFlow({ orgId, projectId, projectName, actor, onDone,
           <div className="flex items-center gap-2 flex-wrap">
             {doc ? (
               <span className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-1.5 text-xs font-bold text-[var(--color-text)]">
-                <FileText className="w-3.5 h-3.5 text-[var(--color-accent)]" /> {doc.label}
+                <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {doc.label}
                 <button onClick={() => setDoc(null)} className="text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3 h-3" /></button>
               </span>
             ) : (
@@ -348,7 +348,7 @@ export function NewChecklistFlow({ orgId, projectId, projectName, actor, onDone,
           <ul className="max-h-72 overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
             {proposed.map((p, i) => (
               <li key={i} className="px-3 py-1.5 flex items-start gap-2 text-xs">
-                {p.section && <span className="shrink-0 text-[9px] font-bold uppercase tracking-wider text-[var(--color-text-faint)] mt-0.5">{p.section}</span>}
+                {p.section && <span className="shrink-0 text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-faint)] mt-0.5">{p.section}</span>}
                 <span className="flex-1 text-[var(--color-text)]">{p.text}</span>
                 <button onClick={() => setProposed(proposed.filter((_, j) => j !== i))}
                   className="shrink-0 text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3 h-3" /></button>
@@ -473,12 +473,12 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
       <button onClick={() => setOpen((v) => !v)} className="w-full px-4 py-3 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
         {open ? <ChevronDown className="w-4 h-4 text-[var(--color-text-faint)]" /> : <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)]" />}
         <span className="text-xs font-black text-[var(--color-text)]">{checklist.title}</span>
-        <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">{CHECKLIST_KIND_LABEL[checklist.kind]}</span>
+        <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">{CHECKLIST_KIND_LABEL[checklist.kind]}</span>
         {checklist.status === "complete" && (
-          <span className="inline-flex items-center gap-0.5 text-[9px] font-black uppercase text-emerald-700 dark:text-emerald-300"><ShieldCheck className="w-3 h-3" /> complete</span>
+          <span className="inline-flex items-center gap-0.5 text-[11px] font-black uppercase text-emerald-700 dark:text-emerald-300"><ShieldCheck className="w-3 h-3" /> complete</span>
         )}
         {progress && checklist.status === "open" && (
-          <span className="ml-auto text-[10px] font-bold tabular-nums text-[var(--color-text-muted)]">
+          <span className="ml-auto text-[11px] font-bold tabular-nums text-[var(--color-text-muted)]">
             {progress.satisfied}/{progress.applicable} satisfied{progress.needsEvidence > 0 ? ` · ${progress.needsEvidence} need evidence` : ""}
           </span>
         )}
@@ -529,7 +529,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
               {sections.map(([section, secItems]) => (
                 <div key={section || "_"}>
                   {section && (
-                    <div className="px-3 py-1.5 bg-[var(--color-surface-2)]/60 text-[9px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">
+                    <div className="px-3 py-1.5 bg-[var(--color-surface-2)]/60 text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">
                       {section}
                     </div>
                   )}
@@ -578,19 +578,19 @@ function ChecklistItemRow({ orgId, projectId, item, canManage, actor, onChanged,
         <div className="min-w-0 flex-1">
           <div className="text-[var(--color-text)]">{item.text}</div>
           {item.aiRationale && (
-            <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">
+            <div className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
               <span className="font-bold">Assessment:</span> {item.aiRationale}
             </div>
           )}
           {item.manualNote && (
-            <div className="mt-0.5 text-[10px] font-bold text-[var(--color-accent)]">
+            <div className="mt-0.5 text-[11px] font-bold text-[var(--color-text)]">
               Human decision{item.updatedByName ? ` (${item.updatedByName})` : ""}: {item.manualNote}
             </div>
           )}
           {item.evidence.length > 0 && (
             <div className="mt-1 flex flex-wrap gap-1">
               {item.evidence.map((e, i) => (
-                <span key={i} className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${e.source === "auto" ? "border-emerald-500/40 bg-emerald-500/[0.07] text-emerald-700 dark:text-emerald-300" : "border-sky-500/40 bg-sky-500/[0.07] text-sky-700 dark:text-sky-300"}`}
+                <span key={i} className={`text-[11px] font-bold px-1.5 py-0.5 rounded border ${e.source === "auto" ? "border-emerald-500/40 bg-emerald-500/[0.07] text-emerald-700 dark:text-emerald-300" : "border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]"}`}
                   title={e.source === "auto" ? "Found by the evidence sweep" : "Attached by a person"}>
                   {e.label}
                 </span>
@@ -602,23 +602,23 @@ function ChecklistItemRow({ orgId, projectId, item, canManage, actor, onChanged,
           <span className="shrink-0 flex items-center gap-1">
             {!na && item.status !== "satisfied" && (
               <button onClick={() => void override({ status: "satisfied" }, "Mark satisfied")}
-                className="px-1.5 py-0.5 rounded text-[10px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10" title="Mark satisfied with your note on the record">✓ Satisfied</button>
+                className="px-1.5 py-0.5 rounded text-[11px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10" title="Mark satisfied with your note on the record">✓ Satisfied</button>
             )}
             {!na && item.status === "satisfied" && (
               // One tap back to open. It stays human-decided, so the
               // evidence sweep won't green it again on its own.
               <button onClick={() => void override({ status: "open", manualNote: "Satisfied taken back - not done yet" }, null)}
-                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]" title="Not satisfied after all - back to open">
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]" title="Not satisfied after all - back to open">
                 <RotateCcw className="w-3 h-3" /> Undo satisfied
               </button>
             )}
             {!na && (
               <button onClick={() => void override({ applicability: "na", status: "na" }, "Mark not applicable")}
-                className="px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]" title="Not applicable to this job - your reason goes on the record">N/A</button>
+                className="px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]" title="Not applicable to this job - your reason goes on the record">N/A</button>
             )}
             {na && (
               <button onClick={() => void override({ applicability: "applies", status: "open" }, "Reopen this item")}
-                className="px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Reopen</button>
+                className="px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Reopen</button>
             )}
           </span>
         )}
@@ -721,10 +721,10 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, p
   return (
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
-        <PackageCheck className="w-4 h-4 text-[var(--color-accent)]" />
+        <PackageCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-sm font-bold text-[var(--color-text)]">Turnover package - QA/QC sign-off</span>
         {progress.required > 0 && (
-          <span className="text-[10px] font-bold tabular-nums text-[var(--color-text-muted)]">
+          <span className="text-[11px] font-bold tabular-nums text-[var(--color-text-muted)]">
             {progress.accepted}/{progress.required} accepted{progress.received > 0 ? ` · ${progress.received} awaiting review` : ""}
           </span>
         )}
@@ -753,18 +753,18 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, p
             <li key={it.id} className="px-4 py-2.5 text-xs">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-bold text-[var(--color-text)]">{it.name}</span>
-                {!it.required && <span className="text-[9px] font-bold text-[var(--color-text-faint)]">optional</span>}
+                {!it.required && <span className="text-[11px] font-bold text-[var(--color-text-faint)]">optional</span>}
                 <TurnoverChip status={it.status} />
-                {it.partyId && partyName.get(it.partyId) && <span className="text-[10px] text-[var(--color-text-muted)]">{partyName.get(it.partyId)}</span>}
+                {it.partyId && partyName.get(it.partyId) && <span className="text-[11px] text-[var(--color-text-muted)]">{partyName.get(it.partyId)}</span>}
                 {it.documentId && (
                   docs.get(it.documentId)
-                    ? <Link href={docs.get(it.documentId)!.href} className="inline-flex items-center gap-1 text-[10px] font-bold text-[var(--color-accent)] hover:underline"><Paperclip className="w-3 h-3" /> {docs.get(it.documentId)!.label}</Link>
-                    : <span className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]"><Paperclip className="w-3 h-3" /> document attached</span>
+                    ? <Link href={docs.get(it.documentId)!.href} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:underline"><Paperclip className="w-3 h-3" /> {docs.get(it.documentId)!.label}</Link>
+                    : <span className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-muted)]"><Paperclip className="w-3 h-3" /> document attached</span>
                 )}
                 {canManage && busy !== it.id && (
                   <span className="ml-auto flex items-center gap-1 flex-wrap">
                     {(it.status === "accepted" || it.status === "waived") && (
-                      <button onClick={() => void reopen(it)} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]" title="Back into the review - the decision stays on the record">
+                      <button onClick={() => void reopen(it)} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]" title="Back into the review - the decision stays on the record">
                         <RotateCcw className="w-3 h-3" /> Reopen
                       </button>
                     )}
@@ -775,22 +775,22 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, p
                       <Pencil className="w-3 h-3" /> Edit
                     </button>
                     {it.status === "open" && (
-                      <button onClick={() => void review(it, "received")} className="px-1.5 py-0.5 rounded text-[10px] font-bold text-sky-700 dark:text-sky-300 hover:bg-sky-500/10">Received</button>
+                      <button onClick={() => void review(it, "received")} className="px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--color-accent)] dark:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Received</button>
                     )}
                     {(it.status === "received" || it.status === "rejected") && (
-                      <button onClick={() => void review(it, "accepted")} className="px-1.5 py-0.5 rounded text-[10px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10">Accept</button>
+                      <button onClick={() => void review(it, "accepted")} className="px-1.5 py-0.5 rounded text-[11px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10">Accept</button>
                     )}
                     {it.status === "received" && (
-                      <button onClick={() => void review(it, "rejected")} className="px-1.5 py-0.5 rounded text-[10px] font-bold text-rose-700 dark:text-rose-300 hover:bg-rose-500/10">Reject</button>
+                      <button onClick={() => void review(it, "rejected")} className="px-1.5 py-0.5 rounded text-[11px] font-bold text-rose-700 dark:text-rose-300 hover:bg-rose-500/10">Reject</button>
                     )}
                     {(it.status === "open" || it.status === "received") && (
-                      <button onClick={() => void review(it, "waived")} className="px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Waive</button>
+                      <button onClick={() => void review(it, "waived")} className="px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Waive</button>
                     )}
                   </span>
                 )}
                 {busy === it.id && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-muted)] ml-auto" />}
               </div>
-              <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">
+              <div className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
                 {[
                   it.description,
                   it.reviewedByName ? `${it.status} by ${it.reviewedByName}${it.reviewedAt ? ` on ${new Date(it.reviewedAt).toLocaleDateString()}` : ""}` : null,
@@ -826,12 +826,12 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, p
 
 function TurnoverChip({ status }: { status: TurnoverItem["status"] }) {
   const tone = status === "accepted" ? "border-emerald-500/40 bg-emerald-500/[0.07] text-emerald-700 dark:text-emerald-300"
-    : status === "received" ? "border-sky-500/40 bg-sky-500/[0.07] text-sky-700 dark:text-sky-300"
+    : status === "received" ? "border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text-muted)] dark:text-[var(--color-text)]"
     : status === "rejected" ? "border-rose-500/40 bg-rose-500/[0.07] text-rose-700 dark:text-rose-300"
     : status === "waived" ? "border-[var(--color-border)] text-[var(--color-text-faint)]"
     : "border-amber-500/40 bg-amber-500/[0.07] text-amber-700 dark:text-amber-300";
   return (
-    <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${tone}`}>
+    <span className={`text-[11px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${tone}`}>
       {TURNOVER_STATUS_LABEL[status]}
     </span>
   );
@@ -929,7 +929,7 @@ function DocPicker({ orgId, busy, onPick, onClear, onCancel }: {
           ))}
         </ul>
       )}
-      <div className="text-[10px] text-[var(--color-text-faint)]">From document control. A submission through the contractor&apos;s link lands there once it&apos;s approved under Intake.</div>
+      <div className="text-[11px] text-[var(--color-text-faint)]">From document control. A submission through the contractor&apos;s link lands there once it&apos;s approved under Intake.</div>
     </div>
   );
 }
@@ -994,11 +994,11 @@ function PunchSection({ orgId, projectId, canManage, actor, items, parties, peop
   return (
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
-        <ListChecks className="w-4 h-4 text-[var(--color-accent)]" />
+        <ListChecks className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-sm font-bold text-[var(--color-text)]">Punch list</span>
-        <span className="text-[10px] text-[var(--color-text-muted)]">The closeout snag list - visible until it&apos;s empty.</span>
+        <span className="text-[11px] text-[var(--color-text-muted)]">The closeout snag list - visible until it&apos;s empty.</span>
         {open.length > 0 && (
-          <span className="ml-auto text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40">{open.length} open</span>
+          <span className="ml-auto text-[11px] font-black px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40">{open.length} open</span>
         )}
       </div>
 
@@ -1046,23 +1046,23 @@ function PunchSection({ orgId, projectId, canManage, actor, items, parties, peop
               <li key={it.id} className={`px-4 py-2 flex items-center gap-2 flex-wrap text-xs ${it.status !== "open" ? "opacity-55" : ""}`}>
                 <span className={`w-2 h-2 rounded-full shrink-0 ${it.status === "done" ? "bg-emerald-500" : it.status === "void" ? "bg-[var(--color-border-strong)]" : overdue ? "bg-rose-500" : "bg-amber-500"}`} />
                 <span className={`text-[var(--color-text)] ${it.status !== "open" ? "line-through" : ""}`}>{it.title}</span>
-                {where && <span className="text-[10px] text-[var(--color-text-muted)]">{where}</span>}
+                {where && <span className="text-[11px] text-[var(--color-text-muted)]">{where}</span>}
                 {it.dueDate && it.status === "open" && (
-                  <span className={`text-[10px] font-bold ${overdue ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>
+                  <span className={`text-[11px] font-bold ${overdue ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>
                     due {new Date(it.dueDate + "T00:00:00").toLocaleDateString()}{overdue ? " - overdue" : ""}
                   </span>
                 )}
-                {it.status === "void" && <span className="text-[9px] font-black uppercase text-[var(--color-text-faint)]">void</span>}
-                {it.createdByName && <span className="text-[10px] text-[var(--color-text-faint)]">by {it.createdByName}</span>}
+                {it.status === "void" && <span className="text-[11px] font-black uppercase text-[var(--color-text-faint)]">void</span>}
+                {it.createdByName && <span className="text-[11px] text-[var(--color-text-faint)]">by {it.createdByName}</span>}
                 {canManage && it.status === "open" && busy !== it.id && (
                   <span className="ml-auto flex items-center gap-1">
                     <button onClick={() => setEditing(it.id)} className={quietBtn} title="Change what it is, where, when it's due, who's on it">
                       <Pencil className="w-3 h-3" /> Edit
                     </button>
                     <button onClick={() => void setStatus(it, "done")}
-                      className="px-2 py-1 rounded text-[10px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10">Done</button>
+                      className="px-2 py-1 rounded text-[11px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10">Done</button>
                     <button onClick={() => void voidItem(it)}
-                      className="p-1.5 rounded text-[10px] font-bold text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-500/10" title="Void - not a real snag" aria-label="Void - not a real snag"><Ban className="w-3.5 h-3.5" /></button>
+                      className="p-1.5 rounded text-[11px] font-bold text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-500/10" title="Void - not a real snag" aria-label="Void - not a real snag"><Ban className="w-3.5 h-3.5" /></button>
                   </span>
                 )}
                 {canManage && it.status !== "open" && busy !== it.id && (

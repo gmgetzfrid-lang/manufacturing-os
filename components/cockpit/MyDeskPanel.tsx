@@ -166,22 +166,22 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm overflow-hidden">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
-        <KeyRound className="w-4 h-4 text-blue-600" />
+        <KeyRound className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-sm font-black text-[var(--color-text)]">My desk</span>
-        <span className="text-[10px] font-bold text-[var(--color-text-faint)] ml-auto">{total} item{total === 1 ? "" : "s"}</span>
+        <span className="text-[11px] font-bold text-[var(--color-text-faint)] ml-auto">{total} item{total === 1 ? "" : "s"}</span>
       </div>
 
       <div className="p-3 space-y-3">
         {checkouts.length > 0 && (
           <div className="space-y-1">
-            <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Checked out to me</div>
+            <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Checked out to me</div>
             {checkouts.map((c) => {
               const k = clock(c);
               return (
                 <div key={c.sessionId} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] group">
                   <Link href={docHref(c.libraryId, c.documentId)} className="flex-1 min-w-0">
-                    <span className="text-xs font-bold text-[var(--color-text)] group-hover:text-blue-700 truncate block">{c.docLabel}</span>
-                    <span className="text-[10px] text-[var(--color-text-faint)] flex items-center gap-1">
+                    <span className="text-xs font-bold text-[var(--color-text)] group-hover:text-[var(--color-text)] truncate block">{c.docLabel}</span>
+                    <span className="text-[11px] text-[var(--color-text-faint)] flex items-center gap-1">
                       <Clock className="w-2.5 h-2.5" />
                       <span className={k.hot ? "text-amber-600 font-bold" : ""}>{k.text}</span>
                       {c.purpose && <> · {c.purpose}</>}
@@ -191,7 +191,7 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
                     onClick={() => void release(c)}
                     disabled={releasingId === c.sessionId}
                     title="Release - no changes"
-                    className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 sm:py-1 rounded-md text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 opacity-100 sm:opacity-0 group-hover:opacity-100 hover:bg-emerald-100 transition-all disabled:opacity-50"
+                    className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 sm:py-1 rounded-md text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 opacity-100 sm:opacity-0 group-hover:opacity-100 hover:bg-emerald-100 transition-all disabled:opacity-50"
                   >
                     {releasingId === c.sessionId ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
                     Release
@@ -204,30 +204,30 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
 
         {staleCopies.length > 0 && (
           <div className="space-y-1">
-            <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">My copies that went stale</div>
+            <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">My copies that went stale</div>
             {staleCopies.slice(0, 5).map((s) => (
               <Link key={s.documentId} href={docHref(s.libraryId, s.documentId)} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-amber-50 group">
                 <FileDown className="w-3 h-3 text-amber-500 shrink-0" />
                 <span className="text-xs text-[var(--color-text)] group-hover:text-amber-800 truncate flex-1">{s.docLabel}</span>
-                <span className="text-[10px] font-bold text-amber-700 shrink-0">
+                <span className="text-[11px] font-bold text-amber-700 shrink-0">
                   you have Rev {s.downloadedRev ?? "?"} → now Rev {s.currentRev ?? "?"}
                 </span>
               </Link>
             ))}
             {staleCopies.length > 5 && (
-              <div className="text-[10px] text-[var(--color-text-faint)] px-2">…and {staleCopies.length - 5} more</div>
+              <div className="text-[11px] text-[var(--color-text-faint)] px-2">…and {staleCopies.length - 5} more</div>
             )}
           </div>
         )}
 
         {branches.length > 0 && (
           <div className="space-y-1">
-            <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">My branches awaiting reconciliation</div>
+            <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">My branches awaiting reconciliation</div>
             {branches.map((b) => (
-              <Link key={b.id} href={docHref(b.libraryId, b.documentId)} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-purple-50 group">
-                <GitBranch className="w-3 h-3 text-purple-500 shrink-0" />
-                <span className="text-xs text-[var(--color-text)] group-hover:text-purple-800 truncate flex-1">{b.docLabel}</span>
-                <span className="text-[10px] text-[var(--color-text-faint)] shrink-0">
+              <Link key={b.id} href={docHref(b.libraryId, b.documentId)} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] group">
+                <GitBranch className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
+                <span className="text-xs text-[var(--color-text)] group-hover:text-[var(--color-text)] truncate flex-1">{b.docLabel}</span>
+                <span className="text-[11px] text-[var(--color-text-faint)] shrink-0">
                   since {new Date(b.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
                 </span>
               </Link>

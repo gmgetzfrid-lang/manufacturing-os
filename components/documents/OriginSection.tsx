@@ -53,7 +53,7 @@ export default function OriginSection({ doc, orgId, canManage }: {
   // Internal + non-manager + not editing → stay quiet (internal is the default).
   if (!loading && origin !== "external" && !editing && !canManage) return null;
 
-  const inp = "text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 outline-none focus:border-[var(--color-accent)]";
+  const inp = "text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 outline-none focus:border-[var(--color-border-strong)]";
 
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 space-y-2">
@@ -63,7 +63,7 @@ export default function OriginSection({ doc, orgId, canManage }: {
         {!loading && !editing && (
           <div className="ml-auto flex items-center gap-2">
             {origin === "external" ? <OriginBadge origin="external" source={source} reference={reference} edition={edition} /> : <span className="text-[11px] text-[var(--color-text-muted)]">Internal</span>}
-            {canManage && <button onClick={() => setEditing(true)} className="text-[10px] font-bold text-[var(--color-accent)] hover:underline">Edit</button>}
+            {canManage && <button onClick={() => setEditing(true)} className="text-[11px] font-bold text-[var(--color-accent)] hover:underline">Edit</button>}
           </div>
         )}
       </div>

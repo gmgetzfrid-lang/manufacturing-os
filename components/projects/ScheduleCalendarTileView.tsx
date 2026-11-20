@@ -394,7 +394,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
     const head = (
       <button type="button" onClick={() => openShift(key, band)}
         title={`${band === "day" ? "Day" : "Night"} shift ${clockLabel(w.start, tz)}–${clockLabel(w.end, tz)}${band === "night" ? ` (into ${fmtInTz(w.end, tz, { weekday: "short" })} morning)` : ""} - open its list to enter progress`}
-        className={`${plan ? "flex-1" : "shrink-0"} flex items-center gap-1 px-1 min-w-0 ${big ? "text-[10.5px]" : "text-[9px]"} font-black uppercase tracking-wider hover:underline ${band === "day" ? "text-sky-800 dark:text-sky-300" : "text-violet-800 dark:text-violet-200"}`}>
+        className={`${plan ? "flex-1" : "shrink-0"} flex items-center gap-1 px-1 min-w-0 ${big ? "text-[11px]" : "text-[11px]"} font-black uppercase tracking-wider hover:underline ${band === "day" ? "text-sky-800 dark:text-sky-300" : "text-violet-800 dark:text-violet-200"}`}>
         {band === "day" ? <Sun className="w-2.5 h-2.5 shrink-0" aria-hidden /> : <Moon className="w-2.5 h-2.5 shrink-0" aria-hidden />}
         {band === "day" ? "Day" : "Night"}
         <span className="font-semibold normal-case tracking-normal opacity-80 truncate">{clockLabel(w.start, tz)}–{band === "night" && !short ? `${fmtInTz(w.end, tz, { weekday: "short" })} ` : ""}{clockLabel(w.end, tz)}</span>
@@ -407,7 +407,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
       <div className="shrink-0 flex items-center gap-1 min-w-0">
         {head}
         <button type="button" onClick={() => onPlanNext!(w)} title="Plan this shift - swap, pull in or push out work orders. The schedule, the shift report and the email follow."
-          className="shrink-0 rounded px-1.5 py-px text-[9px] font-black uppercase tracking-wider bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:brightness-110">Plan</button>
+          className="shrink-0 rounded px-1.5 py-px text-[11px] font-black uppercase tracking-wider bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:brightness-110">Plan</button>
       </div>
     );
   };
@@ -420,7 +420,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
       <div key="idle" className="shrink-0 flex flex-col gap-1">
         <button type="button" onClick={() => setIdleOpen((cur) => { const n = new Set(cur); if (n.has(key)) n.delete(key); else n.add(key); return n; })}
           title={idle.map((p) => p.ms.name).join("\n")}
-          className={`flex items-center gap-1 px-1 text-left ${big ? "text-[10.5px]" : "text-[9.5px]"} font-semibold text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]`}>
+          className={`flex items-center gap-1 px-1 text-left ${big ? "text-[11px]" : "text-[11px]"} font-semibold text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]`}>
           <ChevronRight className={`w-3 h-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} aria-hidden />
           {idle.length} open, no work this day
         </button>
@@ -597,7 +597,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
             </button>
           ))}
         </div>
-        <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title={`Days and times are shown in the plant's zone: ${tz}`}>{tzAbbrev(tz, cursor.getTime())}</span>
+        <span className="text-[11px] font-mono font-bold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title={`Days and times are shown in the plant's zone: ${tz}`}>{tzAbbrev(tz, cursor.getTime())}</span>
         <button onClick={goToday} className="ml-1 inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded-md hover:bg-[var(--color-surface-2)] border border-[var(--color-border)] transition-colors">
           <Crosshair className="w-3.5 h-3.5 text-rose-500" /> Today
         </button>
@@ -620,7 +620,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
         )}
         <div className="ml-auto inline-flex items-center gap-1.5 flex-wrap">
           {mode !== "day" && <>
-            <span className="text-[10px] font-semibold text-[var(--color-text-faint)] uppercase tracking-wide">Crew</span>
+            <span className="text-[11px] font-semibold text-[var(--color-text-faint)] uppercase tracking-wide">Crew</span>
             <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-md p-0.5 gap-0.5" role="group" aria-label="Crew">
               {([["all", "All"], ["day", "Day"], ["night", "Night"]] as const).map(([id, label]) => (
                 <button key={id} onClick={() => setCrewFilter(id)} aria-pressed={crewFilter === id}
@@ -637,7 +637,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
               <Moon className="w-3 h-3" /> Night shifts
             </button>
           </>}
-          <span className="text-[10px] font-semibold text-[var(--color-text-faint)] uppercase tracking-wide">Show</span>
+          <span className="text-[11px] font-semibold text-[var(--color-text-faint)] uppercase tracking-wide">Show</span>
           <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-md p-0.5 gap-0.5">
             {([["tasks", "Tasks"], ["subtasks", "Sub-tasks"]] as const).map(([id, label]) => (
               <button
@@ -658,7 +658,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
           "Group" is whatever the schedule's top-level WBS is — a unit,
           area, zone, phase, sub-project, etc. */}
       {units.length > 1 && (
-        <div className="px-3 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex items-center gap-3 flex-wrap text-[10px]">
+        <div className="px-3 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex items-center gap-3 flex-wrap text-[11px]">
           <span className="font-black uppercase tracking-widest text-[var(--color-text-faint)]">Groups</span>
           {units.map((u) => {
             const color = colorFor(u);
@@ -673,7 +673,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
       )}
 
       {/* One quiet line of how-to — what each mark on a card does. */}
-      <div className={`px-3 py-1.5 border-b border-[var(--color-border)] bg-slate-50/40 dark:bg-[var(--color-surface-2)]/40 flex items-center gap-x-3 gap-y-1 flex-wrap text-[10.5px] text-[var(--color-text-muted)] ${mode === "day" ? "hidden" : ""}`}>
+      <div className={`px-3 py-1.5 border-b border-[var(--color-border)] bg-slate-50/40 dark:bg-[var(--color-surface-2)]/40 flex items-center gap-x-3 gap-y-1 flex-wrap text-[11px] text-[var(--color-text-muted)] ${mode === "day" ? "hidden" : ""}`}>
         <Info className="w-3.5 h-3.5 text-[var(--color-accent)] shrink-0" />
         {showSubtasks
           ? <span><b className="text-[var(--color-text)]">Sub-items:</b> each step is its own card - drag one to move just that step.</span>
@@ -681,7 +681,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
         {/* What the marks on a card do — not on a phone, where a day opens its list. */}
         {!compact && <>
           <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-slate-400 border border-black/10" /> status</span>
-          <span className="inline-flex items-center gap-1"><span className="text-[9px] font-bold px-1 rounded border border-[var(--color-border-strong)]">40%</span> set progress</span>
+          <span className="inline-flex items-center gap-1"><span className="text-[11px] font-bold px-1 rounded border border-[var(--color-border-strong)]">40%</span> set progress</span>
           {!showSubtasks && <span className="inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" /> its steps that day</span>}
           <span className="inline-flex items-center gap-1"><GripVertical className="w-3 h-3" /> drag by the colored edge</span>
           <span className="inline-flex items-center gap-1"><CheckSquare className="w-3 h-3" /> select (on hover)</span>
@@ -734,7 +734,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                   <span className={`text-[12px] font-black ${isToday ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text)]"}`}>
                     {fmtInTz(day, tz, { weekday: "long", month: "short", day: "numeric" })}
                   </span>
-                  <span className="text-[10.5px] font-semibold text-[var(--color-text-faint)]">
+                  <span className="text-[11px] font-semibold text-[var(--color-text-faint)]">
                     {items.length ? `${items.length} task${items.length === 1 ? "" : "s"}${nightN ? ` · ${nightN} night` : ""}${items.filter(isDone).length ? ` · ${items.filter(isDone).length} done` : ""} ›` : "Nothing scheduled"}
                   </span>
                 </button>
@@ -817,8 +817,8 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                   title={`${fmtInTz(addDaysUTC(weekDays[0], -1, tz), tz, { weekday: "long" })} night - open its list`}
                   className="min-w-0 border-r border-violet-200 dark:border-violet-900 bg-violet-100/60 dark:bg-violet-950/30 flex flex-col items-center justify-center gap-1 text-violet-800 dark:text-violet-200 hover:bg-violet-100">
                   <Moon className="w-3.5 h-3.5" aria-hidden />
-                  <span className="text-[9px] font-black uppercase tracking-wider">{fmtInTz(addDaysUTC(weekDays[0], -1, tz), tz, { weekday: "short" })}</span>
-                  {prevNight.length > 0 && <span className="text-[10px] font-bold tabular-nums">{prevNight.length}</span>}
+                  <span className="text-[11px] font-black uppercase tracking-wider">{fmtInTz(addDaysUTC(weekDays[0], -1, tz), tz, { weekday: "short" })}</span>
+                  {prevNight.length > 0 && <span className="text-[11px] font-bold tabular-nums">{prevNight.length}</span>}
                 </button>
                 {weekDays.map((day, i) => {
                   const key = ymd(day, tz);
@@ -875,7 +875,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                     className={`min-w-0 border-r border-[var(--color-border)] last:border-r-0 p-1 flex flex-col items-start gap-0.5 text-left ${inMonth ? "bg-[var(--color-surface)]" : "bg-slate-50/40 dark:bg-transparent"} ${isToday ? "ring-1 ring-inset ring-rose-300" : ""}`}>
                     <span className={`text-[11px] font-bold ${isToday ? "text-rose-600 dark:text-rose-400" : inMonth ? "text-[var(--color-text)]" : "text-slate-300 dark:text-slate-600"}`}>{wallClock(day.getTime(), tz).day}</span>
                     {items.length > 0 && <>
-                      <span className="text-[10px] font-black tabular-nums px-1.5 rounded-full bg-[var(--color-accent-soft)] text-[var(--color-accent)]">{items.length}</span>
+                      <span className="text-[11px] font-black tabular-nums px-1.5 rounded-full bg-[var(--color-accent-soft)] text-[var(--color-accent)]">{items.length}</span>
                       <span className="mt-auto w-full h-1 rounded-full bg-black/10 overflow-hidden"><span className={`block h-full ${avg >= 100 ? "bg-emerald-500" : "bg-[var(--color-accent)]"}`} style={{ width: `${avg}%` }} /></span>
                     </>}
                   </button>
@@ -897,10 +897,10 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                       className={`inline-flex items-center gap-1 text-[11px] font-bold rounded px-1 -ml-1 hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-accent)] transition-colors ${isToday ? "text-rose-600 dark:text-rose-400" : inMonth ? "text-[var(--color-text)]" : "text-slate-300"}`}
                     >
                       {wallClock(day.getTime(), tz).day}
-                      {items.length > 0 && <span className="text-[8px] font-black uppercase tracking-wider opacity-0 group-hover/tile:opacity-70">Open day</span>}
+                      {items.length > 0 && <span className="text-[11px] font-black uppercase tracking-wider opacity-0 group-hover/tile:opacity-70">Open day</span>}
                     </button>
                     {items.length > 0 && (
-                      <span className={`ml-auto min-w-0 truncate whitespace-nowrap text-[9.5px] font-semibold tabular-nums ${inMonth ? "text-[var(--color-text-faint)]" : "text-slate-300"}`}>
+                      <span className={`ml-auto min-w-0 truncate whitespace-nowrap text-[11px] font-semibold tabular-nums ${inMonth ? "text-[var(--color-text-faint)]" : "text-slate-300"}`}>
                         {items.length} task{items.length === 1 ? "" : "s"}{nightN > 0 && <span className="text-violet-700 dark:text-violet-300"> · {nightN} night</span>}{doneHere ? ` · ${doneHere} done` : ""}
                       </span>
                     )}
@@ -1056,7 +1056,7 @@ function DayScroller({ children, fade }: { children: React.ReactNode; fade: stri
           <button type="button"
             onClick={(e) => { e.stopPropagation(); ref.current?.scrollBy({ top: (ref.current?.clientHeight ?? 120) * 0.8, behavior: "smooth" }); }}
             title="Scroll for the rest of this day's tasks"
-            className="absolute bottom-0.5 left-1/2 -translate-x-1/2 inline-flex items-center gap-0.5 whitespace-nowrap rounded-full bg-[var(--color-surface)] border border-[var(--color-border)] shadow-sm px-2 py-[1px] text-[9.5px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:border-[var(--color-accent-ring)]">
+            className="absolute bottom-0.5 left-1/2 -translate-x-1/2 inline-flex items-center gap-0.5 whitespace-nowrap rounded-full bg-[var(--color-surface)] border border-[var(--color-border)] shadow-sm px-2 py-[1px] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:border-[var(--color-accent-ring)]">
             <ChevronDown className="w-3 h-3" /> {below} more
           </button>
         </>
@@ -1248,7 +1248,7 @@ function Chip({
           {/* Second line: where / when on the left, % and its steps on the
               right — the name keeps the whole first line. */}
           <div className="mt-0.5 flex items-center gap-1 min-w-0">
-            <span className="flex items-center gap-1 min-w-0 flex-1 text-[9.5px] leading-tight opacity-70">
+            <span className="flex items-center gap-1 min-w-0 flex-1 text-[11px] leading-tight opacity-70">
               {/* Night work is tagged; round the clock and day-and-night
                   mixes are marked; day work — most of it — is left quiet. */}
               {foundHere.map((k) => (
@@ -1278,7 +1278,7 @@ function Chip({
               {(
                 <button type="button" onClick={(e) => { e.stopPropagation(); if (onToggleExpand) onToggleExpand(e); else onClick(e); }}
                   title={isLeaf ? `${pct}% complete - tap to update` : `${pct}% complete · ${done}/${leafTotal} steps done - tap to update its steps`}
-                  className={`relative inline-flex items-center justify-center rounded-md border px-1 py-0 text-[9px] font-bold tabular-nums after:absolute after:-inset-1 pointer-coarse:after:-inset-2.5 after:content-[''] hover:brightness-95 ${pct >= 100 ? "text-emerald-700 bg-emerald-50 border-emerald-200" : pct > 0 ? "text-blue-700 bg-blue-50 border-blue-200" : "text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]"}`}>
+                  className={`relative inline-flex items-center justify-center rounded-md border px-1 py-0 text-[11px] font-bold tabular-nums after:absolute after:-inset-1 pointer-coarse:after:-inset-2.5 after:content-[''] hover:brightness-95 ${pct >= 100 ? "text-emerald-700 bg-emerald-50 border-emerald-200" : pct > 0 ? "text-blue-700 bg-blue-50 border-blue-200" : "text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]"}`}>
                   {pct}%
                 </button>
               )}

@@ -373,7 +373,7 @@ export default function CitedPageViewer({
         <div className="px-3 sm:px-4 py-2.5 sm:py-3 border-b border-[var(--color-border)] flex items-center gap-2 sm:gap-3 flex-wrap shrink-0">
           <div className="min-w-0 flex-1 basis-40">
             <div className="text-sm font-black text-[var(--color-text)] truncate">{view.title.replace(/\.pdf$/i, "")}</div>
-            <div className="text-[10px] text-[var(--color-text-muted)] truncate">
+            <div className="text-[11px] text-[var(--color-text-muted)] truncate">
               {view.documentId !== documentId
                 ? `jumped here from ${title.replace(/\.pdf$/i, "")}`
                 : `${section ? `${section} · ` : ""}cited page ${page}${
@@ -401,7 +401,7 @@ export default function CitedPageViewer({
               <ZoomOut className="w-4 h-4" />
             </button>
             <button onClick={() => setZoom(1)}
-              className="text-[10px] font-black tabular-nums px-1 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"
+              className="text-[11px] font-black tabular-nums px-1 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"
               title="Reset to fit width">
               {Math.round(zoom * 100)}%
             </button>
@@ -418,7 +418,7 @@ export default function CitedPageViewer({
                   }
                   setPageNumber(page);
                 }}
-                className="text-[10px] font-black px-2 py-1 rounded-lg border border-orange-300 text-orange-700 dark:text-orange-300 dark:border-orange-800 hover:bg-orange-500/10">
+                className="text-[11px] font-black px-2 py-1 rounded-lg border border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)] dark:border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
                 {view.documentId !== documentId ? "Back to cited sheet" : `Back to p.${page}`}
               </button>
             )}
@@ -459,26 +459,26 @@ export default function CitedPageViewer({
               </button>
               {findApplied && (
                 <button type="button" onClick={() => { setFindApplied(""); setFindTag(""); }}
-                  className="text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] shrink-0">
+                  className="text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] shrink-0">
                   Clear
                 </button>
               )}
             </form>
             {marks.some((m) => m.source === "vision") && (
-              <span className="text-[10px] text-sky-700 dark:text-sky-400">
+              <span className="text-[11px] text-[var(--color-text)] dark:text-[var(--color-text)]">
                 Blue swipes are approximate - this sheet was read by AI, not extracted.
               </span>
             )}
             {elsewhere.map((e) => (
               <button key={`${e.tag}-${e.documentId}-${e.page}`} onClick={() => jumpTo(e)}
                 title={e.documentName}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-black border border-sky-300 dark:border-sky-800 text-sky-800 dark:text-sky-300 bg-sky-50 dark:bg-sky-950/30 hover:bg-sky-100 transition-colors">
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-black border border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] transition-colors">
                 <Crosshair className="w-3 h-3" />
                 {e.tag} is on {e.sameDocument ? `p.${e.page}` : e.documentName.replace(/\.pdf$/i, "").slice(0, 28)} - jump
               </button>
             ))}
             {locateNote && (
-              <span className="text-[10px] text-amber-700 dark:text-amber-400 flex-1 min-w-0">{locateNote}</span>
+              <span className="text-[11px] text-amber-700 dark:text-amber-400 flex-1 min-w-0">{locateNote}</span>
             )}
           </div>
         )}
@@ -535,15 +535,15 @@ export default function CitedPageViewer({
                       style={{ left: `${m.nx * 100}%`, top: `${m.ny * 100}%` }}>
                       {approx && (
                         <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2
-                          w-24 h-14 rounded-md border-2 border-dashed border-sky-500/70" />
+ w-24 h-14 rounded-md border-2 border-dashed border-[var(--color-border-strong)]" />
                       )}
                       <span className={`block rounded-[3px] ${
                         approx
-                          ? "w-20 h-5 bg-sky-400/45 ring-1 ring-sky-500/60"
+                          ? "w-20 h-5 bg-sky-400/45 ring-1 ring-[var(--color-border-strong)]"
                           : "w-14 h-4 bg-yellow-300/60 ring-1 ring-amber-500/70"
                       }`} />
                       <span className="absolute left-1/2 -translate-x-1/2 top-full mt-1 whitespace-nowrap
-                        px-1.5 py-0.5 rounded text-[10px] font-black text-white bg-slate-900/85">
+ px-1.5 py-0.5 rounded text-[11px] font-black text-white bg-slate-900/85">
                         {m.tag}{approx ? " ~" : ""}
                       </span>
                     </div>
@@ -565,7 +565,7 @@ export default function CitedPageViewer({
               <ChevronLeft className="w-4 h-4" /> <span className="hidden sm:inline">Previous source</span>
             </button>
             <div className="flex-1 min-w-0 text-center">
-              <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">
+              <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">
                 Source {idx + 1} of {list.length}
                 <span className="normal-case tracking-normal font-bold">
                   {" · "}{activeSource.title.replace(/\.pdf$/i, "").slice(0, 44)}
@@ -576,10 +576,10 @@ export default function CitedPageViewer({
                 {list.map((s, i) => (
                   <button key={`${s.fileKey}-${s.page}-${i}`} type="button" onClick={() => setIdx(i)}
                     title={`${s.title.replace(/\.pdf$/i, "")}${s.section ? ` · ${s.section}` : ""} · p.${s.page}`}
-                    className={`min-w-6 h-6 px-1.5 rounded-md text-[10px] font-black tabular-nums border transition-all ${
+                    className={`min-w-6 h-6 px-1.5 rounded-md text-[11px] font-black tabular-nums border transition-all ${
                       i === idx
-                        ? "bg-orange-600 text-white border-orange-600 scale-110 shadow"
-                        : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-orange-400 hover:text-orange-700"
+                        ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)] scale-110 shadow"
+                        : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent-hover)]"
                     }`}>
                     {s.n ?? i + 1}
                   </button>

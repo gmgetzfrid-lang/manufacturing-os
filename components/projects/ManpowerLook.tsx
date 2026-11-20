@@ -174,7 +174,7 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
                   className="w-full grid grid-cols-[116px_minmax(0,1fr)_auto] gap-2 items-center py-1 text-left text-[12px]">
                   <span className="text-[var(--color-text)] leading-tight pl-1 inline-flex items-start gap-0.5">
                     {isOpen ? <ChevronDown className="w-3.5 h-3.5 mt-px shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 mt-px shrink-0" />}
-                    <span>{labelOf(c)}{c.carried && <span className="block text-[10.5px] text-amber-700 dark:text-amber-400">carried, not checked</span>}</span>
+                    <span>{labelOf(c)}{c.carried && <span className="block text-[11px] text-amber-700 dark:text-amber-400">carried, not checked</span>}</span>
                   </span>
                   <span className="relative h-3">
                     <span className={`absolute inset-y-0 left-0 flex gap-[2px] ${c.carried ? "opacity-50" : ""}`} style={{ width: `${(total / max) * 100}%` }}>
@@ -254,7 +254,7 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
           <ul className="mt-1 divide-y divide-[var(--color-border)]/60 text-[12px]">
             {(allWos ? wos : wos.slice(0, 10)).map((w) => (
               <li key={w.key} className="flex items-baseline gap-2 py-1">
-                <span className="flex-1 min-w-0 break-words text-[var(--color-text)]">{w.label}{w.added && <span className="ml-1.5 text-[10.5px] font-bold text-amber-700 dark:text-amber-400">added</span>}</span>
+                <span className="flex-1 min-w-0 break-words text-[var(--color-text)]">{w.label}{w.added && <span className="ml-1.5 text-[11px] font-bold text-amber-700 dark:text-amber-400">added</span>}</span>
                 <span className="tabular-nums text-[var(--color-text-muted)]">{n0(w.mh)} h</span>
               </li>
             ))}

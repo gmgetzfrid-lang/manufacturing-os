@@ -120,14 +120,14 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
     <div className="mt-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
       <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
         <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-sky-500 to-indigo-600 flex items-center justify-center">
+          <div className="w-7 h-7 rounded-lg flex items-center justify-center bg-[var(--color-text)]">
             <DraftingCompass className="w-4 h-4 text-white" />
           </div>
           <div>
             <div className="text-xs font-black text-[var(--color-text)]">
               {isDrawingSet ? "Drawing intelligence" : "Library health"}
             </div>
-            <div className="text-[10px] text-[var(--color-text-muted)]">
+            <div className="text-[11px] text-[var(--color-text-muted)]">
               {isDrawingSet
                 ? "Computed from every sheet's extracted tags - counts you can trust, not AI guesses."
                 : "What indexing actually got out of these documents."}
@@ -189,7 +189,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
           <div className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden mb-2">
             {census.categories.slice(0, 10).map((c) => (
               <div key={c.prefix} className="px-3 py-1.5 flex items-center gap-2 text-[11px]">
-                <span className="w-10 shrink-0 font-mono font-black text-orange-600">{c.prefix}-</span>
+                <span className="w-10 shrink-0 font-mono font-black text-[var(--color-text)]">{c.prefix}-</span>
                 <span className={`flex-1 font-bold ${c.known ? "text-[var(--color-text)]" : "text-amber-600"}`}>
                   {c.label}
                 </span>
@@ -243,7 +243,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
           </button>
           {showScope && (
             <div className="mt-1.5 rounded-xl border border-[var(--color-border)] overflow-hidden">
-              <p className="px-3 py-2 text-[10px] text-[var(--color-text-muted)] border-b border-[var(--color-border)]">
+              <p className="px-3 py-2 text-[11px] text-[var(--color-text-muted)] border-b border-[var(--color-border)]">
                 These are <b>not broken</b>. This set ends at its battery limits and those units
                 weren&apos;t loaded. Add the sheets in a series below and its connectors join the audit -
                 the widened set will then have its own outward connectors, which is normal.
@@ -254,7 +254,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
                     <span className="shrink-0 w-36 min-w-0">
                       <span className="block font-mono font-black text-[var(--color-text)] truncate" title={o.series}>{o.series}</span>
                       {o.unitName && (
-                        <span className="block text-[10px] text-sky-700 dark:text-sky-400 truncate" title={o.unitName}>{o.unitName}</span>
+                        <span className="block text-[11px] text-[var(--color-text)] dark:text-[var(--color-text)] truncate" title={o.unitName}>{o.unitName}</span>
                       )}
                     </span>
                     <span className="text-[var(--color-text-muted)] flex-1 truncate" title={o.refs.join(", ")}>
@@ -280,7 +280,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
           </button>
           {showOneWay && (
             <div className="mt-1.5 rounded-xl border border-amber-300 dark:border-amber-800 overflow-hidden">
-              <p className="px-3 py-2 text-[10px] text-amber-900 dark:text-amber-200 border-b border-amber-200 dark:border-amber-900">
+              <p className="px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200 border-b border-amber-200 dark:border-amber-900">
                 Both sheets are loaded, but the reference only runs one way. Continuation notes are
                 sometimes legitimately one-way - this is where genuine drafting misses hide.
               </p>
@@ -310,7 +310,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
           </button>
           {showOpc && (
             <div className="mt-1.5 rounded-xl border border-amber-300 dark:border-amber-800 overflow-hidden">
-              <p className="px-3 py-2 text-[10px] text-amber-900 dark:text-amber-200 border-b border-amber-200 dark:border-amber-900">
+              <p className="px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200 border-b border-amber-200 dark:border-amber-900">
                 The numbered box at the page edge should reappear on the sheet it points to - that
                 number is how connectors pair, verified by stream name and equipment. These didn&apos;t.
                 Best-effort: box numbers come from AI-read sheets, so a missed transcription can show
@@ -345,7 +345,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
           </button>
           {showNoRef && (
             <div className="mt-1.5 rounded-xl border border-rose-200 dark:border-rose-900 overflow-hidden">
-              <p className="px-3 py-2 text-[10px] text-rose-900 dark:text-rose-200 border-b border-rose-100 dark:border-rose-900/50">
+              <p className="px-3 py-2 text-[11px] text-rose-900 dark:text-rose-200 border-b border-rose-100 dark:border-rose-900/50">
                 An off-page connector must say which drawing it continues on. These carry a box
                 number and a stream but <b>no drawing number</b> - nothing tells the reader where to
                 go. That&apos;s a drafting defect worth fixing on the sheet.
@@ -377,7 +377,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
           </button>
           {showSheets && (
             <div className="mt-1.5 rounded-xl border border-[var(--color-border)] overflow-hidden">
-              <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-2 px-3 py-1.5 bg-[var(--color-surface-2)] text-[9px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+              <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-2 px-3 py-1.5 bg-[var(--color-surface-2)] text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
                 <span>Document</span><span className="text-right">Pages</span>
                 <span className="text-right">Text</span><span className="text-right">Tags</span>
                 <span className="text-right">How read</span>
@@ -385,7 +385,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
               <ul className="divide-y divide-[var(--color-border)] max-h-64 overflow-y-auto">
                 {intel.sheets!.map((s) => {
                   const badge =
-                    s.verdict === "vision" ? { label: "AI vision", cls: "text-sky-700 dark:text-sky-400", Icon: Eye }
+                    s.verdict === "vision" ? { label: "AI vision", cls: "text-[var(--color-text)] dark:text-[var(--color-text)]", Icon: Eye }
                     : s.verdict === "text" ? { label: "Text layer", cls: "text-emerald-700 dark:text-emerald-400", Icon: FileText }
                     : s.verdict === "text-no-tags" ? { label: "Text, no tags", cls: "text-amber-600", Icon: AlertTriangle }
                     : s.verdict === "empty" ? { label: "Nothing read", cls: "text-rose-600", Icon: AlertTriangle }
@@ -401,13 +401,13 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
                           // Without this line, a skipped page surfaces days
                           // later as "X-35 is not in the tag index" on a
                           // trace, with no visible reason anywhere.
-                          <span className="block truncate text-[9px] font-bold text-rose-600"
+                          <span className="block truncate text-[11px] font-bold text-rose-600"
                             title={`No tags extracted from page(s) ${s.gapPages!.join(", ")} - vision indexing did not complete. Rebuild the index and keep this tab open until it finishes.`}>
                             ⚠ {s.gapPages!.length} page(s) unread: {s.gapPages!.slice(0, 8).join(", ")}{s.gapPages!.length > 8 ? "…" : ""}
                           </span>
                         )}
                         {s.declared && (
-                          <span className="block truncate font-mono text-[9px] text-[var(--color-text-muted)]"
+                          <span className="block truncate font-mono text-[11px] text-[var(--color-text-muted)]"
                             title="Read from this sheet's own title block">
                             ≡ {s.declared}
                           </span>
@@ -429,7 +429,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
                   );
                 })}
               </ul>
-              <p className="px-3 py-2 text-[10px] text-[var(--color-text-muted)] border-t border-[var(--color-border)]">
+              <p className="px-3 py-2 text-[11px] text-[var(--color-text-muted)] border-t border-[var(--color-border)]">
                 <b>Text, no tags</b> on an AutoCAD export usually means SHX fonts - the title block extracts,
                 the tags plot as line-work. Turn on <b>Index every page with AI vision</b> in Library AI setup
                 and rebuild; those sheets flip to <b>AI vision</b> and their tags appear.

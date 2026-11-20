@@ -152,7 +152,7 @@ export default function LibraryOrderModal({
       <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95">
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5">
-            <div className="p-1.5 bg-purple-100 rounded-lg"><GripVertical className="w-4 h-4 text-purple-700" /></div>
+            <div className="p-1.5 bg-[var(--color-surface-2)] rounded-lg"><GripVertical className="w-4 h-4 text-[var(--color-text-muted)]" /></div>
             <div>
               <div className="text-sm font-black text-[var(--color-text)]">Library Display Order</div>
               <div className="text-[11px] text-[var(--color-text-muted)]">Drag rows to set the order documents appear in this library.</div>
@@ -166,7 +166,7 @@ export default function LibraryOrderModal({
         <div className="px-5 py-2 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] flex items-center justify-between text-[11px] shrink-0">
           <div className="text-[var(--color-text-muted)]">
             {docs.length} document{docs.length === 1 ? "" : "s"} ·
-            {dirty ? <span className="text-orange-700 font-bold"> unsaved changes</span> : <span> position saved</span>}
+            {dirty ? <span className="text-[var(--color-text)] font-bold"> unsaved changes</span> : <span> position saved</span>}
           </div>
           <button onClick={alphabetize} className="inline-flex items-center gap-1 text-[var(--color-text)] hover:text-[var(--color-text)] font-bold">
             <ArrowDownAZ className="w-3 h-3" /> Alphabetize
@@ -190,17 +190,17 @@ export default function LibraryOrderModal({
                   onDragOver={onDragOver}
                   onDrop={() => onDrop(d.id)}
                   className={`bg-[var(--color-surface)] border rounded-lg px-2.5 py-2 flex items-center gap-2.5 cursor-move transition-all ${
-                    dragId === d.id ? "border-purple-400 ring-2 ring-purple-200 opacity-50" : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]"
+                    dragId === d.id ? "border-[var(--color-border-strong)] ring-2 ring-[var(--color-border-strong)] opacity-50" : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]"
                   }`}
                 >
                   <GripVertical className="w-3.5 h-3.5 text-slate-300 shrink-0" />
-                  <span className="text-[10px] font-mono text-[var(--color-text-faint)] w-7 text-right shrink-0">{idx + 1}.</span>
-                  <FileText className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                  <span className="text-[11px] font-mono text-[var(--color-text-faint)] w-7 text-right shrink-0">{idx + 1}.</span>
+                  <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="text-xs font-bold text-[var(--color-text)] truncate">{d.documentNumber}</div>
                     <div className="text-[11px] text-[var(--color-text-muted)] truncate">{d.title}</div>
                   </div>
-                  {d.rev && <span className="text-[10px] font-bold text-[var(--color-text-muted)] shrink-0">Rev {d.rev}</span>}
+                  {d.rev && <span className="text-[11px] font-bold text-[var(--color-text-muted)] shrink-0">Rev {d.rev}</span>}
                   <div className="flex flex-col shrink-0 -my-1">
                     <button onClick={() => move(d.id, -1)} disabled={idx === 0} title="Move up"
                       className="p-0.5 text-[var(--color-text-faint)] hover:text-[var(--color-text)] disabled:opacity-25">

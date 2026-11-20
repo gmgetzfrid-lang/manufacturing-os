@@ -111,7 +111,7 @@ export function DialogHost() {
         <div className="flex items-start gap-3">
           <div
             className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
-              danger ? "bg-rose-50 text-rose-600 dark:bg-rose-500/15" : "bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
+              danger ? "bg-rose-50 text-rose-600 dark:bg-rose-500/15" : "bg-[var(--color-surface-2)] text-[var(--color-text)]"
             }`}
           >
             <Icon className="w-4.5 h-4.5" />

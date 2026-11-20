@@ -108,9 +108,9 @@ export default function SharePage() {
         {state === "ok" && data && (
           <div>
             <div className="flex items-center gap-3 mb-4">
-              <div className="p-2.5 rounded-lg bg-blue-50 text-blue-700 border border-blue-200"><FileText className="w-5 h-5" /></div>
+              <div className="p-2.5 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)]"><FileText className="w-5 h-5" /></div>
               <div className="flex-1 min-w-0">
-                <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Shared document</div>
+                <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Shared document</div>
                 <h1 className="text-base font-black text-[var(--color-text)] truncate">{data.documentNumber || data.title || "Document"}</h1>
               </div>
             </div>
@@ -137,7 +137,7 @@ export default function SharePage() {
                 <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" /> {downloadError}
               </div>
             )}
-            <div className="mt-4 text-[10px] text-[var(--color-text-faint)] inline-flex items-center gap-1">
+            <div className="mt-4 text-[11px] text-[var(--color-text-faint)] inline-flex items-center gap-1">
               <ShieldCheck className="w-3 h-3" /> Access counted on the distribution record · copy is watermarked with a verify QR
             </div>
           </div>

@@ -56,7 +56,7 @@ export default function AddWidgetModal({ open, onClose, existingTypes, isAdmin, 
             if (list.length === 0) return null;
             return (
               <section key={cat}>
-                <h3 className="px-1 mb-1.5 text-[10px] font-black uppercase tracking-[0.14em] text-[var(--color-text-faint)]">{cat}</h3>
+                <h3 className="px-1 mb-1.5 text-[11px] font-black uppercase tracking-[0.14em] text-[var(--color-text-faint)]">{cat}</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {list.map((m) => {
                     const n = count(m.type);
@@ -67,19 +67,19 @@ export default function AddWidgetModal({ open, onClose, existingTypes, isAdmin, 
                         onClick={() => { onAdd(m.type); setJustAdded(m.type); }}
                         className={`relative flex items-center gap-3 p-3 rounded-xl border text-left transition-colors ${
                           blocked ? "border-[var(--color-border)] opacity-60 cursor-default" : "border-[var(--color-border)] hover:border-[var(--color-accent)] hover:bg-[var(--color-surface-2)]"}`}>
-                        {m.isNew && <span className="absolute -top-1.5 right-3 px-1.5 py-0.5 rounded bg-[var(--color-accent)] text-white text-[9px] font-black uppercase tracking-wider">New</span>}
+                        {m.isNew && <span className="absolute -top-1.5 right-3 px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text)] text-[11px] font-black uppercase tracking-wider">New</span>}
                         <span className={`inline-flex items-center justify-center w-10 h-10 rounded-xl ${toneChip(m.tone)} shrink-0`}><Icon className="w-5 h-5" /></span>
                         <div className="min-w-0 flex-1">
                           <div className="text-sm font-bold text-[var(--color-text)]">{m.title}</div>
                           <div className="text-xs text-[var(--color-text-muted)] line-clamp-2">{m.description}</div>
-                          {n > 0 && m.multi && <div className="text-[10px] font-bold text-emerald-600 mt-0.5">{n} on your dashboard - add another</div>}
+                          {n > 0 && m.multi && <div className="text-[11px] font-bold text-emerald-600 mt-0.5">{n} on your dashboard - add another</div>}
                         </div>
                         {blocked ? (
                           <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600 shrink-0"><Check className="w-4 h-4" /> Added</span>
                         ) : justAdded === m.type ? (
                           <span className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-emerald-600 text-white shrink-0"><Check className="w-4 h-4" /></span>
                         ) : (
-                          <span className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-[var(--color-accent)] text-white shrink-0"><Plus className="w-4 h-4" /></span>
+                          <span className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)] shrink-0"><Plus className="w-4 h-4" /></span>
                         )}
                       </button>
                     );

@@ -394,7 +394,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       {/* Which clock the schedule runs on. Every date and time below is the
           plant's; a project without a zone still reads as UTC, so say so. */}
       {mode === "plan" && <div className="flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
-        <Clock className="w-3.5 h-3.5 text-[var(--color-accent)] shrink-0" />
+        <Clock className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
         {tz === DEFAULT_SCHEDULE_TZ ? (
           <span>Schedule times are shown in <b className="text-[var(--color-text)]">UTC</b>. Set the plant&apos;s timezone under <b className="text-[var(--color-text)]">Edit project</b> so days and shifts line up for everyone.</span>
         ) : (
@@ -448,7 +448,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
                 <button
                   onClick={() => setRebaseOpen(true)}
                   title="Shift every task by a date delta - reuse an old schedule with a new start date"
-                  className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] bg-[var(--color-accent-soft)] border border-[var(--color-accent-ring)]/40 px-2.5 py-1.5 rounded-lg shadow-sm transition-colors"
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] bg-[var(--color-surface-2)] border border-[var(--color-accent-ring)]/40 px-2.5 py-1.5 rounded-lg shadow-sm transition-colors"
                 >
                   <Calendar className="w-3.5 h-3.5" /> Rebase
                 </button>
@@ -626,9 +626,9 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
         <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
           <div className="px-4 py-2.5 border-b border-[var(--color-border)] flex items-center justify-between gap-3 bg-slate-50/60 dark:bg-[var(--color-surface-2)]">
             <div className="flex items-center gap-2">
-              <Flag className="w-4 h-4 text-[var(--color-accent)]" />
+              <Flag className="w-4 h-4 text-[var(--color-text-muted)]" />
               <div className="font-bold text-[var(--color-text)] text-sm">Milestones</div>
-              <span className="text-[10px] text-[var(--color-text-muted)] font-mono">{visible.length}</span>
+              <span className="text-[11px] text-[var(--color-text-muted)] font-mono">{visible.length}</span>
             </div>
             <HelpTooltip>
               <b>Imported rows</b> are read-only milestones from your scheduling tool (P6 / MS Project). They still count toward the earned-value rollup. Toggle &ldquo;Imported rows&rdquo; up top to hide them from this list while keeping them in metrics.
@@ -794,14 +794,14 @@ function MilestoneRow({ m, depth = 0, info, canEdit, busy, onSetStatus, onDelete
   return (
     <div className={`py-3 pr-4 flex items-start gap-3 border-l-4 ${tone} ${ghost ? "opacity-90" : ""}`} style={{ paddingLeft: 16 + depth * 18 }}>
       {m.isSummary
-        ? <Layers className="w-4 h-4 mt-0.5 text-[var(--color-accent)] shrink-0" />
+        ? <Layers className="w-4 h-4 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
         : <Flag className="w-4 h-4 mt-0.5 text-[var(--color-text-faint)] shrink-0" />}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          {m.wbs && <span className="font-mono text-[10px] text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded shrink-0">{m.wbs}</span>}
+          {m.wbs && <span className="font-mono text-[11px] text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded shrink-0">{m.wbs}</span>}
           <span className={`text-sm truncate ${m.isSummary ? "font-black text-[var(--color-text)]" : "font-bold text-[var(--color-text)]"}`}>{m.name}</span>
           <StatusChip status={effStatus} />
-          <span className="text-[10px] font-black tabular-nums text-[var(--color-text-muted)]" title={isParent ? "Rolled up from sub-tasks" : "% complete"}>{effPct}%</span>
+          <span className="text-[11px] font-black tabular-nums text-[var(--color-text-muted)]" title={isParent ? "Rolled up from sub-tasks" : "% complete"}>{effPct}%</span>
           {driftDays !== 0 && blFinish && (
             <span className={`text-[11px] font-semibold px-1.5 py-0.5 rounded border ${driftDays > 0 ? "bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800" : "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800"}`} title="Drift vs approved plan">
               {driftDays > 0 ? `+${driftDays}d` : `${driftDays}d`} vs plan
@@ -847,7 +847,7 @@ function MilestoneRow({ m, depth = 0, info, canEdit, busy, onSetStatus, onDelete
                 <button
                   onClick={() => onSetStatus(m.id!, "completed")}
                   disabled={busy}
-                  className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-300 hover:text-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 border border-emerald-200 dark:border-emerald-800 px-1.5 py-1 rounded disabled:opacity-40 transition-colors"
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-300 hover:text-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 border border-emerald-200 dark:border-emerald-800 px-1.5 py-1 rounded disabled:opacity-40 transition-colors"
                   title="Mark complete"
                 >
                   <Check className="w-3 h-3" /> Done
@@ -873,7 +873,7 @@ function MilestoneRow({ m, depth = 0, info, canEdit, busy, onSetStatus, onDelete
 function StatusChip({ status }: { status: MilestoneStatus }) {
   const tone =
     status === "completed"   ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800" :
-    status === "in_progress" ? "bg-blue-100 dark:bg-blue-900/40    text-blue-800 dark:text-blue-300    border-blue-200 dark:border-blue-800" :
+    status === "in_progress" ? "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]    text-[var(--color-text-muted)] dark:text-[var(--color-text)]    border-[var(--color-border)] dark:border-[var(--color-border)]" :
     status === "missed"      ? "bg-red-100 dark:bg-red-900/40     text-red-800 dark:text-red-300     border-red-200 dark:border-red-800" :
     status === "blocked"     ? "bg-amber-100 dark:bg-amber-900/40   text-amber-800 dark:text-amber-300   border-amber-200 dark:border-amber-800" :
                                "bg-[var(--color-surface-2)]   text-[var(--color-text)]   border-[var(--color-border)]";
@@ -906,7 +906,7 @@ function StatusMenu({ current, onPick, disabled }: { current: MilestoneStatus; o
         ref={btnRef}
         onClick={toggle}
         disabled={disabled}
-        className="inline-flex items-center gap-0.5 text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] px-1.5 py-1 rounded disabled:opacity-40 transition-colors"
+        className="inline-flex items-center gap-0.5 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] px-1.5 py-1 rounded disabled:opacity-40 transition-colors"
         title="Change status"
       >
         Status <ChevronDown className="w-3 h-3" />
@@ -1006,10 +1006,10 @@ function AddMilestoneForm({
   };
 
   const inp = "text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5 bg-[var(--color-surface)]";
-  const lbl = "block text-[9.5px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-0.5";
+  const lbl = "block text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-0.5";
 
   return (
-    <form onSubmit={submit} className="px-4 py-3 bg-[var(--color-accent-soft)]/60 border-b border-[var(--color-border)] space-y-2">
+    <form onSubmit={submit} className="px-4 py-3 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] space-y-2">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
         <label className="col-span-2">
           <span className={lbl}>Step</span>
@@ -1049,7 +1049,7 @@ function AddMilestoneForm({
         <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional notes" rows={1} className={`${inp} md:col-span-3 resize-y`} />
       </div>
       {finishFromHours && !finishAt && (
-        <div className="text-[10.5px] text-[var(--color-text-muted)]">Finish will be set to <b>{fmtInTz(finishFromHours, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</b> (start + {hours} h).</div>
+        <div className="text-[11px] text-[var(--color-text-muted)]">Finish will be set to <b>{fmtInTz(finishFromHours, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</b> (start + {hours} h).</div>
       )}
       {error && (
         <div className="text-[11px] text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded px-2 py-1">{error}</div>

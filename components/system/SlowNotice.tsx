@@ -31,7 +31,7 @@ export function SlowNotice({ secs, onStartOver, dark = false, what = "The server
       <b>Taking longer than usual ({secs}s).</b> {what} is slow to answer - usually because it&rsquo;s under heavy
       load (a big upload or indexing job). Your account and data are fine; it&rsquo;s still trying.
       {secs >= 25 && onStartOver && (
-        <button type="button" onClick={onStartOver} className={`block mt-1.5 font-bold underline ${dark ? "text-orange-400" : ""}`}>
+        <button type="button" onClick={onStartOver} className={`block mt-1.5 font-bold underline ${dark ? "text-[var(--color-accent)]" : ""}`}>
           Start over
         </button>
       )}

@@ -37,7 +37,7 @@ const BRANCHES: StageDef[] = [
 ];
 
 const TONE: Record<string, string> = {
-  current: "border-[var(--color-accent)] bg-[var(--color-accent-soft)] ring-2 ring-[var(--color-accent-ring)]",
+  current: "border-[var(--color-border-strong)] bg-[var(--color-surface-2)] ring-2 ring-[var(--color-accent-ring)]",
   done: "border-emerald-200 bg-emerald-50/40",
   upcoming: "border-[var(--color-border)] bg-[var(--color-surface)]",
 };
@@ -67,7 +67,7 @@ export default function WorkflowDiagramModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 px-5 py-4 border-b border-[var(--color-border)]">
-          <GitBranch className="w-4 h-4 text-[var(--color-accent)]" />
+          <GitBranch className="w-4 h-4 text-[var(--color-text-muted)]" />
           <div className="flex-1">
             <h2 className="text-sm font-black text-[var(--color-text)]">How a drafting request flows</h2>
             <p className="text-[11px] text-[var(--color-text-muted)]">Your request moves through these stages. The highlighted one is where it is now.</p>
@@ -83,9 +83,9 @@ export default function WorkflowDiagramModal({
                 <li key={stage.status}>
                   <div className={`rounded-xl border p-3 ${TONE[tone]}`}>
                     <div className="flex items-center gap-2">
-                      <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-black ${tone === "current" ? "bg-[var(--color-text)] text-[var(--color-surface)]" : tone === "done" ? "bg-emerald-500 text-white" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border border-[var(--color-border)]"}`}>{i + 1}</span>
+                      <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[11px] font-black ${tone === "current" ? "bg-[var(--color-text)] text-[var(--color-surface)]" : tone === "done" ? "bg-emerald-500 text-white" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border border-[var(--color-border)]"}`}>{i + 1}</span>
                       <span className="text-sm font-bold text-[var(--color-text)]">{stage.label}</span>
-                      {stage.status === current && <span className="ml-auto text-[10px] font-black uppercase tracking-wider text-[var(--color-accent)]">You are here</span>}
+                      {stage.status === current && <span className="ml-auto text-[11px] font-black uppercase tracking-wider text-[var(--color-text)]">You are here</span>}
                     </div>
                     <p className="text-[11px] text-[var(--color-text-muted)] mt-1 leading-relaxed pl-7">{stage.blurb}</p>
                   </div>
@@ -107,7 +107,7 @@ export default function WorkflowDiagramModal({
                 <div key={b.status} className={`rounded-xl border p-3 ${b.status === current ? TONE.current : "border-amber-200 bg-amber-50/40"}`}>
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-bold text-[var(--color-text)]">{b.label}</span>
-                    {b.status === current && <span className="ml-auto text-[10px] font-black uppercase tracking-wider text-[var(--color-accent)]">You are here</span>}
+                    {b.status === current && <span className="ml-auto text-[11px] font-black uppercase tracking-wider text-[var(--color-text)]">You are here</span>}
                   </div>
                   <p className="text-[11px] text-[var(--color-text-muted)] mt-1 leading-relaxed">{b.blurb}</p>
                 </div>

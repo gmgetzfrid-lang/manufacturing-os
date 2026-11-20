@@ -135,24 +135,24 @@ export default function VerifyTicketPage() {
             {/* The facts card */}
             <div className="bg-white/95 rounded-2xl shadow-2xl p-5 text-left space-y-3">
               <div>
-                <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Drafting ticket</div>
+                <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">Drafting ticket</div>
                 <div className="text-sm font-bold text-slate-900">{result.ticketNumber ?? "-"}</div>
                 {result.title && <div className="text-xs text-slate-500 mt-0.5">{result.title}</div>}
-                {result.unit && <div className="text-[10px] text-slate-400 mt-0.5">Unit {result.unit}</div>}
+                {result.unit && <div className="text-[11px] text-slate-400 mt-0.5">Unit {result.unit}</div>}
               </div>
               <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-100">
                 <div>
-                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">This copy</div>
+                  <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">This copy</div>
                   <div className={`text-lg font-black ${result.verdict === "current" ? "text-emerald-600" : result.verdict === "superseded" ? "text-red-600" : "text-amber-600"}`}>
                     Rev {result.printedRev ?? "?"}
                   </div>
                 </div>
                 <div>
-                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                  <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">
                     {result.inReview ? "In review now" : "Latest issue"}
                   </div>
                   <div className="text-lg font-black text-slate-900">Rev {result.currentRev ?? "?"}</div>
-                  <div className="text-[10px] text-slate-400">activity {fmt(result.lastActivityAt)}</div>
+                  <div className="text-[11px] text-slate-400">activity {fmt(result.lastActivityAt)}</div>
                 </div>
               </div>
               {result.verdict !== "current" && (
@@ -164,7 +164,7 @@ export default function VerifyTicketPage() {
               )}
             </div>
 
-            <div className="mt-5 text-[10px] text-white/60">
+            <div className="mt-5 text-[11px] text-white/60">
               Checked {new Date(result.checkedAt).toLocaleString()} · Refinery OS drafting portal
             </div>
             <button

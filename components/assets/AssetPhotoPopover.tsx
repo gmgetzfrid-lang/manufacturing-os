@@ -178,20 +178,20 @@ export default function AssetPhotoPopover({
 
       {/* Header */}
       <div className="px-3 py-2 border-b border-[var(--color-border)] flex items-center gap-2">
-        <div className="p-1 bg-blue-50 rounded shrink-0">
-          <Tag className="w-3 h-3 text-blue-700" />
+        <div className="p-1 bg-[var(--color-surface-2)] rounded shrink-0">
+          <Tag className="w-3 h-3 text-[var(--color-text-muted)]" />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
             <span className="text-xs font-black text-[var(--color-text)] truncate">{asset.tag}</span>
             {assetType && (
-              <span className="text-[9px] font-black uppercase tracking-widest bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded">
+              <span className="text-[11px] font-black uppercase tracking-widest bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded">
                 {assetType.name}
               </span>
             )}
           </div>
           {(asset.description || asset.location) && (
-            <div className="text-[10px] text-[var(--color-text-muted)] truncate flex items-center gap-1.5">
+            <div className="text-[11px] text-[var(--color-text-muted)] truncate flex items-center gap-1.5">
               {asset.description && <span className="truncate">{asset.description}</span>}
               {asset.location && (
                 <span className="inline-flex items-center gap-0.5 shrink-0">
@@ -253,7 +253,7 @@ export default function AssetPhotoPopover({
               </>
             )}
             {age && (
-              <div className="absolute bottom-2 right-2 inline-flex items-center gap-1 px-2 py-1 rounded-md bg-slate-900/75 backdrop-blur-sm text-white text-[10px] font-mono shadow">
+              <div className="absolute bottom-2 right-2 inline-flex items-center gap-1 px-2 py-1 rounded-md bg-slate-900/75 backdrop-blur-sm text-white text-[11px] font-mono shadow">
                 <Calendar className="w-2.5 h-2.5" />
                 {active.captured_at ? new Date(active.captured_at).toLocaleDateString() : "no date"}
                 <span className={`w-1.5 h-1.5 rounded-full ${
@@ -264,7 +264,7 @@ export default function AssetPhotoPopover({
               </div>
             )}
             {active.status !== "current" && (
-              <div className={`absolute top-2 left-2 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wide shadow ${
+              <div className={`absolute top-2 left-2 px-1.5 py-0.5 rounded text-[11px] font-black uppercase tracking-wide shadow ${
                 active.status === "needs_verification"
                   ? "bg-amber-500 text-white"
                   : "bg-red-500 text-white"
@@ -293,7 +293,7 @@ export default function AssetPhotoPopover({
                 key={p.id}
                 onClick={() => setActiveIdx(i)}
                 className={`shrink-0 w-12 h-12 rounded overflow-hidden border-2 transition-all relative ${
-                  i === activeIdx ? "border-blue-500 ring-1 ring-blue-200" : "border-[var(--color-border)] opacity-70 hover:opacity-100"
+                  i === activeIdx ? "border-[var(--color-border-strong)] ring-1 ring-[var(--color-border-strong)]" : "border-[var(--color-border)] opacity-70 hover:opacity-100"
                 }`}
               >
                 <SignedImg path={p.file_url} alt="" className="w-full h-full object-cover" />
@@ -310,14 +310,14 @@ export default function AssetPhotoPopover({
 
       {/* Footer action */}
       <div className="px-3 py-2 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between gap-2">
-        <span className="text-[10px] text-[var(--color-text-muted)]">
+        <span className="text-[11px] text-[var(--color-text-muted)]">
           {photos.length > 0 ? `${activeIdx + 1} of ${photos.length}` : "No photos"}
-          {photos.length > 0 && <> · <button onClick={onExpandFull} className="font-bold text-blue-700 hover:underline">Open full view</button></>}
+          {photos.length > 0 && <> · <button onClick={onExpandFull} className="font-bold text-[var(--color-accent)] hover:underline">Open full view</button></>}
         </span>
         {canManage && onUploadClick && (
           <button
             onClick={onUploadClick}
-            className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100"
+            className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100"
           >
             <Upload className="w-3 h-3" /> Add photos
           </button>
@@ -336,7 +336,7 @@ function EmptyState({ canUpload, onUpload }: { canUpload: boolean; onUpload?: ()
       {canUpload && onUpload && (
         <button
           onClick={onUpload}
-          className="mt-2 inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold text-white bg-emerald-600 hover:bg-emerald-500 shadow"
+          className="mt-2 inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold text-white bg-emerald-600 hover:bg-emerald-500 shadow"
         >
           <Upload className="w-3 h-3" /> Upload first photo
         </button>

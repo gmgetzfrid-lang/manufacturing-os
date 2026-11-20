@@ -105,7 +105,7 @@ export default function MessageStream({
         <div className="mx-auto max-w-5xl pt-4 pb-6">
           {empty ? (
             <div className="pt-[12vh] text-center animate-rise">
-              <div className="mx-auto w-12 h-12 rounded-2xl bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center shadow-lg">
+              <div className="mx-auto w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg bg-[var(--color-text)]">
                 <Icon className="w-6 h-6 text-white" />
               </div>
               <h2 className="mt-4 text-lg font-black text-[var(--color-text)]">{meta.label}</h2>
@@ -114,13 +114,13 @@ export default function MessageStream({
               <div className="mt-6 flex flex-wrap justify-center gap-2">
                 {EXAMPLES[scope].map((e) => (
                   <button key={e} onClick={() => onExample(e)}
-                    className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-xs font-bold text-[var(--color-text)] hover:border-[var(--color-accent-ring)] hover:bg-[var(--color-accent-soft)] transition-colors">
+                    className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-xs font-bold text-[var(--color-text)] hover:border-[var(--color-accent-ring)] hover:bg-[var(--color-surface-2)] transition-colors">
                     {e}
                   </button>
                 ))}
               </div>
               {scope !== "internet" && (
-                <p className="mt-6 text-[10px] text-[var(--color-text-faint)]">
+                <p className="mt-6 text-[11px] text-[var(--color-text-faint)]">
                   It only reads documents approved for indexing. Anything excluded from AI stays invisible to it.
                 </p>
               )}

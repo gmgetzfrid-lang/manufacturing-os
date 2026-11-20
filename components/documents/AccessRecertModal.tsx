@@ -68,13 +68,13 @@ export default function AccessRecertModal({ libraryId, orgId, name, uid, userNam
 
   const status = recertStatusFor(nextDate);
   const days = daysUntilRecert(nextDate);
-  const inp = "text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 outline-none focus:border-[var(--color-accent)]";
+  const inp = "text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 outline-none focus:border-[var(--color-border-strong)]";
 
   return (
     <div className="fixed inset-0 z-[520] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4" onClick={onClose}>
       <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3">
-          <KeyRound className="w-5 h-5 text-[var(--color-accent)]" />
+          <KeyRound className="w-5 h-5 text-[var(--color-text-muted)]" />
           <div className="flex-1 min-w-0">
             <div className="text-sm font-bold text-[var(--color-text)]">Access recertification</div>
             <div className="text-[11px] text-[var(--color-text-muted)] truncate">Review &amp; attest who has access to {name || "this library"}</div>
@@ -121,14 +121,14 @@ export default function AccessRecertModal({ libraryId, orgId, name, uid, userNam
                 <div className="rounded-lg border border-[var(--color-border)] max-h-52 overflow-y-auto divide-y divide-[var(--color-border)]">
                   {grants.map((g, i) => (
                     <div key={i} className="flex items-center gap-2 px-2.5 py-1.5 text-[12px]">
-                      <span className="text-[10px] font-bold uppercase text-[var(--color-text-faint)] w-10 shrink-0">{g.subjectType}</span>
+                      <span className="text-[11px] font-bold uppercase text-[var(--color-text-faint)] w-10 shrink-0">{g.subjectType}</span>
                       <span className="text-[var(--color-text)] min-w-0 truncate">{g.subjectName}</span>
-                      <span className="ml-auto text-[10px] text-[var(--color-text-muted)] truncate">{g.actions.join(", ")}</span>
+                      <span className="ml-auto text-[11px] text-[var(--color-text-muted)] truncate">{g.actions.join(", ")}</span>
                     </div>
                   ))}
                 </div>
               )}
-              <div className="text-[10px] text-[var(--color-text-muted)] mt-1 flex items-center gap-1"><ShieldAlert className="w-3 h-3" /> To remove access, use the library&apos;s Permissions panel, then attest below.</div>
+              <div className="text-[11px] text-[var(--color-text-muted)] mt-1 flex items-center gap-1"><ShieldAlert className="w-3 h-3" /> To remove access, use the library&apos;s Permissions panel, then attest below.</div>
             </div>
 
             {/* Attest */}

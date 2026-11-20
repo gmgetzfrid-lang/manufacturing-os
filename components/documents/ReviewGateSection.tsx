@@ -129,9 +129,9 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
   };
 
   const statusChip = (r: ReviewSignoffRow) => {
-    if (r.status === "signed") return <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700"><CheckCircle2 className="w-3 h-3" /> {r.signedAt?.slice(0, 10)}</span>;
-    if (r.slot === "alternate" && !r.activated) return <span className="text-[10px] font-bold text-[var(--color-text-faint)]">Standby</span>;
-    return <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-600"><Clock className="w-3 h-3" /> Pending</span>;
+    if (r.status === "signed") return <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700"><CheckCircle2 className="w-3 h-3" /> {r.signedAt?.slice(0, 10)}</span>;
+    if (r.slot === "alternate" && !r.activated) return <span className="text-[11px] font-bold text-[var(--color-text-faint)]">Standby</span>;
+    return <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-600"><Clock className="w-3 h-3" /> Pending</span>;
   };
 
   // Nothing in review: show the effective mode (and stay quiet if none).
@@ -165,11 +165,11 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
   }
 
   return (
-    <div className="rounded-xl border border-violet-300 bg-violet-50/40 p-3 space-y-2.5">
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 space-y-2.5">
       <div className="flex items-center gap-2">
-        <ShieldCheck className="w-4 h-4 text-violet-600" />
-        <span className="text-xs font-black uppercase tracking-wider text-violet-700">In review{draftLabel ? ` · ${draftLabel}` : ""}</span>
-        {!loading && <span className="ml-auto text-[10px] font-bold text-violet-700">{signedCount}/{primaries.length} signed</span>}
+        <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
+        <span className="text-xs font-black uppercase tracking-wider text-[var(--color-text)]">In review{draftLabel ? ` · ${draftLabel}` : ""}</span>
+        {!loading && <span className="ml-auto text-[11px] font-bold text-[var(--color-text)]">{signedCount}/{primaries.length} signed</span>}
       </div>
 
       {loading ? (
@@ -177,7 +177,7 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
       ) : (
         <>
           {draftFileUrl && (
-            <button onClick={() => void viewDraft()} className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-violet-300 bg-white text-violet-700 text-xs font-bold hover:bg-violet-50">
+            <button onClick={() => void viewDraft()} className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-[var(--color-border)] bg-white text-[var(--color-text)] text-xs font-bold hover:bg-[var(--color-surface-2)]">
               <FileText className="w-3.5 h-3.5" /> View draft{draftLabel ? ` ${draftLabel}` : ""}
             </button>
           )}
@@ -197,7 +197,7 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
                 </span>
                 <span className="ml-auto shrink-0">{statusChip(r)}</span>
                 {canManage && r.slot === "alternate" && !r.activated && r.status === "pending" && (
-                  <button title="Activate alternate" onClick={() => void activate(r.id)} disabled={busy} className="shrink-0 p-1 rounded hover:bg-white text-violet-600"><UserPlus className="w-3 h-3" /></button>
+                  <button title="Activate alternate" onClick={() => void activate(r.id)} disabled={busy} className="shrink-0 p-1 rounded hover:bg-white text-[var(--color-accent)]"><UserPlus className="w-3 h-3" /></button>
                 )}
               </div>
             ))}
@@ -221,7 +221,7 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowUpFromLine className="w-3.5 h-3.5" />} Publish approved revision
             </button>
           )}
-          <div className="text-[10px] text-[var(--color-text-muted)]">The current Rev {doc.rev || "-"} stays the controlled copy until this draft is approved &amp; published.</div>
+          <div className="text-[11px] text-[var(--color-text-muted)]">The current Rev {doc.rev || "-"} stays the controlled copy until this draft is approved &amp; published.</div>
         </>
       )}
 

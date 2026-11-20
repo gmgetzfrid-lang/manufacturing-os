@@ -199,11 +199,11 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
                 const n = woUnits.find(([c]) => c === u.code)?.[1] ?? 0;
                 const own = data.edges.some((e) => e.b === `cbunit:${u.code}` && e.evidence?.source === "setup");
                 return (
-                  <span key={u.code} className="inline-flex items-center gap-1 rounded-full border border-[var(--color-accent)] bg-[var(--color-accent-soft)] pl-2.5 pr-1 py-1 text-[12.5px] font-semibold text-[var(--color-text)]">
+                  <span key={u.code} className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] pl-2.5 pr-1 py-1 text-[12.5px] font-semibold text-[var(--color-text)]">
                     <span className="min-w-0">{unitName(u)}<span className="font-normal text-[var(--color-text-muted)]">{i === 0 && pUnits.length > 1 ? " · main" : ""}{n ? ` · ${n} WO${n === 1 ? "" : "s"}` : ""}</span></span>
                     {busy === `unit:${u.code}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                       : own ? <button type="button" disabled={!!busy} onClick={() => unitOn(u, false)} aria-label={`Take the project off ${u.label}`} className="p-0.5 rounded-full hover:bg-[var(--color-surface-2)]"><X className="w-3.5 h-3.5" /></button>
-                        : <span className="px-1 text-[10.5px] font-normal text-[var(--color-text-muted)]" title="Linked in Documents › Scope">Scope</span>}
+                        : <span className="px-1 text-[11px] font-normal text-[var(--color-text-muted)]" title="Linked in Documents › Scope">Scope</span>}
                   </span>
                 );
               })}

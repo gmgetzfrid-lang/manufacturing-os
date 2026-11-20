@@ -415,12 +415,12 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
         <div className="flex items-center space-x-4">
           <span className="text-slate-400 text-xs font-bold uppercase tracking-widest hidden md:block">Redline Pro</span>
           <div className="flex bg-slate-800 rounded-lg p-1 border border-slate-700">
-             <button onClick={() => setTool('pan')} className={`p-2 rounded ${tool === 'pan' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white'}`} title="Pan (Grab & Move)"><Move className="w-5 h-5"/></button>
+             <button onClick={() => setTool('pan')} className={`p-2 rounded ${tool === 'pan' ? 'bg-[var(--color-text)] text-[var(--color-surface)]' : 'text-slate-400 hover:text-white'}`} title="Pan (Grab & Move)"><Move className="w-5 h-5"/></button>
              <div className="w-px h-6 bg-slate-700 mx-1 self-center"/>
-             <button onClick={() => setTool('pen')} className={`p-2 rounded ${tool === 'pen' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white'}`} title="Pen"><Pen className="w-5 h-5"/></button>
-             <button onClick={() => setTool('line')} className={`p-2 rounded ${tool === 'line' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white'}`} title="Straight Line"><Minus className="w-5 h-5"/></button>
-             <button onClick={() => setTool('highlight')} className={`p-2 rounded ${tool === 'highlight' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white'}`} title="Highlighter"><Highlighter className="w-5 h-5"/></button>
-             <button onClick={addText} className={`p-2 rounded ${tool === 'text' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white'}`} title="Add Text"><Type className="w-5 h-5"/></button>
+             <button onClick={() => setTool('pen')} className={`p-2 rounded ${tool === 'pen' ? 'bg-[var(--color-text)] text-[var(--color-surface)]' : 'text-slate-400 hover:text-white'}`} title="Pen"><Pen className="w-5 h-5"/></button>
+             <button onClick={() => setTool('line')} className={`p-2 rounded ${tool === 'line' ? 'bg-[var(--color-text)] text-[var(--color-surface)]' : 'text-slate-400 hover:text-white'}`} title="Straight Line"><Minus className="w-5 h-5"/></button>
+             <button onClick={() => setTool('highlight')} className={`p-2 rounded ${tool === 'highlight' ? 'bg-[var(--color-text)] text-[var(--color-surface)]' : 'text-slate-400 hover:text-white'}`} title="Highlighter"><Highlighter className="w-5 h-5"/></button>
+             <button onClick={addText} className={`p-2 rounded ${tool === 'text' ? 'bg-[var(--color-text)] text-[var(--color-surface)]' : 'text-slate-400 hover:text-white'}`} title="Add Text"><Type className="w-5 h-5"/></button>
              <button onClick={deleteSelected} className="p-2 text-slate-400 hover:text-red-500" title="Delete Selected"><Trash2 className="w-5 h-5"/></button>
           </div>
           

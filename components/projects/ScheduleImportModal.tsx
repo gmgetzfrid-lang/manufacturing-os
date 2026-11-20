@@ -312,9 +312,9 @@ export default function ScheduleImportModal({
   return (
     <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <div className="w-full max-w-3xl bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[88vh] animate-in fade-in zoom-in-95">
-        <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between bg-gradient-to-r from-[var(--color-accent-soft)] via-white to-slate-50">
+        <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface-2)]">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-[var(--color-accent)] flex items-center justify-center shadow-md">
+            <div className="w-10 h-10 rounded-xl bg-[var(--color-surface-2)] flex items-center justify-center shadow-md">
               <Upload className="w-5 h-5 text-[var(--color-accent-fg)]" />
             </div>
             <div className="min-w-0">
@@ -323,7 +323,7 @@ export default function ScheduleImportModal({
                 <span>Importing into</span>
                 <span className="font-bold text-[var(--color-text)] truncate max-w-[200px]">{projectName ?? `Project ${projectId.slice(0,8)}`}</span>
                 {projectStatus && projectStatus !== "active" && (
-                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-rose-100 dark:bg-rose-900/40 text-rose-800 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] font-black uppercase tracking-wider bg-rose-100 dark:bg-rose-900/40 text-rose-800 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
                     <AlertTriangle className="w-2.5 h-2.5" /> {projectStatus}
                   </span>
                 )}
@@ -360,7 +360,7 @@ export default function ScheduleImportModal({
               className={`relative border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all ${
                 dragOver
                   ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]/60 scale-[1.01]"
-                  : "border-[var(--color-border-strong)] bg-slate-50/40 hover:border-[var(--color-accent-ring)] hover:bg-[var(--color-accent-soft)]/30"
+                  : "border-[var(--color-border-strong)] bg-slate-50/40 hover:border-[var(--color-accent-ring)] hover:bg-[var(--color-surface-2)]"
               }`}
             >
               <input
@@ -377,8 +377,8 @@ export default function ScheduleImportModal({
                 </div>
               ) : (
                 <>
-                  <div className="w-16 h-16 mx-auto rounded-2xl bg-[var(--color-accent-soft)] flex items-center justify-center mb-3 border border-[var(--color-accent-ring)]/40">
-                    <FileUp className="w-8 h-8 text-[var(--color-accent)]" />
+                  <div className="w-16 h-16 mx-auto rounded-2xl bg-[var(--color-surface-2)] flex items-center justify-center mb-3 border border-[var(--color-accent-ring)]/40">
+                    <FileUp className="w-8 h-8 text-[var(--color-text-muted)]" />
                   </div>
                   <div className="text-base font-black text-[var(--color-text)]">Drop your schedule here</div>
                   <div className="text-sm text-[var(--color-text-muted)] mt-1">or click to pick a file</div>
@@ -387,7 +387,7 @@ export default function ScheduleImportModal({
                     <FormatBadge label=".xer" hint="Primavera P6 native" />
                     <FormatBadge label=".csv" hint="Direct export or generic" />
                   </div>
-                  <div className="mt-2 text-[10px] text-[var(--color-text-muted)]">
+                  <div className="mt-2 text-[11px] text-[var(--color-text-muted)]">
                     Have a .mpp or .mpx? Export XML first - in MS Project: File → Save As → XML Format.
                   </div>
                 </>
@@ -506,24 +506,24 @@ export default function ScheduleImportModal({
                         <tr key={i}>
                           <td className="px-3 py-1.5">
                             <div className="font-bold text-[var(--color-text)] truncate flex items-center gap-1">
-                              {r.isSummary && <span className="text-[9px] font-black bg-[var(--color-accent-soft)] text-[var(--color-accent)] px-1 rounded shrink-0">SUM</span>}
+                              {r.isSummary && <span className="text-[11px] font-black bg-[var(--color-surface-2)] text-[var(--color-text)] px-1 rounded shrink-0">SUM</span>}
                               <span className="truncate">{r.name}</span>
                               {(r.dependsOnExternalRefs?.length ?? 0) > 0 && (
                                 <span
-                                  className="inline-flex items-center gap-0.5 text-[9px] font-black bg-[var(--color-accent-soft)] text-[var(--color-accent)] px-1 rounded shrink-0"
+                                  className="inline-flex items-center gap-0.5 text-[11px] font-black bg-[var(--color-surface-2)] text-[var(--color-text)] px-1 rounded shrink-0"
                                   title={`${r.dependsOnExternalRefs!.length} predecessor link${r.dependsOnExternalRefs!.length === 1 ? "" : "s"} from the source schedule`}
                                 >
                                   <Link2 className="w-2.5 h-2.5" />{r.dependsOnExternalRefs!.length}
                                 </span>
                               )}
                             </div>
-                            {r.externalRef && <div className="text-[10px] font-mono text-[var(--color-text-faint)] truncate">{r.externalRef}</div>}
+                            {r.externalRef && <div className="text-[11px] font-mono text-[var(--color-text-faint)] truncate">{r.externalRef}</div>}
                           </td>
                           <td className="px-3 py-1.5 text-[var(--color-text)]">
                             <CalIcon className="inline w-3 h-3 mr-1 text-[var(--color-text-faint)]" />
                             {humanDate(r.plannedAt, tz)}
                           </td>
-                          <td className="px-3 py-1.5 text-[10px] font-mono text-[var(--color-text-muted)] truncate">
+                          <td className="px-3 py-1.5 text-[11px] font-mono text-[var(--color-text-muted)] truncate">
                             {r.parentExternalRef ? r.parentExternalRef.split(":")[1] : <span className="text-slate-300">-</span>}
                           </td>
                           <td className="px-3 py-1.5 text-[var(--color-text)] font-mono">{r.outlineLevel ?? <span className="text-slate-300">-</span>}</td>
@@ -633,7 +633,7 @@ function FormatBadge({ label, hint }: { label: string; hint: string }) {
   return (
     <div className="inline-flex flex-col items-center gap-0.5 px-2.5 py-1 rounded-md bg-[var(--color-surface)] border border-[var(--color-border)]">
       <span className="text-[11px] font-mono font-black text-[var(--color-text)]">{label}</span>
-      <span className="text-[9px] text-[var(--color-text-muted)]">{hint}</span>
+      <span className="text-[11px] text-[var(--color-text-muted)]">{hint}</span>
     </div>
   );
 }
@@ -656,10 +656,10 @@ function humanDate(iso: string, tz: string): string {
 function XmlExportGuide({ filename, format }: { filename: string; format: "msproject-mpp" | "msproject-mpx" }) {
   const ext = format === "msproject-mpp" ? ".mpp" : ".mpx";
   return (
-    <div className="rounded-xl border border-[var(--color-accent-ring)]/50 bg-[var(--color-accent-soft)]/60 overflow-hidden">
-      <div className="px-4 py-3 bg-gradient-to-r from-[var(--color-accent-soft)] to-[var(--color-accent-soft)]/40 border-b border-[var(--color-accent-ring)]/40 flex items-center gap-2.5">
+    <div className="rounded-xl border border-[var(--color-accent-ring)]/50 bg-[var(--color-surface-2)] overflow-hidden">
+      <div className="px-4 py-3 border-b border-[var(--color-accent-ring)]/40 flex items-center gap-2.5 bg-[var(--color-surface-2)]">
         <div className="w-9 h-9 rounded-lg bg-[var(--color-surface)] border border-[var(--color-accent-ring)]/50 flex items-center justify-center shrink-0">
-          <FileText className="w-4 h-4 text-[var(--color-accent)]" />
+          <FileText className="w-4 h-4 text-[var(--color-text-muted)]" />
         </div>
         <div className="flex-1 min-w-0">
           <div className="text-sm font-black text-[var(--color-text)]">This file needs to be exported as XML first</div>
@@ -674,13 +674,13 @@ function XmlExportGuide({ filename, format }: { filename: string; format: "mspro
           <div className="text-xs font-black text-emerald-900 dark:text-emerald-200 uppercase tracking-widest mb-2">Exact copy · no setup</div>
           <ol className="space-y-1.5 text-xs text-emerald-900/90">
             <Step n={1}>
-              Open <code className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-800 text-[10px]">{filename || "your schedule"}</code> in Microsoft Project.
+              Open <code className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-800 text-[11px]">{filename || "your schedule"}</code> in Microsoft Project.
             </Step>
             <Step n={2}>
               <b>File → Save As</b> (or <kbd className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-800">F12</kbd>) → choose <b>XML Format (*.xml)</b> and save.
             </Step>
             <Step n={3}>
-              Drag that new <code className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-800 text-[10px]">.xml</code> file right here. It imports with all dependencies, resources, and exact dates.
+              Drag that new <code className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-800 text-[11px]">.xml</code> file right here. It imports with all dependencies, resources, and exact dates.
             </Step>
           </ol>
         </div>
@@ -692,7 +692,7 @@ function XmlExportGuide({ filename, format }: { filename: string; format: "mspro
 function Step({ n, children }: { n: number; children: React.ReactNode }) {
   return (
     <li className="flex items-start gap-2.5">
-      <span className="shrink-0 w-5 h-5 rounded-full bg-amber-600 text-white text-[10px] font-black flex items-center justify-center mt-0.5">{n}</span>
+      <span className="shrink-0 w-5 h-5 rounded-full bg-amber-600 text-white text-[11px] font-black flex items-center justify-center mt-0.5">{n}</span>
       <span className="flex-1">{children}</span>
     </li>
   );
@@ -761,7 +761,7 @@ function StatCell({ label, value, tone }: { label: string; value: string; tone: 
                        "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text)]";
   return (
     <div className={`rounded-md border px-2 py-1 ${cls}`}>
-      <div className="text-[9px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">{label}</div>
+      <div className="text-[11px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">{label}</div>
       <div className="font-mono font-bold text-[12px]">{value}</div>
     </div>
   );

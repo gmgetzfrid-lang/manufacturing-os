@@ -140,7 +140,7 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
               {shown.map((r) => {
                 const why = attention(r, now);
                 return (
-                  <tr key={r.id} onClick={() => canManage && setOpen({ row: r, fields: { ...r } })} title={why.join(" · ")} className={`border-b last:border-b-0 border-[var(--color-border)] align-top ${canManage ? "cursor-pointer hover:bg-[var(--color-surface-2)]" : ""} ${why.length ? "bg-orange-50/60 dark:bg-orange-950/10" : ""}`}>
+                  <tr key={r.id} onClick={() => canManage && setOpen({ row: r, fields: { ...r } })} title={why.join(" · ")} className={`border-b last:border-b-0 border-[var(--color-border)] align-top ${canManage ? "cursor-pointer hover:bg-[var(--color-surface-2)]" : ""} ${why.length ? "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]" : ""}`}>
                     <td className="px-2.5 py-2"><b className="text-[var(--color-text)]">{r.item}</b>{(r.kind === "offsite" || r.vendor) && <div className="text-[12px] text-[var(--color-text-muted)]">{r.kind === "offsite" ? "Off-site repair" : ""}{r.kind === "offsite" && r.vendor ? " · " : ""}{r.vendor}</div>}</td>
                     <td className="px-2.5 py-2 text-[var(--color-text)]">{specCell(r)}</td>
                     <td className="px-2.5 py-2 text-[var(--color-text)]">{r.workOrder}</td>
@@ -160,7 +160,7 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
             const why = attention(r, now);
             return (
               <li key={r.id}>
-                <button type="button" disabled={!canManage} onClick={() => setOpen({ row: r, fields: { ...r } })} className={`w-full text-left rounded-xl border px-3 py-2.5 text-[12.5px] ${why.length ? "border-orange-300 bg-orange-50/60 dark:bg-orange-950/10" : "border-[var(--color-border)] bg-[var(--color-surface)]"}`}>
+                <button type="button" disabled={!canManage} onClick={() => setOpen({ row: r, fields: { ...r } })} className={`w-full text-left rounded-xl border px-3 py-2.5 text-[12.5px] ${why.length ? "border-[var(--color-text)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]" : "border-[var(--color-border)] bg-[var(--color-surface)]"}`}>
                   <div className="flex items-start gap-2"><b className="min-w-0 flex-1 text-[13.5px] text-[var(--color-text)]">{r.item}</b><span className={`${tag} ${statusTone(r.status)}`}>{STATUS_WORD[r.status]}</span></div>
                   <div className="text-[var(--color-text-muted)]">{[r.kind === "offsite" ? "Off-site repair" : null, r.vendor, r.workOrder].filter(Boolean).join(" · ")}</div>
                   <div className="mt-1 text-[var(--color-text)]"><span className="text-[var(--color-text-muted)]">Spec: </span>{specCell(r)}</div>

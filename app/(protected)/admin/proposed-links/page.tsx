@@ -33,7 +33,7 @@ import EstateReviewPanel from "@/components/intelligence/EstateReviewPanel";
 
 const TIER_STYLE: Record<ProposalTier, string> = {
   provable: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300",
-  strong: "bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300",
+  strong: "bg-[var(--color-surface-2)] text-[var(--color-text)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)]",
   inferred: "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300",
 };
 
@@ -161,7 +161,7 @@ export default function ProposedLinksPage() {
         subtitle="What the system found in your own extracted data - each with the evidence behind it. Nothing here was applied without you."
         actions={canRun ? (
           <button onClick={() => void runProposers()} disabled={running}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-black text-white bg-violet-600 hover:bg-violet-500 disabled:opacity-60">
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
             {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
             {running ? "Scanning…" : "Find connections"}
           </button>
@@ -238,11 +238,11 @@ export default function ProposedLinksPage() {
                   {/* The pair */}
                   <div className="flex items-center gap-2 flex-wrap">
                     <Link href={docLink(p.doc)} className="inline-flex items-center gap-1.5 text-xs font-black text-[var(--color-text)] hover:text-[var(--color-accent)]">
-                      <FileText className="w-3.5 h-3.5 text-blue-600" /> {docLabel(p.doc)}
+                      <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {docLabel(p.doc)}
                     </Link>
                     <span className="text-[var(--color-text-faint)] text-xs">↔</span>
                     <Link href={docLink(p.target)} className="inline-flex items-center gap-1.5 text-xs font-black text-[var(--color-text)] hover:text-[var(--color-accent)]">
-                      <FileText className="w-3.5 h-3.5 text-blue-600" /> {docLabel(p.target)}
+                      <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {docLabel(p.target)}
                     </Link>
                   </div>
 
@@ -253,14 +253,14 @@ export default function ProposedLinksPage() {
                   )}
 
                   <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
-                    <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wide ${TIER_STYLE[p.tier]}`}>
+                    <span className={`px-1.5 py-0.5 rounded-full text-[11px] font-black uppercase tracking-wide ${TIER_STYLE[p.tier]}`}>
                       {TIER_LABELS[p.tier]}
                     </span>
-                    <span className="text-[10px] font-bold text-[var(--color-text-muted)]">
+                    <span className="text-[11px] font-bold text-[var(--color-text-muted)]">
                       {proposerLabel(p.proposer, p.evidence)}
                     </span>
                     {p.source_rev && (
-                      <span className="text-[10px] text-[var(--color-text-faint)]">from rev {p.source_rev}</span>
+                      <span className="text-[11px] text-[var(--color-text-faint)]">from rev {p.source_rev}</span>
                     )}
                   </div>
                 </div>

@@ -79,7 +79,7 @@ export function Modal({
 
 export function ModalHeader({
   icon: Icon,
-  iconClassName = "bg-[var(--color-accent-soft)] text-[var(--color-accent)]",
+  iconClassName = "bg-[var(--color-surface-2)] text-[var(--color-text)]",
   title,
   subtitle,
   onClose,

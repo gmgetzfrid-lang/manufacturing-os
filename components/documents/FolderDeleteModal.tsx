@@ -96,12 +96,12 @@ export default function FolderDeleteModal({
   const option = (value: "all" | "lift", Icon: typeof FolderX, t: string, children: React.ReactNode, disabled?: boolean) => (
     <label className={`flex items-start gap-3 rounded-xl border-2 p-3 cursor-pointer transition-colors ${
       mode === value
-        ? value === "all" ? "border-rose-500 bg-rose-50/70 dark:bg-rose-950/20" : "border-blue-500 bg-blue-50/70 dark:bg-blue-950/20"
+        ? value === "all" ? "border-rose-500 bg-rose-50/70 dark:bg-rose-950/20" : "border-[var(--color-border-strong)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]"
         : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
     } ${disabled ? "opacity-60 cursor-not-allowed" : ""}`}>
       <input type="radio" name="folder-delete-mode" className="mt-1" checked={mode === value} disabled={disabled || !!running}
         onChange={() => setMode(value)} />
-      <Icon className={`w-5 h-5 shrink-0 mt-0.5 ${value === "all" ? "text-rose-600" : "text-blue-600"}`} />
+      <Icon className={`w-5 h-5 shrink-0 mt-0.5 ${value === "all" ? "text-rose-600" : "text-[var(--color-text-muted)]"}`} />
       <span className="min-w-0">
         <span className="block text-sm font-black text-[var(--color-text)]">{t}</span>
         <span className="block text-xs text-[var(--color-text-muted)] mt-0.5">{children}</span>
@@ -176,7 +176,7 @@ export default function FolderDeleteModal({
             </button>
             <button onClick={() => void go()} disabled={!canGo}
               className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-black text-white disabled:opacity-40 ${
-                mode === "all" || empty ? "bg-rose-600 hover:bg-rose-700" : "bg-blue-600 hover:bg-blue-700"}`}>
+                mode === "all" || empty ? "bg-rose-600 hover:bg-rose-700" : "bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]"}`}>
               {running ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
               {running ? "Deleting…"
                 : empty ? (one ? "Delete folder" : `Delete ${folders.length} folders`)

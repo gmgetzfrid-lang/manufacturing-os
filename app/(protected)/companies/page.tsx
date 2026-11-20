@@ -171,7 +171,7 @@ function CompanyCard({ company: c, profile }: { company: Company; profile: Compa
         <div className="shrink-0 flex flex-col items-center">
           <ScoreDial score={sc?.composite ?? null} size={76} label={band.label} />
           {sc && sc.evidenceCount > 0 && (
-            <span className="mt-1 text-[9px] text-[var(--color-text-faint)]" title="How much recorded evidence backs this score">
+            <span className="mt-1 text-[11px] text-[var(--color-text-faint)]" title="How much recorded evidence backs this score">
               {sc.evidenceCount} evidence point{sc.evidenceCount === 1 ? "" : "s"}
             </span>
           )}
@@ -180,19 +180,19 @@ function CompanyCard({ company: c, profile }: { company: Company; profile: Compa
         {/* Identity + dimensions */}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-black text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)] transition-colors">{c.name}</span>
-            <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)]">{COMPANY_KIND_LABEL[c.kind]}</span>
-            {c.trade && <span className="text-[10px] text-[var(--color-text-muted)]">{c.trade}</span>}
+            <span className="text-sm font-black text-[var(--color-text)] truncate group-hover:text-[var(--color-text)] transition-colors">{c.name}</span>
+            <span className="text-[11px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)]">{COMPANY_KIND_LABEL[c.kind]}</span>
+            {c.trade && <span className="text-[11px] text-[var(--color-text-muted)]">{c.trade}</span>}
             {c.status === "do_not_use" && (
-              <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border border-rose-500/50 bg-rose-500/10 text-rose-700 dark:text-rose-300">Do not use</span>
+              <span className="text-[11px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border border-rose-500/50 bg-rose-500/10 text-rose-700 dark:text-rose-300">Do not use</span>
             )}
-            {c.status === "inactive" && <span className="text-[9px] font-bold text-[var(--color-text-faint)]">inactive</span>}
+            {c.status === "inactive" && <span className="text-[11px] font-bold text-[var(--color-text-faint)]">inactive</span>}
           </div>
 
           {/* The five dimensions — each shows its work on hover AND in text. */}
           <div className="mt-2 space-y-1">
             {(sc?.dimensions ?? []).map((d) => (
-              <div key={d.key} className="flex items-center gap-2 text-[10px]" title={d.detail}>
+              <div key={d.key} className="flex items-center gap-2 text-[11px]" title={d.detail}>
                 <span className="w-24 shrink-0 font-bold text-[var(--color-text-muted)]">{d.label}</span>
                 {d.score != null ? (
                   <>
@@ -208,14 +208,14 @@ function CompanyCard({ company: c, profile }: { company: Company; profile: Compa
               </div>
             ))}
             {!profile && (
-              <div className="flex items-center gap-1.5 text-[10px] text-[var(--color-text-faint)]"><Loader2 className="w-3 h-3 animate-spin" /> gathering the record…</div>
+              <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-faint)]"><Loader2 className="w-3 h-3 animate-spin" /> gathering the record…</div>
             )}
           </div>
         </div>
       </div>
 
       {/* Fact strip — the juicy row. */}
-      <div className="mt-3 pt-2.5 border-t border-[var(--color-border)] flex flex-wrap gap-x-4 gap-y-1.5 text-[10px] text-[var(--color-text-muted)]">
+      <div className="mt-3 pt-2.5 border-t border-[var(--color-border)] flex flex-wrap gap-x-4 gap-y-1.5 text-[11px] text-[var(--color-text-muted)]">
         {(profile?.projects.length ?? 0) > 0 && (
           <span className="inline-flex items-center gap-1" title={profile!.projects.map((p) => p.projectName).join(", ")}>
             <Briefcase className="w-3 h-3" /> {profile!.projects.length} job{profile!.projects.length === 1 ? "" : "s"}
@@ -286,7 +286,7 @@ function AddCompanyModal({ orgId, actorId, onClose, onCreated }: {
     <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
-          <div className="p-2 bg-[var(--color-accent-soft)] rounded-lg"><HardHat className="w-5 h-5 text-[var(--color-accent)]" /></div>
+          <div className="p-2 bg-[var(--color-surface-2)] rounded-lg"><HardHat className="w-5 h-5 text-[var(--color-text-muted)]" /></div>
           <div className="flex-1">
             <div className="text-sm font-black text-[var(--color-text)]">Add a known company</div>
             <div className="text-xs text-[var(--color-text-muted)]">Their record builds itself from real work - this is just the front of the file.</div>

@@ -111,22 +111,22 @@ export default function VerifyPage() {
             {/* The facts card */}
             <div className="bg-white/95 rounded-2xl shadow-2xl p-5 text-left space-y-3">
               <div>
-                <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Document</div>
+                <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">Document</div>
                 <div className="text-sm font-bold text-slate-900">{result.docNumber ?? "-"}</div>
                 {result.title && <div className="text-xs text-slate-500 mt-0.5">{result.title}</div>}
               </div>
               <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-100">
                 <div>
-                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">This print</div>
+                  <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">This print</div>
                   <div className={`text-lg font-black ${result.isCurrent ? "text-emerald-600" : "text-red-600"}`}>
                     Rev {result.printedRev ?? "?"}
                   </div>
-                  <div className="text-[10px] text-slate-400">issued {fmt(result.printedAt)}</div>
+                  <div className="text-[11px] text-slate-400">issued {fmt(result.printedAt)}</div>
                 </div>
                 <div>
-                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Current</div>
+                  <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">Current</div>
                   <div className="text-lg font-black text-slate-900">Rev {result.currentRev ?? "?"}</div>
-                  <div className="text-[10px] text-slate-400">issued {fmt(result.currentIssuedAt)}</div>
+                  <div className="text-[11px] text-slate-400">issued {fmt(result.currentIssuedAt)}</div>
                 </div>
               </div>
               {!result.isCurrent && (
@@ -137,7 +137,7 @@ export default function VerifyPage() {
               )}
             </div>
 
-            <div className="mt-5 text-[10px] text-white/60">
+            <div className="mt-5 text-[11px] text-white/60">
               Checked {new Date(result.checkedAt).toLocaleString()} · Refinery OS document control
             </div>
             <button

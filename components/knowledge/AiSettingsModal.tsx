@@ -68,7 +68,7 @@ function Notice({ notice }: { notice: { tone: "ok" | "err"; text: string } | nul
 }
 
 const NoKeyChip = ({ label }: { label: string }) => (
-  <span className="inline-flex items-center gap-1 text-[10px] font-black text-amber-700 dark:text-amber-400">
+  <span className="inline-flex items-center gap-1 text-[11px] font-black text-amber-700 dark:text-amber-400">
     <AlertTriangle className="w-3 h-3" /> {label}
   </span>
 );
@@ -200,7 +200,7 @@ export function KeyEditor({ orgId, current, onChanged }: {
           Your API key (only you use it, only you pay for it)
         </div>
         {current && !grandfatheredBlocked ? (
-          <span className="inline-flex items-center gap-1 text-[10px] font-black text-emerald-700 dark:text-emerald-400">
+          <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-700 dark:text-emerald-400">
             <KeyRound className="w-3 h-3" /> ACTIVE · ····{current.keyLast4 ?? "????"}
           </span>
         ) : !current ? (
@@ -217,7 +217,7 @@ export function KeyEditor({ orgId, current, onChanged }: {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <label className="block">
-          <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Provider</span>
+          <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Provider</span>
           <Select value={provider} onChange={(e) => {
             setProvider(e.target.value);
             const meta = PROVIDERS.find((p) => p.id === e.target.value);
@@ -227,15 +227,15 @@ export function KeyEditor({ orgId, current, onChanged }: {
           </Select>
         </label>
         <label className="block">
-          <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Main model</span>
+          <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Main model</span>
           <Select value={model} onChange={(e) => pickModel(e.target.value)} disabled={busy !== null}>
             {options.map((m) => <option key={m} value={m}>{modelLabel(m, offered)}</option>)}
           </Select>
         </label>
       </div>
-      <p className="text-[10px] text-[var(--color-text-muted)]">{PROVIDER_BLOCK_MESSAGE}</p>
+      <p className="text-[11px] text-[var(--color-text-muted)]">{PROVIDER_BLOCK_MESSAGE}</p>
       <label className="block">
-        <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+        <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
           API key {current ? "(leave blank to keep the saved key)" : ""}
         </span>
         <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)}
@@ -255,7 +255,7 @@ export function KeyEditor({ orgId, current, onChanged }: {
         )}
       </div>
       <Notice notice={notice} />
-      <p className="text-[10px] text-[var(--color-text-muted)]">
+      <p className="text-[11px] text-[var(--color-text-muted)]">
         <b>Verify &amp; save</b> makes a live call with the key first - a key that saves is a key that
         works. <b>Test only</b> never saves anything. Saving again replaces your key; if your provider
         runs out of credits it simply stops answering until you top up.
@@ -336,7 +336,7 @@ export function JobModelsEditor({ orgId, current, jobModels, ready, jobUse, onCh
                 </Select>
                 {busy === j.id && <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" />}
               </div>
-              <p className="text-[10.5px] text-[var(--color-text-muted)]">
+              <p className="text-[11px] text-[var(--color-text-muted)]">
                 Cost per {j.use.per}{own && own.n >= 3 ? ` from your average of ${own.n}` : " at a typical size"}.
               </p>
             </li>
@@ -474,7 +474,7 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
           <Sparkles className="w-3.5 h-3.5" /> Meaning-based search (optional)
         </div>
         {saved ? (
-          <span className="inline-flex items-center gap-1 text-[10px] font-black text-emerald-700 dark:text-emerald-400">
+          <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-700 dark:text-emerald-400">
             <KeyRound className="w-3 h-3" /> ACTIVE · ····{current?.embeddingKeyLast4 ?? "????"}
           </span>
         ) : reusingChatKey ? null : (
@@ -490,7 +490,7 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
       </p>
 
       {reusingChatKey && !saved && (
-        <div className="rounded-lg border border-cyan-300 dark:border-cyan-800 bg-cyan-50 dark:bg-cyan-950/30 px-3 py-2 text-[11px] text-cyan-900 dark:text-cyan-200">
+        <div className="rounded-lg border border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] px-3 py-2 text-[11px] text-[var(--color-text)] dark:text-[var(--color-text)]">
           Your OpenAI chat key already works for embeddings - nothing to add here unless you
           want to use a different provider.
         </div>
@@ -498,7 +498,7 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <label className="block">
-          <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Provider</span>
+          <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Provider</span>
           <Select value={provider} onChange={(e) => {
             setProvider(e.target.value);
             setModel(defaultEmbeddingModel(e.target.value as "voyage" | "openai"));
@@ -507,16 +507,16 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
           </Select>
         </label>
         <label className="block">
-          <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Model</span>
+          <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Model</span>
           <Select value={model} onChange={(e) => setModel(e.target.value)}>
             {meta.models.map((m) => <option key={m} value={m}>{m}</option>)}
           </Select>
         </label>
       </div>
-      <p className="text-[10px] text-[var(--color-text-muted)]">{meta.hint}</p>
+      <p className="text-[11px] text-[var(--color-text-muted)]">{meta.hint}</p>
 
       <label className="block">
-        <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+        <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
           Embeddings API key {saved ? "(leave blank to keep the saved key)" : ""}
         </span>
         <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)}
@@ -538,7 +538,7 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
         )}
       </div>
       <Notice notice={notice} />
-      <p className="text-[10px] text-[var(--color-text-muted)]">
+      <p className="text-[11px] text-[var(--color-text-muted)]">
         <b>Verify &amp; save</b> makes a real embed call with the key first - a key that saves is a key
         that works. Embedding spend bills to <b>your own account with that provider</b>; the meter&apos;s
         figure is an estimate, your provider&apos;s invoice is the real number.
@@ -629,7 +629,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
   return (
     <div className="rounded-xl border border-[var(--color-border)] px-3.5 py-3 space-y-3">
       <div className="flex items-center justify-between gap-2">
-        <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
+        <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
           <Gauge className="w-3.5 h-3.5" /> Your AI usage - {usage.monthLabel}
         </div>
         <span className={`text-xs font-black ${capped ? "text-rose-600" : hot ? "text-amber-600" : "text-[var(--color-text)]"}`}>
@@ -653,7 +653,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
           <span><b className="text-[var(--color-text)]">{fmtUsd(background)}</b> on indexing and reading documents</span>
         )}
       </div>
-      <p className="text-[10px] text-[var(--color-text-muted)]">
+      <p className="text-[11px] text-[var(--color-text-muted)]">
         These numbers are YOURS alone: every question you ask, and every indexing or drawing-reading run
         your key pays for, writes a metering row under your user id with the token counts your provider
         reported - nobody else&apos;s work is mixed in. All of it counts toward the cap.
@@ -671,11 +671,11 @@ export function UsagePanel({ orgId }: { orgId: string }) {
       {usage.team && (
         <div className="pt-2 border-t border-[var(--color-border)] space-y-2">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
+            <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
               <Users className="w-3.5 h-3.5" /> Team this month
             </span>
             <div className="ml-auto flex items-center gap-1.5">
-              <span className="text-[10px] text-[var(--color-text-muted)]">Cap $/person</span>
+              <span className="text-[11px] text-[var(--color-text-muted)]">Cap $/person</span>
               <Input value={capDraft} onChange={(e) => setCapDraft(e.target.value)}
                 className="!w-20 !py-1 text-xs" inputMode="decimal" />
               <Button variant="secondary" onClick={() => void saveCap()} disabled={savingCap}
@@ -705,7 +705,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
                     disabled={savingUser === m.userId}
                     onChange={(e) => void setMemberCap(m.userId, m.name, e.target.value)}
                     title={`${m.name}'s monthly cap`}
-                    className={`shrink-0 w-[74px] text-[10px] font-black rounded-lg border px-1 py-0.5 bg-[var(--color-surface)] cursor-pointer disabled:opacity-50 ${
+                    className={`shrink-0 w-[74px] text-[11px] font-black rounded-lg border px-1 py-0.5 bg-[var(--color-surface)] cursor-pointer disabled:opacity-50 ${
                       m.hasOverride
                         ? "border-[var(--color-accent)] text-[var(--color-accent)]"
                         : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
@@ -718,7 +718,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
               );
             })}
           </ul>
-          <p className="text-[10px] text-[var(--color-text-muted)]">
+          <p className="text-[11px] text-[var(--color-text-muted)]">
             Each person meters against their own cap - the dropdown sets it (highlighted = personal
             override, &ldquo;def&rdquo; = the workspace default). Estimated from exact provider token counts ×
             published rates; questions lock server-side at 100% and reset on the 1st (UTC).

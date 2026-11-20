@@ -98,24 +98,24 @@ export default function CollectionsStrip({
   if (collections.length === 0 && !openCollectionId && !creating) return null;
 
   return (
-    <div className="px-4 py-3 border-b border-[var(--color-border)] bg-gradient-to-b from-purple-50/40 to-white">
+    <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2 min-w-0">
-          <FolderKanban className="w-4 h-4 text-purple-700 shrink-0" />
-          <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text)] shrink-0">
+          <FolderKanban className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
+          <span className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text)] shrink-0">
             Curated Collections
           </span>
           {/* Scope chip — makes it obvious these books belong to THIS folder. */}
-          <span className="text-[10px] font-bold text-purple-700 bg-purple-50 border border-purple-200 rounded px-1.5 py-px truncate max-w-[180px]" title={folderId && folderName ? `Books in “${folderName}”` : "Books at the library root"}>
+          <span className="text-[11px] font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded px-1.5 py-px truncate max-w-[180px]" title={folderId && folderName ? `Books in “${folderName}”` : "Books at the library root"}>
             {folderId && folderName ? folderName : "Library root"}
           </span>
           {collections.length > 0 && (
-            <span className="text-[10px] text-[var(--color-text-faint)] shrink-0">· {collections.length}</span>
+            <span className="text-[11px] text-[var(--color-text-faint)] shrink-0">· {collections.length}</span>
           )}
         </div>
         <button
           onClick={() => setCreating(true)}
-          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-purple-600 hover:bg-purple-500 text-white shadow-sm transition-colors"
+          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] shadow-sm transition-colors"
         >
           <Plus className="w-3 h-3" /> New Collection
         </button>
@@ -185,7 +185,7 @@ function CollectionCard({
       title={count > 0 ? "Open book" : "Add documents to this book"}
       className={`group shrink-0 w-60 rounded-2xl border p-3 shadow-sm hover-lift transition-all relative cursor-pointer ${
         isOrg
-          ? "bg-[var(--color-surface)] border-purple-200 hover:border-purple-300"
+          ? "bg-[var(--color-surface)] border-[var(--color-border)] hover:border-[var(--color-border)]"
           : "bg-[var(--color-surface)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"
       }`}
     >
@@ -202,14 +202,14 @@ function CollectionCard({
 
         <div className="min-w-0 flex-1 pr-4">
           <div className="text-xs font-black text-[var(--color-text)] line-clamp-2 leading-snug">{collection.name}</div>
-          <div className="mt-1 text-[10px] font-bold text-[var(--color-text-muted)]">
+          <div className="mt-1 text-[11px] font-bold text-[var(--color-text-muted)]">
             {count} {count === 1 ? "sheet" : "sheets"}
           </div>
           <div className="mt-1.5">
             {isOrg ? (
-              <span className="text-[9px] font-black uppercase tracking-widest text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200">Pinned</span>
+              <span className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded border border-[var(--color-border)]">Pinned</span>
             ) : (
-              <span className="text-[9px] font-black uppercase tracking-widest text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded border border-[var(--color-border)] inline-flex items-center gap-0.5">
+              <span className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded border border-[var(--color-border)] inline-flex items-center gap-0.5">
                 <UserIcon className="w-2.5 h-2.5" /> Personal
               </span>
             )}

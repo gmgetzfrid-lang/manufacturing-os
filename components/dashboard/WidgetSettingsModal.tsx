@@ -52,7 +52,7 @@ export default function WidgetSettingsModal({ widget, onClose, onSave }: Props) 
 
   if (!meta) return null;
   const set = (k: string, v: unknown) => setDraft((d) => ({ ...d, [k]: v }));
-  const input = "w-full h-9 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)]";
+  const input = "w-full h-9 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-border-strong)]";
 
   const renderField = (f: WidgetSettingField) => {
     const v = draft[f.key];
@@ -109,7 +109,7 @@ export default function WidgetSettingsModal({ widget, onClose, onSave }: Props) 
       <div className="relative w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden max-h-[85vh] flex flex-col">
         <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]">
           <div className="flex items-center gap-2 min-w-0">
-            <Settings2 className="w-5 h-5 text-[var(--color-accent)] shrink-0" />
+            <Settings2 className="w-5 h-5 text-[var(--color-text-muted)] shrink-0" />
             <div className="min-w-0">
               <h2 className="text-base font-black text-[var(--color-text)] truncate">{meta.title} settings</h2>
               <p className="text-xs text-[var(--color-text-muted)]">Only this widget changes.</p>

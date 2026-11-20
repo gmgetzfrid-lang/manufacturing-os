@@ -89,7 +89,7 @@ export default function NodePeek({
         <div className="flex-1 min-w-0">
           <div className="text-xs font-black text-[var(--color-text)] break-words">{node.label}</div>
           {node.sub && <div className="text-[11px] text-[var(--color-text-muted)] break-words">{node.sub}</div>}
-          <div className="text-[10px] text-[var(--color-text-faint)] mt-0.5">
+          <div className="text-[11px] text-[var(--color-text-faint)] mt-0.5">
             {labelFor(node.type)} · {node.degree} connection{node.degree === 1 ? "" : "s"}
           </div>
         </div>
@@ -102,7 +102,7 @@ export default function NodePeek({
             interrogate is a link nobody trusts. */}
         {(loading || (evidence && evidence.length > 0)) && (
           <div className="border-t border-[var(--color-border)] pt-2">
-            <div className="flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+            <div className="flex items-center gap-1 text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
               <Quote className="w-3 h-3" />
               {isAsset ? "Mentioned in" : "Mentions"}
               {evidence && <span className="text-[var(--color-text-faint)]">· {evidence.length}</span>}
@@ -115,7 +115,7 @@ export default function NodePeek({
             {evidence?.slice(0, 12).map((e, i) => (
               <div key={`${e.assetId}-${e.knowledgeDocumentId ?? e.documentId}-${e.page}-${i}`}
                 className="mb-1.5 rounded-lg bg-[var(--color-surface-2)] px-2 py-1.5">
-                <div className="flex items-center gap-1 text-[10px] font-black text-[var(--color-text)]">
+                <div className="flex items-center gap-1 text-[11px] font-black text-[var(--color-text)]">
                   <FileText className="w-3 h-3 shrink-0 text-[var(--color-text-faint)]" />
                   <span className="truncate">{isAsset ? e.documentName : e.assetTag}</span>
                   <span className="ml-auto shrink-0 text-[var(--color-text-faint)] font-bold">
@@ -127,7 +127,7 @@ export default function NodePeek({
                   “{e.snippet}”
                 </div>
                 {e.confidence < 0.9 && (
-                  <div className="text-[9px] font-black uppercase tracking-wider text-amber-700 mt-0.5">
+                  <div className="text-[11px] font-black uppercase tracking-wider text-amber-700 mt-0.5">
                     {e.origin} match · unreviewed
                   </div>
                 )}
@@ -146,7 +146,7 @@ export default function NodePeek({
         {/* WHERE TO — walking the web is the whole interaction. */}
         {connections.length > 0 && (
           <div className="border-t border-[var(--color-border)] pt-2">
-            <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+            <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
               Connected · {connections.length}
             </div>
             <div className="space-y-0.5">
@@ -156,7 +156,7 @@ export default function NodePeek({
                   <span className="mt-1 w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: colorFor(c.type) }} />
                   <span className="flex-1 min-w-0">
                     <span className="block text-[11px] font-bold text-[var(--color-text)] truncate">{c.label}</span>
-                    {reasons?.get(c.id) && <span className="block text-[10px] text-[var(--color-text-muted)] leading-snug">{reasons.get(c.id)}</span>}
+                    {reasons?.get(c.id) && <span className="block text-[11px] text-[var(--color-text-muted)] leading-snug">{reasons.get(c.id)}</span>}
                   </span>
                   <CornerDownLeft className="mt-0.5 w-3 h-3 shrink-0 text-[var(--color-text-faint)] opacity-0 group-hover:opacity-100" />
                 </button>

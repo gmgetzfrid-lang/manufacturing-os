@@ -142,7 +142,7 @@ export function BarList({ items, fmt, className = "" }: {
           <div className="flex items-baseline justify-between gap-2 text-[11px]">
             <span className={`truncate font-bold ${it.highlight ? "text-[var(--color-accent)]" : "text-[var(--color-text)]"}`}>
               {it.label}
-              {it.flag && <span className="ml-1.5 font-black text-[10px] text-rose-600 dark:text-rose-400">{it.flag}</span>}
+              {it.flag && <span className="ml-1.5 font-black text-[11px] text-rose-600 dark:text-rose-400">{it.flag}</span>}
             </span>
             <span className="tabular-nums font-black text-[var(--color-text)] shrink-0">{fmt(it.value)}</span>
           </div>
@@ -154,7 +154,7 @@ export function BarList({ items, fmt, className = "" }: {
                 opacity: it.highlight ? 1 : 0.75,
               }} />
           </div>
-          {it.sublabel && <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">{it.sublabel}</div>}
+          {it.sublabel && <div className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">{it.sublabel}</div>}
         </div>
       ))}
     </div>
@@ -200,7 +200,7 @@ export function ScoreDial({ score, size = 64, label, className = "" }: {
         <div className="font-black tabular-nums text-[var(--color-text)]" style={{ fontSize: size / 3.4 }}>
           {score == null ? "-" : Math.round(score)}
         </div>
-        {label && <div className="mt-0.5 text-[8px] font-black uppercase tracking-wider" style={{ color }}>{label}</div>}
+        {label && <div className="mt-0.5 text-[11px] font-black uppercase tracking-wider" style={{ color }}>{label}</div>}
       </div>
     </div>
   );
@@ -245,7 +245,7 @@ export function Donut({ segments, size = 96, fmt, centerLabel, className = "" }:
           })}
         </svg>
         {centerLabel && (
-          <div className="absolute inset-0 flex items-center justify-center text-[10px] font-black text-[var(--color-text-muted)] text-center leading-tight">
+          <div className="absolute inset-0 flex items-center justify-center text-[11px] font-black text-[var(--color-text-muted)] text-center leading-tight">
             {centerLabel}
           </div>
         )}
@@ -283,10 +283,10 @@ export function ExampleFrame({ children, note, className = "" }: {
         </span>
       </div>
       <div className="px-3 pt-2.5 pb-1 flex items-center gap-2">
-        <span className="text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40">
+        <span className="text-[11px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40">
           Example data
         </span>
-        <span className="text-[10px] text-[var(--color-text-muted)]">
+        <span className="text-[11px] text-[var(--color-text-muted)]">
           {note ?? "This is what the view looks like with a job in flight - it turns real as your numbers land."}
         </span>
       </div>

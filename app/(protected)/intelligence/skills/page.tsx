@@ -121,11 +121,11 @@ export default function SkillLibraryPage() {
 
   const badgeRow = (r: { builtin_key: string | null; visibility: string }, kindLabel: string) => (
     <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
-      <span className="text-[9px] font-black uppercase tracking-wide text-[var(--color-text-muted)]">{kindLabel}</span>
+      <span className="text-[11px] font-black uppercase tracking-wide text-[var(--color-text-muted)]">{kindLabel}</span>
       {r.builtin_key ? (
-        <span className="text-[9px] font-black uppercase tracking-wide text-violet-600">Built-in</span>
+        <span className="text-[11px] font-black uppercase tracking-wide text-[var(--color-text)]">Built-in</span>
       ) : (
-        <span className="inline-flex items-center gap-0.5 text-[9px] font-black uppercase tracking-wide text-[var(--color-text-faint)]">
+        <span className="inline-flex items-center gap-0.5 text-[11px] font-black uppercase tracking-wide text-[var(--color-text-faint)]">
           {r.visibility === "org" ? <Users className="w-2.5 h-2.5" /> : <Lock className="w-2.5 h-2.5" />}
           {r.visibility === "org" ? "Org-wide" : "Private"}
         </span>
@@ -139,7 +139,7 @@ export default function SkillLibraryPage() {
     onToggle: () => Promise<void>; onFlip: () => Promise<void>; onDelete: () => Promise<void>;
   }) => (
     <div className="flex items-center gap-1.5 pt-1 border-t border-[var(--color-border)]/60">
-      <span className="text-[10px] text-[var(--color-text-faint)] flex-1 truncate">
+      <span className="text-[11px] text-[var(--color-text-faint)] flex-1 truncate">
         {opts.builtin ? "Ships with the engine" : `by ${opts.mine ? "you" : (opts.authorName ?? "a teammate")}`}
       </span>
       {!opts.builtin && opts.mayManage && (
@@ -163,7 +163,7 @@ export default function SkillLibraryPage() {
     opts.mayManage ? (
       <button type="button" onClick={() => void guard(opts.id, opts.onToggle)} disabled={busyId === opts.id}
         title={opts.enabled ? "Disable - it stops running" : "Enable"}
-        className={`shrink-0 inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-[10px] font-black border transition-colors ${opts.enabled
+        className={`shrink-0 inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-[11px] font-black border transition-colors ${opts.enabled
           ? "border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40"
           : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`}>
         {busyId === opts.id ? <Loader2 className="w-3 h-3 animate-spin" />
@@ -176,10 +176,10 @@ export default function SkillLibraryPage() {
     activeOrgId && uid ? (
       <button type="button" onClick={() => setStudioKind(kind)}
         style={{ animation: "rise 0.45s var(--ease-fluid) both", animationDelay: `${Math.min(delayIndex, 9) * 60}ms` }}
-        className="rounded-2xl border-2 border-dashed border-[var(--color-border-strong)] hover:border-violet-400 min-h-[10rem] flex flex-col items-center justify-center gap-2 text-[var(--color-text-muted)] hover:text-violet-700 transition-colors p-4">
+        className="rounded-2xl border-2 border-dashed border-[var(--color-border-strong)] hover:border-[var(--color-border-strong)] min-h-[10rem] flex flex-col items-center justify-center gap-2 text-[var(--color-text-muted)] hover:text-[var(--color-accent-hover)] transition-colors p-4">
         <Sparkles className="w-6 h-6" />
         <span className="text-xs font-black">Build a skill</span>
-        <span className="text-[10px] text-center max-w-[16rem]">{blurb}</span>
+        <span className="text-[11px] text-center max-w-[16rem]">{blurb}</span>
       </button>
     ) : null
   );
@@ -226,7 +226,7 @@ export default function SkillLibraryPage() {
                 style={{ animation: "rise 0.4s var(--ease-fluid) both", animationDelay: `${i * 60}ms` }}
                 className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2.5">
                 <div className="text-xl font-black text-[var(--color-text)] tabular-nums">{s.n}</div>
-                <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">{s.label}</div>
+                <div className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">{s.label}</div>
               </div>
             ))}
           </div>
@@ -250,10 +250,10 @@ export default function SkillLibraryPage() {
                     className={`rounded-2xl border overflow-hidden transition-all ${r.enabled
                       ? "border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm hover:shadow-md"
                       : "border-dashed border-[var(--color-border)] bg-[var(--color-surface-2)]/40 opacity-75"}`}>
-                    <div className={`h-1 bg-gradient-to-r ${REASONING_HUE} ${r.enabled ? "" : "opacity-30"}`} />
+                    <div className={`h-1 bg-[var(--color-border)] ${r.enabled ? "" : "opacity-30"}`} />
                     <div className="p-4 space-y-2">
                       <div className="flex items-start gap-2.5">
-                        <span className={`shrink-0 w-9 h-9 rounded-xl bg-gradient-to-br ${REASONING_HUE} text-white flex items-center justify-center shadow-sm ${r.enabled ? "" : "grayscale"}`}>
+                        <span className={`shrink-0 w-9 h-9 rounded-xl bg-[var(--color-surface-2)] text-[var(--color-text)] flex items-center justify-center shadow-sm ${r.enabled ? "" : "grayscale"}`}>
                           <BrainCircuit className="w-[18px] h-[18px]" />
                         </span>
                         <div className="flex-1 min-w-0">
@@ -268,10 +268,10 @@ export default function SkillLibraryPage() {
                       {/* The pack itself, on demand — the description sells it,
                           the details prove it. */}
                       <details className="group">
-                        <summary className="cursor-pointer text-[10px] font-black uppercase tracking-wider text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] list-none">
+                        <summary className="cursor-pointer text-[11px] font-black uppercase tracking-wider text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] list-none">
                           View the discipline ▸
                         </summary>
-                        <pre className="mt-1.5 whitespace-pre-wrap text-[10px] leading-relaxed text-[var(--color-text-muted)] bg-[var(--color-surface-2)]/60 rounded-lg p-2.5 max-h-48 overflow-y-auto font-sans">{r.instructions}</pre>
+                        <pre className="mt-1.5 whitespace-pre-wrap text-[11px] leading-relaxed text-[var(--color-text-muted)] bg-[var(--color-surface-2)]/60 rounded-lg p-2.5 max-h-48 overflow-y-auto font-sans">{r.instructions}</pre>
                       </details>
                       {cardControls({
                         id: r.id, name: r.name, builtin: !!r.builtin_key, mayManage, mine,
@@ -291,7 +291,7 @@ export default function SkillLibraryPage() {
 
           {/* ── Connection skills ────────────────────────────────────────── */}
           {shelfHeading(
-            <Waypoints className="w-5 h-5 text-violet-600 mt-0.5 shrink-0" />,
+            <Waypoints className="w-5 h-5 text-[var(--color-text-muted)] mt-0.5 shrink-0" />,
             "Connection skills",
             "Detectors the engine runs to grow the org graph. Findings queue for review - nothing custom applies itself.",
           )}
@@ -310,10 +310,10 @@ export default function SkillLibraryPage() {
                     className={`rounded-2xl border overflow-hidden transition-all ${r.enabled
                       ? "border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm hover:shadow-md"
                       : "border-dashed border-[var(--color-border)] bg-[var(--color-surface-2)]/40 opacity-75"}`}>
-                    <div className={`h-1 bg-gradient-to-r ${meta.hue} ${r.enabled ? "" : "opacity-30"}`} />
+                    <div className={`h-1 bg-[var(--color-border)] ${r.enabled ? "" : "opacity-30"}`} />
                     <div className="p-4 space-y-2">
                       <div className="flex items-start gap-2.5">
-                        <span className={`shrink-0 w-9 h-9 rounded-xl bg-gradient-to-br ${meta.hue} text-white flex items-center justify-center shadow-sm ${r.enabled ? "" : "grayscale"}`}>
+                        <span className={`shrink-0 w-9 h-9 rounded-xl bg-[var(--color-surface-2)] text-[var(--color-text)] flex items-center justify-center shadow-sm ${r.enabled ? "" : "grayscale"}`}>
                           <KindIcon className="w-[18px] h-[18px]" />
                         </span>
                         <div className="flex-1 min-w-0">
@@ -328,10 +328,10 @@ export default function SkillLibraryPage() {
                       {(r.config?.patterns?.length ?? 0) > 0 && (
                         <div className="flex items-center gap-1 flex-wrap">
                           {r.config.patterns!.slice(0, 3).map((p) => (
-                            <code key={p} className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[10px] font-mono text-[var(--color-text)] max-w-full truncate">{p}</code>
+                            <code key={p} className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[11px] font-mono text-[var(--color-text)] max-w-full truncate">{p}</code>
                           ))}
                           {(r.config.patterns!.length > 3) && (
-                            <span className="text-[10px] text-[var(--color-text-faint)]">+{r.config.patterns!.length - 3}</span>
+                            <span className="text-[11px] text-[var(--color-text-faint)]">+{r.config.patterns!.length - 3}</span>
                           )}
                         </div>
                       )}
@@ -352,9 +352,9 @@ export default function SkillLibraryPage() {
           )}
 
           <div className="mt-6 flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
-            <Waypoints className="w-3.5 h-3.5 text-violet-600 shrink-0" />
+            <Waypoints className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
             Connection skills run with “Find connections”; reasoning skills ride every question.
-            <Link href="/admin/proposed-links" className="inline-flex items-center gap-0.5 font-black text-violet-700 hover:text-violet-600">
+            <Link href="/admin/proposed-links" className="inline-flex items-center gap-0.5 font-black text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">
               Review what the engine found <ArrowUpRight className="w-3 h-3" />
             </Link>
           </div>

@@ -48,7 +48,7 @@ export default function QrBadge({ value, size = 128, caption, className }: QrBad
         className="rounded-lg border border-[var(--color-border)] bg-white p-1"
       />
       {caption && (
-        <span className="text-[10px] text-[var(--color-text-muted)] text-center max-w-[160px] leading-tight">
+        <span className="text-[11px] text-[var(--color-text-muted)] text-center max-w-[160px] leading-tight">
           {caption}
         </span>
       )}

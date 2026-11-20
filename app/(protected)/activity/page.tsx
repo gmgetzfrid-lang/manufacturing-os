@@ -63,14 +63,14 @@ const ACTION_VERBS: Record<string, { verb: string; emoji?: string; icon: React.C
 };
 const TONE_BG: Record<string, string> = {
   slate: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]",
-  indigo: "bg-indigo-50 text-indigo-700 border-indigo-200",
+  indigo: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
   emerald: "bg-emerald-50 text-emerald-700 border-emerald-200",
   amber: "bg-amber-50 text-amber-700 border-amber-200",
   rose: "bg-rose-50 text-rose-700 border-rose-200",
-  sky: "bg-sky-50 text-sky-700 border-sky-200",
-  blue: "bg-blue-50 text-blue-700 border-blue-200",
-  violet: "bg-violet-50 text-violet-700 border-violet-200",
-  fuchsia: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200",
+  sky: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
+  blue: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
+  violet: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
+  fuchsia: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
 };
 
 const RESOURCE_LABEL: Record<string, string> = {
@@ -229,8 +229,8 @@ export default function ActivityFeedPage() {
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
               {([
-                ["Revisions", pulse.revisions, GitBranch, "text-blue-600 bg-blue-50"],
-                ["Checkouts", pulse.locks, Lock, "text-indigo-600 bg-indigo-50"],
+                ["Revisions", pulse.revisions, GitBranch, "text-[var(--color-text)] bg-[var(--color-surface-2)]"],
+                ["Checkouts", pulse.locks, Lock, "text-[var(--color-text)] bg-[var(--color-surface-2)]"],
                 ["Holds", pulse.holds, AlertOctagon, "text-rose-600 bg-rose-50"],
                 ["Milestones", pulse.milestones, Zap, "text-emerald-600 bg-emerald-50"],
                 ["Equipment", pulse.equipment, Layers, "text-amber-600 bg-amber-50"],
@@ -238,7 +238,7 @@ export default function ActivityFeedPage() {
                 <div key={label} className="rounded-xl border border-[var(--color-border)] p-2.5">
                   <div className={`w-7 h-7 rounded-lg flex items-center justify-center mb-1.5 ${cls}`}><Icon className="w-3.5 h-3.5" /></div>
                   <div className="text-lg font-black text-[var(--color-text)] leading-none">{n}</div>
-                  <div className="text-[10px] font-bold text-[var(--color-text-faint)] uppercase tracking-wider mt-1">{label}</div>
+                  <div className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase tracking-wider mt-1">{label}</div>
                 </div>
               ))}
             </div>

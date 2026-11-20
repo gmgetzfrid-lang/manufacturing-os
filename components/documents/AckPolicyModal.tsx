@@ -94,14 +94,14 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
     finally { setBusy(false); }
   };
 
-  const inp = "text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 outline-none focus:border-[var(--color-accent)]";
+  const inp = "text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 outline-none focus:border-[var(--color-border-strong)]";
   const nobody = enabled && people.length === 0 && roles.length === 0 && teamIds.length === 0;
 
   return (
     <div className="fixed inset-0 z-[520] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4" onClick={onClose}>
       <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3">
-          <ClipboardCheck className="w-5 h-5 text-[var(--color-accent)]" />
+          <ClipboardCheck className="w-5 h-5 text-[var(--color-text-muted)]" />
           <div className="flex-1 min-w-0">
             <div className="text-sm font-bold text-[var(--color-text)]">Read &amp; understood</div>
             <div className="text-[11px] text-[var(--color-text-muted)] truncate">Every issued revision in this {scopeLabel}{name ? ` · ${name}` : ""} must be acknowledged</div>
@@ -143,7 +143,7 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
                       <button key={r} onClick={() => toggleRole(r)} className={`px-2 py-0.5 rounded-full text-[11px] font-bold border transition-colors ${roles.includes(r) ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{r}</button>
                     ))}
                   </div>
-                  <div className="text-[10px] text-[var(--color-text-muted)]">Role members are resolved to individuals each time a revision is issued.</div>
+                  <div className="text-[11px] text-[var(--color-text-muted)]">Role members are resolved to individuals each time a revision is issued.</div>
                 </div>
 
                 {allTeams.length > 0 && (
@@ -154,7 +154,7 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
                         <button key={t.id} onClick={() => toggleTeam(t.id)} className={`px-2 py-0.5 rounded-full text-[11px] font-bold border transition-colors ${teamIds.includes(t.id) ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{t.name}</button>
                       ))}
                     </div>
-                    <div className="text-[10px] text-[var(--color-text-muted)]">Department members are resolved to individuals each time a revision is issued.</div>
+                    <div className="text-[11px] text-[var(--color-text-muted)]">Department members are resolved to individuals each time a revision is issued.</div>
                   </div>
                 )}
 

@@ -99,12 +99,12 @@ export default function CompanyProfilePage() {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-xl font-black text-[var(--color-text)] flex items-center gap-2">
-                <HardHat className="w-5 h-5 text-[var(--color-accent)]" /> {company.name}
+                <HardHat className="w-5 h-5 text-[var(--color-text-muted)]" /> {company.name}
               </h1>
-              <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)]">{COMPANY_KIND_LABEL[company.kind]}</span>
+              <span className="text-[11px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)]">{COMPANY_KIND_LABEL[company.kind]}</span>
               {company.trade && <span className="text-xs text-[var(--color-text-muted)]">{company.trade}</span>}
               {company.status !== "active" && (
-                <span className={`text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${company.status === "do_not_use" ? "border-rose-500/50 bg-rose-500/10 text-rose-700 dark:text-rose-300" : "border-[var(--color-border)] text-[var(--color-text-faint)]"}`}>
+                <span className={`text-[11px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${company.status === "do_not_use" ? "border-rose-500/50 bg-rose-500/10 text-rose-700 dark:text-rose-300" : "border-[var(--color-border)] text-[var(--color-text-faint)]"}`}>
                   {company.status === "do_not_use" ? "Do not use" : "Inactive"}
                 </span>
               )}
@@ -142,7 +142,7 @@ export default function CompanyProfilePage() {
               {!profile && <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-faint)]"><Loader2 className="w-3 h-3 animate-spin" /> gathering the record…</div>}
             </div>
             {sc && (
-              <div className="mt-2 text-[10px] text-[var(--color-text-faint)]">
+              <div className="mt-2 text-[11px] text-[var(--color-text-faint)]">
                 Score computed from {sc.evidenceCount} recorded evidence point{sc.evidenceCount === 1 ? "" : "s"} - never from typed-in ratings. Dimensions without evidence stay Unrated and don&apos;t count.
               </div>
             )}
@@ -235,17 +235,17 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
   return (
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
-        <BookOpenCheck className="w-4 h-4 text-[var(--color-accent)]" />
+        <BookOpenCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-sm font-bold text-[var(--color-text)]">Quality manual</span>
         {company.qualityManualScore != null ? (
           <span className="text-[11px] font-black tabular-nums" style={{ color: scoreBandColor(company.qualityManualScore) }}>
             {Math.round(company.qualityManualScore)}% coverage
           </span>
         ) : (
-          <span className="text-[10px] text-[var(--color-text-muted)]">Not evaluated - the score gauges how much of a real quality program their manual covers.</span>
+          <span className="text-[11px] text-[var(--color-text-muted)]">Not evaluated - the score gauges how much of a real quality program their manual covers.</span>
         )}
         {company.qualityManualReviewedAt && (
-          <span className="ml-auto text-[10px] text-[var(--color-text-faint)]">confirmed {new Date(company.qualityManualReviewedAt).toLocaleDateString()}</span>
+          <span className="ml-auto text-[11px] text-[var(--color-text-faint)]">confirmed {new Date(company.qualityManualReviewedAt).toLocaleDateString()}</span>
         )}
       </div>
 
@@ -266,7 +266,7 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
               <div className="flex items-center gap-2 flex-wrap">
                 {doc ? (
                   <span className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] px-2.5 py-1.5 text-xs font-bold text-[var(--color-text)]">
-                    <FileText className="w-3.5 h-3.5 text-[var(--color-accent)]" /> {doc.label}
+                    <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {doc.label}
                     <button onClick={() => setDoc(null)} className="text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3 h-3" /></button>
                   </span>
                 ) : (
@@ -299,7 +299,7 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
             <>
               <div className="flex items-center gap-2">
                 <span className="text-xs font-black text-[var(--color-text)]">Proposed: {proposal.score}% coverage</span>
-                <span className="text-[10px] text-[var(--color-text-muted)]">Review the findings - nothing lands on the record until you confirm.</span>
+                <span className="text-[11px] text-[var(--color-text-muted)]">Review the findings - nothing lands on the record until you confirm.</span>
                 <span className="ml-auto flex items-center gap-2">
                   <button onClick={() => setProposal(null)} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Discard</button>
                   <button onClick={() => void confirm()} disabled={confirming}
@@ -349,9 +349,9 @@ function EventsPanel({ orgId, company, events, canManage, actorId, actorName, on
   return (
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
-        <ShieldAlert className="w-4 h-4 text-[var(--color-accent)]" />
+        <ShieldAlert className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-sm font-bold text-[var(--color-text)]">Safety &amp; performance log</span>
-        <span className="text-[10px] text-[var(--color-text-muted)]">Dated facts, attributed - these feed the safety score. Near-miss REPORTING barely costs points; it&apos;s healthy culture.</span>
+        <span className="text-[11px] text-[var(--color-text-muted)]">Dated facts, attributed - these feed the safety score. Near-miss REPORTING barely costs points; it&apos;s healthy culture.</span>
       </div>
       {canManage && (
         <div className="px-4 py-2.5 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
@@ -409,13 +409,13 @@ function HistoryPanels({ profile, scorecard }: { profile: CompanyProfileData | n
       {projects.length > 0 && (
         <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
           <div className="px-4 py-2.5 border-b border-[var(--color-border)] flex items-center gap-2 text-sm font-bold text-[var(--color-text)]">
-            <Briefcase className="w-4 h-4 text-[var(--color-accent)]" /> Jobs ({projects.length})
+            <Briefcase className="w-4 h-4 text-[var(--color-text-muted)]" /> Jobs ({projects.length})
           </div>
           <ul className="divide-y divide-[var(--color-border)]">
             {projects.map((p) => (
               <li key={p.projectId} className="px-4 py-2 text-xs">
                 <Link href={`/projects/${p.projectId}`} className="font-bold text-[var(--color-text)] hover:text-[var(--color-accent)]">{p.projectName}</Link>
-                <div className="text-[10px] text-[var(--color-text-muted)]">
+                <div className="text-[11px] text-[var(--color-text-muted)]">
                   {[p.trade, p.contractValue != null ? `contract ${fmtMoney(p.contractValue)}` : null].filter(Boolean).join(" · ") || "-"}
                 </div>
               </li>
@@ -426,7 +426,7 @@ function HistoryPanels({ profile, scorecard }: { profile: CompanyProfileData | n
       {bids.length > 0 && (
         <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
           <div className="px-4 py-2.5 border-b border-[var(--color-border)] flex items-center gap-2 text-sm font-bold text-[var(--color-text)]">
-            <Trophy className="w-4 h-4 text-[var(--color-accent)]" /> Bid history ({bids.filter((b) => b.won).length}/{bids.length} won)
+            <Trophy className="w-4 h-4 text-[var(--color-text-muted)]" /> Bid history ({bids.filter((b) => b.won).length}/{bids.length} won)
           </div>
           <ul className="divide-y divide-[var(--color-border)]">
             {bids.map((b, i) => (
@@ -434,8 +434,8 @@ function HistoryPanels({ profile, scorecard }: { profile: CompanyProfileData | n
                 <span className="text-[var(--color-text)]">{b.rfqGroup ?? "Quote"}</span>
                 {b.total != null && <span className="font-black tabular-nums">{fmtMoney(b.total)}</span>}
                 {b.won
-                  ? <span className="ml-auto text-[9px] font-black uppercase text-emerald-700 dark:text-emerald-300">won</span>
-                  : <span className="ml-auto text-[9px] font-bold uppercase text-[var(--color-text-faint)]">not selected</span>}
+                  ? <span className="ml-auto text-[11px] font-black uppercase text-emerald-700 dark:text-emerald-300">won</span>
+                  : <span className="ml-auto text-[11px] font-bold uppercase text-[var(--color-text-faint)]">not selected</span>}
               </li>
             ))}
           </ul>
@@ -444,19 +444,19 @@ function HistoryPanels({ profile, scorecard }: { profile: CompanyProfileData | n
       {changeOrders.length > 0 && (
         <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm md:col-span-2">
           <div className="px-4 py-2.5 border-b border-[var(--color-border)] flex items-center gap-2 text-sm font-bold text-[var(--color-text)]">
-            <GitPullRequestArrow className="w-4 h-4 text-[var(--color-accent)]" /> Change orders on their scopes ({changeOrders.length})
+            <GitPullRequestArrow className="w-4 h-4 text-[var(--color-text-muted)]" /> Change orders on their scopes ({changeOrders.length})
           </div>
           <ul className="divide-y divide-[var(--color-border)]">
             {changeOrders.map((co, i) => (
               <li key={i} className="px-4 py-2 text-xs flex items-center gap-2 flex-wrap">
-                <span className="font-mono text-[10px] font-black text-[var(--color-text-muted)]">{co.coNumber}</span>
+                <span className="font-mono text-[11px] font-black text-[var(--color-text-muted)]">{co.coNumber}</span>
                 <span className="text-[var(--color-text)]">{co.title}</span>
                 <span className="font-black tabular-nums">{fmtMoney(co.amount)}</span>
-                <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${co.reasonCode === "scope_gap" ? "border-rose-500/40 bg-rose-500/[0.06] text-rose-700 dark:text-rose-300" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}
+                <span className={`text-[11px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${co.reasonCode === "scope_gap" ? "border-rose-500/40 bg-rose-500/[0.06] text-rose-700 dark:text-rose-300" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}
                   title={co.reasonCode === "scope_gap" ? "Their bid missed this scope - counts against their cost discipline" : undefined}>
                   {CO_REASON_LABEL[co.reasonCode as CoReason] ?? co.reasonCode}
                 </span>
-                <span className="ml-auto text-[9px] font-bold uppercase text-[var(--color-text-faint)]">{co.status}</span>
+                <span className="ml-auto text-[11px] font-bold uppercase text-[var(--color-text-faint)]">{co.status}</span>
               </li>
             ))}
           </ul>

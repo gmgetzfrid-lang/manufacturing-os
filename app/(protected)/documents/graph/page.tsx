@@ -762,7 +762,7 @@ function GraphPageInner() {
               <button onClick={() => jumpTo(activeIdx)} className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 hover:bg-[var(--color-canvas)]" title="Centre on this result">
                 <Crosshair className="w-3.5 h-3.5 text-sky-600" />
                 <span className="font-bold tabular-nums">{activeIdx + 1}</span><span className="text-[var(--color-text-muted)]">/ {hits.length}</span>
-                <span className={`rounded-full border px-1.5 py-px text-[10px] font-bold ${VERDICT_STYLE[activeHit.verdict]}`}>{VERDICT_LABEL[activeHit.verdict]} · {activeHit.score}</span>
+                <span className={`rounded-full border px-1.5 py-px text-[11px] font-bold ${VERDICT_STYLE[activeHit.verdict]}`}>{VERDICT_LABEL[activeHit.verdict]} · {activeHit.score}</span>
                 <FileTypeIcon type={fileTypeOf(activeHit.entry.name)} className="w-3.5 h-3.5" />
                 <span className="font-semibold max-w-[260px] truncate">{activeHit.entry.name}</span>
               </button>
@@ -993,11 +993,11 @@ function HitCard({ hit, rank, active, relations, pages, onReveal, onOpen, onPage
       <div className="flex items-start gap-2">
         <button onClick={onReveal} className="flex-1 text-left min-w-0">
           <div className="flex items-center gap-1.5">
-            <span className={`shrink-0 w-5 h-5 rounded-full grid place-items-center text-[10px] font-extrabold text-white ${active ? "bg-sky-500" : "bg-slate-800"}`}>{rank}</span>
-            <span className={`shrink-0 rounded-full border px-1.5 py-px text-[10px] font-bold ${VERDICT_STYLE[hit.verdict]}`}>{VERDICT_LABEL[hit.verdict]} · {hit.score}</span>
+            <span className={`shrink-0 w-5 h-5 rounded-full grid place-items-center text-[11px] font-extrabold text-white ${active ? "bg-sky-500" : "bg-slate-800"}`}>{rank}</span>
+            <span className={`shrink-0 rounded-full border px-1.5 py-px text-[11px] font-bold ${VERDICT_STYLE[hit.verdict]}`}>{VERDICT_LABEL[hit.verdict]} · {hit.score}</span>
             <FileTypeIcon type={fileTypeOf(e.name)} className="w-4 h-4 shrink-0" />
             <span className="text-sm font-semibold truncate">{e.name}</span>
-            {e.read?.status === "ready" && <span title={`Content read by AI (${e.read.pages} pages)`} className="shrink-0 inline-flex items-center gap-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 px-1.5 text-[10px] font-bold"><Eye className="w-3 h-3" /> read</span>}
+            {e.read?.status === "ready" && <span title={`Content read by AI (${e.read.pages} pages)`} className="shrink-0 inline-flex items-center gap-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 px-1.5 text-[11px] font-bold"><Eye className="w-3 h-3" /> read</span>}
           </div>
           {e.title && e.title !== e.name && <div className="text-[11px] text-[var(--color-text-muted)] truncate">{e.title}</div>}
           <PathCrumbs entry={e} />
@@ -1027,7 +1027,7 @@ function SelectedCard({ entry, hit, sameBytes, onClose, onReveal, onOpen, orgId,
           <div className="text-[11px] text-[var(--color-text-muted)]">{fileTypeOf(entry.name).label}</div>
           {entry.title && entry.title !== entry.name && <div className="text-xs text-[var(--color-text-muted)] truncate">{entry.title}</div>}
           <PathCrumbs entry={entry} />
-          <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-[var(--color-text-muted)]">
+          <div className="mt-1 flex flex-wrap gap-1 text-[11px] text-[var(--color-text-muted)]">
             {entry.number && <span className="rounded bg-[var(--color-surface)] border border-[var(--color-border)] px-1">{entry.number}{entry.rev ? ` rev ${entry.rev}` : ""}</span>}
             {entry.status && <span className="rounded bg-[var(--color-surface)] border border-[var(--color-border)] px-1">{entry.status}</span>}
             {entry.years.length > 0 && <span className="rounded bg-[var(--color-surface)] border border-[var(--color-border)] px-1">dated {entry.years.join(", ")}</span>}
@@ -1146,7 +1146,7 @@ function EntityPanel({ orgId, sat, data, entryById, nodeById, serverFind: liveFi
           <div className="text-base font-black leading-tight">{sat.label}</div>
           {asset?.description && <div className="text-xs text-[var(--color-text-muted)]">{asset.description}</div>}
           {about && (about.typeName || about.code || about.location) && (
-            <div className="mt-0.5 flex flex-wrap gap-1 text-[10px]">
+            <div className="mt-0.5 flex flex-wrap gap-1 text-[11px]">
               {about.typeName && <span className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1">{about.typeName}</span>}
               {about.code && <span className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 font-mono">site code {about.code}</span>}
               {about.location && <span className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1">{about.location}</span>}
@@ -1158,10 +1158,10 @@ function EntityPanel({ orgId, sat, data, entryById, nodeById, serverFind: liveFi
       </div>
       {about?.callout && (about.callout.name || about.callout.details) && (
         <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-xs">
-          <div className="text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">As printed on the drawing</div>
+          <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">As printed on the drawing</div>
           {about.callout.name && <div className="font-semibold">{about.callout.name}</div>}
           {about.callout.details && <div className="text-[11px] text-[var(--color-text-muted)]">{about.callout.details}</div>}
-          {about.callout.sheet && <div className="text-[10px] text-[var(--color-text-faint)]">{about.callout.sheet}{about.callout.page ? `, page ${about.callout.page}` : ""}</div>}
+          {about.callout.sheet && <div className="text-[11px] text-[var(--color-text-faint)]">{about.callout.sheet}{about.callout.page ? `, page ${about.callout.page}` : ""}</div>}
         </div>
       )}
       {asset && (

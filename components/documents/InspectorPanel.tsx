@@ -339,7 +339,7 @@ export default function InspectorPanel({
     <div className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-300">
 
       {/* HEADER ─────────────────────────────────────────────────────── */}
-      <div className="rounded-xl border border-[var(--color-border)] bg-gradient-to-br from-slate-50 to-white p-4">
+      <div className="rounded-xl border border-[var(--color-border)] p-4 bg-[var(--color-surface-2)]">
         <div className="text-lg font-black text-[var(--color-text)] leading-tight break-words">{title}</div>
         <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
           {selectedDoc.documentNumber && (
@@ -354,7 +354,7 @@ export default function InspectorPanel({
             </HelpTooltip>
           </span>
           <span className="text-slate-300">•</span>
-          <span className="inline-flex items-center text-[10px] font-bold border px-1.5 py-0.5 rounded-md bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)] gap-0.5">
+          <span className="inline-flex items-center text-[11px] font-bold border px-1.5 py-0.5 rounded-md bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)] gap-0.5">
             {selectedDoc.status || "-"}
             <HelpTooltip>
               <b>Draft</b> - not yet released.
@@ -393,10 +393,10 @@ export default function InspectorPanel({
           can carry. A doc with unmerged parallel work must look WRONG
           everywhere you meet it, not just in specialist views. */}
       {openBranches.length > 0 && (
-        <div className="rounded-xl border-2 border-purple-300 bg-purple-50 p-3">
+        <div className="rounded-xl border-2 border-[var(--color-border)] bg-[var(--color-surface-2)] p-3">
           <div className="flex items-start gap-2">
-            <GitBranch className="w-4 h-4 mt-0.5 text-purple-600 shrink-0" />
-            <div className="flex-1 min-w-0 text-xs text-purple-900">
+            <GitBranch className="w-4 h-4 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
+            <div className="flex-1 min-w-0 text-xs text-[var(--color-text)]">
               <b>Unreconciled branch{openBranches.length > 1 ? "es" : ""} on this document.</b>{" "}
               {openBranches.map((b) => (
                 <span key={b.id} className="block mt-1 text-[11px]">
@@ -404,7 +404,7 @@ export default function InspectorPanel({
                   {new Date(b.createdAt).toLocaleDateString()} - &ldquo;{b.reason}&rdquo;
                 </span>
               ))}
-              <span className="block mt-1.5 text-[10px] text-purple-700">
+              <span className="block mt-1.5 text-[11px] text-[var(--color-text)]">
                 The current revision does <b>not</b> include that work. Resolve it from the
                 Control Tower&apos;s open-items queue (merge into a new revision, or withdraw).
               </span>
@@ -528,7 +528,7 @@ export default function InspectorPanel({
           title="Distribution & sharing"
           icon={Send}
           summary={distSummary && (distSummary.issued > 0 || distSummary.ackTotal > 0)
-            ? <span className="text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md">
+            ? <span className="text-[11px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md">
                 {distSummary.issued > 0 ? `${distSummary.issued}${distSummary.issuedCapped ? "+" : ""} issued` : ""}
                 {distSummary.issued > 0 && distSummary.ackTotal > 0 ? " · " : ""}
                 {distSummary.ackTotal > 0 ? `${distSummary.ackDone}/${distSummary.ackTotal} confirmed` : ""}
@@ -600,7 +600,7 @@ export default function InspectorPanel({
               customColumns,
             ).reduce((n, g) => n + g.tags.length, 0);
             return tagCount > 0
-              ? <span className="text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md">
+              ? <span className="text-[11px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md">
                   {tagCount} equipment tag{tagCount === 1 ? "" : "s"}
                 </span>
               : undefined;
@@ -714,7 +714,7 @@ export default function InspectorPanel({
           title="Checkout"
           icon={Lock}
           summary={isCheckedOut
-            ? <span className="inline-flex items-center text-[10px] font-bold border px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-800 border-amber-200">
+            ? <span className="inline-flex items-center text-[11px] font-bold border px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-800 border-amber-200">
                 {checkedOutByMe ? "Checked out by you" : `Checked out · ${selectedDoc.checkedOutByName || "someone"}`}
               </span>
             : undefined}
@@ -772,7 +772,7 @@ export default function InspectorPanel({
             onClick={() => setCompareOpen(true)}
             disabled={!selectedDoc.id}
             title="Overlay any two revisions - grey unchanged, red removed, green added"
-            className="flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl border border-violet-200 bg-violet-50 text-xs font-bold text-violet-800 hover:bg-violet-100 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            className="flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-all disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <GitCompare className="w-3.5 h-3.5" /> Compare revisions
           </button>
@@ -804,9 +804,9 @@ export default function InspectorPanel({
           <div className="space-y-3">
             {recentAudits.map((log, i) => (
               <div key={i} className="flex flex-col gap-0.5 border-l-2 border-[var(--color-border)] pl-3">
-                <span className="text-[10px] font-bold text-[var(--color-text)] uppercase">{log.action.replace(/_/g, ' ')}</span>
-                <span className="text-[10px] text-[var(--color-text-muted)]">by {log.userEmail?.split('@')[0]}</span>
-                <span className="text-[9px] text-[var(--color-text-faint)] font-mono">{formatTs(log.timestamp)}</span>
+                <span className="text-[11px] font-bold text-[var(--color-text)] uppercase">{log.action.replace(/_/g, ' ')}</span>
+                <span className="text-[11px] text-[var(--color-text-muted)]">by {log.userEmail?.split('@')[0]}</span>
+                <span className="text-[11px] text-[var(--color-text-faint)] font-mono">{formatTs(log.timestamp)}</span>
               </div>
             ))}
           </div>
@@ -915,7 +915,7 @@ export default function InspectorPanel({
                 catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
               }}
               title="Assemble the full chain-of-custody - revision lineage, holds, and audit trail - into a print-to-PDF report"
-              className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-indigo-200 bg-indigo-50 text-xs font-bold text-indigo-800 hover:bg-indigo-100 transition-all"
+              className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-all"
             >
               <Shield className="w-3.5 h-3.5" /> Evidence pack
             </button>
@@ -1023,7 +1023,7 @@ function TransmittalTrail({ orgId, documentId, currentRev }: { orgId: string; do
   if (rows.length === 0) return null;
   return (
     <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 px-3 py-2.5">
-      <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1.5">Transmitted on</div>
+      <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1.5">Transmitted on</div>
       <ul className="space-y-1">
         {rows.map((r) => {
           const stale = !!(r.rev && currentRev && r.rev !== currentRev);
@@ -1035,10 +1035,10 @@ function TransmittalTrail({ orgId, documentId, currentRev }: { orgId: string; do
                 {r.issuedAt ? ` · ${new Date(r.issuedAt).toLocaleDateString()}` : ""}
               </span>
               {r.status === "acknowledged"
-                ? <span className="text-[9px] font-black text-emerald-700 dark:text-emerald-300">ACK&apos;D</span>
-                : <span className="text-[9px] font-black text-amber-700 dark:text-amber-400">AWAITING ACK</span>}
+                ? <span className="text-[11px] font-black text-emerald-700 dark:text-emerald-300">ACK&apos;D</span>
+                : <span className="text-[11px] font-black text-amber-700 dark:text-amber-400">AWAITING ACK</span>}
               {stale && (
-                <span className="text-[9px] font-black text-rose-700 dark:text-rose-300 bg-rose-500/10 border border-rose-500/40 rounded px-1 py-0.5" title={`They hold Rev ${r.rev}; current is Rev ${currentRev}. Consider a superseding transmittal.`}>
+                <span className="text-[11px] font-black text-rose-700 dark:text-rose-300 bg-rose-500/10 border border-rose-500/40 rounded px-1 py-0.5" title={`They hold Rev ${r.rev}; current is Rev ${currentRev}. Consider a superseding transmittal.`}>
                   HOLDS SUPERSEDED REV
                 </span>
               )}

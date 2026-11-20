@@ -141,11 +141,11 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
         <div className="p-5 space-y-5">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="block">
-              <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Name</span>
+              <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Name</span>
               <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Scope of Work" />
             </label>
             <label className="block">
-              <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">One document per…</span>
+              <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">One document per…</span>
               <Select value={mode} onChange={(e) => setMode(e.target.value as OutputTemplate["mode"])}>
                 <option value="per_row">Row - one document per spreadsheet row</option>
                 <option value="summary">Summary - one document covering all rows</option>
@@ -154,14 +154,14 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
             </label>
           </div>
           <label className="block">
-            <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Description</span>
+            <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Description</span>
             <Input value={description} onChange={(e) => setDescription(e.target.value)}
               placeholder="Issued to contractors for turnaround work orders" />
           </label>
 
           {/* ── Blank template ─────────────────────────────────────────── */}
           <div className="rounded-xl border border-[var(--color-border)] p-3.5">
-            <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5">
+            <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5">
               Blank template - owns all formatting
             </div>
             <div className="flex items-center gap-2 flex-wrap">
@@ -175,8 +175,8 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
               </label>
               {templateFile && (
                 <span className="inline-flex items-center gap-1.5 text-xs font-bold text-[var(--color-text)]">
-                  <FileText className="w-3.5 h-3.5 text-orange-600" /> {templateFile.name}
-                  <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]">
+                  <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {templateFile.name}
+                  <span className="text-[11px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]">
                     {KIND_LABEL[kind]}
                   </span>
                 </span>
@@ -192,7 +192,7 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
               </div>
             )}
             {loops.length > 0 && (
-              <p className="mt-1.5 text-[10px] text-[var(--color-text-muted)]">
+              <p className="mt-1.5 text-[11px] text-[var(--color-text-muted)]">
                 Repeating blocks detected: {loops.map((l) => `{#${l}}`).join(", ")} - these fill from
                 the data rows automatically.
               </p>
@@ -202,14 +202,14 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
           {/* ── Fill points ────────────────────────────────────────────── */}
           {placeholders.length > 0 && (
             <div className="rounded-xl border border-[var(--color-border)] p-3.5">
-              <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-2">
+              <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-2">
                 Fill points - what goes in each blank
               </div>
               <ul className="space-y-2">
                 {placeholders.map((p) => (
                   <li key={p.tag} className="rounded-lg border border-[var(--color-border)] p-2.5">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <code className="text-[11px] font-mono font-black text-orange-600">{`{${p.tag}}`}</code>
+                      <code className="text-[11px] font-mono font-black text-[var(--color-text)]">{`{${p.tag}}`}</code>
                       <div className="ml-auto inline-flex rounded-lg border border-[var(--color-border)] p-0.5">
                         {([
                           ["data", Database, "From data"],
@@ -217,8 +217,8 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
                           ["static", Type, "Fixed text"],
                         ] as const).map(([k, Icon, label]) => (
                           <button key={k} type="button" onClick={() => updatePlaceholder(p.tag, { kind: k })}
-                            className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-black transition-colors ${
-                              p.kind === k ? "bg-orange-600 text-white" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                            className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-black transition-colors ${
+                              p.kind === k ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
                             <Icon className="w-3 h-3" /> {label}
                           </button>
                         ))}
@@ -235,7 +235,7 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
                         placeholder="Fixed text used in every document" />
                     )}
                     {p.kind === "data" && (
-                      <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">
+                      <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
                         Filled from the spreadsheet - the column is matched automatically at generate
                         time (you can correct it there).
                       </p>
@@ -248,7 +248,7 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
 
           {/* ── Examples ───────────────────────────────────────────────── */}
           <div className="rounded-xl border border-[var(--color-border)] p-3.5">
-            <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5">
+            <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5">
               Example documents - the voice to copy
             </div>
             <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
@@ -275,17 +275,17 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
           </div>
 
           <label className="block">
-            <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Standing instructions</span>
+            <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Standing instructions</span>
             <Textarea rows={3} value={instructions} onChange={(e) => setInstructions(e.target.value)}
               className="text-xs"
               placeholder="e.g. Written for contractors - never assume tools or scaffolding are provided. Always name the unit and equipment tag in the first sentence. Use our abbreviations (T/A, PSV, MOC)." />
           </label>
 
           <label className="block">
-            <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">File naming</span>
+            <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">File naming</span>
             <Input value={filenamePattern} onChange={(e) => setFilenamePattern(e.target.value)}
               placeholder="SOW-{wo_number}-{unit}" className="text-xs font-mono" />
-            <span className="block mt-1 text-[10px] text-[var(--color-text-muted)]">
+            <span className="block mt-1 text-[11px] text-[var(--color-text-muted)]">
               Use any fill point in braces. Blank = the template name plus a number.
             </span>
           </label>

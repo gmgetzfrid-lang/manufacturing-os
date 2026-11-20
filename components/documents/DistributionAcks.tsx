@@ -133,16 +133,16 @@ export default function DistributionAcks({
     <div className="space-y-2">
       {/* RECIPIENT FACE — the unmissable confirm bar. */}
       {myPending && (
-        <div className="rounded-xl border-2 border-blue-400 bg-blue-50 p-3 flex items-center gap-3 animate-in fade-in">
-          <ClipboardCheck className="w-5 h-5 text-blue-600 shrink-0" />
-          <div className="flex-1 min-w-0 text-xs text-blue-900">
+        <div className="rounded-xl border-2 border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-3 flex items-center gap-3 animate-in fade-in">
+          <ClipboardCheck className="w-5 h-5 text-[var(--color-text-muted)] shrink-0" />
+          <div className="flex-1 min-w-0 text-xs text-[var(--color-text)]">
             <b>{myPending.requestedByName || "Document Control"}</b> asked you to confirm you have{" "}
             <b>Rev {myPending.revLabel ?? currentRev ?? "?"}</b> of this document.
           </div>
           <button
             onClick={() => void handleAcknowledge()}
             disabled={acking}
-            className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-white bg-blue-600 hover:bg-blue-500 shadow disabled:opacity-50"
+            className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] shadow disabled:opacity-50"
           >
             {acking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
             I have this revision
@@ -157,14 +157,14 @@ export default function DistributionAcks({
             onClick={() => setOpen((v) => !v)}
             className="w-full px-3.5 py-2.5 flex items-center gap-2 hover:bg-[var(--color-surface-2)] transition-colors"
           >
-            <ClipboardCheck className="w-4 h-4 text-blue-600 shrink-0" />
+            <ClipboardCheck className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
             <span className="text-xs font-bold text-[var(--color-text)]">Distribution confirmations</span>
             <span className="ml-auto">
               {acks.length === 0 ? (
-                <span className="text-[10px] font-bold text-[var(--color-text-faint)]">none requested for Rev {currentRev ?? "-"}</span>
+                <span className="text-[11px] font-bold text-[var(--color-text-faint)]">none requested for Rev {currentRev ?? "-"}</span>
               ) : (
-                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
-                  confirmed === acks.length ? "bg-emerald-50 text-emerald-700" : "bg-blue-50 text-blue-700"
+                <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded-full ${
+                  confirmed === acks.length ? "bg-emerald-50 text-emerald-700" : "bg-[var(--color-surface-2)] text-[var(--color-text)]"
                 }`}>
                   {confirmed} of {acks.length} confirmed
                 </span>
@@ -180,7 +180,7 @@ export default function DistributionAcks({
                   {/* Progress bar */}
                   <div className="h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
                     <div
-                      className="h-full bg-blue-500 transition-all duration-500"
+                      className="h-full bg-[var(--color-text-muted)] transition-all duration-500"
                       style={{ width: `${acks.length ? Math.round((confirmed / acks.length) * 100) : 0}%` }}
                     />
                   </div>
@@ -206,18 +206,18 @@ export default function DistributionAcks({
                 <div className="flex items-center gap-2 pt-1">
                   <button
                     onClick={() => void openPicker()}
-                    className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-[10px] font-bold border border-blue-200 text-blue-700 hover:bg-blue-50"
+                    className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-[11px] font-bold border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                   >
                     <UserPlus className="w-3 h-3" /> Request confirmations…
                   </button>
                   {acks.some((a) => !a.acknowledgedAt) && (
                     reminded ? (
-                      <span className="text-[10px] font-bold text-emerald-700">Reminder sent ✓</span>
+                      <span className="text-[11px] font-bold text-emerald-700">Reminder sent ✓</span>
                     ) : (
                       <button
                         onClick={() => void handleRemind()}
                         disabled={busy}
-                        className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-[10px] font-bold border border-amber-200 text-amber-700 hover:bg-amber-50 disabled:opacity-50"
+                        className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-[11px] font-bold border border-amber-200 text-amber-700 hover:bg-amber-50 disabled:opacity-50"
                       >
                         <BellRing className="w-3 h-3" /> Remind the unconfirmed
                       </button>
@@ -230,7 +230,7 @@ export default function DistributionAcks({
               {showPicker && (
                 <div className="rounded-lg border border-[var(--color-border)] p-2 space-y-1.5">
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">
+                    <span className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">
                       Who must confirm Rev {currentRev ?? "?"}?
                     </span>
                     <button onClick={() => setShowPicker(false)} className="p-0.5 rounded hover:bg-[var(--color-surface-2)]">
@@ -253,14 +253,14 @@ export default function DistributionAcks({
                           className="rounded"
                         />
                         <span className="font-bold text-[var(--color-text)]">{m.email?.split("@")[0] ?? m.uid.slice(0, 8)}</span>
-                        {m.role && <span className="text-[9px] text-[var(--color-text-faint)] uppercase">{m.role}</span>}
+                        {m.role && <span className="text-[11px] text-[var(--color-text-faint)] uppercase">{m.role}</span>}
                       </label>
                     ))}
                   </div>
                   <button
                     onClick={() => void handleRequest()}
                     disabled={busy || checked.size === 0}
-                    className="w-full inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50"
+                    className="w-full inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
                   >
                     {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <ClipboardCheck className="w-3 h-3" />}
                     Ask {checked.size || "…"} {checked.size === 1 ? "person" : "people"} to confirm

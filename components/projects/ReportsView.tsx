@@ -624,7 +624,7 @@ export default function ReportsView(p: Props) {
             {sel === "closeout" && (
               <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("project:tab", { detail: "closeout" }))}
                 className="w-full flex items-center gap-2 text-left text-[12.5px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
-                <span className="flex-1">To close the project (PSSR, turnover, punch list), go to <b className="text-[var(--color-accent)] underline">Close-out</b>.</span>
+                <span className="flex-1">To close the project (PSSR, turnover, punch list), go to <b className="text-[var(--color-text)] underline">Close-out</b>.</span>
               </button>
             )}
             {(!meeting || meeting === "turnover" || lhRow) && options}
@@ -666,8 +666,8 @@ export default function ReportsView(p: Props) {
               const on = r.id === sel;
               return (
                 <button key={r.id} type="button" aria-current={on ? "page" : undefined} onClick={() => { setSel(r.id); setPhoneOpen(true); }}
-                  className={`w-full text-left px-4 py-2 border-l-[3px] ${on ? "sm:border-[var(--color-accent)] sm:bg-[var(--color-accent-soft)] border-transparent" : "border-transparent hover:bg-[var(--color-surface-2)]"}`}>
-                  <span className={`block text-[14px] font-bold ${on ? "sm:text-[var(--color-accent)] text-[var(--color-text)]" : "text-[var(--color-text)]"}`}>{r.name}</span>
+                  className={`w-full text-left px-4 py-2 border-l-[3px] ${on ? "sm:border-[var(--color-accent)] sm:bg-[var(--color-surface-2)] border-transparent" : "border-transparent hover:bg-[var(--color-surface-2)]"}`}>
+                  <span className={`block text-[14px] font-bold ${on ? "sm:text-[var(--color-text)] text-[var(--color-text)]" : "text-[var(--color-text)]"}`}>{r.name}</span>
                   <span className="block text-[12px] text-[var(--color-text-muted)] leading-snug">{r.sub}</span>
                 </button>
               );

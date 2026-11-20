@@ -28,10 +28,10 @@ export interface QuickLookFmt {
 
 function Tile({ label, sub, big, small, tone }: { label: string; sub?: string; big: React.ReactNode; small?: React.ReactNode; tone?: "accent" }) {
   return (
-    <div className={`min-w-0 rounded-lg border px-2 py-1.5 sm:px-3 sm:py-2 ${tone === "accent" ? "border-orange-400 bg-orange-50 dark:border-orange-700 dark:bg-orange-950/40" : "border-[var(--color-border)] bg-[var(--color-surface-2)]"}`}>
-      <div className="text-[9px] sm:text-[12px] font-semibold text-[var(--color-text-muted)]">{label}{sub && <span className="hidden sm:inline normal-case font-semibold tracking-normal"> · {sub}</span>}</div>
+    <div className={`min-w-0 rounded-lg border px-2 py-1.5 sm:px-3 sm:py-2 ${tone === "accent" ? "border-[var(--color-border-strong)] bg-[var(--color-surface-2)] dark:border-[var(--color-border)] dark:bg-[var(--color-surface-2)]" : "border-[var(--color-border)] bg-[var(--color-surface-2)]"}`}>
+      <div className="text-[11px] sm:text-[12px] font-semibold text-[var(--color-text-muted)]">{label}{sub && <span className="hidden sm:inline normal-case font-semibold tracking-normal"> · {sub}</span>}</div>
       <div className="text-[13px] sm:text-[18px] font-black leading-tight text-[var(--color-text)] tabular-nums">{big}</div>
-      {small && <div className="text-[10.5px] sm:text-[11.5px] leading-snug text-[var(--color-text-muted)]">{small}</div>}
+      {small && <div className="text-[11px] sm:text-[11.5px] leading-snug text-[var(--color-text-muted)]">{small}</div>}
     </div>
   );
 }
@@ -95,7 +95,7 @@ export function QuickLookCard({ look, goalAt, noteOf, fmt, onOpen, onClose }: {
             <div className="rounded-lg border border-[var(--color-border)] overflow-hidden">
               <table className="w-full text-[12px]">
                 <thead>
-                  <tr className="bg-[var(--color-surface-2)] text-[9.5px] font-black uppercase tracking-wider text-[var(--color-text-muted)] text-left">
+                  <tr className="bg-[var(--color-surface-2)] text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] text-left">
                     <th className="px-2 py-1 w-[104px]">Starts</th>
                     <th className="px-2 py-1 w-[104px] hidden sm:table-cell">Done by</th>
                     <th className="px-2 py-1">Step</th>
@@ -107,13 +107,13 @@ export function QuickLookCard({ look, goalAt, noteOf, fmt, onOpen, onClose }: {
                   {look.order.map((s) => {
                     const fin = s.percent >= 100;
                     return (
-                      <tr key={s.id} className={`border-t border-[var(--color-border)] align-top ${s.isThis ? "bg-orange-50 dark:bg-orange-950/40" : ""}`}>
+                      <tr key={s.id} className={`border-t border-[var(--color-border)] align-top ${s.isThis ? "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]" : ""}`}>
                         <td className="px-2 py-1 font-mono tabular-nums text-[11px] whitespace-nowrap">{fmt.DTs(s.start)}</td>
                         <td className="px-2 py-1 font-mono tabular-nums text-[11px] whitespace-nowrap hidden sm:table-cell">{fmt.DTs(s.finish)}</td>
                         <td className="px-2 py-1">
                           {s.isThis ? <b className="text-[var(--color-text)]">{s.name}</b> : link(s, fin ? "text-[var(--color-text-faint)] line-through" : "font-semibold text-[var(--color-text)]")}
-                          {s.isThis && <span className="ml-1.5 rounded bg-[var(--color-accent)] px-1 py-px text-[9px] font-black uppercase text-[var(--color-accent-fg)]">This step</span>}
-                          {s.isNext && <span className="ml-1.5 rounded bg-slate-800 px-1 py-px text-[9px] font-black uppercase text-white dark:bg-slate-200 dark:text-slate-900">Next</span>}
+                          {s.isThis && <span className="ml-1.5 rounded bg-[var(--color-surface-2)] px-1 py-px text-[11px] font-black uppercase text-[var(--color-text)]">This step</span>}
+                          {s.isNext && <span className="ml-1.5 rounded bg-slate-800 px-1 py-px text-[11px] font-black uppercase text-white dark:bg-slate-200 dark:text-slate-900">Next</span>}
                         </td>
                         <td className="px-2 py-1 hidden sm:table-cell text-[11px] text-[var(--color-text-muted)]">{s.who}</td>
                         <td className="px-2 py-1 text-right font-mono tabular-nums text-[11px]">{fin ? "✓" : `${s.percent}%`}</td>
@@ -197,7 +197,7 @@ export function TaskSearch({ idx, fmt, onPick }: { idx: QuickLookIndex; fmt: Qui
             <button key={h.id} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => pick(h.id)}
               className={`block w-full text-left px-3 py-1.5 ${i === hi ? "bg-[var(--color-surface-2)]" : "hover:bg-[var(--color-surface-2)]"}`}>
               <div className="text-[12px] font-semibold text-[var(--color-text)] truncate">{h.name}</div>
-              <div className="text-[10.5px] text-[var(--color-text-muted)] truncate">{[h.parentName, fmt.DTs(h.start), h.who].filter(Boolean).join(" · ")}</div>
+              <div className="text-[11px] text-[var(--color-text-muted)] truncate">{[h.parentName, fmt.DTs(h.start), h.who].filter(Boolean).join(" · ")}</div>
             </button>
           ))}
         </div>

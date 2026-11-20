@@ -121,11 +121,11 @@ export default function EditOverlapBanner({
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
               {nudged.has(row.documentId) ? (
-                <span className="text-[10px] font-bold text-emerald-700">Heads-up sent ✓</span>
+                <span className="text-[11px] font-bold text-emerald-700">Heads-up sent ✓</span>
               ) : (
                 <button
                   onClick={() => void sendHeadsUp(row)}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold border border-amber-400 hover:bg-amber-100"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold border border-amber-400 hover:bg-amber-100"
                   title="Send an in-app heads-up to everyone involved"
                 >
                   <BellRing className="w-3 h-3" /> Send heads-up

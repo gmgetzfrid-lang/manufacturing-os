@@ -20,9 +20,9 @@ const ORDER: HealthStatus[] = [
   "notPdf", "noFile", "heldBack", "notCurrent",
 ];
 const TONE: Record<HealthStatus, string> = {
-  indexed: "bg-emerald-500", indexing: "bg-sky-500", waiting: "bg-sky-300",
-  outdated: "bg-amber-500", partial: "bg-amber-400", stuck: "bg-orange-500", failed: "bg-rose-600",
-  missing: "bg-rose-400", retired: "bg-violet-400",
+  indexed: "bg-emerald-500", indexing: "bg-[var(--color-text-muted)]", waiting: "bg-[var(--color-border)]",
+  outdated: "bg-amber-500", partial: "bg-amber-400", stuck: "bg-[var(--color-text-muted)]", failed: "bg-rose-600",
+  missing: "bg-rose-400", retired: "bg-[var(--color-text-muted)]",
   notPdf: "bg-slate-400", noFile: "bg-slate-300", heldBack: "bg-slate-500", notCurrent: "bg-slate-300",
 };
 const EXPLAIN: Partial<Record<HealthStatus, string>> = {
@@ -179,7 +179,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
           ? <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0" />
           : <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0" />}
         <div className="min-w-0 flex-1">
-          <div className="text-[10.5px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Library health</div>
+          <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Library health</div>
           <div className="text-sm font-black text-[var(--color-text)]">
             {L
               ? <>{L.counts.indexed.toLocaleString()} of {L.indexable.toLocaleString()} readable documents indexed
@@ -246,7 +246,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
         </div>
       )}
       {report.skipped?.length > 0 && (
-        <div className="mx-4 mb-2 rounded-lg bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-900 px-3 py-2 text-[11px] text-sky-900 dark:text-sky-200 flex gap-2">
+        <div className="mx-4 mb-2 rounded-lg bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] border border-[var(--color-border)] dark:border-[var(--color-border)] px-3 py-2 text-[11px] text-[var(--color-text)] dark:text-[var(--color-text)] flex gap-2">
           <Info className="w-4 h-4 shrink-0" />
           <span>The database is slow right now (usually: the meaning index is being written), so to answer quickly this check left out: {report.skipped.join(", ")}. Press Re-check in a few minutes for the full picture.</span>
         </div>
@@ -300,7 +300,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
                   </li>
                 ))}
               </ul>
-              {N.wrong > N.samples.length && <p className="text-[10px] text-[var(--color-text-faint)] mt-1">Showing {N.samples.length} of {N.wrong.toLocaleString()}.</p>}
+              {N.wrong > N.samples.length && <p className="text-[11px] text-[var(--color-text-faint)] mt-1">Showing {N.samples.length} of {N.wrong.toLocaleString()}.</p>}
             </div>
           )}
         </div>
@@ -357,7 +357,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
                             </li>
                           ))}
                         </ul>
-                        {n > items.length && <p className="text-[10px] text-[var(--color-text-faint)] mt-1">Showing {items.length} of {n.toLocaleString()}.</p>}
+                        {n > items.length && <p className="text-[11px] text-[var(--color-text-faint)] mt-1">Showing {items.length} of {n.toLocaleString()}.</p>}
                       </div>
                     )}
                   </div>
@@ -389,7 +389,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
               {report.meaning && meaningPct !== null ? (
                 <>
                   <div className="text-[var(--color-text-muted)]">{report.meaning.embedded.toLocaleString()} of {report.meaning.chunks.toLocaleString()} passages ({meaningPct}%)</div>
-                  <div className="mt-1 h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden"><div className="h-full bg-violet-500" style={{ width: `${meaningPct}%` }} /></div>
+                  <div className="mt-1 h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden"><div className="h-full bg-[var(--color-text-muted)]" style={{ width: `${meaningPct}%` }} /></div>
                 </>
               ) : (
                 <div className="text-[var(--color-text-muted)]">Busy building - the count will show on the next check.</div>
@@ -406,7 +406,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
               <div className="text-[var(--color-text-muted)]">{report.retired.toLocaleString()} kept for free restore - not searched</div>
             </div>
           </div>
-          <p className="text-[10px] text-[var(--color-text-faint)]">
+          <p className="text-[11px] text-[var(--color-text-faint)]">
             Checked {new Date(report.checkedAt).toLocaleTimeString()}. Moving files inside a linked library never touches their index; files added are picked up automatically; a file moved out is set aside, not deleted.
           </p>
         </div>

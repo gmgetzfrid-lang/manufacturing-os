@@ -42,7 +42,7 @@ export default function SignaturePanel({
   return (
     <div className={`rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] ${className}`}>
       <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)]">
-        <ShieldCheck className="w-4 h-4 text-[var(--color-accent)]" />
+        <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-sm font-black text-[var(--color-text)] flex-1">Signatures {sigs && sigs.length > 0 && <span className="text-[var(--color-text-muted)] font-bold">({sigs.length})</span>}</span>
         {canSign && (
           <button

@@ -211,7 +211,7 @@ function Header({ shifts, tz, dayLabel }: { shifts: Array<{ start: number; kind:
     if (s.kind !== "day" && i !== 0) continue;
     const span = s.kind === "day" ? 2 : 1;
     out.push(
-      <div key={i} className="absolute top-0 border-l border-[var(--color-border)] pl-1 text-[10.5px] text-[var(--color-text-muted)] leading-tight whitespace-nowrap overflow-hidden" style={{ left: i * PX, width: span * PX }}>
+      <div key={i} className="absolute top-0 border-l border-[var(--color-border)] pl-1 text-[11px] text-[var(--color-text-muted)] leading-tight whitespace-nowrap overflow-hidden" style={{ left: i * PX, width: span * PX }}>
         <b className="text-[var(--color-text)]">{dayLabel ? dayLabel(s.start) : PX < 20 ? fmtInTz(s.start, tz, { day: "numeric" }) : PX < 26 ? fmtInTz(s.start, tz, { month: "numeric", day: "numeric" }) : fmtInTz(s.start, tz, { weekday: "short" })}</b> {PX < 26 ? "" : dayLabel ? fmtInTz(s.start, tz, { weekday: "short" }) : fmtInTz(s.start, tz, { month: "short", day: "numeric" })}
         <div className="flex mt-0.5">{span === 2 ? <><span className="flex-1 text-center">D</span><span className="flex-1 text-center">N</span></> : <span className="flex-1 text-center">{s.kind === "night" ? "N" : "D"}</span>}</div>
       </div>,
@@ -249,7 +249,7 @@ function pieces(items: Piece[], x: (t: number) => number, top: number): { h: num
   const nodes = at.map((q) => {
     const l = x(q.from), w = Math.max(3, x(q.to) - l);
     return (
-      <i key={q.key} title={q.title} className="absolute rounded-[3px] overflow-hidden whitespace-nowrap not-italic text-white text-[9.5px] font-bold leading-[10px] px-[3px]"
+      <i key={q.key} title={q.title} className="absolute rounded-[3px] overflow-hidden whitespace-nowrap not-italic text-white text-[11px] font-bold leading-[10px] px-[3px]"
         style={{ left: l + 0.75, width: Math.max(2, w - 1.5), top: top + q.lane * 13, height: 10, background: q.color, boxShadow: q.ring }}>
         {q.label && w >= 34 ? q.label : null}
       </i>
@@ -369,7 +369,7 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
                     return (
                       <tr key={s.id}>
                         <td className={cellAct}>
-                          <div className="font-bold text-[var(--color-text)]">{s.name}{!s.inPlan && <span className="ml-1 rounded bg-orange-100 dark:bg-orange-900/40 px-1 text-[10px] font-black text-orange-900 dark:text-orange-200">Added</span>}</div>
+                          <div className="font-bold text-[var(--color-text)]">{s.name}{!s.inPlan && <span className="ml-1 rounded bg-orange-100 dark:bg-orange-900/40 px-1 text-[11px] font-black text-orange-900 dark:text-orange-200">Added</span>}</div>
                           <div className="text-[11px] text-[var(--color-text-muted)]"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(w.crew) }} />{w.crew} · plan {r1(s.plannedH)} h{!p.cols ? ` · ${s.elapsedH != null ? `took ${s.elapsedH} h` : s.status === "done" ? "start not recorded" : s.status === "not_started" ? "not started" : "still going"}` : ""}</div>
                           {w.ready && <div className="text-[11px] text-blue-700 dark:text-blue-300">Ready {when(w.ready.at, tz)}, waited {w.ready.shifts.length} shift{w.ready.shifts.length === 1 ? "" : "s"} to start: {w.ready.busyOn.length ? `${w.crew} was on ${[...new Set(w.ready.busyOn.map((b) => b.split(" - ")[0]))].join(", ")}` : `${w.crew} logged nothing those shifts`}</div>}
                           {w.waits.map((r, i) => (
@@ -625,7 +625,7 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
           <tbody>
             {plan.pre.length > 0 && <SectionRow4 title="Before the shutdown" sub="bookings and materials" width={width} shifts={plan.shifts} />}
             {plan.pre.map((a) => (
-              <tr key={a.id}><td className={cellAct}><div className="font-bold">{a.name} <span className="rounded bg-emerald-100 px-1 text-[10px] font-black text-emerald-900">New</span></div>{a.basis && <div className="text-[11px] text-[var(--color-text-muted)]">{a.basis}</div>}</td><td className={cellN}>-</td><td className={cellDt}>Before Day 1</td><td className={cellDt} /><td className="p-0"><div className="relative h-10" style={{ width }}><Grid shifts={plan.shifts} /><span className="absolute left-1.5 top-2.5 rounded bg-emerald-100 px-1.5 text-[10.5px] font-bold text-emerald-900">before the shutdown</span></div></td></tr>
+              <tr key={a.id}><td className={cellAct}><div className="font-bold">{a.name} <span className="rounded bg-emerald-100 px-1 text-[11px] font-black text-emerald-900">New</span></div>{a.basis && <div className="text-[11px] text-[var(--color-text-muted)]">{a.basis}</div>}</td><td className={cellN}>-</td><td className={cellDt}>Before Day 1</td><td className={cellDt} /><td className="p-0"><div className="relative h-10" style={{ width }}><Grid shifts={plan.shifts} /><span className="absolute left-1.5 top-2.5 rounded bg-emerald-100 px-1.5 text-[11px] font-bold text-emerald-900">before the shutdown</span></div></td></tr>
             ))}
             {orders.map(([key, acts]) => {
               const s0 = Math.min(...acts.map((a) => a.start)), s1 = Math.max(...acts.map((a) => a.finish));
@@ -643,7 +643,7 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
                   <tr className="bg-[var(--color-surface-2)]" data-order={key}>
                     <td className={`${cellAct} !bg-[var(--color-surface-2)]`}>
                       <OrderName open={isOpen} onToggle={() => flip(key)}>
-                        <div className="font-black text-[12.5px]">{orderName.get(key) ?? key}{crit && <span className="ml-1 rounded bg-rose-100 px-1 text-[10px] font-black text-rose-900">Sets the finish</span>}</div>
+                        <div className="font-black text-[12.5px]">{orderName.get(key) ?? key}{crit && <span className="ml-1 rounded bg-rose-100 px-1 text-[11px] font-black text-rose-900">Sets the finish</span>}</div>
                         {bo?.foundOn && <div className="text-[11px] font-semibold text-orange-800 dark:text-orange-300">Found on {bo.foundOn}</div>}
                         <div className="text-[11px] text-[var(--color-text-muted)]">{acts.length} activit{acts.length === 1 ? "y" : "ies"} · {r1(acts.reduce((n, a) => n + a.hours, 0))} h{changed ? ` · ${changed} changed` : ""}</div>
                       </OrderName>
@@ -657,7 +657,7 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
                     return (
                       <tr key={a.id} className={isCrit ? "[&>td:first-child]:shadow-[inset_3px_0_0_#dc2626]" : ""}>
                         <td className={`${cellAct} ${isCrit ? "!bg-rose-50 dark:!bg-rose-950/20" : ""}`}>
-                          <div className="font-bold">{a.name}{k && <span className={`ml-1 rounded px-1 text-[10px] font-black ${k[1]}`}>{k[0]}</span>}{a.heldForCrew && <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] font-black text-amber-900">Waits for its crew</span>}</div>
+                          <div className="font-bold">{a.name}{k && <span className={`ml-1 rounded px-1 text-[11px] font-black ${k[1]}`}>{k[0]}</span>}{a.heldForCrew && <span className="ml-1 rounded bg-amber-100 px-1 text-[11px] font-black text-amber-900">Waits for its crew</span>}</div>
                           <div className="text-[11px] text-[var(--color-text-muted)]"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(a.crew) }} />{a.crew} · {r1(a.hours)} h · {a.cal === "both" ? "days and nights" : a.cal === "night" ? "nights" : "days"}</div>
                           {a.basis && a.kind !== "found" && <div className="text-[11px] text-blue-800 dark:text-blue-300">{a.basis}</div>}
                           {a.waitedForCrew && <div className="text-[11px] text-blue-700 dark:text-blue-300">This year it waited {a.waitedForCrew.shifts} shift{a.waitedForCrew.shifts === 1 ? "" : "s"} for {a.waitedForCrew.crew}{a.waitedForCrew.busyOn.length ? ` (on ${[...new Set(a.waitedForCrew.busyOn.map((b) => b.split(" - ")[0]))].join(", ")})` : ""}. See {a.waitedForCrew.crew} under Crews below.</div>}
@@ -694,7 +694,7 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
                       : sum ? <div className="text-[11px] text-[var(--color-text-muted)]">Staffing plan ({sp.plan!.file || "typed in"}): days {sum.day.direct} on the tools{sum.night.direct ? `, nights ${sum.night.direct}` : ""} at the most. <button type="button" onClick={() => openContractor(sp.co)} className="font-bold text-[var(--color-accent)] hover:underline cursor-pointer">Open it</button></div>
                       : <div className="text-[11px] text-[var(--color-text-muted)]">No staffing plan yet. <button type="button" onClick={() => openContractor(sp.co)} className="font-bold text-[var(--color-accent)] hover:underline cursor-pointer">Put in {sp.co}&apos;s</button></div>}
                   </td>
-                  <td className={cellN}>{Math.max(0, ...jobs)}<div className="text-[10px] font-normal text-[var(--color-text-muted)]">most in a shift</div></td><td className="col-x" /><td className="col-x" />
+                  <td className={cellN}>{Math.max(0, ...jobs)}<div className="text-[11px] font-normal text-[var(--color-text-muted)]">most in a shift</div></td><td className="col-x" /><td className="col-x" />
                   <td className="p-0"><div className="relative h-10" style={{ width }}><Grid shifts={plan.shifts} />
                     {plan.shifts.map((w, i) => {
                       const n = jobs[i] ?? 0;
@@ -788,7 +788,7 @@ function Taught(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBui
             return (
               <li key={l.id} className={`py-2.5 ${out ? "opacity-60" : ""}`} data-lesson={l.id}>
                 <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                  <span className="rounded bg-[var(--color-surface-2)] px-1.5 text-[10.5px] font-black uppercase tracking-wide text-[var(--color-text-muted)]">{AREA_WORD[l.area]}</span>
+                  <span className="rounded bg-[var(--color-surface-2)] px-1.5 text-[11px] font-black uppercase tracking-wide text-[var(--color-text-muted)]">{AREA_WORD[l.area]}</span>
                   <b className="order-last basis-full sm:order-none sm:basis-0 sm:flex-1 min-w-0 text-[13.5px] text-[var(--color-text)]">{l.title}</b>
                   {!out && <span className={`text-[12px] font-bold ${(effects[l.id] ?? 0) >= 0.5 ? "text-emerald-700 dark:text-emerald-400" : (effects[l.id] ?? 0) <= -0.5 ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-muted)]"}`}>{effectWord(effects[l.id])}</span>}
                   {p.canEdit && <button type="button" onClick={() => skip(l.id, !out)} className="text-[12px] font-bold text-[var(--color-accent)] hover:underline cursor-pointer">{out ? "Put back" : "Leave out"}</button>}
@@ -810,7 +810,7 @@ function Taught(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBui
             {[...moving, ...(allRisks ? still : [])].map((r) => (
               <li key={r.id} className="py-2" data-risk={r.id}>
                 <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                  <span className="rounded bg-[var(--color-surface-2)] px-1.5 text-[10.5px] font-black uppercase tracking-wide text-[var(--color-text-muted)]">{r.kind === "found" ? "Found" : "Ran long"}</span>
+                  <span className="rounded bg-[var(--color-surface-2)] px-1.5 text-[11px] font-black uppercase tracking-wide text-[var(--color-text-muted)]">{r.kind === "found" ? "Found" : "Ran long"}</span>
                   <b className="order-last basis-full sm:order-none sm:basis-0 sm:flex-1 min-w-0 text-[13px] text-[var(--color-text)]">{r.where}</b>
                   <span className={`text-[12px] font-bold ${r.finishH >= 0.5 ? "text-rose-700 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>{r.finishH >= 0.5 ? `finish ${r1(r.finishH)} h later` : "no change to the finish"}</span>
                 </div>

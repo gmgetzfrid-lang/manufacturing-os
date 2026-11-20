@@ -137,7 +137,7 @@ export default function CustomizeNodeModal({
                 const active = v.icon === k;
                 return (
                   <button key={k} onClick={() => set({ icon: active ? undefined : k })} title={k}
-                    className={`aspect-square grid place-items-center rounded-lg border transition-colors ${active ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"}`}>
+                    className={`aspect-square grid place-items-center rounded-lg border transition-colors ${active ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"}`}>
                     <NodeIcon name={k} className="w-4 h-4" />
                   </button>
                 );
@@ -176,7 +176,7 @@ export default function CustomizeNodeModal({
                 const cur = v.headerHeight ?? "auto";
                 return (
                   <button key={key} onClick={() => set({ headerHeight: key })}
-                    className={`py-1.5 rounded-lg text-xs font-bold border ${cur === key ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
+                    className={`py-1.5 rounded-lg text-xs font-bold border ${cur === key ? "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
                     {label}
                   </button>
                 );
@@ -193,7 +193,7 @@ export default function CustomizeNodeModal({
                 const cur = v.bgType ?? "none";
                 return (
                   <button key={key} onClick={() => set({ bgType: key })}
-                    className={`py-1.5 rounded-lg text-xs font-bold border ${cur === key ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
+                    className={`py-1.5 rounded-lg text-xs font-bold border ${cur === key ? "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
                     {label}
                   </button>
                 );
@@ -238,7 +238,7 @@ export default function CustomizeNodeModal({
               <div className="mt-1.5 grid grid-cols-3 gap-1.5">
                 {([["none", "Original"], ["brand", "Brand duotone"], ["mono", "Mono"]] as const).map(([key, label]) => (
                   <button key={key} onClick={() => set({ coverTint: key })}
-                    className={`py-1.5 rounded-lg text-xs font-bold border ${ (v.coverTint ?? "none") === key ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
+                    className={`py-1.5 rounded-lg text-xs font-bold border ${ (v.coverTint ?? "none") === key ? "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
                     {label}
                   </button>
                 ))}

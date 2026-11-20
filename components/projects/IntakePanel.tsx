@@ -322,7 +322,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       {/* Review queue — the point of the whole system. */}
       <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
         <div className="flex items-center gap-2 mb-2">
-          <UploadCloud className="w-4 h-4 text-[var(--color-accent)]" />
+          <UploadCloud className="w-4 h-4 text-[var(--color-text-muted)]" />
           <span className="text-base font-bold text-[var(--color-text)]">Submissions awaiting review</span>
           <span className={`text-base font-black tabular-nums ${pending.length ? "text-amber-600" : "text-[var(--color-text-faint)]"}`}>{pending.length}</span>
         </div>
@@ -363,7 +363,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       {/* Submit links */}
       <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
         <div className="flex items-center gap-2 mb-2">
-          <Link2 className="w-4 h-4 text-[var(--color-accent)]" />
+          <Link2 className="w-4 h-4 text-[var(--color-text-muted)]" />
           <span className="text-base font-bold text-[var(--color-text)]">Contractor submit links</span>
           <span className="text-xs text-[var(--color-text-muted)]">no account needed - upload-only, own documents only, everything tracked</span>
         </div>
@@ -372,10 +372,10 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
             <li key={l.id} className={`text-xs rounded-lg border px-2.5 py-1.5 ${l.revokedAt ? "border-[var(--color-border)] opacity-60" : "border-[var(--color-border-strong)]"}`}>
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-bold text-[var(--color-text)]">{l.companyName}</span>
-                {l.allowAutoSupersede && <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-violet-700 dark:text-violet-300"><ShieldCheck className="w-3 h-3" /> trusted</span>}
+                {l.allowAutoSupersede && <span className="inline-flex items-center gap-0.5 text-[11px] font-bold text-[var(--color-text)] dark:text-[var(--color-text)]"><ShieldCheck className="w-3 h-3" /> trusted</span>}
                 <span className="text-[var(--color-text-faint)]">{l.submissionCount} submission{l.submissionCount === 1 ? "" : "s"}{l.expiresAt && !isExpired(l.expiresAt) ? ` · expires ${new Date(l.expiresAt).toLocaleDateString()}` : ""}{l.revokedAt ? " · REVOKED" : ""}</span>
                 {l.expiresAt && isExpired(l.expiresAt) && !l.revokedAt && (
-                  <span className="text-[10px] font-black uppercase text-rose-700 dark:text-rose-300">expired {new Date(l.expiresAt).toLocaleDateString()}</span>
+                  <span className="text-[11px] font-black uppercase text-rose-700 dark:text-rose-300">expired {new Date(l.expiresAt).toLocaleDateString()}</span>
                 )}
                 {!l.revokedAt && (
                   <span className="ml-auto flex items-center gap-1 flex-wrap">
@@ -400,7 +400,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
               </div>
               {extendOpen === l.id && canManage && !l.revokedAt && (
                 <div className="mt-1.5 pt-1.5 border-t border-[var(--color-border)] flex items-center gap-1.5 flex-wrap">
-                  <span className="text-[10px] font-bold text-[var(--color-text-muted)]">Works through:</span>
+                  <span className="text-[11px] font-bold text-[var(--color-text-muted)]">Works through:</span>
                   <button onClick={() => void extend(l, extendedExpiry(l.expiresAt, 7))} disabled={busy === l.id}
                     className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
                     {busy === l.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <CalendarPlus className="w-3 h-3" />} 7 more days
@@ -419,9 +419,9 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                 <div className="mt-1.5 pt-1.5 border-t border-[var(--color-border)] space-y-1.5">
                   {l.assignedDocIds.length > 0 && (
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-[10px] font-bold text-[var(--color-text-muted)]">Assigned:</span>
+                      <span className="text-[11px] font-bold text-[var(--color-text-muted)]">Assigned:</span>
                       {l.assignedDocIds.map((id) => (
-                        <span key={id} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-[10px] font-bold text-[var(--color-text)]">
+                        <span key={id} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)]">
                           {docLabels.get(id) ?? "Document"}
                           {canManage && (
                             <button onClick={() => void updateAssigned(l, l.assignedDocIds.filter((x) => x !== id))} disabled={busy === l.id} title="Unassign" className="text-[var(--color-text-faint)] hover:text-rose-600">
@@ -444,7 +444,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                           className="h-7 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-6 pr-2 text-xs"
                         />
                       </div>
-                      {assignSearching && <div className="mt-1 text-[10px] text-[var(--color-text-faint)]">Searching…</div>}
+                      {assignSearching && <div className="mt-1 text-[11px] text-[var(--color-text-faint)]">Searching…</div>}
                       {assignResults.length > 0 && (
                         <ul className="mt-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)] overflow-hidden">
                           {assignResults.filter((r) => !l.assignedDocIds.includes(r.id)).map((r) => (
@@ -460,7 +460,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                           ))}
                         </ul>
                       )}
-                      <div className="mt-1 text-[10px] text-[var(--color-text-faint)]">Assigned documents appear on {l.companyName}&rsquo;s portal. Their revisions of your documents <b>always</b> go through review, even on trusted links.</div>
+                      <div className="mt-1 text-[11px] text-[var(--color-text-faint)]">Assigned documents appear on {l.companyName}&rsquo;s portal. Their revisions of your documents <b>always</b> go through review, even on trusted links.</div>
                     </div>
                   )}
                 </div>
@@ -472,7 +472,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
 
         {canManage && (
           <div className="rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface-2)]/40 p-3 space-y-2">
-            <div className="text-[10px] font-bold text-[var(--color-text-muted)]">New submit link</div>
+            <div className="text-[11px] font-bold text-[var(--color-text-muted)]">New submit link</div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Company name (stamped on every submission)" className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
               <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Contact email (optional)" className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />

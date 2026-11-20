@@ -26,7 +26,7 @@ export default function PageHeader({ header, actions }: { header: ResolvedHeader
         showIcon={false}
       />
       {/* extra bottom scrim for title legibility on top of NodeCover's own */}
-      <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/15 to-transparent" />
+      <div className="absolute inset-0 bg-[var(--color-surface-2)]" />
       <div className="absolute inset-x-0 bottom-0 p-4 flex items-end gap-3">
         <span className="w-11 h-11 rounded-xl grid place-items-center bg-white/15 backdrop-blur-sm text-white ring-1 ring-white/25 shrink-0">
           <NodeIcon name={header.icon} className="w-5 h-5" />

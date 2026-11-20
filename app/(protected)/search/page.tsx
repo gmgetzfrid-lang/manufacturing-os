@@ -94,7 +94,7 @@ export default function SearchPage() {
 
       {others.length > 0 && (
         <div className="mt-4">
-          <div className="text-[10.5px] font-black uppercase tracking-wider text-[var(--color-text-faint)] mb-1.5">Requests, projects, notes</div>
+          <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-faint)] mb-1.5">Requests, projects, notes</div>
           <ul className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-sm divide-y divide-[var(--color-border)] overflow-hidden">
             {others.map((h) => {
               const Icon = OTHER_ICON[h.kind] ?? Search;
@@ -105,9 +105,9 @@ export default function SearchPage() {
                     <span className="flex-1 min-w-0">
                       <span className="block text-sm font-bold text-[var(--color-text)] truncate">{h.title}</span>
                       {h.subtitle && <span className="block text-xs text-[var(--color-text-muted)] truncate mt-0.5">{h.subtitle}</span>}
-                      <span className="block text-[10px] text-[var(--color-text-faint)] uppercase tracking-wider mt-1">{OTHER_LABEL[h.kind]}</span>
+                      <span className="block text-[11px] text-[var(--color-text-faint)] uppercase tracking-wider mt-1">{OTHER_LABEL[h.kind]}</span>
                     </span>
-                    {h.badge && <span className="text-[10px] font-bold uppercase text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded shrink-0">{h.badge}</span>}
+                    {h.badge && <span className="text-[11px] font-bold uppercase text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded shrink-0">{h.badge}</span>}
                   </Link>
                 </li>
               );

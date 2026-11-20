@@ -32,7 +32,7 @@ import { woOf } from "@/lib/workOrderCrew";
 /** What the quick view saves for a step. */
 export type { StepUpdate } from "@/components/projects/StepCard";
 
-const DOT: Record<string, string> = { planned: "bg-slate-300", in_progress: "bg-blue-600", on_hold: "bg-amber-500", blocked: "bg-rose-600", missed: "bg-rose-800", completed: "bg-emerald-500" };
+const DOT: Record<string, string> = { planned: "bg-slate-300", in_progress: "bg-[var(--color-text-muted)]", on_hold: "bg-amber-500", blocked: "bg-rose-600", missed: "bg-rose-800", completed: "bg-emerald-500" };
 const WORD: Record<string, string> = { planned: "Not started", in_progress: "In progress", on_hold: "On hold", blocked: "Blocked", missed: "Missed", completed: "Done" };
 const ms = (v: unknown) => (v == null ? NaN : v instanceof Date ? v.getTime() : typeof v === "number" ? v : Date.parse(String(v)));
 
@@ -143,11 +143,11 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
   const header = (
     <div className="px-3 py-2 border-b border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)]">
       <div className="flex items-baseline gap-2">
-        <Layers className="w-3.5 h-3.5 text-[var(--color-accent)] shrink-0 self-center" />
+        <Layers className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0 self-center" />
         <span className="text-[13px] font-bold text-[var(--color-text)] flex-1 min-w-0 break-words">{task.name}</span>
         {wos.length > 0 && <span className="font-mono text-[11.5px] font-semibold text-[var(--color-text)] shrink-0">WO {wos.join(", ")}</span>}
       </div>
-      <div className="mt-0.5 text-[10.5px] text-[var(--color-text-muted)]">
+      <div className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
         <b className="text-[var(--color-text)]">{dayLabel}</b>{all.length > 1 ? ` · ${onDay.length} of ${all.length} steps ${band ? "this shift" : "this day"}` : ""}
       </div>
       {taskPct != null && (
@@ -171,13 +171,13 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
     const isOpen = open === id;
     const s0 = startMsOf(m), f0 = finishMsOf(m);
     return (
-      <li key={id} className={`border-b border-[var(--color-border)] last:border-b-0 ${isOpen ? "border-l-4 border-l-sky-500" : ""} ${muted ? "opacity-70" : ""}`}>
+      <li key={id} className={`border-b border-[var(--color-border)] last:border-b-0 ${isOpen ? "border-l-4 border-l-[var(--color-border-strong)]" : ""} ${muted ? "opacity-70" : ""}`}>
         <button type="button" onClick={() => setOpen(isOpen ? null : id)} aria-expanded={isOpen} aria-label={`${isOpen ? "Close" : "Open"} step: ${m.name}`}
-          className={`w-full flex items-start gap-2 px-3 py-2 text-left hover:bg-[var(--color-surface-2)] ${isOpen ? "bg-sky-50 dark:bg-sky-950/30" : ""}`}>
+          className={`w-full flex items-start gap-2 px-3 py-2 text-left hover:bg-[var(--color-surface-2)] ${isOpen ? "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]" : ""}`}>
           <span className={`mt-1 w-2.5 h-2.5 rounded-full shrink-0 ${DOT[m.status] ?? DOT.planned}`} aria-label={WORD[m.status]} />
           <span className="flex-1 min-w-0">
             <span className={`block text-[12.5px] font-semibold break-words ${m.status === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{m.name} <PathTag id={m.id} marks={marks} /> <DiscoveryTag m={m} tz={tz} /></span>
-            {!isOpen && <><span className="block text-[10.5px] text-[var(--color-text-muted)]">
+            {!isOpen && <><span className="block text-[11px] text-[var(--color-text-muted)]">
               {(() => {
                 // Where it actually happened, beside the plan.
                 const b = builtSpan(m);
@@ -211,8 +211,8 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
             {info.why && h < 0 && <span className="block text-[11px] italic font-medium text-amber-800 dark:text-amber-300 break-words">Why behind: {info.why.body}</span>}</>}
           </span>
           <span className="shrink-0 flex flex-col items-end gap-0.5">
-            <span className={`rounded-md border px-1 text-[10px] font-bold tabular-nums ${pct >= 100 ? "text-emerald-700 bg-emerald-50 border-emerald-200" : pct > 0 ? "text-blue-700 bg-blue-50 border-blue-200" : "text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]"}`}>{pct}%</span>
-            {Math.abs(h) >= 0.1 && m.status !== "completed" && <span className={`font-mono text-[10.5px] font-bold ${h < 0 ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>{h > 0 ? "+" : "−"}{Math.abs(h)} h</span>}
+            <span className={`rounded-md border px-1 text-[11px] font-bold tabular-nums ${pct >= 100 ? "text-emerald-700 bg-emerald-50 border-emerald-200" : pct > 0 ? "text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]" : "text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]"}`}>{pct}%</span>
+            {Math.abs(h) >= 0.1 && m.status !== "completed" && <span className={`font-mono text-[11px] font-bold ${h < 0 ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>{h > 0 ? "+" : "−"}{Math.abs(h)} h</span>}
           </span>
           {/* A step opens to its card: start, %, finish, history. */}
           <ChevronRight className={`w-3.5 h-3.5 mt-1 shrink-0 text-[var(--color-text-faint)] transition-transform ${isOpen ? "rotate-90" : ""}`} aria-hidden />
@@ -239,7 +239,7 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
             return (
               <React.Fragment key={m.id ?? m.name}>
                 {d !== prev && Number.isFinite(startMsOf(m)) && (
-                  <li className={`px-3 pt-2 pb-0.5 text-[12px] font-semibold ${d === dayKey ? "text-[var(--color-accent)]" : "text-[var(--color-text-muted)]"}`}>
+                  <li className={`px-3 pt-2 pb-0.5 text-[12px] font-semibold ${d === dayKey ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
                     {fmtInTz(startMsOf(m), tz, { weekday: "short", month: "short", day: "numeric" })}{d === dayKey ? " · today" : ""}
                   </li>
                 )}
@@ -250,16 +250,16 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
         ) : <ul>{here.main.map((m) => stepRow(m))}</ul>}
       {here.rest.length > 0 && (
         <div className="border-t border-[var(--color-border)]">
-          <button type="button" onClick={() => setShowOthers((v) => !v)} className="w-full px-3 py-1.5 text-left text-[10.5px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] inline-flex items-center gap-1">
+          <button type="button" onClick={() => setShowOthers((v) => !v)} className="w-full px-3 py-1.5 text-left text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] inline-flex items-center gap-1">
             <ChevronRight className={`w-3 h-3 transition-transform ${showOthers ? "rotate-90" : ""}`} />
             {here.rest.length} step{here.rest.length === 1 ? "" : "s"} on other {band ? "shifts" : "days"}
           </button>
           {showOthers && <ul className="border-t border-[var(--color-border)]">{here.rest.map((m) => stepRow(m, true))}</ul>}
         </div>
       )}
-      <div className="px-3 py-1.5 border-t border-[var(--color-border)] flex items-center justify-between gap-2 text-[10.5px] text-[var(--color-text-faint)]">
+      <div className="px-3 py-1.5 border-t border-[var(--color-border)] flex items-center justify-between gap-2 text-[11px] text-[var(--color-text-faint)]">
         {onDiscovery ? (
-          <button type="button" onClick={() => onDiscovery(task)} className="font-bold text-violet-700 dark:text-violet-300 hover:underline">+ Discovery or added scope</button>
+          <button type="button" onClick={() => onDiscovery(task)} className="font-bold text-[var(--color-accent)] dark:text-[var(--color-text)] hover:underline">+ Discovery or added scope</button>
         ) : <span>Tap a step to update it.</span>}
         {onOpenDetail && <button type="button" onClick={() => onOpenDetail(task)} className="font-semibold text-[var(--color-accent)] hover:underline">Schedule details (move, depends on) ›</button>}
       </div>

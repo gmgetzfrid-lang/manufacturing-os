@@ -99,7 +99,7 @@ export default function ProfilePage() {
 
         {/* Identity */}
         <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
-          <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3">Identity</div>
+          <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3">Identity</div>
 
           {/* Avatar — photo if set, otherwise initials from the display name
               (Grant Getzfrid → GG). This is the face shown everywhere. */}
@@ -131,7 +131,7 @@ export default function ProfilePage() {
                   </button>
                 )}
               </div>
-              <div className="text-[10px] text-[var(--color-text-muted)]">
+              <div className="text-[11px] text-[var(--color-text-muted)]">
                 No photo? Your initials are shown instead - set your display name below so they&apos;re right.
               </div>
               <input
@@ -155,7 +155,7 @@ export default function ProfilePage() {
 
           <Row icon={Mail} label="Email" value={userEmail ?? "-"} mono />
           <div className="mt-3">
-            <label className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest inline-flex items-center gap-1">
+            <label className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest inline-flex items-center gap-1">
               <Edit3 className="w-2.5 h-2.5" /> Display name
             </label>
             <Input
@@ -176,19 +176,19 @@ export default function ProfilePage() {
 
         {/* Workspaces */}
         <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
-          <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3">Workspaces</div>
+          <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3">Workspaces</div>
           {orgs.length === 0 ? (
             <p className="text-xs text-[var(--color-text-muted)] italic">You aren&apos;t a member of any workspaces.</p>
           ) : (
             <ul className="divide-y divide-[var(--color-border)]">
               {orgs.map((o) => (
                 <li key={o.org_id} className="py-2 flex items-center gap-3">
-                  <Briefcase className="w-4 h-4 text-[var(--color-accent)]" />
+                  <Briefcase className="w-4 h-4 text-[var(--color-text-muted)]" />
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-bold text-[var(--color-text)] truncate">{o.org_name}</div>
-                    <div className="text-[10px] text-[var(--color-text-muted)] font-mono uppercase tracking-wider">{o.role}</div>
+                    <div className="text-[11px] text-[var(--color-text-muted)] font-mono uppercase tracking-wider">{o.role}</div>
                   </div>
-                  {o.org_id === activeOrgId && <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">active</span>}
+                  {o.org_id === activeOrgId && <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">active</span>}
                 </li>
               ))}
             </ul>
@@ -197,7 +197,7 @@ export default function ProfilePage() {
 
         {/* Current session */}
         <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
-          <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3">Current session</div>
+          <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3">Current session</div>
           <Row icon={Shield} label="Role" value={activeRole || "-"} />
         </div>
 
@@ -232,7 +232,7 @@ function Row({ icon: Icon, label, value, mono }: { icon: React.ComponentType<{ c
   return (
     <div className="flex items-center gap-3 py-1.5">
       <Icon className="w-4 h-4 text-[var(--color-text-faint)]" />
-      <span className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest w-16">{label}</span>
+      <span className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest w-16">{label}</span>
       <span className={`text-sm text-[var(--color-text)] ${mono ? "font-mono" : ""}`}>{value}</span>
     </div>
   );

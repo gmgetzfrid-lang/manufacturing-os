@@ -33,7 +33,7 @@ const TotalsCtx = createContext<Map<string, number> | undefined>(undefined);
 
 function CountBadge({ n }: { n: number | undefined }) {
   if (n === undefined) return null;
-  return <span className="ml-auto shrink-0 text-[10px] tabular-nums text-[var(--color-text-faint)]" title="Files here, including subfolders">{n.toLocaleString()}</span>;
+  return <span className="ml-auto shrink-0 text-[11px] tabular-nums text-[var(--color-text-faint)]" title="Files here, including subfolders">{n.toLocaleString()}</span>;
 }
 
 interface FolderRailProps {
@@ -188,7 +188,7 @@ export default function FolderRail({
           title="Folders - hover to browse"
         >
           <PanelLeftOpen className="w-4 h-4" />
-          <span className="text-[8px] font-black uppercase tracking-[0.15em] leading-none" style={{ writingMode: "vertical-rl" }}>Folders</span>
+          <span className="text-[11px] font-black uppercase tracking-[0.15em] leading-none" style={{ writingMode: "vertical-rl" }}>Folders</span>
         </div>
 
         <div className="w-6 h-px bg-[var(--color-border)] my-1" />
@@ -222,7 +222,7 @@ export default function FolderRail({
             >
               {folder.color || folder.icon ? <FolderGlyph folder={folder} active={isActive} /> : <Folder className="w-3.5 h-3.5" />}
               {isActive && (
-                <span className="absolute -left-0.5 top-1/2 -translate-y-1/2 w-0.5 h-4 bg-[var(--color-accent)] rounded-r-full" />
+                <span className="absolute -left-0.5 top-1/2 -translate-y-1/2 w-0.5 h-4 bg-[var(--color-surface-2)] rounded-r-full" />
               )}
             </button>
           );
@@ -256,7 +256,7 @@ export default function FolderRail({
           <div className="h-full flex flex-col">
             <div className="px-3 py-2.5 border-b border-[var(--color-border)] flex items-center justify-between">
               <div>
-                <div className="text-[9px] font-black text-[var(--color-text-faint)] uppercase tracking-widest">Library</div>
+                <div className="text-[11px] font-black text-[var(--color-text-faint)] uppercase tracking-widest">Library</div>
                 <div className="text-xs font-bold text-[var(--color-text)] truncate max-w-[180px]">{libraryName}</div>
               </div>
               {isController && (

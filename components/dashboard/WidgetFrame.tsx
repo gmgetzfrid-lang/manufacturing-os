@@ -143,7 +143,7 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings,
       <div
         className={`group/widget relative flex flex-col h-full rounded-2xl border overflow-hidden transition-all duration-300 bg-[var(--color-surface)] ${
           editing
-            ? "border-dashed border-[var(--color-accent)] shadow-sm"
+            ? "border-dashed border-[var(--color-border-strong)] shadow-sm"
             // View mode: no hard border — the card FLOATS on the canvas. No
             // hover translate: cards jumping as the wheel sweeps across them
             // read as a scroll glitch.

@@ -408,12 +408,12 @@ export default function RevUpModal({
               <button
                 onClick={() => setShowDiff(true)}
                 disabled={!myBaseVersion || !conflictCurrentVersion}
-                className="flex items-center gap-2 p-3 rounded-xl border-2 border-[var(--color-border)] hover:border-blue-400 text-left disabled:opacity-40"
+                className="flex items-center gap-2 p-3 rounded-xl border-2 border-[var(--color-border)] hover:border-[var(--color-border-strong)] text-left disabled:opacity-40"
               >
-                <Diff className="w-4 h-4 text-blue-600 shrink-0" />
+                <Diff className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
                 <div>
                   <div className="text-xs font-bold text-[var(--color-text)]">View what changed</div>
-                  <div className="text-[10px] text-[var(--color-text-muted)]">Visual diff: your base → their Rev {conflict.currentRev}</div>
+                  <div className="text-[11px] text-[var(--color-text-muted)]">Visual diff: your base → their Rev {conflict.currentRev}</div>
                 </div>
               </button>
               <div className="p-3 rounded-xl border-2 border-[var(--color-border)]">
@@ -424,7 +424,7 @@ export default function RevUpModal({
                   </div>
                 </div>
                 {msgSent ? (
-                  <div className="mt-2 text-[10px] font-bold text-emerald-700">Message posted to the thread ✓</div>
+                  <div className="mt-2 text-[11px] font-bold text-emerald-700">Message posted to the thread ✓</div>
                 ) : (
                   <div className="mt-2 flex gap-1.5">
                     <input
@@ -457,10 +457,10 @@ export default function RevUpModal({
               ) : (
                 <div className="space-y-2">
                   <div className="flex items-center gap-2 text-xs font-bold text-[var(--color-text)]">
-                    <GitBranch className="w-3.5 h-3.5 text-purple-600" />
+                    <GitBranch className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                     Publish as a BRANCH
                   </div>
-                  <div className="text-[10px] text-[var(--color-text-muted)] leading-relaxed">
+                  <div className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">
                     Your file is saved on the record, but it does <b>not</b> become the current revision.
                     An open item is created (visible to Document Control and both authors) that stays open
                     until someone merges the two changes into a later revision - or withdraws this branch.
@@ -483,7 +483,7 @@ export default function RevUpModal({
                     <button
                       onClick={() => doPublish(true)}
                       disabled={submitting || branchReason.trim().length < 5}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50"
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
                     >
                       {submitting ? <Loader2 className="w-3 h-3 animate-spin" /> : <GitBranch className="w-3 h-3" />}
                       Publish branch
@@ -533,8 +533,8 @@ export default function RevUpModal({
       <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 animate-in fade-in zoom-in-95">
         {/* Header */}
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
-          <div className="p-2 bg-orange-100 rounded-lg">
-            <ArrowUpFromLine className="w-5 h-5 text-orange-700" />
+          <div className="p-2 bg-[var(--color-surface-2)] rounded-lg">
+            <ArrowUpFromLine className="w-5 h-5 text-[var(--color-text-muted)]" />
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-black text-[var(--color-text)]">Publish New Revision</div>
@@ -557,7 +557,7 @@ export default function RevUpModal({
               onDrop={handleDrop}
               onClick={() => fileInputRef.current?.click()}
               className={`mt-1.5 rounded-xl border-2 border-dashed transition-colors cursor-pointer p-6 text-center ${
-                dragOver ? "border-orange-500 bg-orange-50" :
+                dragOver ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]" :
                 file ? "border-emerald-400 bg-emerald-50" : "border-[var(--color-border-strong)] hover:border-slate-400 bg-[var(--color-surface-2)]"
               }`}
             >
@@ -605,7 +605,7 @@ export default function RevUpModal({
               ))}
             </select>
             {baseVersionId !== "none" && baseVersionId !== (doc.currentVersionId ?? "none") && (
-              <div className="mt-1.5 flex items-start gap-1.5 text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2">
+              <div className="mt-1.5 flex items-start gap-1.5 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2">
                 <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
                 <span>
                   You&apos;re declaring a base that is <b>not the current revision</b>. Publishing will stop
@@ -654,9 +654,9 @@ export default function RevUpModal({
           {/* Pre-publish review banner — this library gates revisions behind
               reviewer sign-off. A Minor/Correction change escapes the gate. */}
           {effMode !== "none" && (
-            <div className="rounded-lg border border-violet-300 bg-violet-50 p-3 text-[12px] text-violet-900 space-y-2">
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 text-[12px] text-[var(--color-text)] space-y-2">
               <div className="flex items-start gap-2">
-                <ShieldCheck className="w-4 h-4 mt-0.5 shrink-0 text-violet-600" />
+                <ShieldCheck className="w-4 h-4 mt-0.5 shrink-0 text-[var(--color-text-muted)]" />
                 <span>
                   This library requires <b>pre-publish review</b>.{" "}
                   {willReview
@@ -706,7 +706,7 @@ export default function RevUpModal({
               change type on a drawing waives the MOC — say so, so a real
               process change doesn't slip out under last week's setting. */}
           {docClass === "drawing" && isMinorLike && (
-            <div className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5">
+            <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5">
               <b>{changeType}</b> on a drawing is replacement-in-kind - no MOC required. If this revision
               changes the process, switch the change type to <b>Major</b> (the MOC becomes mandatory).
             </div>
@@ -768,7 +768,7 @@ export default function RevUpModal({
                 <div className="flex items-center justify-center gap-2 text-xs text-emerald-700">
                   <FileBox className="w-3.5 h-3.5" />
                   <span className="font-medium">{sourceFile.name}</span>
-                  <span className="text-[10px] text-emerald-600">({(sourceFile.size / 1024).toFixed(0)} KB)</span>
+                  <span className="text-[11px] text-emerald-600">({(sourceFile.size / 1024).toFixed(0)} KB)</span>
                   <button
                     onClick={(e) => { e.stopPropagation(); setSourceFile(null); }}
                     className="ml-1 text-emerald-700 hover:text-emerald-900"
@@ -806,7 +806,7 @@ export default function RevUpModal({
                 </span>
               </div>
               <div>
-                <label className="text-[10px] font-black text-amber-900 uppercase tracking-widest">
+                <label className="text-[11px] font-black text-amber-900 uppercase tracking-widest">
                   Note to {doc.checkedOutByName || "the checkout holder"} *
                 </label>
                 <textarea
@@ -841,8 +841,8 @@ export default function RevUpModal({
         <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between gap-2">
           <div className="text-[11px] text-[var(--color-text-muted)]">
             Going from <b>Rev {doc.rev || "-"}</b> → {willReview
-              ? <b className="text-violet-600">{revisionLabel || "?"}A (in review)</b>
-              : <b className="text-orange-600">Rev {revisionLabel || "?"}</b>}
+              ? <b className="text-[var(--color-text)]">{revisionLabel || "?"}A (in review)</b>
+              : <b className="text-[var(--color-text)]">Rev {revisionLabel || "?"}</b>}
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -855,7 +855,7 @@ export default function RevUpModal({
             <button
               onClick={() => doPublish(false)}
               disabled={submitting || !file}
-              className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white disabled:opacity-50 ${willReview ? "bg-violet-600 hover:bg-violet-500" : "bg-orange-600 hover:bg-orange-500"}`}
+              className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white disabled:opacity-50 ${willReview ? "bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)]" : "bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]"}`}
             >
               {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ChevronRight className="w-3.5 h-3.5" />}
               {submitting ? (willReview ? "Submitting…" : "Publishing…") : (willReview ? "Submit for Review" : "Publish Revision")}
@@ -870,11 +870,11 @@ export default function RevUpModal({
 function Field({ label, hint, isoTopic, children }: { label: string; hint?: string; isoTopic?: import("@/components/ui/IsoGuidance").IsoTopic | undefined; children: React.ReactNode }) {
   return (
     <div>
-      <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest inline-flex items-center gap-1">
+      <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest inline-flex items-center gap-1">
         {label}
         {isoTopic && <IsoGuidance topic={isoTopic} />}
       </label>
-      {hint && <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">{hint}</div>}
+      {hint && <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">{hint}</div>}
       <div className="mt-1">{children}</div>
     </div>
   );

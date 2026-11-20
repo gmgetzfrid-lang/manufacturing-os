@@ -273,19 +273,19 @@ export default function TaskDetailPanel({
       <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-[1px]" onClick={onClose} />
       <div className="relative w-full max-w-[440px] bg-[var(--color-surface)] shadow-2xl ring-1 ring-slate-900/10 flex flex-col animate-[slidein_.15s_ease-out]">
         {/* Header */}
-        <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-start gap-2 bg-gradient-to-b from-white dark:from-[var(--color-surface)] to-slate-50/50 dark:to-[var(--color-surface)]">
+        <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-start gap-2 bg-[var(--color-surface-2)]">
           <div className="flex-1 min-w-0">
             {/* Breadcrumb: DEC OUTAGE › Transmix 1 › Shut Down … so the
                 task is always shown in the context of its unit. Each
                 crumb is clickable to jump up the tree. */}
             {ancestors && ancestors.length > 0 && (
-              <nav className="flex items-center gap-0.5 flex-wrap mb-1 text-[10px] text-[var(--color-text-muted)]">
+              <nav className="flex items-center gap-0.5 flex-wrap mb-1 text-[11px] text-[var(--color-text-muted)]">
                 {ancestors.slice().reverse().map((a, i) => (
                   <React.Fragment key={a.id ?? i}>
                     {i > 0 && <ChevronRight className="w-2.5 h-2.5 text-slate-300" />}
                     <button
                       onClick={() => onSelectMilestone?.(a)}
-                      className="font-semibold hover:text-indigo-700 hover:underline truncate max-w-[120px]"
+                      className="font-semibold hover:text-[var(--color-accent-hover)] hover:underline truncate max-w-[120px]"
                       title={a.name}
                     >
                       {a.name}
@@ -297,9 +297,9 @@ export default function TaskDetailPanel({
             )}
             <div className="flex items-center gap-2 flex-wrap">
               <StatusPill status={effStatus} />
-              <span className="text-[10px] font-black tabular-nums text-[var(--color-text-muted)]">{effPct}%</span>
-              {m.wbs && <span className="font-mono text-[10px] text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{m.wbs}</span>}
-              {!isLeaf && <span className="text-[9px] font-black uppercase tracking-wider bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 px-1.5 py-0.5 rounded">Summary</span>}
+              <span className="text-[11px] font-black tabular-nums text-[var(--color-text-muted)]">{effPct}%</span>
+              {m.wbs && <span className="font-mono text-[11px] text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{m.wbs}</span>}
+              {!isLeaf && <span className="text-[11px] font-black uppercase tracking-wider bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)] px-1.5 py-0.5 rounded">Summary</span>}
             </div>
             <h2 className="mt-1.5 text-base font-bold text-[var(--color-text)] leading-snug break-words">{m.name}</h2>
           </div>
@@ -353,7 +353,7 @@ export default function TaskDetailPanel({
                       onSetProgress={(p) => void applyProgress(p)}
                       onStartWithNote={onStartNote && m.id ? async (p, n, w) => { const ok = await onStartNote(m.id!, p, n, w); loadNotes(); onChanged(); return ok; } : undefined}
                     />
-                    <span className="text-[10px] text-[var(--color-text-faint)]">incl. on-hold / blocked</span>
+                    <span className="text-[11px] text-[var(--color-text-faint)]">incl. on-hold / blocked</span>
                   </div>
                   {/* % done: one tap (or type it), with what got done — a
                       correction too: pick the right number, say why. */}
@@ -379,9 +379,9 @@ export default function TaskDetailPanel({
                   </div>
                   {/* Rolled-up progress bar. */}
                   <div className="mt-2 h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-                    <div className={`h-full ${effPct === 100 ? "bg-emerald-500" : "bg-[var(--color-accent)]"}`} style={{ width: `${effPct}%` }} />
+                    <div className={`h-full ${effPct === 100 ? "bg-emerald-500" : "bg-[var(--color-surface-2)]"}`} style={{ width: `${effPct}%` }} />
                   </div>
-                  <div className="mt-2 text-[10px] text-[var(--color-text-faint)] flex items-start gap-1">
+                  <div className="mt-2 text-[11px] text-[var(--color-text-faint)] flex items-start gap-1">
                     <Layers className="w-3 h-3 mt-0.5 shrink-0" />
                     Its status and % roll up from its steps. Set each step&apos;s progress in the list below.
                   </div>
@@ -398,15 +398,15 @@ export default function TaskDetailPanel({
                     <button onClick={() => onMoveDays(m.id!, 1)} title="1 day later" className="px-2 py-1 text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] border-l border-[var(--color-border)]"><ChevronRight className="w-3.5 h-3.5" /></button>
                     <button onClick={() => onMoveDays(m.id!, 7)} title="1 week later" className="px-2 py-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] border-l border-[var(--color-border)]">+1w</button>
                   </div>
-                  <span className="text-[10px] text-[var(--color-text-faint)]">{m.isSummary ? "moves the whole phase together" : "shifts this task (its sub-steps come along)"}</span>
+                  <span className="text-[11px] text-[var(--color-text-faint)]">{m.isSummary ? "moves the whole phase together" : "shifts this task (its sub-steps come along)"}</span>
                 </div>
               )}
 
               {/* Metadata */}
               <div className="px-4 py-3 border-b border-[var(--color-border)] space-y-2.5">
                 <Field icon={<CalendarDays className="w-3.5 h-3.5" />} label="Scheduled">
-                  {spanLabel(span.start, span.finish, tz)} <span className="text-[10px] text-[var(--color-text-faint)]">{tzAbbrev(tz, span.start)}</span>
-                  {!isLeaf && <span className="block text-[10px] text-[var(--color-text-faint)]">from its first step to its last</span>}
+                  {spanLabel(span.start, span.finish, tz)} <span className="text-[11px] text-[var(--color-text-faint)]">{tzAbbrev(tz, span.start)}</span>
+                  {!isLeaf && <span className="block text-[11px] text-[var(--color-text-faint)]">from its first step to its last</span>}
                 </Field>
                 {isLeaf && (m.actualStartAt || m.actualAt || canEdit) && (
                   <Field icon={<Clock className="w-3.5 h-3.5" />} label="Actual">
@@ -430,7 +430,7 @@ export default function TaskDetailPanel({
                         {m.status === "completed" ? (m.actualAt ? ` · finished ${fmtInTz(m.actualAt as string, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}` : " · finish time not recorded") : ""}
                         {canEdit && (m.actualStartAt || m.status !== "planned") && (
                           <button onClick={() => setActualEdit({ start: toDateTimeInput(m.actualStartAt as string | null, tz), finish: toDateTimeInput(m.actualAt as string | null, tz) })}
-                            className="ml-1.5 text-[10px] font-bold text-[var(--color-accent)] hover:underline" title="Correct when the work really started or finished - the shift that did it gets the credit">correct</button>
+                            className="ml-1.5 text-[11px] font-bold text-[var(--color-accent)] hover:underline" title="Correct when the work really started or finished - the shift that did it gets the credit">correct</button>
                         )}
                       </span>
                     )}
@@ -450,13 +450,13 @@ export default function TaskDetailPanel({
                 {(m.responsibleParty || m.responsibleOrg) && (
                   <Field icon={<User className="w-3.5 h-3.5" />} label="Responsible (planned)">
                     {[m.responsibleParty, m.responsibleOrg].filter(Boolean).join(" · ")}
-                    {m.responsibleKind && <span className="ml-1.5 text-[10px] uppercase tracking-wide text-[var(--color-text-faint)]">{m.responsibleKind}</span>}
+                    {m.responsibleKind && <span className="ml-1.5 text-[11px] uppercase tracking-wide text-[var(--color-text-faint)]">{m.responsibleKind}</span>}
                   </Field>
                 )}
                 {(m.actualParty || m.actualOrg) && (
                   <Field icon={<HardHat className="w-3.5 h-3.5" />} label="Actually performed by">
                     {[m.actualParty, m.actualOrg].filter(Boolean).join(" · ")}
-                    {m.actualKind && <span className="ml-1.5 text-[10px] uppercase tracking-wide text-[var(--color-text-faint)]">{m.actualKind}</span>}
+                    {m.actualKind && <span className="ml-1.5 text-[11px] uppercase tracking-wide text-[var(--color-text-faint)]">{m.actualKind}</span>}
                   </Field>
                 )}
                 {m.location && (
@@ -468,7 +468,7 @@ export default function TaskDetailPanel({
                   const label = w === "both" ? "Round the clock" : w === "night" ? "Night shift" : "Day shift";
                   return (
                     <Field icon={w === "night" ? <Moon className="w-3.5 h-3.5" /> : w === "both" ? <Sunset className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />} label="Worked on">
-                      {label} <span className="text-[10px] text-[var(--color-text-faint)]">{m.shift === "swing" || ((m.shift === "day" || m.shift === "night") && w === m.shift) ? "· set on the task"
+                      {label} <span className="text-[11px] text-[var(--color-text-faint)]">{m.shift === "swing" || ((m.shift === "day" || m.shift === "night") && w === m.shift) ? "· set on the task"
                         : calendarShift(m, shiftTimes) ? `· from its calendar${typeof m.attributes?.work_calendar === "string" ? ` (${m.attributes.work_calendar}, ${String(m.attributes.work_hours ?? "").replace(/,/g, ", ")})` : ""}`
                         : "· from its times - set the crew if that's wrong"}</span>
                     </Field>
@@ -486,8 +486,8 @@ export default function TaskDetailPanel({
                 const d = discoveryOf(m);
                 if (!d) return null;
                 return (
-                  <div className="px-4 py-3 border-b border-[var(--color-border)] bg-violet-50/60 dark:bg-violet-950/20">
-                    <div className="text-[12px] font-semibold text-violet-700 dark:text-violet-300 mb-1">{ADDED[kindOf(d)].word}{d.of > 1 ? ` · step ${d.seq} of ${d.of}` : ""}</div>
+                  <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]">
+                    <div className="text-[12px] font-semibold text-[var(--color-text)] dark:text-[var(--color-text)] mb-1">{ADDED[kindOf(d)].word}{d.of > 1 ? ` · step ${d.seq} of ${d.of}` : ""}</div>
                     <div className="text-xs text-[var(--color-text)] break-words">{d.what}</div>
                     <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
                       {ADDED[kindOf(d)].found[0].toUpperCase() + ADDED[kindOf(d)].found.slice(1)} {fmtInTz(d.foundAt, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}{d.foundBy ? ` by ${d.foundBy}` : ""}{d.approvedBy ? ` · approved by ${d.approvedBy}` : ""}
@@ -504,7 +504,7 @@ export default function TaskDetailPanel({
               {isLeaf && m.id && canEdit && m.status !== "completed" && (() => {
                 const k = workShiftOf(m, tz, shiftTimes);
                 const started = (m.percentComplete ?? 0) > 0 || !!m.actualStartAt;
-                const seg = (on: boolean, night: boolean) => `inline-flex items-center gap-1 px-3 py-1.5 text-[12px] font-bold border-l first:border-l-0 border-[var(--color-border-strong)] disabled:opacity-50 ${on ? (night ? "bg-violet-700 text-white" : "bg-sky-700 text-white") : "bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`;
+                const seg = (on: boolean, night: boolean) => `inline-flex items-center gap-1 px-3 py-1.5 text-[12px] font-bold border-l first:border-l-0 border-[var(--color-border-strong)] disabled:opacity-50 ${on ? (night ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-surface-2)] text-[var(--color-text)]") : "bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`;
                 return (
                   <div className="px-4 py-2.5 border-b border-[var(--color-border)] space-y-1">
                     <div className="flex items-center gap-2">
@@ -570,11 +570,11 @@ export default function TaskDetailPanel({
               {subtasks.length > 0 && (
                 <div className="px-4 py-3 border-b border-[var(--color-border)]">
                   <div className="flex items-center gap-1.5 mb-1">
-                    <Layers className="w-3.5 h-3.5 text-indigo-500" />
+                    <Layers className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                     <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Subtasks</span>
-                    {leafProgress && <span className="text-[11px] font-mono text-indigo-600 dark:text-indigo-400 font-bold ml-auto">{leafProgress.done}/{leafProgress.total} · {leafProgress.pct}%</span>}
+                    {leafProgress && <span className="text-[11px] font-mono text-[var(--color-text)] dark:text-[var(--color-text)] font-bold ml-auto">{leafProgress.done}/{leafProgress.total} · {leafProgress.pct}%</span>}
                   </div>
-                  <div className="text-[10px] text-[var(--color-text-faint)] mb-2">
+                  <div className="text-[11px] text-[var(--color-text-faint)] mb-2">
                     % = progress and what got done · dot = status · ◀ ▶ = move this step a day (the rest stay put) · name = open it
                   </div>
                   <ul className="space-y-1">
@@ -605,7 +605,7 @@ export default function TaskDetailPanel({
                         </span>
                         <button onClick={() => onSelectSubtask?.(s)} className="flex-1 min-w-0 text-left" title="Open subtask">
                           <span className={`block text-[12px] truncate ${sStatus === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{s.name}</span>
-                          <span className="block text-[10px] text-[var(--color-text-muted)] font-mono">{spanLabel(startOf(s), finishOf(s), tz)}{sInfo ? ` · ${sInfo.percent}%` : ""}</span>
+                          <span className="block text-[11px] text-[var(--color-text-muted)] font-mono">{spanLabel(startOf(s), finishOf(s), tz)}{sInfo ? ` · ${sInfo.percent}%` : ""}</span>
                         </button>
                         {/* A step's % with what got done — right here, no need to open it. */}
                         {!sIsSummary && s.id && (
@@ -627,20 +627,20 @@ export default function TaskDetailPanel({
                             <button
                               onClick={(e) => { e.stopPropagation(); onMoveDays(s.id!, -1); }}
                               title="Move this step 1 day earlier"
-                              className="w-5 h-5 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-indigo-700 hover:bg-indigo-50"
+                              className="w-5 h-5 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-[var(--color-accent-hover)] hover:bg-[var(--color-surface-2)]"
                             >
                               <ChevronLeft className="w-3.5 h-3.5" />
                             </button>
                             <button
                               onClick={(e) => { e.stopPropagation(); onMoveDays(s.id!, 1); }}
                               title="Move this step 1 day later"
-                              className="w-5 h-5 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-indigo-700 hover:bg-indigo-50"
+                              className="w-5 h-5 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-[var(--color-accent-hover)] hover:bg-[var(--color-surface-2)]"
                             >
                               <ChevronRight className="w-3.5 h-3.5" />
                             </button>
                           </span>
                         )}
-                        {s.id && childCount(s.id) > 0 && <span className="text-[10px] text-[var(--color-text-faint)] font-mono shrink-0">{childCount(s.id)}</span>}
+                        {s.id && childCount(s.id) > 0 && <span className="text-[11px] text-[var(--color-text-faint)] font-mono shrink-0">{childCount(s.id)}</span>}
                       </li>
                       );
                     })}
@@ -659,10 +659,10 @@ export default function TaskDetailPanel({
                     <input
                       value={noteDraft} onChange={(e) => setNoteDraft(e.target.value)}
                       placeholder="Add a note…"
-                      className="flex-1 text-xs px-2 py-1.5 border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-indigo-500/30"
+                      className="flex-1 text-xs px-2 py-1.5 border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]"
                       onKeyDown={(e) => { if (e.key === "Enter") void addNote(); }}
                     />
-                    <button onClick={() => void addNote()} disabled={!noteDraft.trim()} className="p-1.5 rounded-md text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 disabled:opacity-40" title="Add note">
+                    <button onClick={() => void addNote()} disabled={!noteDraft.trim()} className="p-1.5 rounded-md text-[var(--color-accent)] dark:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40" title="Add note">
                       <MessageSquarePlus className="w-4 h-4" />
                     </button>
                   </div>
@@ -675,7 +675,7 @@ export default function TaskDetailPanel({
                       <li key={n.id} className="text-xs">
                         <div className="flex items-center gap-1.5">
                           {n.kind === "reschedule"
-                            ? <CalendarDays className="w-3 h-3 text-violet-500 shrink-0" />
+                            ? <CalendarDays className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
                             : n.statusAt
                               ? <StatusPill status={n.statusAt} dotOnly />
                               : <MessageSquarePlus className="w-3 h-3 text-[var(--color-text-faint)] shrink-0" />}
@@ -696,7 +696,7 @@ export default function TaskDetailPanel({
                             <span className="flex-1 text-[var(--color-text-muted)]">{n.body}</span>
                             {/* A comment is its author's to change. */}
                             {canEdit && n.kind === "note" && n.id && n.createdBy === userId && (
-                              <span className="shrink-0 flex gap-1.5 text-[10px] font-bold">
+                              <span className="shrink-0 flex gap-1.5 text-[11px] font-bold">
                                 <button onClick={() => setEditNote({ id: n.id!, body: n.body ?? "" })} className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]">Edit</button>
                                 <button onClick={() => void removeNote(n.id!)} className="text-[var(--color-text-faint)] hover:text-rose-600">Delete</button>
                               </span>
@@ -731,7 +731,7 @@ export default function TaskDetailPanel({
             )}
           </div>
         )}
-        {saving && <div className="absolute inset-0 bg-white/40 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-indigo-600 dark:text-indigo-400" /></div>}
+        {saving && <div className="absolute inset-0 bg-white/40 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-muted)] dark:text-[var(--color-text)]" /></div>}
       </div>
       <style jsx>{`@keyframes slidein { from { transform: translateX(16px); opacity: .6 } to { transform: translateX(0); opacity: 1 } }`}</style>
     </div>
@@ -877,7 +877,7 @@ function EditForm({
         <div><DateTimePicker label="Planned start" value={start} onChange={(x) => datesTo(x, finish)} tz={tz} times={shiftTimes} disabled={!isLeaf} future showNow={false} /><Note err={v.errors.start} warn={v.warnings.start} /></div>
         <div><DateTimePicker label="Planned finish" value={finish} onChange={(x) => datesTo(start, x)} tz={tz} times={shiftTimes} disabled={!isLeaf} future showNow={false} /><Note err={v.errors.finish} warn={v.warnings.finish} /></div>
       </div>
-      {!isLeaf && <div className="text-[10px] text-[var(--color-text-muted)] -mt-1">A phase runs from its first step to its last - move the phase (or its steps) on the timeline to change its dates.</div>}
+      {!isLeaf && <div className="text-[11px] text-[var(--color-text-muted)] -mt-1">A phase runs from its first step to its last - move the phase (or its steps) on the timeline to change its dates.</div>}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <L label="Work hours">
           <input type="number" min={0} value={durationHours} onChange={(e) => { setDurationHours(e.target.value); setHoursTyped(true); }} className={cls("durationHours")} />
@@ -921,7 +921,7 @@ function EditForm({
       {error && <div className="text-xs text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-md p-2">{error}</div>}
       <div className="flex items-center justify-end gap-2 pt-1">
         <button onClick={onCancel} disabled={saving} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
-        <button onClick={() => void save()} disabled={saving || !canSave || v.hasErrors} title={v.hasErrors ? "Fix the highlighted fields first" : undefined} className="inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-md disabled:opacity-40">
+        <button onClick={() => void save()} disabled={saving || !canSave || v.hasErrors} title={v.hasErrors ? "Fix the highlighted fields first" : undefined} className="inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-md disabled:opacity-40">
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save
         </button>
       </div>
@@ -929,7 +929,7 @@ function EditForm({
   );
 }
 
-const inp = "w-full px-2.5 py-1.5 text-sm border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400";
+const inp = "w-full px-2.5 py-1.5 text-sm border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:border-[var(--color-border-strong)]";
 
 function L({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -944,7 +944,7 @@ function L({ label, children }: { label: string; children: React.ReactNode }) {
 function Note({ err, warn }: { err?: string; warn?: string }) {
   if (!err && !warn) return null;
   return (
-    <div className={`mt-0.5 flex items-start gap-1 text-[10.5px] ${err ? "text-rose-600 dark:text-rose-400" : "text-amber-600 dark:text-amber-400"}`}>
+    <div className={`mt-0.5 flex items-start gap-1 text-[11px] ${err ? "text-rose-600 dark:text-rose-400" : "text-amber-600 dark:text-amber-400"}`}>
       <AlertTriangle className="w-3 h-3 shrink-0 mt-px" /> {err ?? warn}
     </div>
   );
@@ -975,14 +975,14 @@ function Field({ icon, label, children }: { icon: React.ReactNode; label: string
 function StatusPill({ status, dotOnly }: { status: MilestoneStatus; dotOnly?: boolean }) {
   const tone =
     status === "completed"   ? "bg-emerald-500" :
-    status === "in_progress" ? "bg-blue-500" :
+    status === "in_progress" ? "bg-[var(--color-text-muted)]" :
     status === "on_hold"     ? "bg-amber-500" :
     status === "blocked"     ? "bg-rose-500" :
     status === "missed"      ? "bg-rose-600" : "bg-slate-400";
   if (dotOnly) return <span className={`shrink-0 w-2 h-2 rounded-full ${tone}`} title={labelOf(status)} />;
   const text =
     status === "completed"   ? "text-emerald-800 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-900/40 border-emerald-200 dark:border-emerald-800" :
-    status === "in_progress" ? "text-blue-800 dark:text-blue-300 bg-blue-100 dark:bg-blue-900/40 border-blue-200 dark:border-blue-800" :
+    status === "in_progress" ? "text-[var(--color-text)] dark:text-[var(--color-text)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] border-[var(--color-border)] dark:border-[var(--color-border)]" :
     status === "on_hold"     ? "text-amber-900 dark:text-amber-200 bg-amber-100 dark:bg-amber-900/40 border-amber-200 dark:border-amber-800" :
     status === "blocked"     ? "text-rose-800 dark:text-rose-300 bg-rose-100 dark:bg-rose-900/40 border-rose-200 dark:border-rose-800" :
     status === "missed"      ? "text-rose-900 dark:text-rose-200 bg-rose-100 dark:bg-rose-900/40 border-rose-200 dark:border-rose-800" : "text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]";
@@ -1084,9 +1084,9 @@ function DependencyEditor({
   return (
     <div className="px-4 py-3 border-b border-[var(--color-border)]">
       <div className="flex items-center gap-1.5 mb-1.5">
-        <Link2 className="w-3.5 h-3.5 text-indigo-500" />
+        <Link2 className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
         <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Depends on</span>
-        <span className="text-[10px] text-[var(--color-text-faint)]">- and how it waits on each</span>
+        <span className="text-[11px] text-[var(--color-text-faint)]">- and how it waits on each</span>
       </div>
       {deps.length === 0 ? (
         <div className="text-[11px] text-[var(--color-text-faint)] italic mb-1.5">No dependencies.</div>
@@ -1096,7 +1096,7 @@ function DependencyEditor({
             const t = byId.get(id);
             const l = linkOf(links, id);
             return (
-              <div key={id} className="flex flex-wrap items-center gap-1.5 rounded-md bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 text-indigo-800 dark:text-indigo-300 text-[11px] font-semibold pl-2 pr-1 py-0.5">
+              <div key={id} className="flex flex-wrap items-center gap-1.5 rounded-md bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] border border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)] text-[11px] font-semibold pl-2 pr-1 py-0.5">
                 <button type="button" className="flex-1 min-w-[55%] break-words text-left hover:underline" onClick={() => t && onSelectMilestone?.(t)} title={withTask(t, byId)}>
                   {withTask(t, byId)}
                 </button>
@@ -1104,18 +1104,18 @@ function DependencyEditor({
                   <>
                     <select value={l.type} disabled={saving} title="How this task waits on it"
                       onChange={(e) => void save(deps, { ...links, [id]: { ...l, type: e.target.value as LinkType } })}
-                      className="text-[10.5px] font-semibold rounded border border-indigo-200 dark:border-indigo-800 bg-[var(--color-surface)] text-[var(--color-text)] px-1 py-0.5">
+                      className="text-[11px] font-semibold rounded border border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] px-1 py-0.5">
                       {(Object.keys(LINK_LABEL) as LinkType[]).map((k) => <option key={k} value={k}>{LINK_LABEL[k]}</option>)}
                     </select>
-                    <label className="inline-flex items-center gap-0.5 text-[10.5px]" title="Lag in hours (negative = lead)">
+                    <label className="inline-flex items-center gap-0.5 text-[11px]" title="Lag in hours (negative = lead)">
                       +<input key={`${id}-${l.lagHours}`} type="number" step={0.5} defaultValue={l.lagHours} disabled={saving}
                         onBlur={(e) => { const v = Number(e.target.value) || 0; if (v !== l.lagHours) void save(deps, { ...links, [id]: { ...l, lagHours: v } }); }}
-                        className="w-12 rounded border border-indigo-200 dark:border-indigo-800 bg-[var(--color-surface)] text-[var(--color-text)] px-1 py-0.5 text-right" />h
+                        className="w-12 rounded border border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] px-1 py-0.5 text-right" />h
                     </label>
                   </>
-                ) : linkShort(l) ? <span className="text-[10px]">{linkShort(l)}</span> : null}
+                ) : linkShort(l) ? <span className="text-[11px]">{linkShort(l)}</span> : null}
                 {canEdit && (
-                  <button type="button" disabled={saving} onClick={() => void save(deps.filter((dd) => dd !== id))} className="p-0.5 rounded-full hover:bg-indigo-200/60 text-indigo-500 hover:text-indigo-800" title="Remove dependency">
+                  <button type="button" disabled={saving} onClick={() => void save(deps.filter((dd) => dd !== id))} className="p-0.5 rounded-full hover:bg-[var(--color-border)] text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]" title="Remove dependency">
                     <XIcon className="w-3 h-3" />
                   </button>
                 )}
@@ -1197,7 +1197,7 @@ function HoldsUpEditor({ milestone, allTasks, canEdit, userId, onChanged, onSele
       <div className="flex items-center gap-1.5 mb-1.5">
         <ArrowRight className="w-3.5 h-3.5 text-amber-600" />
         <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Holds up</span>
-        <span className="text-[10px] text-[var(--color-text-faint)]">- can&apos;t start until this is done</span>
+        <span className="text-[11px] text-[var(--color-text-faint)]">- can&apos;t start until this is done</span>
       </div>
       {waiting.length === 0 ? (
         <div className="text-[11px] text-[var(--color-text-faint)] italic mb-1.5">Nothing waits on it.</div>
@@ -1268,9 +1268,9 @@ function AssigneeEditor({ milestone, canEdit, userId, onChanged }: {
   return (
     <div className="px-4 py-3 border-b border-[var(--color-border)]">
       <div className="flex items-center gap-1.5 mb-1.5">
-        <Target className="w-3.5 h-3.5 text-indigo-500" />
+        <Target className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
         <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Responsible</span>
-        <span className="text-[10px] text-[var(--color-text-faint)]">- the member who owns this deliverable</span>
+        <span className="text-[11px] text-[var(--color-text-faint)]">- the member who owns this deliverable</span>
       </div>
       {canEdit ? (
         <select
@@ -1345,13 +1345,13 @@ function CriticalRow({ m, isLeaf, allTasks, critical, canEdit, userId, userEmail
       <span className={onCount ? "font-bold text-rose-700 dark:text-rose-300" : ""}>
         {isLeaf ? (onCount ? "On the critical path" : "Not critical") : onCount ? `${onCount} of ${below.filter((t) => !allTasks.some((c) => c.parentId === t.id)).length} steps critical` : "No steps critical"}
       </span>
-      <span className="ml-1 text-[10px] text-[var(--color-text-faint)]">· {why}</span>
+      <span className="ml-1 text-[11px] text-[var(--color-text-faint)]">· {why}</span>
       {canEdit && (
         <div className="mt-1 flex items-center gap-2 flex-wrap">
           <div className="inline-flex overflow-hidden rounded-md border border-[var(--color-border-strong)] divide-x divide-[var(--color-border)]" role="group" aria-label="Critical path">
             {opt(null, "Auto")}{opt("yes", "Critical")}{opt("no", "Not critical")}
           </div>
-          {!isLeaf && <span className="text-[10px] text-[var(--color-text-faint)]">applies to every step under it</span>}
+          {!isLeaf && <span className="text-[11px] text-[var(--color-text-faint)]">applies to every step under it</span>}
           {busy && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-faint)]" />}
         </div>
       )}

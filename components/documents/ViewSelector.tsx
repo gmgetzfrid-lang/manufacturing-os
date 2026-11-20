@@ -90,7 +90,7 @@ export default function ViewSelector({
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div className="absolute right-0 mt-1 w-64 origin-top-right bg-[var(--color-surface)] text-[var(--color-text)] rounded-xl border border-[var(--color-border)] ring-1 ring-black/5 shadow-lg z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             <div className="px-3 py-2 border-b border-[var(--color-border)]">
-              <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Views</div>
+              <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Views</div>
             </div>
             <div className="max-h-72 overflow-y-auto">
               {loading ? (
@@ -101,7 +101,7 @@ export default function ViewSelector({
                 <>
                   {orgViews.length > 0 && (
                     <>
-                      <div className="px-3 py-1 text-[9px] font-black uppercase tracking-widest text-[var(--color-text-faint)] bg-[var(--color-surface-2)]">Admin Views</div>
+                      <div className="px-3 py-1 text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)] bg-[var(--color-surface-2)]">Admin Views</div>
                       {orgViews.map((v) => (
                         <ViewRow key={v.id} v={v} active={v.id === activeViewId} onApply={() => apply(v)} onDelete={isAdmin ? () => remove(v.id) : undefined} />
                       ))}
@@ -109,7 +109,7 @@ export default function ViewSelector({
                   )}
                   {userViews.length > 0 && (
                     <>
-                      <div className="px-3 py-1 text-[9px] font-black uppercase tracking-widest text-[var(--color-text-faint)] bg-[var(--color-surface-2)]">My Views</div>
+                      <div className="px-3 py-1 text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)] bg-[var(--color-surface-2)]">My Views</div>
                       {userViews.map((v) => (
                         <ViewRow key={v.id} v={v} active={v.id === activeViewId} onApply={() => apply(v)} onDelete={() => remove(v.id)} />
                       ))}
@@ -156,14 +156,14 @@ function ViewRow({ v, active, onApply, onDelete }: {
   v: LibraryView; active: boolean; onApply: () => void; onDelete?: () => void;
 }) {
   return (
-    <div className={`flex items-center gap-2 px-3 py-2 hover:bg-[var(--color-surface-2)] cursor-pointer ${active ? "bg-[var(--color-accent-soft)]" : ""}`} onClick={onApply}>
+    <div className={`flex items-center gap-2 px-3 py-2 hover:bg-[var(--color-surface-2)] cursor-pointer ${active ? "bg-[var(--color-surface-2)]" : ""}`} onClick={onApply}>
       {v.scope === "user" ? <UserIcon className="w-3 h-3 text-[var(--color-text-faint)] shrink-0" /> : <Eye className="w-3 h-3 text-[var(--color-text-faint)] shrink-0" />}
       <div className="flex-1 min-w-0">
         <div className="text-xs font-bold text-[var(--color-text)] truncate flex items-center gap-1">
           {v.name}
           {v.is_default && <Star className="w-3 h-3 text-amber-500 fill-amber-400" />}
         </div>
-        {v.description && <div className="text-[10px] text-[var(--color-text-muted)] truncate">{v.description}</div>}
+        {v.description && <div className="text-[11px] text-[var(--color-text-muted)] truncate">{v.description}</div>}
       </div>
       {onDelete && (
         <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="p-1 text-[var(--color-text-faint)] hover:text-red-600 hover:bg-red-50 rounded">
@@ -210,7 +210,7 @@ function SaveViewModal({
       <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center justify-between">
           <div className="text-sm font-black text-[var(--color-text)] flex items-center gap-2">
-            <Save className="w-4 h-4 text-[var(--color-accent)]" /> Save current view
+            <Save className="w-4 h-4 text-[var(--color-text-muted)]" /> Save current view
           </div>
           <button onClick={onClose} disabled={busy} className="p-1.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
             <X className="w-3.5 h-3.5" />
@@ -218,15 +218,15 @@ function SaveViewModal({
         </div>
         <div className="px-5 py-4 space-y-3">
           <div>
-            <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Name *</label>
+            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Name *</label>
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Past Due P&IDs" autoFocus className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
           </div>
           <div>
-            <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Description</label>
+            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Description</label>
             <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional" className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
           </div>
           <div>
-            <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Visibility</label>
+            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Visibility</label>
             <div className="mt-1 flex bg-[var(--color-surface-2)] p-1 rounded-lg w-fit">
               {isAdmin && (
                 <button onClick={() => setScope("org")} className={`px-3 py-1.5 text-xs font-bold rounded-md ${scope === "org" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>

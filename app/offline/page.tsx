@@ -7,7 +7,7 @@ import Link from "next/link";
 export default function OfflinePage() {
   return (
     <div className="min-h-dvh flex flex-col items-center justify-center bg-slate-950 text-center p-6">
-      <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-orange-500 to-orange-700 flex items-center justify-center shadow-lg mb-5">
+      <div className="w-16 h-16 rounded-2xl flex items-center justify-center shadow-lg mb-5 bg-[var(--color-text)]">
         <WifiOff className="w-8 h-8 text-white" />
       </div>
       <h1 className="text-xl font-black text-white">You&apos;re offline</h1>

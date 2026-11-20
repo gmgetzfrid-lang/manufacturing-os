@@ -96,7 +96,7 @@ function SetupLink({ href, icon: Icon, title, body }: {
 }) {
   return (
     <Link href={href} className="flex items-start gap-3 rounded-lg px-2 py-2 -mx-2 hover:bg-[var(--color-surface-2)] transition-colors">
-      <Icon className="w-4 h-4 text-violet-600 mt-0.5 shrink-0" />
+      <Icon className="w-4 h-4 text-[var(--color-text-muted)] mt-0.5 shrink-0" />
       <div className="flex-1">
         <div className="text-sm font-bold text-[var(--color-text)]">{title}</div>
         <p className="text-[11px] text-[var(--color-text-muted)]">{body}</p>

@@ -154,7 +154,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
       <div className="absolute inset-0 bg-black/45 backdrop-blur-[2px] animate-in fade-in" onClick={onClose} />
       <div className="relative w-full max-w-lg max-h-[85dvh] overflow-y-auto bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-2xl animate-in fade-in zoom-in-95 duration-150">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-2">
-          <Pencil className="w-4 h-4 text-[var(--color-accent)]" />
+          <Pencil className="w-4 h-4 text-[var(--color-text-muted)]" />
           <span className="text-sm font-black text-[var(--color-text)]">Edit project</span>
           <button onClick={onClose} className="ml-auto p-1 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
@@ -200,7 +200,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
                 <div className="mt-1 space-y-1.5">
                   {goals.map((g, i) => (
                     <div key={i} className="flex items-center gap-2 text-xs rounded-lg border border-[var(--color-border)] px-2.5 py-1.5">
-                      <Target className="w-3 h-3 text-[var(--color-accent)] shrink-0" />
+                      <Target className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
                       <input value={g} onChange={(e) => setGoals(goals.map((x, j) => (j === i ? e.target.value : x)))} aria-label={`Goal ${i + 1}`}
                         className="flex-1 min-w-0 bg-transparent text-[var(--color-text)] outline-none" />
                       <button type="button" onClick={() => setGoals(goals.filter((_, j) => j !== i))} aria-label="Remove goal" className="p-1 text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3.5 h-3.5" /></button>
@@ -244,19 +244,19 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
                         ))}
                       </ul>
                     )}
-                    <div className="mt-1 text-[10px] text-[var(--color-text-faint)]">From document control - upload it there first if it isn&apos;t in yet.</div>
+                    <div className="mt-1 text-[11px] text-[var(--color-text-faint)]">From document control - upload it there first if it isn&apos;t in yet.</div>
                   </div>
                 )}
               </div>
             </>
           )}
           {wizardLoaded === "missing" && (
-            <div className="text-[10px] text-[var(--color-text-faint)]">Purpose, goals, success criteria, job size and the Summary of Work need the database update 20261013_project_controls_program.sql.</div>
+            <div className="text-[11px] text-[var(--color-text-faint)]">Purpose, goals, success criteria, job size and the Summary of Work need the database update 20261013_project_controls_program.sql.</div>
           )}
           <div>
             <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Plant timezone</span>
             <TimeZoneSelect value={timezone} onChange={setTimezone} className="mt-1" />
-            <div className="mt-1 text-[10px] text-[var(--color-text-faint)]">
+            <div className="mt-1 text-[11px] text-[var(--color-text-faint)]">
               Every schedule date, calendar day and shift is shown and entered in this zone, for everyone on the project.
               {originalTz === DEFAULT_SCHEDULE_TZ && !tzChanged && " Currently UTC - pick the plant's zone so evening work lands on the right day."}
             </div>
@@ -289,7 +289,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
               ))}
             </div>
             {visibility === "private" && (
-              <div className="mt-1 text-[10px] text-[var(--color-text-faint)]">Only members, the owner, and Document Control can see private projects.</div>
+              <div className="mt-1 text-[11px] text-[var(--color-text-faint)]">Only members, the owner, and Document Control can see private projects.</div>
             )}
           </div>
           {error && <div className="rounded-lg border border-rose-500/40 bg-rose-500/[0.07] px-3 py-2 text-xs font-bold text-rose-700 dark:text-rose-300">{error}</div>}

@@ -485,7 +485,6 @@ export default function ProjectDetailPage() {
             {MAIN_TABS.map((t) => (
               <TabButton key={t.id} active={tab === t.id} onClick={() => setTab(t.id)} main>
                 <t.icon className="w-4 h-4 max-sm:hidden" /> {t.label}
-                {t.id === "closeout" && workDone && <span className="w-2 h-2 rounded-full bg-emerald-500" aria-label="work done" />}
               </TabButton>
             ))}
             {RECORD_TABS.filter((t) => t.id === tab).map((t) => (
@@ -747,7 +746,7 @@ export default function ProjectDetailPage() {
               );
             })()}
             <div className="px-6 py-5">
-              <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">
+              <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">
                 Reason {pendingStatus === "cancelled" ? "*" : "(optional)"}
               </label>
               <textarea
@@ -789,7 +788,7 @@ function StatusBadge({ status }: { status: ProjectStatus }) {
   const cls: Record<ProjectStatus, string> = {
     active: "bg-emerald-100 text-emerald-700 border-emerald-200",
     paused: "bg-amber-100 text-amber-700 border-amber-200",
-    completed: "bg-blue-100 text-blue-700 border-blue-200",
+    completed: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]",
     cancelled: "bg-red-100 text-red-700 border-red-200",
     archived: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
   };
@@ -861,7 +860,7 @@ function Section({ title, count, tone, children }: { title: string; count: numbe
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
       <div className={`px-4 py-2.5 border-b border-[var(--color-border)] flex items-center justify-between text-xs font-bold ${tone === "active" ? "bg-emerald-50/40 text-emerald-800" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
         <span>{title}</span>
-        <span className="text-[10px] font-mono bg-[var(--color-surface)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-full">{count}</span>
+        <span className="text-[11px] font-mono bg-[var(--color-surface)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-full">{count}</span>
       </div>
       {children}
     </div>
@@ -877,11 +876,11 @@ function CheckoutLine({ c, historical }: { c: CheckoutWithDoc; historical?: bool
           <div className="flex flex-wrap items-baseline gap-x-2">
             <span className="font-mono text-sm font-bold text-[var(--color-text)] truncate">{c.docNumber || "-"}</span>
             <span className="text-xs text-[var(--color-text-muted)] truncate">{c.docTitle}</span>
-            {c.libraryName && <span className="text-[10px] text-[var(--color-text-faint)]">in {c.libraryName}</span>}
+            {c.libraryName && <span className="text-[11px] text-[var(--color-text-faint)]">in {c.libraryName}</span>}
           </div>
           <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[var(--color-text-muted)]">
             <span className="inline-flex items-center gap-1"><UserIcon className="w-3 h-3" />{c.userName}</span>
-            <span className="text-[10px] font-bold uppercase bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{c.mode}</span>
+            <span className="text-[11px] font-bold uppercase bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{c.mode}</span>
             <span>{historical ? `Released ${formatRelative(c.releasedAt ?? c.endedAt)}` : `Since ${formatRelative(c.startedAt)}`}</span>
             {c.releasedReason && <span className="text-[var(--color-text-faint)] italic">- {c.releasedReason}</span>}
           </div>
@@ -891,7 +890,7 @@ function CheckoutLine({ c, historical }: { c: CheckoutWithDoc; historical?: bool
         </div>
         <Link
           href={`/documents/${c.libraryId}?doc=${c.documentId}`}
-          className="p-1.5 rounded-md text-[var(--color-text-faint)] hover:text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] transition-colors"
+          className="p-1.5 rounded-md text-[var(--color-text-faint)] hover:text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] transition-colors"
           title="Open document"
         >
           <ExternalLink className="w-3.5 h-3.5" />
@@ -916,8 +915,8 @@ function ActivityTab({
       {canComment && (
         <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-4 shadow-sm">
           <div className="flex items-start gap-3">
-            <div className="p-2 bg-[var(--color-accent-soft)] rounded-lg shrink-0">
-              <MessageSquare className="w-4 h-4 text-[var(--color-accent)]" />
+            <div className="p-2 bg-[var(--color-surface-2)] rounded-lg shrink-0">
+              <MessageSquare className="w-4 h-4 text-[var(--color-text-muted)]" />
             </div>
             <div className="flex-1">
               <textarea
@@ -1033,7 +1032,7 @@ function MembersTab({
     <div className="space-y-4">
       {canManage && (
         <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-4 shadow-sm">
-          <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-2">Add member</div>
+          <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest mb-2">Add member</div>
           <div className="flex flex-col sm:flex-row gap-2">
             <input value={addEmail} onChange={(e) => setAddEmail(e.target.value)} placeholder="user@example.com"
               className="flex-1 px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
@@ -1075,7 +1074,7 @@ function MembersTab({
             const respDraft = editingResp[m.userId];
             return (
               <div key={m.id} className="px-4 py-3 flex items-start gap-3 group">
-                <div className="p-2 bg-[var(--color-accent-soft)] rounded-full text-[var(--color-accent)] mt-0.5"><UserIcon className="w-4 h-4" /></div>
+                <div className="p-2 bg-[var(--color-surface-2)] rounded-full text-[var(--color-text)] mt-0.5"><UserIcon className="w-4 h-4" /></div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-bold text-[var(--color-text)] truncate">{m.userName || m.userEmail || m.userId.slice(0, 8)}</span>
@@ -1086,7 +1085,7 @@ function MembersTab({
                         {MEMBER_ROLES.map((r) => <option key={r.role} value={r.role}>{r.label}</option>)}
                       </select>
                     ) : (
-                      <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${isOwner || m.role === "co_owner" ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]" : m.role === "collaborator" ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>{roleLabel(isOwner ? "owner" : m.role)}</span>
+                      <span className={`text-[11px] font-bold uppercase px-1.5 py-0.5 rounded ${isOwner || m.role === "co_owner" ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : m.role === "collaborator" ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>{roleLabel(isOwner ? "owner" : m.role)}</span>
                     )}
                   </div>
                   {m.userEmail && <div className="text-xs text-[var(--color-text-muted)] truncate">{m.userEmail}</div>}
@@ -1114,7 +1113,7 @@ function MembersTab({
                 <div className="flex items-center gap-1 shrink-0">
                   {canTransfer && !isOwner && (
                     <button onClick={() => setTransferTo(m.userId)} title="Hand the project to this member"
-                      className="text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] px-1.5 py-1 rounded hover:bg-[var(--color-accent-soft)] whitespace-nowrap">
+                      className="text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] px-1.5 py-1 rounded hover:bg-[var(--color-surface-2)] whitespace-nowrap">
                       Make owner
                     </button>
                   )}

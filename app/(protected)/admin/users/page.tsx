@@ -451,7 +451,7 @@ function RoleAddPicker({
 
   // Nothing left that would grant new access — the guardrail in action.
   if (options.length === 0) {
-    return <span className="text-[10px] text-[var(--color-text-faint)] italic px-1">full access</span>;
+    return <span className="text-[11px] text-[var(--color-text-faint)] italic px-1">full access</span>;
   }
 
   return (
@@ -468,7 +468,7 @@ function RoleAddPicker({
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div className="absolute left-0 z-50 mt-1 w-72 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg py-1 max-h-72 overflow-auto animate-in fade-in zoom-in-95 duration-150">
-            <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-faint)] border-b border-[var(--color-border)]">
+            <div className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-faint)] border-b border-[var(--color-border)]">
               Roles that add new access
             </div>
             {options.map((r) => {
@@ -478,10 +478,10 @@ function RoleAddPicker({
                   key={r}
                   type="button"
                   onClick={() => { onAdd(r); setOpen(false); }}
-                  className="block w-full text-left px-3 py-2 hover:bg-[var(--color-accent-soft)] transition-colors"
+                  className="block w-full text-left px-3 py-2 hover:bg-[var(--color-surface-2)] transition-colors"
                 >
                   <div className="text-xs font-bold text-[var(--color-text)]">{r}</div>
-                  <div className="text-[10px] text-[var(--color-text-muted)] leading-tight mt-0.5">+ {adds.join(' · ')}</div>
+                  <div className="text-[11px] text-[var(--color-text-muted)] leading-tight mt-0.5">+ {adds.join(' · ')}</div>
                 </button>
               );
             })}

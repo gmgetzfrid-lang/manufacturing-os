@@ -78,20 +78,20 @@ export default function ThreadRail(p: RailProps) {
         </div>
         <div className="flex items-center gap-1.5 flex-wrap">
           <button onClick={() => setMine(false)}
-            className={`text-[10px] font-black px-2 py-1 rounded-md border transition-colors ${!mine
+            className={`text-[11px] font-black px-2 py-1 rounded-md border transition-colors ${!mine
               ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]"
               : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
             Everyone
           </button>
           <button onClick={() => setMine(true)}
-            className={`text-[10px] font-black px-2 py-1 rounded-md border transition-colors ${mine
+            className={`text-[11px] font-black px-2 py-1 rounded-md border transition-colors ${mine
               ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]"
               : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
             Mine
           </button>
           {p.libraryFilter && (
             <button onClick={p.onClearLibraryFilter} title="Show every conversation"
-              className="ml-auto inline-flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[var(--color-text)] bg-[var(--color-surface-2)] max-w-[55%]">
+              className="ml-auto inline-flex items-center gap-1 text-[11px] font-black px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[var(--color-text)] bg-[var(--color-surface-2)] max-w-[55%]">
               <span className="truncate">{p.libraryFilter.name}</span> <X className="w-3 h-3 shrink-0" />
             </button>
           )}
@@ -126,7 +126,7 @@ export default function ThreadRail(p: RailProps) {
             {settled.length > 0 && (
               <div className="mt-2">
                 <button onClick={() => setSettledOpen((v) => !v)}
-                  className="w-full flex items-center gap-1 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]">
+                  className="w-full flex items-center gap-1 px-2 py-1 text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]">
                   {settledOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
                   Settled <span className="font-bold normal-case tracking-normal">({settled.length})</span>
                 </button>
@@ -143,7 +143,7 @@ export default function ThreadRail(p: RailProps) {
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="mt-2">
-      <div className="px-2 py-1 text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">{label}</div>
+      <div className="px-2 py-1 text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">{label}</div>
       <div className="space-y-0.5">{children}</div>
     </div>
   );
@@ -174,7 +174,7 @@ function Row({ t, p }: { t: ChatThread; p: RailProps }) {
 
   return (
     <div ref={ref} className={`group relative rounded-lg transition-colors ${active
-      ? "bg-[var(--color-accent-soft)]"
+      ? "bg-[var(--color-surface-2)]"
       : "hover:bg-[var(--color-surface-2)]"}`}>
       {renaming ? (
         <div className="px-2 py-1.5">
@@ -188,12 +188,12 @@ function Row({ t, p }: { t: ChatThread; p: RailProps }) {
       ) : (
         <button onClick={() => p.onOpen(t)} className="w-full text-left px-2 py-1.5 pr-8">
           <div className="flex items-center gap-1.5 min-w-0">
-            <Icon className={`w-3.5 h-3.5 shrink-0 ${t.scope === "internet" ? "text-sky-600" : t.scope === "tools" ? "text-violet-600" : "text-orange-600"}`} />
+            <Icon className={`w-3.5 h-3.5 shrink-0 ${t.scope === "internet" ? "text-[var(--color-text-muted)]" : t.scope === "tools" ? "text-[var(--color-text-muted)]" : "text-[var(--color-text-muted)]"}`} />
             <span className={`text-xs truncate ${active ? "font-black text-[var(--color-text)]" : "font-bold text-[var(--color-text)]"}`}>
               {t.title || "Untitled"}
             </span>
           </div>
-          <div className="pl-5 text-[10px] text-[var(--color-text-muted)] truncate">
+          <div className="pl-5 text-[11px] text-[var(--color-text-muted)] truncate">
             {libName ? `${libName} · ` : ""}{who} · {relativeTime(t.lastMessageAt)}
           </div>
         </button>

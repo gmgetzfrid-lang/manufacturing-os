@@ -115,15 +115,15 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
   return (
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
-        <GitPullRequestArrow className="w-4 h-4 text-[var(--color-accent)]" />
+        <GitPullRequestArrow className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-sm font-bold text-[var(--color-text)]">Change orders</span>
         {open.length > 0 && (
-          <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40">
+          <span className="text-[11px] font-black px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40">
             {open.length} awaiting decision
           </span>
         )}
         {summary.approvedCount > 0 && (
-          <span className="text-[10px] text-[var(--color-text-muted)]">
+          <span className="text-[11px] text-[var(--color-text-muted)]">
             {summary.approvedCount} approved · {fmtMoney(summary.approvedAmount)} total change
           </span>
         )}
@@ -156,7 +156,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
         <>
           {summary.byReason.length > 0 && (
             <div className="px-4 py-3 border-b border-[var(--color-border)]">
-              <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-2">
+              <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-2">
                 Approved changes by reason - who owns the growth
               </div>
               <Donut
@@ -198,16 +198,16 @@ function CoRow({ co, canManage, busy, partyName, accountLabel, accounts, decide,
   return (
     <li className={`px-4 py-2.5 text-xs ${!isOpen && co.status !== "approved" ? "opacity-60" : ""}`}>
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="font-mono text-[10px] font-black text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{co.coNumber}</span>
+        <span className="font-mono text-[11px] font-black text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{co.coNumber}</span>
         <span className="font-bold text-[var(--color-text)]">{co.title}</span>
         <span className={`font-black tabular-nums ${co.amount < 0 ? "text-emerald-700 dark:text-emerald-300" : "text-[var(--color-text)]"}`}>
           {co.amount < 0 ? `credit ${fmtMoney(Math.abs(co.amount))}` : fmtMoney(co.amount)}
         </span>
-        <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)]"
+        <span className="text-[11px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)]"
           title="Reason codes score both sides: scope gaps land on the contractor's record, design errors and owner requests on ours.">
           {CO_REASON_LABEL[co.reasonCode]}
         </span>
-        <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${
+        <span className={`text-[11px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${
           co.status === "approved" ? "border-emerald-500/40 bg-emerald-500/[0.07] text-emerald-700 dark:text-emerald-300"
           : co.status === "proposed" ? "border-amber-500/40 bg-amber-500/[0.07] text-amber-700 dark:text-amber-300"
           : "border-[var(--color-border)] text-[var(--color-text-faint)]"}`}>
@@ -217,38 +217,38 @@ function CoRow({ co, canManage, busy, partyName, accountLabel, accounts, decide,
           <span className="ml-auto inline-flex items-center gap-1.5">
             {!co.costAccountId && (
               <select value={accountPick} onChange={(e) => setAccountPick(e.target.value)}
-                className="h-6 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-[10px] max-w-40"
+                className="h-6 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-[11px] max-w-40"
                 title="Approval posts money - pick where it lands.">
                 <option value="">Posts to budget line…</option>
                 {accounts.map((a) => <option key={a.id} value={a.id}>{a.code ? `${a.code} ` : ""}{a.name}</option>)}
               </select>
             )}
             <button onClick={() => void decide(co, "approved", accountPick || undefined)} disabled={busy}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
               {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Approve
             </button>
             <button onClick={() => void decide(co, "rejected")} disabled={busy}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-rose-500/50 text-rose-700 dark:text-rose-300 text-[10px] font-black hover:bg-rose-500/10 disabled:opacity-50 transition-colors">
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-rose-500/50 text-rose-700 dark:text-rose-300 text-[11px] font-black hover:bg-rose-500/10 disabled:opacity-50 transition-colors">
               <XIcon className="w-3 h-3" /> Reject
             </button>
             <button onClick={onEdit} disabled={busy} title="Change the title, amount, reason or where it posts"
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text-muted)] text-[10px] font-bold hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text-muted)] text-[11px] font-bold hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
               <Pencil className="w-3 h-3" /> Edit
             </button>
             <button onClick={() => void decide(co, "void")} disabled={busy} title="Take the proposal back - it stays on the record as void"
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[var(--color-text-faint)] text-[10px] font-bold hover:text-rose-600 hover:bg-rose-500/10 disabled:opacity-50 transition-colors">
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[var(--color-text-faint)] text-[11px] font-bold hover:text-rose-600 hover:bg-rose-500/10 disabled:opacity-50 transition-colors">
               <Ban className="w-3 h-3" /> Withdraw
             </button>
           </span>
         )}
         {co.status === "approved" && canManage && (
           <button onClick={onVoidApproved} disabled={busy} title="Approved in error: its money comes off the budget line and the CO shows as void"
-            className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[var(--color-text-faint)] text-[10px] font-bold hover:text-rose-600 hover:bg-rose-500/10 disabled:opacity-50 transition-colors">
+            className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[var(--color-text-faint)] text-[11px] font-bold hover:text-rose-600 hover:bg-rose-500/10 disabled:opacity-50 transition-colors">
             {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Ban className="w-3 h-3" />} Void
           </button>
         )}
       </div>
-      <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">
+      <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
         {[
           partyName, accountLabel,
           co.description,
@@ -311,7 +311,7 @@ function ProposeForm({ orgId, projectId, actor, accounts, parties, onDone, onCan
   };
 
   return (
-    <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-accent-soft)]/40 space-y-2">
+    <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] space-y-2">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
         <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What changed? (title)" autoFocus
           className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs col-span-2" />

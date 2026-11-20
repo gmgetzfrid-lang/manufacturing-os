@@ -1470,7 +1470,7 @@ export default function ExecutionView({
                   className="absolute top-0 -right-1 z-30 h-full w-2 cursor-col-resize hover:bg-[var(--color-accent)]/30 active:bg-[var(--color-accent)]/50" />
               )}
               <div className="sticky top-0 z-10 bg-slate-50/95 dark:bg-[var(--color-surface-2)]/95 backdrop-blur border-b border-[var(--color-border)] flex items-center px-3 text-[12px] font-semibold text-[var(--color-text-muted)]" style={{ height: AXIS_H }}>
-                <ListTree className="w-3.5 h-3.5 mr-1.5 text-[var(--color-accent)]" /> Work breakdown
+                <ListTree className="w-3.5 h-3.5 mr-1.5 text-[var(--color-text-muted)]" /> Work breakdown
               </div>
               {win.first > 0 && <div style={{ height: win.first * ROW_H }} aria-hidden />}
               {rows.slice(win.first, win.last).map((r) => (
@@ -1719,16 +1719,16 @@ function Toolbar({
   onBulkDelete: () => void;
 }) {
   return (
-    <div className="px-3 py-2 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap bg-gradient-to-b from-white dark:from-[var(--color-surface)] to-slate-50/40 dark:to-[var(--color-surface)]">
+    <div className="px-3 py-2 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap bg-[var(--color-surface-2)]">
       {selectedCount > 0 ? (
         <div className="flex items-center gap-2 flex-1 flex-wrap">
-          <span className="text-xs font-bold text-[var(--color-accent)]">{selectedCount} selected</span>
+          <span className="text-xs font-bold text-[var(--color-text)]">{selectedCount} selected</span>
           {canEdit && (
             <>
               {/* Bulk status */}
               <div className="inline-flex items-center gap-1">
                 <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Mark</span>
-                {([["completed", "Done", "bg-emerald-600"], ["in_progress", "Doing", "bg-blue-600"], ["on_hold", "Hold", "bg-amber-600"], ["blocked", "Block", "bg-rose-600"]] as const).map(([s, label, bg]) => (
+                {([["completed", "Done", "bg-emerald-600"], ["in_progress", "Doing", "bg-[var(--color-text-muted)]"], ["on_hold", "Hold", "bg-amber-600"], ["blocked", "Block", "bg-rose-600"]] as const).map(([s, label, bg]) => (
                   <button key={s} onClick={() => onBulkStatus(s)} className={`px-2 py-1 rounded-md text-white text-[11px] font-bold ${bg} hover:brightness-110`}>
                     {label}
                   </button>
@@ -1778,7 +1778,7 @@ function Toolbar({
             </button>
             <button
               onClick={onFit}
-              className={`text-[10px] font-bold px-2 py-1 rounded-md border transition-colors ${isAutoFit ? "bg-[var(--color-accent-soft)] border-[var(--color-accent-ring)]/40 text-[var(--color-accent)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}
+              className={`text-[11px] font-bold px-2 py-1 rounded-md border transition-colors ${isAutoFit ? "bg-[var(--color-text)] border-[var(--color-accent-ring)]/40 text-[var(--color-surface)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}
               title="Fit the whole schedule to the screen width"
             >
               Fit
@@ -1830,7 +1830,7 @@ function OutlineRow({
       // name / date range from bleeding over the row below — the rows must stay
       // pixel-aligned with the absolutely-positioned timeline bars on the right.
       // (The status picker is portaled, so it isn't clipped by this.)
-      className={`group relative flex items-center gap-1.5 border-b border-[var(--color-border)] pr-2 overflow-hidden transition-colors ${focused ? "ring-2 ring-inset ring-[var(--color-accent-ring)] bg-[var(--color-accent-soft)]/40" : selected ? "bg-[var(--color-accent-soft)]/70" : checked ? "bg-emerald-50/30 dark:bg-emerald-950/20" : depth === 0 ? color.tint : "hover:bg-[var(--color-surface-2)]"}`}
+      className={`group relative flex items-center gap-1.5 border-b border-[var(--color-border)] pr-2 overflow-hidden transition-colors ${focused ? "ring-2 ring-inset ring-[var(--color-accent-ring)] bg-[var(--color-surface-2)]" : selected ? "bg-[var(--color-surface-2)]" : checked ? "bg-emerald-50/30 dark:bg-emerald-950/20" : depth === 0 ? color.tint : "hover:bg-[var(--color-surface-2)]"}`}
       style={{ height: ROW_H, paddingLeft: indent }}
     >
       {/* Group color rail — same hue for a phase and all its children,
@@ -1842,7 +1842,7 @@ function OutlineRow({
       ))}
       {canEdit && (
         <button onClick={onToggleSelected} className="shrink-0 text-slate-300 hover:text-[var(--color-accent)] transition-colors" title={selected ? "Deselect" : "Select"}>
-          {selected ? <CheckSquare className="w-4 h-4 text-[var(--color-accent)]" /> : <Square className="w-4 h-4" />}
+          {selected ? <CheckSquare className="w-4 h-4 text-[var(--color-text-muted)]" /> : <Square className="w-4 h-4" />}
         </button>
       )}
       {criticalMark && (
@@ -1874,13 +1874,13 @@ function OutlineRow({
         <div className={`truncate text-[13px] leading-tight ${checked ? "line-through text-[var(--color-text-faint)]" : ms.isSummary ? "font-bold text-[var(--color-text)]" : "font-medium text-[var(--color-text)]"}`}>
           {ms.name}
         </div>
-        <div className="flex items-center gap-1.5 text-[10px] text-[var(--color-text-faint)] font-mono leading-tight min-w-0">
+        <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-faint)] font-mono leading-tight min-w-0">
           {work && <ShiftMark work={work} />}
           <DiscoveryTag m={ms} tz={tz} className="shrink-0" />
           {ms.wbs && <span className="text-[var(--color-text-faint)] shrink-0">{ms.wbs}</span>}
           <span className="truncate" title={spanLabel(span.start, span.finish, tz)}>{spanLabel(span.start, span.finish, tz)}</span>
           {(ms.dependsOn?.length ?? 0) > 0 && (
-            <span className="inline-flex items-center gap-0.5 text-[var(--color-accent)] font-bold shrink-0" title={`Depends on ${ms.dependsOn!.length} task${ms.dependsOn!.length === 1 ? "" : "s"} - can't start until they finish`}>
+            <span className="inline-flex items-center gap-0.5 text-[var(--color-text)] font-bold shrink-0" title={`Depends on ${ms.dependsOn!.length} task${ms.dependsOn!.length === 1 ? "" : "s"} - can't start until they finish`}>
               <Link2 className="w-2.5 h-2.5" />{ms.dependsOn!.length}
             </span>
           )}
@@ -1894,7 +1894,7 @@ function OutlineRow({
           <div className="w-9 h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
             <div className={`h-full ${pct === 100 ? "bg-emerald-500" : color.rail}`} style={{ width: `${pct}%` }} />
           </div>
-          <span className="text-[9px] font-bold tabular-nums text-[var(--color-text-faint)] w-7 text-right">{pct}%</span>
+          <span className="text-[11px] font-bold tabular-nums text-[var(--color-text-faint)] w-7 text-right">{pct}%</span>
         </div>
       ) : (
         // Leaf: editable % complete.
@@ -1906,7 +1906,7 @@ function OutlineRow({
         </button>
       )}
       {canEdit && hasChildren && onSequence && (
-        <button onClick={onSequence} title="Sequence sub-tasks end-to-end (each starts when the prior finishes)" className="shrink-0 p-1 rounded text-slate-300 hover:text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] opacity-60 sm:opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 transition-opacity">
+        <button onClick={onSequence} title="Sequence sub-tasks end-to-end (each starts when the prior finishes)" className="shrink-0 p-1 rounded text-slate-300 hover:text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] opacity-60 sm:opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 transition-opacity">
           <ListOrdered className="w-3.5 h-3.5" />
         </button>
       )}
@@ -2021,7 +2021,7 @@ function Bar({
           </>
         )}
         {resize && (
-          <span className="absolute -top-5 left-1/2 -translate-x-1/2 text-[10px] font-bold bg-slate-900 text-white px-1.5 py-0.5 rounded whitespace-nowrap shadow">
+          <span className="absolute -top-5 left-1/2 -translate-x-1/2 text-[11px] font-bold bg-slate-900 text-white px-1.5 py-0.5 rounded whitespace-nowrap shadow">
             {resize.days > 0 ? "+" : ""}{resize.days}d
           </span>
         )}
@@ -2036,7 +2036,7 @@ function Bar({
         <button onClick={onOpenDetail} className="relative shrink-0" aria-label={`Milestone ${ms.name}`}>
           <span className={`block w-3 h-3 rotate-45 border-2 border-white shadow ${ms.status === "completed" ? "bg-emerald-500" : onPath ? "bg-rose-500" : "bg-slate-700"}`} />
         </button>
-        <span className="whitespace-nowrap text-[10px] font-bold text-[var(--color-text)] max-w-[200px] truncate bg-white/80 rounded px-1">{ms.name}</span>
+        <span className="whitespace-nowrap text-[11px] font-bold text-[var(--color-text)] max-w-[200px] truncate bg-white/80 rounded px-1">{ms.name}</span>
       </div>
     );
   }
@@ -2062,7 +2062,7 @@ function Bar({
         <div className="absolute inset-y-0 left-0 bg-white/35" style={{ width: `${pct}%` }} />
         <div className="relative h-full flex items-center pl-2.5 pr-1.5 gap-1">
           {ms.status === "completed" && <CircleCheck className="w-3 h-3 text-white shrink-0" />}
-          {labelFits && <span className="truncate text-[10px] font-semibold text-white drop-shadow-sm">{ms.name}{resize ? ` (${spanDays + previewSpanShift}d)` : ""}</span>}
+          {labelFits && <span className="truncate text-[11px] font-semibold text-white drop-shadow-sm">{ms.name}{resize ? ` (${spanDays + previewSpanShift}d)` : ""}</span>}
         </div>
         {/* Edge resize handles — only on leaves the user can edit. */}
         {draggable && (
@@ -2085,7 +2085,7 @@ function Bar({
           visually merge with neighbouring rows' labels. */}
       {!labelFits && (
         <span
-          className="absolute left-full ml-1.5 whitespace-nowrap text-[10px] font-semibold text-[var(--color-text)] pointer-events-none max-w-[220px] truncate bg-white/80 rounded px-1 shadow-sm"
+          className="absolute left-full ml-1.5 whitespace-nowrap text-[11px] font-semibold text-[var(--color-text)] pointer-events-none max-w-[220px] truncate bg-white/80 rounded px-1 shadow-sm"
           style={{ top: "50%", transform: "translateY(-50%)" }}
         >
           {ms.name}
@@ -2158,7 +2158,7 @@ function Axis({ domain, pxPerDay, shiftTimes }: { domain: { start: Date; totalDa
         {ticks.map((t) => (
           <div key={t.d} className="absolute top-0 bottom-0 flex items-center" style={{ left: t.x, width: step === 1 ? pxPerDay : undefined }}>
             <div className="absolute top-0 bottom-0 left-0 w-px bg-slate-300 dark:bg-slate-600" />
-            <span className={`pl-1.5 text-[10px] whitespace-nowrap ${t.anchor || step === 1 ? "font-bold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{t.label}</span>
+            <span className={`pl-1.5 text-[11px] whitespace-nowrap ${t.anchor || step === 1 ? "font-bold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{t.label}</span>
           </div>
         ))}
       </div>
@@ -2166,10 +2166,10 @@ function Axis({ domain, pxPerDay, shiftTimes }: { domain: { start: Date; totalDa
       {showShifts && (
         <div className="absolute inset-x-0 bottom-0 border-t border-slate-200 dark:border-slate-700" style={{ height: AXIS_H - DAY_ROW }}>
           {bands.map((b, i) => (
-            <div key={i} className={`absolute top-0 flex items-center gap-1 overflow-hidden border-b border-slate-200 dark:border-slate-700 ${b.night ? "bg-indigo-100/80 dark:bg-indigo-950/60 text-indigo-800 dark:text-indigo-300" : "bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300"}`}
+            <div key={i} className={`absolute top-0 flex items-center gap-1 overflow-hidden border-b border-slate-200 dark:border-slate-700 ${b.night ? "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]" : "bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300"}`}
               style={{ left: b.x, width: b.w, height: SHIFT_ROW }} title={`${b.night ? "Night" : "Day"} shift from ${b.label}`}>
               <div className="absolute top-0 bottom-0 left-0 w-px bg-slate-300 dark:bg-slate-600" />
-              <span className="pl-1 text-[9px] font-black whitespace-nowrap">{b.night ? "☾" : "☀"}{pxPerDay >= 110 ? ` ${b.night ? "Night" : "Day"} ${b.label}` : ""}</span>
+              <span className="pl-1 text-[11px] font-black whitespace-nowrap">{b.night ? "☾" : "☀"}{pxPerDay >= 110 ? ` ${b.night ? "Night" : "Day"} ${b.label}` : ""}</span>
             </div>
           ))}
           {hours.map((h, i) => (
@@ -2196,7 +2196,7 @@ function Gridlines({ domain, pxPerDay, rowCount, shiftTimes }: { domain: { start
     const dayAt = ((dh || 0) * 60 + (dm || 0)) / 1440, nightAt = ((nh || 0) * 60 + (nm || 0)) / 1440;
     for (let d = -1; d < domain.totalDays; d++) {
       const nx = (d + nightAt) * pxPerDay;
-      lines.push(<div key={`n${d}`} className="absolute top-0 bottom-0 bg-indigo-50/70 dark:bg-indigo-950/25" style={{ left: nx, width: (d + 1 + dayAt) * pxPerDay - nx }} />);
+      lines.push(<div key={`n${d}`} className="absolute top-0 bottom-0 bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]" style={{ left: nx, width: (d + 1 + dayAt) * pxPerDay - nx }} />);
     }
     const hStep = hourStep(pxPerDay);
     if (hStep && hStep <= 3) {
@@ -2313,7 +2313,7 @@ function Legend() {
       <div className="flex items-center gap-3 flex-wrap">
         <span className="text-[11px] font-semibold text-[var(--color-text-muted)]">Status</span>
         {entries.map(([s, label]) => (
-          <span key={s} className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]">
+          <span key={s} className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
             <span className={`w-2.5 h-2.5 rounded-sm ${statusTone(s).bar}`} /> {label}
           </span>
         ))}
@@ -2321,23 +2321,23 @@ function Legend() {
       {/* Symbol key — what the shapes mean (MS-Project-style vocabulary). */}
       <div className="flex items-center gap-3.5 flex-wrap">
         <span className="text-[11px] font-semibold text-[var(--color-text-muted)]">Symbols</span>
-        <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="A task; the lighter fill shows % complete">
-          <span className="relative w-7 h-2.5 rounded bg-blue-500 overflow-hidden"><span className="absolute inset-y-0 left-0 bg-white/40" style={{ width: "55%" }} /></span> Task (fill = % done)
+        <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]" title="A task; the lighter fill shows % complete">
+          <span className="relative w-7 h-2.5 rounded bg-[var(--color-text-muted)] overflow-hidden"><span className="absolute inset-y-0 left-0 bg-white/40" style={{ width: "55%" }} /></span> Task (fill = % done)
         </span>
-        <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="A summary / phase that rolls up its children">
+        <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]" title="A summary / phase that rolls up its children">
           <span className="relative w-7 flex items-center"><span className="h-1 w-full rounded-full bg-slate-400" /><span className="absolute -left-px w-[3px] h-3 rounded-sm bg-slate-400" /><span className="absolute -right-px w-[3px] h-3 rounded-sm bg-slate-400" /></span> Phase / summary
         </span>
-        <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="A milestone - a zero-duration marker">
+        <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]" title="A milestone - a zero-duration marker">
           <span className="w-2.5 h-2.5 rotate-45 bg-slate-700 border border-white" /> Milestone
         </span>
-        <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="On the critical path - drives the finish date">
+        <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]" title="On the critical path - drives the finish date">
           <span className="w-3 h-2.5 rounded-sm bg-slate-300 ring-2 ring-rose-500 ring-offset-1" /> Critical path
         </span>
-        <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="Finish-to-start dependency between linked tasks">
+        <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]" title="Finish-to-start dependency between linked tasks">
           <svg width="22" height="10" className="overflow-visible"><path d="M1 2 L11 2 L11 8 L20 8" fill="none" stroke="#6366f1" strokeWidth="1.5" /><path d="M16 5 L20 8 L16 11" fill="none" stroke="#6366f1" strokeWidth="1.5" /></svg> Dependency
         </span>
       </div>
-      <div className="flex items-center gap-1.5 text-[10px] text-[var(--color-text-faint)]">
+      <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-faint)]">
         <Info className="w-3 h-3" /> Drag a bar or ◀ ▶ to reschedule · click the dot for status ·
         <kbd className="px-1 rounded bg-[var(--color-surface)] border border-[var(--color-border-strong)] font-mono">↑↓</kbd> navigate
         <kbd className="px-1 rounded bg-[var(--color-surface)] border border-[var(--color-border-strong)] font-mono">←→</kbd> move
@@ -2384,7 +2384,7 @@ function GroupTasksModal({
     <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl ring-1 ring-slate-900/5 overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-[var(--color-accent-soft)] text-[var(--color-accent)] flex items-center justify-center"><FolderPlus className="w-4 h-4" /></div>
+          <div className="w-9 h-9 rounded-xl bg-[var(--color-surface-2)] text-[var(--color-text)] flex items-center justify-center"><FolderPlus className="w-4 h-4" /></div>
           <div className="flex-1 min-w-0">
             <h2 className="text-sm font-semibold text-[var(--color-text)]">Group under a parent</h2>
             <div className="text-[11px] text-[var(--color-text-muted)]">{childIds.length} task{childIds.length === 1 ? "" : "s"} selected</div>
@@ -2412,7 +2412,7 @@ function GroupTasksModal({
           <div className="rounded-md border border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)] p-2.5 max-h-32 overflow-y-auto">
             <ul className="space-y-0.5">
               {childNames.slice(0, 12).map((n, i) => <li key={i} className="text-[11px] text-[var(--color-text)] truncate">{n}</li>)}
-              {childNames.length > 12 && <li className="text-[10px] text-[var(--color-text-muted)] italic">+{childNames.length - 12} more</li>}
+              {childNames.length > 12 && <li className="text-[11px] text-[var(--color-text-muted)] italic">+{childNames.length - 12} more</li>}
             </ul>
           </div>
           {error && <div className="text-xs text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-md p-2">{error}</div>}
@@ -2462,7 +2462,7 @@ function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milest
     <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <div className="w-full max-w-sm bg-[var(--color-surface)] rounded-2xl shadow-2xl ring-1 ring-slate-900/5 overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-[var(--color-accent-soft)] text-[var(--color-accent)] flex items-center justify-center"><CalendarRange className="w-4 h-4" /></div>
+          <div className="w-9 h-9 rounded-xl bg-[var(--color-surface-2)] text-[var(--color-text)] flex items-center justify-center"><CalendarRange className="w-4 h-4" /></div>
           <div className="flex-1 min-w-0">
             <h2 className="text-sm font-semibold text-[var(--color-text)] truncate">Set duration</h2>
             <div className="text-[11px] text-[var(--color-text-muted)] truncate">{task.name}</div>
@@ -2504,7 +2504,7 @@ function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milest
 function statusTone(status: MilestoneStatus): { bar: string; border: string; dotBg: string; dotBorder: string } {
   switch (status) {
     case "completed":   return { bar: "bg-emerald-500", border: "border-emerald-600", dotBg: "bg-emerald-500", dotBorder: "border-emerald-500" };
-    case "in_progress": return { bar: "bg-blue-500",    border: "border-blue-600",    dotBg: "bg-blue-500",    dotBorder: "border-blue-500" };
+    case "in_progress": return { bar: "bg-[var(--color-text-muted)]",    border: "border-[var(--color-border-strong)]",    dotBg: "bg-[var(--color-text-muted)]",    dotBorder: "border-[var(--color-border-strong)]" };
     case "blocked":     return { bar: "bg-rose-500",    border: "border-rose-600",    dotBg: "bg-rose-500",    dotBorder: "border-rose-500" };
     case "on_hold":     return { bar: "bg-amber-500",   border: "border-amber-600",   dotBg: "bg-amber-500",   dotBorder: "border-amber-500" };
     case "missed":      return { bar: "bg-rose-600",    border: "border-rose-700",    dotBg: "bg-rose-600",    dotBorder: "border-rose-600" };

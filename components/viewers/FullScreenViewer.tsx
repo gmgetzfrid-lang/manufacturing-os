@@ -1148,7 +1148,7 @@ export default function FullScreenViewer({
           <button
             onClick={(e) => { e.stopPropagation(); setTagsBarOpen(false); }}
             title="Hide equipment tag bar"
-            className="shrink-0 p-1 rounded text-white/60 hover:text-white hover:bg-white/10 text-[10px] font-bold"
+            className="shrink-0 p-1 rounded text-white/60 hover:text-white hover:bg-white/10 text-[11px] font-bold"
           >
             ✕
           </button>
@@ -1173,7 +1173,7 @@ export default function FullScreenViewer({
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <div className="min-w-0">
             <h2 className="text-white font-bold text-sm truncate">{title}</h2>
-            <p className="text-slate-400 text-[10px] font-mono truncate">{docNumber} • Rev {rev || "-"}</p>
+            <p className="text-slate-400 text-[11px] font-mono truncate">{docNumber} • Rev {rev || "-"}</p>
           </div>
           {docRecord && onCheckout && (
             <div className="pl-3 border-l border-slate-700 shrink-0">
@@ -1189,7 +1189,7 @@ export default function FullScreenViewer({
               muted: "bg-slate-500/10 text-slate-300 border-slate-500/30",
             };
             return (
-              <div className={`hidden md:inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold border ${tone[vb.tone]}`} title="Status of the live version you're viewing. A copy you download or print is stamped separately.">
+              <div className={`hidden md:inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-bold border ${tone[vb.tone]}`} title="Status of the live version you're viewing. A copy you download or print is stamped separately.">
                 {vb.tone === "controlled" ? <ShieldCheck className="w-3 h-3" /> : <ShieldAlert className="w-3 h-3" />}
                 {vb.label}
               </div>
@@ -1335,7 +1335,7 @@ export default function FullScreenViewer({
             <button onClick={() => setStampMenuOpen((v) => !v)} className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${stampMenuOpen ? "bg-orange-600 text-white" : "text-slate-300 hover:text-white hover:bg-slate-700"}`} title="Stamp"><StampIcon className="w-5 h-5" /></button>
             {stampMenuOpen && (
               <div className="absolute left-12 top-0 w-64 rounded-xl bg-slate-900 border border-slate-700 shadow-2xl p-2 z-50 max-h-[80vh] overflow-y-auto">
-                <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-2 pb-2">Standard</div>
+                <div className="text-[11px] font-black text-slate-500 uppercase tracking-widest px-2 pb-2">Standard</div>
                 <div className="grid grid-cols-1 gap-1">
                   {STAMPS.map((s) => (
                     <button key={s.label} onClick={() => addStamp(s.label, s.tone)} className="text-left px-2 py-1.5 rounded-md text-xs font-bold hover:bg-slate-800" style={{ color: COLOR_HEX[s.tone] }}>{s.label}</button>
@@ -1343,10 +1343,10 @@ export default function FullScreenViewer({
                 </div>
 
                 <div className="mt-3 pt-2 border-t border-slate-800 flex items-center justify-between px-2 pb-2">
-                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Custom</span>
+                  <span className="text-[11px] font-black text-slate-500 uppercase tracking-widest">Custom</span>
                   <button
                     onClick={() => stampFileInputRef.current?.click()}
-                    className="text-[10px] font-bold px-2 py-1 rounded-md bg-orange-600 hover:bg-orange-500 text-white"
+                    className="text-[11px] font-bold px-2 py-1 rounded-md bg-orange-600 hover:bg-orange-500 text-white"
                   >+ Upload</button>
                   <input
                     ref={stampFileInputRef}
@@ -1361,7 +1361,7 @@ export default function FullScreenViewer({
                   />
                 </div>
                 {customStamps.length === 0 ? (
-                  <div className="text-[10px] text-slate-500 px-2 pb-2">Upload PNG/JPG/SVG stamps - saved on this device.</div>
+                  <div className="text-[11px] text-slate-500 px-2 pb-2">Upload PNG/JPG/SVG stamps - saved on this device.</div>
                 ) : (
                   <div className="grid grid-cols-3 gap-1 px-1 pb-1">
                     {customStamps.map((s) => (
@@ -1376,7 +1376,7 @@ export default function FullScreenViewer({
                         </button>
                         <button
                           onClick={() => removeCustomStamp(s.id)}
-                          className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 text-white rounded-full text-[9px] font-bold opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity"
+                          className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 text-white rounded-full text-[11px] font-bold opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity"
                           title="Remove"
                         >×</button>
                       </div>
@@ -1404,11 +1404,11 @@ export default function FullScreenViewer({
             </div>
             <div className="w-px h-5 bg-slate-700" />
             <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Width</span>
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Width</span>
               <input type="range" min={1} max={12} value={strokeWidth} onChange={(e) => setStrokeWidth(Number(e.target.value))} className="w-24 h-1 bg-slate-700 rounded-lg accent-orange-500 cursor-pointer" />
-              <span className="text-[10px] font-mono text-slate-300 w-5 text-right">{strokeWidth}</span>
+              <span className="text-[11px] font-mono text-slate-300 w-5 text-right">{strokeWidth}</span>
             </div>
-            <div className="ml-auto text-[10px] text-slate-500 font-mono hidden md:block">
+            <div className="ml-auto text-[11px] text-slate-500 font-mono hidden md:block">
               Tip: V/H/P/L/A/R/T/N/E to switch tools - Ctrl+Z / Ctrl+Y to undo
             </div>
           </div>

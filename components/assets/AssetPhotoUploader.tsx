@@ -155,7 +155,7 @@ export default function AssetPhotoUploader({
             <div className="p-2 bg-emerald-100 rounded-lg shrink-0"><Camera className="w-4 h-4 text-emerald-700" /></div>
             <div className="min-w-0">
               <div className="text-sm font-black text-[var(--color-text)] truncate">
-                Photos for <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-blue-50 text-blue-800 border border-blue-200 text-[11px] font-bold align-middle ml-0.5">{asset.tag}</span>
+                Photos for <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)] text-[11px] font-bold align-middle ml-0.5">{asset.tag}</span>
               </div>
               <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 leading-snug">
                 These photos attach <b>directly to this equipment asset</b> - they do NOT become documents and won&apos;t appear in your library folders. Visible everywhere this tag appears.
@@ -226,7 +226,7 @@ export default function AssetPhotoUploader({
         {/* Pending photos list */}
         {pending.length > 0 && (
           <div className="flex-1 overflow-auto px-5 pt-4 pb-2">
-            <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-2">
+            <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-2">
               Photos to upload ({pending.length})
             </div>
             <div className="space-y-2">
@@ -237,7 +237,7 @@ export default function AssetPhotoUploader({
                   <div className="flex-1 min-w-0 space-y-1.5">
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-bold text-[var(--color-text)] truncate flex-1">{p.file.name}</span>
-                      <span className="text-[10px] text-[var(--color-text-muted)]">{formatBytes(p.file.size)}</span>
+                      <span className="text-[11px] text-[var(--color-text-muted)]">{formatBytes(p.file.size)}</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="flex-1">
@@ -249,14 +249,14 @@ export default function AssetPhotoUploader({
                           className="w-full text-[11px] border border-[var(--color-border)] rounded px-2 py-1 bg-[var(--color-surface)]"
                         />
                       </div>
-                      <div className="shrink-0 inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]">
+                      <div className="shrink-0 inline-flex items-center gap-1 text-[11px] text-[var(--color-text-muted)]">
                         <Calendar className="w-3 h-3" />
                         <input
                           type="date"
                           value={p.capturedAt}
                           onChange={(e) => updatePending(p.id, { capturedAt: e.target.value })}
                           disabled={p.status === "uploading" || p.status === "done"}
-                          className="text-[10px] border border-[var(--color-border)] rounded px-1.5 py-1 bg-[var(--color-surface)]"
+                          className="text-[11px] border border-[var(--color-border)] rounded px-1.5 py-1 bg-[var(--color-surface)]"
                         />
                       </div>
                     </div>

@@ -85,7 +85,7 @@ export default function NodeCover({
           </>
         )}
         {/* legibility scrim */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/35 via-transparent to-transparent" />
+        <div className="absolute inset-0 bg-[var(--color-surface-2)]" />
         {showIcon && (
           <div className="absolute top-2 left-2 w-9 h-9 rounded-lg grid place-items-center bg-white/15 backdrop-blur-sm text-white ring-1 ring-white/25">
             <NodeIcon name={appearance.icon} className={iconSize} />

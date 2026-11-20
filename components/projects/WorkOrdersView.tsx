@@ -193,7 +193,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
         {lines.map((l, i) => <div key={l} className={i === 0 ? `font-semibold ${tone ?? "text-[var(--color-text)]"}` : "text-[var(--color-text-muted)]"}>{l}</div>)}
       </div>
     );
-    const toneOf = (k: string) => (k === "added" ? "text-teal-800 dark:text-teal-300" : k === "discovery" ? "text-violet-800 dark:text-violet-300" : undefined);
+    const toneOf = (k: string) => (k === "added" ? "text-[var(--color-text)] dark:text-[var(--color-text)]" : k === "discovery" ? "text-[var(--color-text)] dark:text-[var(--color-text)]" : undefined);
     return (
       <div className="ml-9 mt-2 space-y-1.5">
         <div className="text-[12px] font-semibold text-[var(--color-text-faint)]">Where it came from</div>
@@ -211,7 +211,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
         <div className="text-[11.5px] text-[var(--color-text-muted)]">
           {[classWords(o.owner), o.crews.join(", ") || null, single ? null : `${o.done} of ${o.steps.length} steps done`].filter(Boolean).join(" · ")}
           {o.added.map((x) => (
-            <span key={x.kind} className={`ml-1.5 font-semibold ${x.kind === "added" ? "text-teal-700 dark:text-teal-300" : "text-violet-700 dark:text-violet-300"}`} title={ADDED[x.kind].tip}>
+            <span key={x.kind} className={`ml-1.5 font-semibold ${x.kind === "added" ? "text-[var(--color-text)] dark:text-[var(--color-text)]" : "text-[var(--color-text)] dark:text-[var(--color-text)]"}`} title={ADDED[x.kind].tip}>
               + {x.n} {ADDED[x.kind].lower} step{x.n === 1 ? "" : "s"} ({x.h} h)
             </span>
           ))}
@@ -275,7 +275,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
         )}
         {canEdit && onDiscovery && (
           <button type="button" onClick={() => setPicking(true)}
-            className={`${onNewWorkOrder ? "" : "ml-auto "}inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-dashed border-[var(--color-accent)] text-[12px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]`}>
+            className={`${onNewWorkOrder ? "" : "ml-auto "}inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-dashed border-[var(--color-accent)] text-[12px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]`}>
             <Plus className="w-3.5 h-3.5" /> Add to a work order
           </button>
         )}
@@ -337,10 +337,10 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
             return (
               // Each work order its own card; open, it's framed in the accent
               // colour and its steps sit inside it, indented on a grey panel.
-              <li key={o.key} className={`rounded-xl border bg-[var(--color-surface)] ${isOpen ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] shadow-md" : "border-[var(--color-border)] shadow-sm"}`}>
+              <li key={o.key} className={`rounded-xl border bg-[var(--color-surface)] ${isOpen ? "border-[var(--color-border-strong)] ring-1 ring-[var(--color-accent)] shadow-md" : "border-[var(--color-border)] shadow-sm"}`}>
                 <button type="button" onClick={() => toggle(o.key)} aria-expanded={isOpen} aria-label={`${isOpen ? "Close" : "Open"} ${name}`}
                   ref={(el) => { if (el) heads.current.set(o.key, el); else heads.current.delete(o.key); }}
-                  className={`w-full text-left px-3 py-2.5 rounded-t-[10px] ${isOpen ? "sticky top-0 z-20 bg-[var(--color-accent-soft)] border-b border-[var(--color-accent)]/30" : "rounded-b-[10px] hover:bg-[var(--color-surface-2)]"}`}>
+                  className={`w-full text-left px-3 py-2.5 rounded-t-[10px] ${isOpen ? "sticky top-0 z-20 bg-[var(--color-surface-2)] border-b border-[var(--color-text)]" : "rounded-b-[10px] hover:bg-[var(--color-surface-2)]"}`}>
                   <div className="flex items-start gap-2.5">
                     <span className={`mt-0.5 shrink-0 inline-flex items-center justify-center w-7 h-7 rounded-full border ${isOpen ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`} aria-hidden>
                       {isOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
@@ -374,7 +374,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
                         <EquipmentField milestone={o.owner} milestones={milestones} />
                         {canEdit && onDiscovery && (
                           <button type="button" onClick={() => onDiscovery(o.owner)}
-                            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-dashed border-[var(--color-accent)] text-[12px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]">
+                            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-dashed border-[var(--color-accent)] text-[12px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]">
                             <Plus className="w-3.5 h-3.5" /> Add discovery or added scope to this work order
                           </button>
                         )}
@@ -397,7 +397,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
                     </div>
                     {/* Its steps: inside the work order, indented, each a row that opens to its card. */}
                     <div className="px-2 sm:px-3 pt-2.5 pb-1">
-                      <div className="ml-2 sm:ml-5 pl-2 sm:pl-3 border-l-2 border-[var(--color-accent)]/40">
+                      <div className="ml-2 sm:ml-5 pl-2 sm:pl-3 border-l-2 border-[var(--color-border-strong)]">
                         <div className="mb-1 text-[12px] font-semibold text-[var(--color-text-muted)]">
                           {single ? "The step" : `Steps · ${o.done} of ${o.steps.length} done`}
                         </div>
@@ -426,7 +426,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
                     )}
                     {/* Close it from the bottom: no scrolling back up. */}
                     <button type="button" onClick={() => toggle(o.key)} aria-label={`Close ${name}`}
-                      className="w-full flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-b-[10px] border-t border-[var(--color-border)] text-[12px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]">
+                      className="w-full flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-b-[10px] border-t border-[var(--color-border)] text-[12px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]">
                       <ChevronUp className="w-4 h-4" /> Close {o.wo ? `WO ${o.wo}` : o.owner.name}
                     </button>
                   </div>

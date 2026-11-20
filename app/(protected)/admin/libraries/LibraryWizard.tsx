@@ -44,8 +44,8 @@ const LIBRARY_TYPES: Array<{
     example: "P&IDs, CAD drawings, schematics",
     desc: "For technical documents that need strict revision tracking (Rev A, B, 0, 1).",
     icon: Database,
-    color: "text-blue-600",
-    bg: "bg-blue-50 border-blue-200",
+    color: "text-[var(--color-text)]",
+    bg: "bg-[var(--color-surface-2)] border-[var(--color-border)]",
   },
   {
     type: "Procedure",
@@ -53,8 +53,8 @@ const LIBRARY_TYPES: Array<{
     example: "SOPs, safety procedures, work instructions",
     desc: "For documents that need periodic review cycles and training records.",
     icon: FileText,
-    color: "text-teal-600",
-    bg: "bg-teal-50 border-teal-200",
+    color: "text-[var(--color-text)]",
+    bg: "bg-[var(--color-surface-2)] border-[var(--color-border)]",
   },
   {
     type: "Business",
@@ -62,8 +62,8 @@ const LIBRARY_TYPES: Array<{
     example: "HR, finance, legal, contracts",
     desc: "Secure storage for internal business documents with department-level access.",
     icon: Users,
-    color: "text-purple-600",
-    bg: "bg-purple-50 border-purple-200",
+    color: "text-[var(--color-text)]",
+    bg: "bg-[var(--color-surface-2)] border-[var(--color-border)]",
   },
   {
     type: "UserSpace",
@@ -71,8 +71,8 @@ const LIBRARY_TYPES: Array<{
     example: "Individual work files, drafts, personal folders",
     desc: "Each user gets their own private space with optional shared folders.",
     icon: LibraryIcon,
-    color: "text-orange-600",
-    bg: "bg-orange-50 border-orange-200",
+    color: "text-[var(--color-text)]",
+    bg: "bg-[var(--color-surface-2)] border-[var(--color-border)]",
   },
 ];
 
@@ -153,7 +153,7 @@ function RolePicker({
       )}
       {ROLE_GROUPS.map((group) => (
         <div key={group.title}>
-          <p className="text-[10px] font-bold text-[var(--color-text-faint)] uppercase tracking-wider mb-1.5">{group.title}</p>
+          <p className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase tracking-wider mb-1.5">{group.title}</p>
           <div className="flex flex-wrap gap-1.5">
             {group.roles.map((role) => {
               const active = selected.includes(role);
@@ -327,7 +327,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
                       step > i + 1
                         ? "bg-green-500 text-white"
                         : step === i + 1
-                        ? "bg-orange-600 text-white"
+                        ? "bg-[var(--color-surface-2)] text-[var(--color-text)]"
                         : "bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"
                     }`}
                   >
@@ -360,7 +360,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     placeholder="e.g. Bakersfield P&IDs, Safety Procedures"
-                    className="w-full px-4 py-3 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl text-[var(--color-text)] font-bold focus:ring-2 focus:ring-orange-500 focus:bg-[var(--color-surface)] outline-none transition-all text-lg placeholder:text-slate-300"
+                    className="w-full px-4 py-3 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl text-[var(--color-text)] font-bold focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:bg-[var(--color-surface)] outline-none transition-all text-lg placeholder:text-slate-300"
                     autoFocus
                   />
                 </div>
@@ -374,7 +374,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
                     onChange={(e) => setDescription(e.target.value)}
                     placeholder="Briefly describe what's stored here and who uses it..."
                     rows={2}
-                    className="w-full px-4 py-3 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl text-[var(--color-text)] focus:ring-2 focus:ring-orange-500 focus:bg-[var(--color-surface)] outline-none resize-none transition-all placeholder:text-slate-300"
+                    className="w-full px-4 py-3 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:bg-[var(--color-surface)] outline-none resize-none transition-all placeholder:text-slate-300"
                   />
                 </div>
               </div>
@@ -393,13 +393,13 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
                         type="button"
                         onClick={() => setType(t.type)}
                         className={`text-left p-4 rounded-xl border-2 transition-all ${
-                          active ? "border-orange-500 bg-orange-50" : `border-[var(--color-border)] hover:border-[var(--color-border-strong)] ${t.bg}`
+                          active ? "border-[var(--color-text)] bg-[var(--color-surface-2)]" : `border-[var(--color-border)] hover:border-[var(--color-border-strong)] ${t.bg}`
                         }`}
                       >
                         <div className="flex items-center gap-3 mb-2">
-                          <Icon className={`w-5 h-5 ${active ? "text-orange-600" : t.color}`} />
+                          <Icon className={`w-5 h-5 ${active ? "text-[var(--color-text-muted)]" : t.color}`} />
                           <span className="font-bold text-sm text-[var(--color-text)]">{t.label}</span>
-                          {active && <CheckCircle2 className="w-4 h-4 text-orange-600 ml-auto" />}
+                          {active && <CheckCircle2 className="w-4 h-4 text-[var(--color-text-muted)] ml-auto" />}
                         </div>
                         <p className="text-xs text-[var(--color-text-muted)] leading-relaxed">{t.desc}</p>
                         <p className="text-[11px] text-[var(--color-text-faint)] mt-1.5 italic">{t.example}</p>
@@ -414,9 +414,9 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
           {/* STEP 2: Document Fields */}
           {step === 2 && (
             <div className="space-y-4">
-              <div className="bg-blue-50 border border-blue-100 rounded-xl p-4">
-                <p className="text-sm font-bold text-blue-900 mb-0.5">Define what information is tracked per document</p>
-                <p className="text-xs text-blue-700">These fields appear as columns in the document list. Edit, reorder, or add fields. The first four are pre-set but fully editable.</p>
+              <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl p-4">
+                <p className="text-sm font-bold text-[var(--color-text)] mb-0.5">Define what information is tracked per document</p>
+                <p className="text-xs text-[var(--color-text)]">These fields appear as columns in the document list. Edit, reorder, or add fields. The first four are pre-set but fully editable.</p>
               </div>
 
               <div className="space-y-2">
@@ -447,14 +447,14 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
                       value={f.label}
                       onChange={(e) => updateField(i, { label: e.target.value, key: f.key || toKey(e.target.value) })}
                       placeholder="Field label (e.g. Project Code)"
-                      className="flex-1 px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm font-medium focus:ring-2 focus:ring-orange-500 outline-none transition-all"
+                      className="flex-1 px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm font-medium focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none transition-all"
                     />
 
                     {/* Field type */}
                     <select
                       value={f.type}
                       onChange={(e) => updateField(i, { type: e.target.value as MetadataFieldDefinition["type"] })}
-                      className="w-32 px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm focus:ring-2 focus:ring-orange-500 outline-none bg-[var(--color-surface)]"
+                      className="w-32 px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none bg-[var(--color-surface)]"
                     >
                       {FIELD_TYPES.map((t) => (
                         <option key={t.value} value={t.value}>{t.label}</option>
@@ -492,7 +492,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
               <button
                 onClick={addField}
                 type="button"
-                className="flex items-center gap-2 px-4 py-3 border-2 border-dashed border-[var(--color-border-strong)] rounded-xl text-sm font-bold text-[var(--color-text-muted)] hover:border-orange-400 hover:text-orange-600 transition-all w-full justify-center"
+                className="flex items-center gap-2 px-4 py-3 border-2 border-dashed border-[var(--color-border-strong)] rounded-xl text-sm font-bold text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-all w-full justify-center"
               >
                 <Plus className="w-4 h-4" />
                 Add Field
@@ -530,7 +530,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
                       onClick={() => setViewAccess("restricted")}
                       className={`flex-1 px-4 py-3 rounded-xl border-2 text-sm font-bold transition-all text-left ${
                         viewAccess === "restricted"
-                          ? "border-orange-500 bg-orange-50 text-orange-800"
+                          ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]"
                           : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"
                       }`}
                     >
@@ -605,7 +605,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
               <button
                 onClick={handleNext}
                 type="button"
-                className="px-6 py-2.5 text-sm font-bold text-white bg-orange-600 rounded-xl shadow hover:bg-orange-500 flex items-center transition-all"
+                className="px-6 py-2.5 text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] rounded-xl shadow hover:bg-[var(--color-accent-hover)] flex items-center transition-all"
               >
                 Continue <ArrowRight className="w-4 h-4 ml-2" />
               </button>
@@ -614,7 +614,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
                 onClick={handleSubmit}
                 disabled={isLoading}
                 type="button"
-                className="px-6 py-2.5 text-sm font-bold text-white bg-orange-600 rounded-xl shadow hover:bg-orange-500 flex items-center disabled:opacity-60 transition-all"
+                className="px-6 py-2.5 text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] rounded-xl shadow hover:bg-[var(--color-accent-hover)] flex items-center disabled:opacity-60 transition-all"
               >
                 <Save className="w-4 h-4 mr-2" />
                 {isLoading ? "Saving..." : "Create Library"}

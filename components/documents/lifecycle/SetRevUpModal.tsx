@@ -133,7 +133,7 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
         <div className="p-5 space-y-4">
           {/* Shared metadata */}
           <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-3 space-y-2">
-            <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Shared across all sheets</div>
+            <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Shared across all sheets</div>
             <div className="grid grid-cols-2 gap-2">
               <select value={issueType ?? ""} onChange={(e) => setIssueType(e.target.value as DocumentVersion["issueType"])} className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5 bg-[var(--color-surface)]">
                 {ISSUE_TYPES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -154,7 +154,7 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
 
           {/* Sheets */}
           <div>
-            <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-1">Sheets ({sheets.length})</div>
+            <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest mb-1">Sheets ({sheets.length})</div>
             {loading ? (
               <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)] py-4 justify-center">
                 <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading sheets…
@@ -169,7 +169,7 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
                   <div key={s.doc.id} className="px-3 py-2 grid grid-cols-12 gap-2 items-center text-xs">
                     <div className="col-span-3 min-w-0">
                       <div className="font-mono font-bold text-[var(--color-text)] truncate">{s.doc.documentNumber || "-"}</div>
-                      <div className="text-[10px] text-[var(--color-text-muted)] truncate">{s.doc.title || s.doc.name}</div>
+                      <div className="text-[11px] text-[var(--color-text-muted)] truncate">{s.doc.title || s.doc.name}</div>
                     </div>
                     <div className="col-span-2 font-mono text-[var(--color-text-muted)]">Rev {s.doc.rev || "-"}</div>
                     <div className="col-span-2">
@@ -182,7 +182,7 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
                         <input type="file" accept="application/pdf" className="hidden" onChange={(e) => updateSheet(i, { file: e.target.files?.[0] ?? null })} />
                         {s.file ? (
                           <span className="inline-flex items-center gap-1 text-[var(--color-text)]">
-                            <FileText className="w-3 h-3 text-blue-600" /> <span className="font-mono truncate">{s.file.name}</span>
+                            <FileText className="w-3 h-3 text-[var(--color-text-muted)]" /> <span className="font-mono truncate">{s.file.name}</span>
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-[var(--color-text-muted)]">
@@ -201,7 +201,7 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
             <div className="text-xs space-y-1">
               <div className="text-emerald-700">Published: <b>{result.succeeded}</b></div>
               {result.sentForReview > 0 && (
-                <div className="text-violet-700">Sent for pre-publish review (not yet live): <b>{result.sentForReview}</b></div>
+                <div className="text-[var(--color-text)]">Sent for pre-publish review (not yet live): <b>{result.sentForReview}</b></div>
               )}
               {result.failed.length > 0 && (
                 <div className="text-red-700">

@@ -93,16 +93,16 @@ interface NavSection {
 }
 
 const TONE_ICON: Record<Tone, string> = {
-  orange:  'text-orange-500',
-  blue:    'text-blue-500',
-  indigo:  'text-indigo-500',
+  orange:  'text-[var(--color-text-muted)]',
+  blue:    'text-[var(--color-text-muted)]',
+  indigo:  'text-[var(--color-text-muted)]',
   amber:   'text-amber-500',
   emerald: 'text-emerald-500',
-  violet:  'text-violet-500',
+  violet:  'text-[var(--color-text-muted)]',
   rose:    'text-rose-500',
   slate:   'text-slate-500',
-  purple:  'text-purple-500',
-  cyan:    'text-cyan-500',
+  purple:  'text-[var(--color-text-muted)]',
+  cyan:    'text-[var(--color-text-muted)]',
 };
 // Accent-driven active state, theme-aware: the accent token reads on both the
 // light and dark sidebar surfaces, and the bg tint is a soft accent wash.
@@ -306,14 +306,11 @@ export default function Sidebar({
       )}
       <aside
         aria-hidden={isMobile && !mobileOpen}
-        className={`${collapsed ? 'w-16' : 'w-64'} bg-gradient-to-b from-[var(--color-surface)] to-[var(--color-surface-2)] h-full flex flex-col border-r border-[var(--color-border)] text-[var(--color-text-muted)] shrink-0 md:shadow-[10px_0_30px_-22px_rgba(2,6,23,0.35)]
-          fixed inset-y-0 left-0 z-[70] md:relative md:inset-auto md:z-auto
-          transition-[transform,width] duration-200 ease-out
-          ${mobileOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'} md:translate-x-0`}
+        className={`${collapsed ? 'w-16' : 'w-64'}    h-full flex flex-col border-r border-[var(--color-border)] text-[var(--color-text-muted)] shrink-0 md:shadow-[10px_0_30px_-22px_rgba(2,6,23,0.35)] fixed inset-y-0 left-0 z-[70] md:relative md:inset-auto md:z-auto transition-[transform,width] duration-200 ease-out bg-[var(--color-surface-2)] ${mobileOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'} md:translate-x-0`}
       >
         {/* Warm brand seam down the trailing edge — a quiet accent that ties
             the rail to the brand in either theme. */}
-        <div className="absolute inset-y-0 right-0 w-px bg-gradient-to-b from-transparent via-[var(--color-accent)]/20 to-transparent pointer-events-none" />
+        <div className="absolute inset-y-0 right-0 w-px pointer-events-none bg-[var(--color-surface-2)]" />
 
       {/* BRAND */}
       <div className={`h-16 flex items-center border-b border-[var(--color-border)] shrink-0 ${collapsed ? 'justify-center px-2' : 'px-4 gap-3'}`}>
@@ -322,23 +319,23 @@ export default function Sidebar({
             onClick={() => setRailCollapsed(false)}
             title="Expand sidebar (⌘B)"
             aria-label="Expand sidebar"
-            className="group relative w-10 h-10 bg-gradient-to-br from-orange-500 to-orange-700 rounded-xl flex items-center justify-center shadow-lg shadow-orange-900/40 ring-1 ring-orange-400/30"
+            className="group relative w-10 h-10 rounded-xl flex items-center justify-center shadow-lg ring-1 ring-[var(--color-border-strong)] bg-[var(--color-text)]"
           >
             <LayoutDashboard className="w-5 h-5 text-white transition-opacity group-hover:opacity-0" />
             <ChevronRight className="w-5 h-5 text-white absolute opacity-0 transition-opacity group-hover:opacity-100" />
             {/* always-visible expand affordance */}
-            <span className="absolute -right-1 -bottom-1 w-4 h-4 rounded-full bg-orange-500 ring-2 ring-[var(--color-surface)] flex items-center justify-center">
+            <span className="absolute -right-1 -bottom-1 w-4 h-4 rounded-full bg-[var(--color-text-muted)] ring-2 ring-[var(--color-surface)] flex items-center justify-center">
               <ChevronRight className="w-2.5 h-2.5 text-white" />
             </span>
           </button>
         ) : (
           <>
-            <div className="w-9 h-9 bg-gradient-to-br from-orange-500 to-orange-700 rounded-xl flex items-center justify-center shadow-lg shadow-orange-900/40 ring-1 ring-orange-400/30 shrink-0">
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center shadow-lg ring-1 ring-[var(--color-border-strong)] shrink-0 bg-[var(--color-text)]">
               <LayoutDashboard className="w-5 h-5 text-white" />
             </div>
             <div className="flex-1 min-w-0">
-              <div className="font-black text-[var(--color-text)] tracking-tight text-base leading-none truncate">Manufacturing<span className="text-orange-500">OS</span></div>
-              <div className="text-[9px] text-[var(--color-text-faint)] font-bold uppercase tracking-widest mt-1">Enterprise Platform</div>
+              <div className="font-black text-[var(--color-text)] tracking-tight text-base leading-none truncate">Manufacturing<span className="text-[var(--color-text-muted)]">OS</span></div>
+              <div className="text-[11px] text-[var(--color-text-faint)] font-bold uppercase tracking-widest mt-1">Enterprise Platform</div>
             </div>
             <button
               onClick={() => (isMobile ? onMobileClose?.() : setRailCollapsed((v) => !v))}
@@ -357,7 +354,7 @@ export default function Sidebar({
         <div className="px-3 pt-3 shrink-0">
           <div className="relative bg-[var(--color-surface-2)] rounded-lg border border-[var(--color-border)] px-3 py-2">
             <div className="flex items-center justify-between gap-2 mb-1">
-              <div className="text-[9px] font-bold text-[var(--color-text-faint)] uppercase tracking-widest">Workspace</div>
+              <div className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase tracking-widest">Workspace</div>
               {canEditBranding && (
                 <button
                   onClick={() => setLogoModalOpen(true)}
@@ -441,8 +438,8 @@ export default function Sidebar({
             <Link href="/profile" className="flex items-center min-w-0 flex-1 group" title="Open profile">
               <UserAvatar uid={uid} email={userEmail} size={36} rounded="lg" />
               <div className="ml-2.5 overflow-hidden">
-                <div className="text-xs font-bold text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)] transition-colors">{userEmail?.split('@')[0] ?? '-'}</div>
-                <div className="text-[10px] text-[var(--color-accent)] truncate font-mono uppercase tracking-widest font-bold">{activeOrgId ? (activeRole ?? '…') : 'No workspace'}</div>
+                <div className="text-xs font-bold text-[var(--color-text)] truncate group-hover:text-[var(--color-text)] transition-colors">{userEmail?.split('@')[0] ?? '-'}</div>
+                <div className="text-[11px] text-[var(--color-text)] truncate font-mono uppercase tracking-widest font-bold">{activeOrgId ? (activeRole ?? '…') : 'No workspace'}</div>
               </div>
             </Link>
             <button
@@ -478,7 +475,7 @@ function SectionHeader({
       className="group/sec w-full flex items-center gap-2 px-1.5 h-7 rounded-md hover:bg-[var(--color-surface-2)] transition-colors select-none"
     >
       <Icon className={`w-3.5 h-3.5 shrink-0 ${TONE_ICON[section.tone]}`} />
-      <span className={`text-[10px] font-black uppercase tracking-[0.16em] truncate ${active ? 'text-[var(--color-text)]' : 'text-[var(--color-text-muted)]'}`}>
+      <span className={`text-[11px] font-black uppercase tracking-[0.16em] truncate ${active ? 'text-[var(--color-text)]' : 'text-[var(--color-text-muted)]'}`}>
         {section.title}
       </span>
       <span className="flex-1 h-px bg-[var(--color-border)] group-hover/sec:bg-[var(--color-border-strong)] transition-colors" aria-hidden />
@@ -490,7 +487,7 @@ function SectionHeader({
 function SectionDivider({ tone, active }: { tone: Tone; active: boolean }) {
   return (
     <div className="px-3 my-1.5 flex items-center" aria-hidden>
-      <div className={`h-px flex-1 ${active ? `bg-gradient-to-r from-transparent via-current to-transparent ${TONE_ICON[tone]}/40` : 'bg-[var(--color-border)]'}`} />
+      <div className={`h-px flex-1 ${active ? `bg-[var(--color-surface-2)] ${TONE_ICON[tone]}/40` : 'bg-[var(--color-border)]'}`} />
     </div>
   );
 }
@@ -508,8 +505,8 @@ function SidebarLeaf({
   const { open: openCenter } = useNotificationCenter();
   const badgeTone =
     leaf.badgeTone === 'red'  ? 'bg-red-600 animate-pulse shadow-red-900/50' :
-    leaf.badgeTone === 'blue' ? 'bg-blue-500 shadow-blue-900/50' :
-                                'bg-orange-500 shadow-orange-900/50';
+    leaf.badgeTone === 'blue' ? 'bg-[var(--color-text-muted)] ' :
+                                'bg-[var(--color-text-muted)] ';
   return (
     <Link href={leaf.href}
       title={collapsed ? `${leaf.label}${leaf.hint ? ` - ${leaf.hint}` : ''}` : (leaf.hint ?? leaf.label)}
@@ -538,7 +535,7 @@ function SidebarLeaf({
           type="button"
           onClick={(e) => { e.preventDefault(); e.stopPropagation(); openCenter(leaf.badgeTone === 'red' ? 'action' : 'all'); }}
           title="See these notifications"
-          className={`${collapsed ? 'absolute top-1 right-1' : ''} inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-white text-[10px] font-black shadow cursor-pointer hover:scale-110 hover:ring-2 hover:ring-white/40 transition-transform ${badgeTone}`}
+          className={`${collapsed ? 'absolute top-1 right-1' : ''} inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-white text-[11px] font-black shadow cursor-pointer hover:scale-110 hover:ring-2 hover:ring-white/40 transition-transform ${badgeTone}`}
         >
           {leaf.badge > 99 ? '99+' : leaf.badge}
         </button>

@@ -56,14 +56,14 @@ export type Tone =
   | "purple" | "amber" | "cyan" | "rose" | "slate";
 
 const CHIP: Record<Tone, string> = {
-  blue: "bg-blue-50 text-blue-600",
-  orange: "bg-orange-50 text-orange-600",
-  indigo: "bg-indigo-50 text-indigo-600",
-  violet: "bg-violet-50 text-violet-600",
+  blue: "bg-[var(--color-surface-2)] text-[var(--color-text)]",
+  orange: "bg-[var(--color-surface-2)] text-[var(--color-text)]",
+  indigo: "bg-[var(--color-surface-2)] text-[var(--color-text)]",
+  violet: "bg-[var(--color-surface-2)] text-[var(--color-text)]",
   emerald: "bg-emerald-50 text-emerald-600",
-  purple: "bg-purple-50 text-purple-600",
+  purple: "bg-[var(--color-surface-2)] text-[var(--color-text)]",
   amber: "bg-amber-50 text-amber-600",
-  cyan: "bg-cyan-50 text-cyan-600",
+  cyan: "bg-[var(--color-surface-2)] text-[var(--color-text)]",
   rose: "bg-rose-50 text-rose-600",
   slate: "bg-slate-100 text-slate-600",
 };
@@ -111,15 +111,15 @@ export function toneWash(tone: Tone) {
 // to each widget. Two blurred radial blooms (a dominant + a complementary) that
 // the frame brightens on hover, so every card reads as alive as the deck.
 const TONE_GLOW: Record<Tone, [string, string]> = {
-  blue:    ["bg-blue-500/25",    "bg-indigo-500/20"],
-  orange:  ["bg-orange-500/25",  "bg-amber-500/20"],
-  indigo:  ["bg-indigo-500/25",  "bg-violet-500/20"],
-  violet:  ["bg-violet-500/25",  "bg-fuchsia-500/20"],
-  emerald: ["bg-emerald-500/25", "bg-teal-500/20"],
-  purple:  ["bg-purple-500/25",  "bg-fuchsia-500/20"],
-  amber:   ["bg-amber-400/25",   "bg-orange-500/20"],
-  cyan:    ["bg-cyan-500/25",    "bg-blue-500/20"],
-  rose:    ["bg-rose-500/25",    "bg-pink-500/20"],
+  blue:    ["bg-[var(--color-surface-2)]",    "bg-[var(--color-surface-2)]"],
+  orange:  ["bg-[var(--color-surface-2)]",  "bg-amber-500/20"],
+  indigo:  ["bg-[var(--color-surface-2)]",  "bg-[var(--color-surface-2)]"],
+  violet:  ["bg-[var(--color-surface-2)]",  "bg-[var(--color-surface-2)]"],
+  emerald: ["bg-emerald-500/25", "bg-[var(--color-surface-2)]"],
+  purple:  ["bg-[var(--color-surface-2)]",  "bg-[var(--color-surface-2)]"],
+  amber:   ["bg-amber-400/25",   "bg-[var(--color-surface-2)]"],
+  cyan:    ["bg-[var(--color-surface-2)]",    "bg-[var(--color-surface-2)]"],
+  rose:    ["bg-rose-500/25",    "bg-[var(--color-surface-2)]"],
   slate:   ["bg-slate-500/20",   "bg-slate-400/15"],
 };
 export function toneGlow(tone: Tone): [string, string] {
@@ -167,7 +167,7 @@ export interface WidgetMeta {
 function Stat({ value, label, accent }: { value: React.ReactNode; label: string; accent?: boolean }) {
   return (
     <div>
-      <div className={`text-2xl font-black leading-none ${accent ? "text-[var(--color-accent)]" : "text-[var(--color-text)]"}`}>{value}</div>
+      <div className={`text-2xl font-black leading-none ${accent ? "text-[var(--color-text)]" : "text-[var(--color-text)]"}`}>{value}</div>
       <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] mt-1">{label}</div>
     </div>
   );
@@ -230,7 +230,7 @@ function DeckLink({ href, label, sub }: { href: string; label: string; sub: stri
   return (
     <Link href={href} className="group flex items-center justify-between gap-2 px-3 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-accent)] transition-colors">
       <div className="min-w-0">
-        <div className="text-[13px] font-bold text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)] transition-colors">{label}</div>
+        <div className="text-[13px] font-bold text-[var(--color-text)] truncate group-hover:text-[var(--color-text)] transition-colors">{label}</div>
         <div className="text-[11px] text-[var(--color-text-muted)] truncate">{sub}</div>
       </div>
       <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
@@ -250,7 +250,7 @@ function DailyBriefBody() {
     <div className={`${FILL} ${SCROLL} gap-3`}>
       <DailyBrief data={snap} />
       {nudges.length > 0 && (
-        <div className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50/40 p-4">
+        <div className="rounded-2xl border border-amber-200 p-4 bg-[var(--color-surface-2)]">
           <div className="flex items-center gap-1.5 mb-2">
             <Zap className="w-4 h-4 text-amber-600" />
             <span className="text-sm font-black text-[var(--color-text)]">Suggested actions</span>
@@ -261,7 +261,7 @@ function DailyBriefBody() {
                 <span className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${n.severity === "high" ? "bg-rose-500" : "bg-amber-500"}`} />
                 <span className="flex-1">{n.message}</span>
                 {n.actionLabel && n.href && (
-                  <Link href={n.href} className="font-bold text-orange-700 hover:text-orange-900 inline-flex items-center gap-0.5 shrink-0">
+                  <Link href={n.href} className="font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] inline-flex items-center gap-0.5 shrink-0">
                     {n.actionLabel} <ChevronRight className="w-3 h-3" />
                   </Link>
                 )}
@@ -361,7 +361,7 @@ function SuggestedActionsBody() {
   }
   return (
     <div className={`${FILL}`}>
-      <div className={`rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50/40 p-4 ${SCROLL}`}>
+      <div className={`rounded-2xl border border-amber-200 p-4 bg-[var(--color-surface-2)] ${SCROLL}`}>
         <div className="flex items-center gap-1.5 mb-2">
           <Zap className="w-4 h-4 text-amber-600" />
           <span className="text-sm font-black text-[var(--color-text)]">Suggested actions</span>
@@ -372,7 +372,7 @@ function SuggestedActionsBody() {
               <span className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${n.severity === "high" ? "bg-rose-500" : "bg-amber-500"}`} />
               <span className="flex-1">{n.message}</span>
               {n.actionLabel && n.href && (
-                <Link href={n.href} className="font-bold text-orange-700 hover:text-orange-900 inline-flex items-center gap-0.5 shrink-0">
+                <Link href={n.href} className="font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] inline-flex items-center gap-0.5 shrink-0">
                   {n.actionLabel} <ChevronRight className="w-3 h-3" />
                 </Link>
               )}
@@ -398,19 +398,19 @@ function WidgetCard({
   children: React.ReactNode;
 }) {
   const tones: Record<string, string> = {
-    indigo: "border-indigo-200 bg-indigo-50/40",
-    orange: "border-orange-200 bg-orange-50/40",
+    indigo: "border-[var(--color-border)] bg-[var(--color-surface-2)]",
+    orange: "border-[var(--color-border)] bg-[var(--color-surface-2)]",
     amber:  "border-amber-200 bg-amber-50/40",
     rose:   "border-rose-200 bg-rose-50/40",
-    blue:   "border-blue-200 bg-blue-50/40",
+    blue:   "border-[var(--color-border)] bg-[var(--color-surface-2)]",
     emerald:"border-emerald-200 bg-emerald-50/40",
-    violet: "border-violet-200 bg-violet-50/40",
+    violet: "border-[var(--color-border)] bg-[var(--color-surface-2)]",
     slate:  "border-[var(--color-border)] bg-[var(--color-canvas)]",
   };
   const iconTones: Record<string, string> = {
-    indigo: "text-indigo-700", orange: "text-orange-700", amber: "text-amber-700",
-    rose: "text-rose-700", blue: "text-blue-700", emerald: "text-emerald-700",
-    violet: "text-violet-700", slate: "text-[var(--color-text-faint)]",
+    indigo: "text-[var(--color-text-muted)]", orange: "text-[var(--color-text-muted)]", amber: "text-amber-700",
+    rose: "text-rose-700", blue: "text-[var(--color-text-muted)]", emerald: "text-emerald-700",
+    violet: "text-[var(--color-text-muted)]", slate: "text-[var(--color-text-faint)]",
   };
   return (
     <div className={`rounded-2xl border ${tones[tone]} shadow-sm p-4`}>
@@ -471,7 +471,7 @@ function OutstandingBody() {
             <ul className="space-y-1.5">
               {snap.markupRequestsToMe.slice(0, 6).map((mr) => (
                 <li key={mr.id} className="text-xs">
-                  <Link href="/documents" className="text-violet-700 hover:underline font-bold">
+                  <Link href="/documents" className="text-[var(--color-accent)] hover:underline font-bold">
                     {mr.documentNumber || mr.documentTitle || mr.documentId.slice(0, 8)}
                   </Link>
                   {mr.requestedByName && <span className="text-[var(--color-text-muted)]"> · from {mr.requestedByName}</span>}
@@ -480,7 +480,7 @@ function OutstandingBody() {
                     <button
                       onClick={() => respondToMarkup(mr, "shared")}
                       disabled={resolvingId === mr.id}
-                      className="inline-flex items-center gap-1 px-2.5 py-2 sm:py-1 rounded-md bg-violet-600 hover:bg-violet-500 text-[var(--color-text)] text-[11px] font-bold disabled:opacity-50"
+                      className="inline-flex items-center gap-1 px-2.5 py-2 sm:py-1 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-text)] text-[11px] font-bold disabled:opacity-50"
                     >
                       <Send className="w-3 h-3" /> Mark shared
                     </button>
@@ -513,11 +513,11 @@ function OutstandingBody() {
                     <DocThumb documentId={s.documentId} width={28} />
                   </DocHoverPreview>
                   <span className="font-mono text-[var(--color-text-muted)]">{s.mode}</span>
-                  <Link href={`/documents/${s.libraryId ?? ""}?doc=${s.documentId}`} className="text-blue-700 hover:underline font-bold">
+                  <Link href={`/documents/${s.libraryId ?? ""}?doc=${s.documentId}`} className="text-[var(--color-accent)] hover:underline font-bold">
                     {s.documentId.slice(0, 8)}
                   </Link>
                   {s.purpose && <span className="text-[var(--color-text-faint)] truncate">- {s.purpose}</span>}
-                  <span className="ml-auto text-[10px] text-[var(--color-text-muted)]">{formatAgo(typeof s.startedAt === "string" ? s.startedAt : undefined)}</span>
+                  <span className="ml-auto text-[11px] text-[var(--color-text-muted)]">{formatAgo(typeof s.startedAt === "string" ? s.startedAt : undefined)}</span>
                 </li>
               ))}
             </ul>
@@ -531,7 +531,7 @@ function OutstandingBody() {
                 <li key={h.id} className="text-xs">
                   <span className="font-bold text-rose-700">{h.reason}</span>
                   {h.notes && <div className="text-[var(--color-text-faint)] truncate mt-0.5 italic">&quot;{h.notes}&quot;</div>}
-                  <div className="text-[10px] text-[var(--color-text-muted)]">opened {formatAgo(typeof h.openedAt === "string" ? h.openedAt : undefined)}</div>
+                  <div className="text-[11px] text-[var(--color-text-muted)]">opened {formatAgo(typeof h.openedAt === "string" ? h.openedAt : undefined)}</div>
                 </li>
               ))}
             </ul>
@@ -546,9 +546,9 @@ function OutstandingBody() {
             <ul className="space-y-1.5">
               {snap.transmittalsAwaitingAck.slice(0, 6).map((t) => (
                 <li key={t.id} className="text-xs flex items-center gap-2">
-                  <Link href="/transmittals" className="font-mono font-bold text-blue-700 hover:underline shrink-0">{t.number}</Link>
+                  <Link href="/transmittals" className="font-mono font-bold text-[var(--color-accent)] hover:underline shrink-0">{t.number}</Link>
                   <span className="text-[var(--color-text-faint)] truncate flex-1">{t.subject || [t.recipientName, t.recipientCompany].filter(Boolean).join(" · ") || `${t.documentCount} doc${t.documentCount === 1 ? "" : "s"}`}</span>
-                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
+                  <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
                     (t.__ageDays ?? 0) >= 14 ? "bg-rose-100 text-rose-800"
                     : (t.__ageDays ?? 0) >= 7 ? "bg-amber-100 text-amber-800"
                     : "bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"
@@ -556,7 +556,7 @@ function OutstandingBody() {
                 </li>
               ))}
             </ul>
-            <Link href="/transmittals" className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-blue-700 hover:text-blue-900">
+            <Link href="/transmittals" className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">
               Transmittal register <ChevronRight className="w-3 h-3" />
             </Link>
           </WidgetCard>
@@ -569,7 +569,7 @@ function OutstandingBody() {
                 <li key={m.id} className="text-xs flex items-center gap-2">
                   <Calendar className="w-3 h-3 text-emerald-600 dark:text-emerald-500 shrink-0" />
                   <span className="font-bold text-[var(--color-text)] truncate flex-1">{m.name}</span>
-                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                  <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded ${
                     (m.__dueInDays ?? 0) === 0 ? "bg-rose-100 text-rose-800"
                     : (m.__dueInDays ?? 0) <= 2 ? "bg-amber-100 text-amber-800"
                     : "bg-emerald-100 text-emerald-800"
@@ -632,8 +632,8 @@ function AdminAnalyticsBody() {
           { label: "Members", value: data?.members ?? 0, href: "/admin/users" },
         ] as const).map((s) => (
           <Link key={s.label} href={s.href} className="group rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-2 hover:border-[var(--color-accent)] transition-colors">
-            <div className="text-lg font-black leading-none text-[var(--color-text)] tabular-nums group-hover:text-[var(--color-accent)] transition-colors">{s.value.toLocaleString()}</div>
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] mt-1 truncate">{s.label}</div>
+            <div className="text-lg font-black leading-none text-[var(--color-text)] tabular-nums group-hover:text-[var(--color-text)] transition-colors">{s.value.toLocaleString()}</div>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] mt-1 truncate">{s.label}</div>
           </Link>
         ))}
       </div>
@@ -656,7 +656,7 @@ function AdminAnalyticsBody() {
           <div className="space-y-1.5">
             {data!.topLibs.map((l, i) => (
               <Link key={l.id} href={`/documents/${l.id}`} className="group flex items-center gap-2">
-                <span className="text-xs font-bold text-[var(--color-text)] truncate w-32 group-hover:text-[var(--color-accent)] transition-colors">{l.name}</span>
+                <span className="text-xs font-bold text-[var(--color-text)] truncate w-32 group-hover:text-[var(--color-text)] transition-colors">{l.name}</span>
                 <span className="flex-1 h-2 rounded-full bg-[var(--viz-track)] overflow-hidden">
                   <span className="block h-full rounded-full transition-all" style={{ width: `${(l.count / maxLib) * 100}%`, background: vizCat(i) }} />
                 </span>
@@ -728,7 +728,6 @@ function CommandDeckBody() {
     return (
       <div className="relative h-full overflow-hidden rounded-3xl border border-[var(--color-border)] bg-[var(--color-canvas)] shadow-2xl shadow-slate-900/30 p-5 sm:p-6">
         <div className="flex items-center gap-2 mb-4">
-          <span className="w-2 h-2 rounded-full bg-emerald-500/70 animate-pulse" />
           <div className="h-3 w-40 rounded bg-[var(--color-surface-2)] animate-pulse" />
         </div>
         <div className="h-7 w-64 rounded bg-[var(--color-surface-2)] animate-pulse mb-2" />

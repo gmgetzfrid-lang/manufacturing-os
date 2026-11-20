@@ -71,8 +71,8 @@ const MOC_STATES: Array<{ v: MocStatus; label: string }> = [
 const TONE_SELECTED: Record<CheckInCard["tone"], string> = {
   positive: "border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500",
   neutral: "border-slate-500 bg-slate-50 ring-1 ring-slate-400",
-  action: "border-blue-500 bg-blue-50 ring-1 ring-blue-500",
-  publish: "border-orange-500 bg-orange-50 ring-1 ring-orange-500",
+  action: "border-[var(--color-border-strong)] bg-[var(--color-surface-2)] ring-1 ring-[var(--color-border-strong)]",
+  publish: "border-[var(--color-border-strong)] bg-[var(--color-surface-2)] ring-1 ring-[var(--color-border-strong)]",
 };
 
 export default function CheckInPanel({
@@ -487,7 +487,7 @@ export default function CheckInPanel({
       <h3 className="text-sm font-bold text-[var(--color-text)] flex items-center">
         <CheckCircle2 className="w-4 h-4 mr-2 text-green-600" /> You are checked out
         {mySession.purpose && (
-          <span className="ml-2 text-[10px] font-bold px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200">
+          <span className="ml-2 text-[11px] font-bold px-2 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)]">
             {mySession.purpose}
           </span>
         )}
@@ -513,7 +513,7 @@ export default function CheckInPanel({
                 className={`w-full p-3 rounded-xl border-2 text-left transition-all ${isSel ? TONE_SELECTED[card.tone] : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}
               >
                 <div className="font-bold text-sm text-[var(--color-text)]">{card.label}</div>
-                {isSel && <p className="text-[10px] text-[var(--color-text-muted)] leading-snug mt-1">{card.hint}</p>}
+                {isSel && <p className="text-[11px] text-[var(--color-text-muted)] leading-snug mt-1">{card.hint}</p>}
               </button>
             );
           })}
@@ -528,9 +528,9 @@ export default function CheckInPanel({
             onChange={(e) => setNote(e.target.value)}
             placeholder={selected.notePrompt}
             rows={3}
-            className="w-full p-3 rounded-xl border border-[var(--color-border)] text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+            className="w-full p-3 rounded-xl border border-[var(--color-border)] text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
           />
-          <div className="text-[10px] text-[var(--color-text-muted)] mt-1">
+          <div className="text-[11px] text-[var(--color-text-muted)] mt-1">
             Recorded verbatim on the register - this is the record the next person reads.
           </div>
         </div>
@@ -539,7 +539,7 @@ export default function CheckInPanel({
       {/* THE PSM GATE — a drawing change states its MOC position, always. */}
       {selected?.moc === "required" && (
         <div className="space-y-1.5 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-2.5">
-          <div className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-wider">
+          <div className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-wider">
             Management of Change <span className="text-rose-500">*</span>
           </div>
           <div className="flex bg-[var(--color-surface)] p-1 rounded-md border border-[var(--color-border)]">
@@ -548,7 +548,7 @@ export default function CheckInPanel({
                 key={opt.v}
                 type="button"
                 onClick={() => { setMocStatus(opt.v); if (opt.v === "none") setMocNumber(""); }}
-                className={`flex-1 py-1 text-[10px] font-bold rounded transition-colors ${mocStatus === opt.v ? "bg-slate-900 text-white" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
+                className={`flex-1 py-1 text-[11px] font-bold rounded transition-colors ${mocStatus === opt.v ? "bg-slate-900 text-white" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
               >
                 {opt.label}
               </button>
@@ -559,11 +559,11 @@ export default function CheckInPanel({
               value={mocNumber}
               onChange={(e) => setMocNumber(e.target.value)}
               placeholder="MOC number - e.g. MOC-2026-014"
-              className="w-full px-2.5 py-1.5 border border-[var(--color-border)] rounded-md text-xs focus:ring-2 focus:ring-blue-500 outline-none"
+              className="w-full px-2.5 py-1.5 border border-[var(--color-border)] rounded-md text-xs focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
             />
           )}
           {mocStatus === "none" && (
-            <div className="flex items-start gap-1.5 text-[10px] text-amber-800 bg-amber-50 border border-amber-200 rounded-md p-2">
+            <div className="flex items-start gap-1.5 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-md p-2">
               <ShieldAlert className="w-3.5 h-3.5 shrink-0 mt-0.5" />
               <span>
                 A drawing change with no MOC is an <b>undocumented field change</b> - this report goes to

@@ -101,7 +101,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] mb-5 overflow-hidden">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
-        <SlidersHorizontal className="w-4 h-4 text-[var(--color-accent)]" />
+        <SlidersHorizontal className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-base font-bold text-[var(--color-text)]">Action permissions</span>
         <span className="text-xs text-[var(--color-text-muted)]">who may perform each workflow action - enforced on the server, audited on save</span>
         {canEdit && (
@@ -134,13 +134,13 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
           <tbody>
             {areas.map((area) => (
               <React.Fragment key={area}>
-                <tr><td colSpan={TOKENS.length + 1} className="sticky left-0 bg-[var(--color-surface)] px-4 pt-3 pb-1 text-[11px] font-black uppercase tracking-wider text-[var(--color-accent)]">{area}</td></tr>
+                <tr><td colSpan={TOKENS.length + 1} className="sticky left-0 bg-[var(--color-surface)] px-4 pt-3 pb-1 text-[11px] font-black uppercase tracking-wider text-[var(--color-text)]">{area}</td></tr>
                 {CAPABILITY_DEFS.filter((d) => d.area === area).map((d) => (
                   <tr key={d.id} className="border-t border-[var(--color-border)] hover:bg-[var(--color-surface-2)]/50">
                     <td className="sticky left-0 bg-[var(--color-surface)] px-4 py-1.5">
                       <span className="font-medium text-[var(--color-text)]">{d.label}</span>
-                      {d.critical && <span className="ml-1.5 text-[9px] font-black text-amber-600 dark:text-amber-400 cursor-help" title="Critical: Admin cannot be removed">CRITICAL</span>}
-                      <div className="text-[10px] text-[var(--color-text-faint)]">{d.description}</div>
+                      {d.critical && <span className="ml-1.5 text-[11px] font-black text-amber-600 dark:text-amber-400 cursor-help" title="Critical: Admin cannot be removed">CRITICAL</span>}
+                      <div className="text-[11px] text-[var(--color-text-faint)]">{d.description}</div>
                     </td>
                     {TOKENS.map((t) => {
                       const on = (policy[d.id] ?? []).includes(t);
@@ -165,7 +165,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
           </tbody>
         </table>
       </div>
-      <div className="px-4 py-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-text-faint)]">
+      <div className="px-4 py-2 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-faint)]">
         Identity rights are never configurable: a ticket&apos;s requester, assigned drafter, and assigned engineer always keep their own-ticket actions. &ldquo;Engineer&rdquo; covers every Engineer-1…4 tier (tiers are labels, enforced identically).
       </div>
     </div>

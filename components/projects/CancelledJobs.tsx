@@ -87,7 +87,7 @@ export function CancelledJobsList({ jobs, canEdit, userId, userEmail, onChanged 
               {j.m.movedTo ? <b>{j.m.movedTo}</b> : <span className="text-[var(--color-text-faint)]">not said</span>}
             </div>
             {j.m.cancelNote && <div className="italic text-[var(--color-text-muted)] break-words">“{j.m.cancelNote}”</div>}
-            <div className="text-[10.5px] text-[var(--color-text-faint)]">
+            <div className="text-[11px] text-[var(--color-text-faint)]">
               Cancelled {j.at != null && Number.isFinite(j.at) ? fmtInTz(j.at, tz, { weekday: "short", month: "short", day: "numeric" }) : ""}{j.m.cancelledByName ? ` · ${j.m.cancelledByName}` : ""}
             </div>
           </div>

@@ -446,7 +446,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
             </div>
             <p className="text-[11.5px] text-[var(--color-text-muted)]">{RATING_MEANS}</p>
 
-            {adding && <div className="rounded-2xl border-2 border-[var(--color-accent)] bg-[var(--color-surface)] p-4"><FindingForm title="Add a finding" pickCategory busy={busy === "add"} onCancel={() => setAdding(false)} onSave={(e, c) => addFinding(e, c ?? "materials")} /></div>}
+            {adding && <div className="rounded-2xl border-2 border-[var(--color-border-strong)] bg-[var(--color-surface)] p-4"><FindingForm title="Add a finding" pickCategory busy={busy === "add"} onCancel={() => setAdding(false)} onSave={(e, c) => addFinding(e, c ?? "materials")} /></div>}
 
             {shown.length === 0 && <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-6 text-center text-[13px] text-[var(--color-text-muted)]">Nothing here.</div>}
             {shown.map((f) => {
@@ -460,10 +460,10 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
                   ) : <>
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className={label}>{c.name}</span>
-                      <span className={`text-[10.5px] font-black px-1.5 py-0.5 rounded ${RATE_CLS[f.rating]}`}>{f.rating === "none" && f.moved === 0 ? "No effect on the finish" : RATING_WORD[f.rating]}</span>
-                      {f.source === "person" && <span className="text-[10.5px] font-bold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">Added by {f.by ?? "a person"}</span>}
-                      {f.source === "job" && <span className="text-[10.5px] font-bold px-1.5 py-0.5 rounded bg-sky-50 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300" data-job-finding>Written on the job{f.by ? ` by ${f.by}` : ""}{f.at ? `, ${day(f.at)}` : ""}</span>}
-                      {(f.areas?.length ?? 0) > 1 && <span className="text-[10.5px] font-bold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">{f.areas!.map((a) => AREAS.find((x) => x.id === a)?.name).join(" · ")}</span>}
+                      <span className={`text-[11px] font-black px-1.5 py-0.5 rounded ${RATE_CLS[f.rating]}`}>{f.rating === "none" && f.moved === 0 ? "No effect on the finish" : RATING_WORD[f.rating]}</span>
+                      {f.source === "person" && <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">Added by {f.by ?? "a person"}</span>}
+                      {f.source === "job" && <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)]" data-job-finding>Written on the job{f.by ? ` by ${f.by}` : ""}{f.at ? `, ${day(f.at)}` : ""}</span>}
+                      {(f.areas?.length ?? 0) > 1 && <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">{f.areas!.map((a) => AREAS.find((x) => x.id === a)?.name).join(" · ")}</span>}
                       <span className={`ml-auto text-[11px] font-black px-2 py-0.5 rounded-full ${f.status === "kept" ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
                         {f.status === "kept" ? `Kept${f.at ? ` ${day(f.at)}` : ""}${f.edited ? " · changed" : ""}` : f.status === "discarded" ? "Discarded" : `Draft${f.edited ? " · changed" : ""}${asks ? ` · ${asks} question${asks === 1 ? "" : "s"} open` : ""}`}
                       </span>
@@ -750,7 +750,7 @@ function ActionLine({ a, kind, busy, canManage, onPlan, onDone }: { a: Action; k
       <div className="min-w-0 flex-1">
         <b className="block text-[15px] leading-snug">{a.what}</b>
         <div className="mt-1 flex items-center gap-1.5 flex-wrap text-[12px]">
-          <span className={`rounded-full px-2 py-0.5 font-black ${a.applies === "all" ? "bg-sky-100 text-sky-800 dark:bg-sky-950/50 dark:text-sky-300" : "bg-[var(--color-border)]/60 text-[var(--color-text-muted)]"}`} data-applies={a.applies}>{appliesWord(a.applies, kind)}</span>
+          <span className={`rounded-full px-2 py-0.5 font-black ${a.applies === "all" ? "bg-[var(--color-surface-2)] text-[var(--color-text)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)]" : "bg-[var(--color-border)]/60 text-[var(--color-text-muted)]"}`} data-applies={a.applies}>{appliesWord(a.applies, kind)}</span>
           <span className="text-[var(--color-text-muted)]">{a.areaName}{a.keys.length > 1 ? `, from ${a.keys.length} findings` : ""}</span>
 
         </div>

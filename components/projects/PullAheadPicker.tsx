@@ -94,7 +94,7 @@ export function PullAheadPicker({ items, onLists, next, shiftHours, picked, coun
         {/* Crew and how much of its shift is filled */}
         <div className="px-4 pt-3 pb-2.5 border-b border-[var(--color-border)] space-y-2">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-[12.5px]">
-            <span className="inline-flex items-center gap-1.5 font-bold text-[var(--color-text)]"><Users className="w-4 h-4 text-[var(--color-accent)]" /> Crew</span>
+            <span className="inline-flex items-center gap-1.5 font-bold text-[var(--color-text)]"><Users className="w-4 h-4 text-[var(--color-text-muted)]" /> Crew</span>
             <select value={pull.crew ?? ""} disabled={locked} onChange={(e) => onPull({ ...pull, crew: e.target.value || null })} aria-label="Crew for the extra work"
               className="h-8 max-w-[240px] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)]">
               <option value="">Not named</option>
@@ -175,7 +175,7 @@ export function PullAheadPicker({ items, onLists, next, shiftHours, picked, coun
                 const cant = !addable(x);
                 const early = x.readiness === "waiting";
                 return (
-                  <div key={r.leaf.id} className={`flex items-start gap-3 px-4 py-2.5 ${on ? "bg-indigo-50/70 dark:bg-indigo-950/30" : ""}`}>
+                  <div key={r.leaf.id} className={`flex items-start gap-3 px-4 py-2.5 ${on ? "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]" : ""}`}>
                     <button type="button" disabled={locked || (cant && !on)} onClick={() => onToggle(r, !on)} aria-pressed={on}
                       aria-label={`${on ? "Remove" : "Add"} ${r.leaf.name}${r.parentName ? ` (${r.parentName})` : ""}`}
                       title={cant ? (x.blockedBy ? `Can't start - it waits on ${x.blockedBy}, which is blocked or on hold` : `Blocked or on hold${r.reason ? `: ${r.reason}` : ""}`) : on ? "Remove from the shift" : early ? "Not ready yet - add only if you know it can start" : "Add to the shift"}
@@ -238,7 +238,7 @@ function Chip({ on, onClick, children }: { on: boolean; onClick: () => void; chi
   return (
     <button type="button" onClick={onClick} aria-pressed={on}
       className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 font-semibold ${on
-        ? "border-[var(--color-accent)] bg-orange-50 dark:bg-orange-950/40 text-orange-800 dark:text-orange-200"
+        ? "border-[var(--color-text)] bg-[var(--color-text)] dark:bg-[var(--color-surface-2)] text-[var(--color-surface)] dark:text-[var(--color-text)]"
         : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
       {on && <Check className="w-3 h-3" />}{children}
     </button>
@@ -250,7 +250,7 @@ function Tag({ tone, children }: { tone: "rose" | "amber" | "emerald" | "slate";
     : tone === "amber" ? "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-900"
       : tone === "emerald" ? "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-200 dark:border-emerald-900"
         : "bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700";
-  return <span className={`inline-block max-w-full break-words px-1.5 py-px rounded border text-[9.5px] font-black uppercase tracking-wider ${cls}`}>{children}</span>;
+  return <span className={`inline-block max-w-full break-words px-1.5 py-px rounded border text-[11px] font-black uppercase tracking-wider ${cls}`}>{children}</span>;
 }
 
 function Ready({ x, kind }: { x: LookAheadItem; kind: string }) {

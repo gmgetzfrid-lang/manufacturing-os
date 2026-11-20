@@ -59,13 +59,13 @@ export default function RetentionPolicyModal({ level, id, orgId, name, uid, user
     finally { setBusy(false); }
   };
 
-  const inp = "text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 outline-none focus:border-[var(--color-accent)]";
+  const inp = "text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 outline-none focus:border-[var(--color-border-strong)]";
 
   return (
     <div className="fixed inset-0 z-[520] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4" onClick={onClose}>
       <div className="w-full max-w-md max-h-[85dvh] overflow-y-auto bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)]" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3">
-          <Archive className="w-5 h-5 text-[var(--color-accent)]" />
+          <Archive className="w-5 h-5 text-[var(--color-text-muted)]" />
           <div className="flex-1 min-w-0">
             <div className="text-sm font-bold text-[var(--color-text)]">Retention</div>
             <div className="text-[11px] text-[var(--color-text-muted)] truncate">How long records in this {scopeLabel}{name ? ` · ${name}` : ""} are kept</div>
@@ -98,7 +98,7 @@ export default function RetentionPolicyModal({ level, id, orgId, name, uid, user
                 </select>
               </div>
             )}
-            <div className="text-[10px] text-[var(--color-text-muted)]">Records are never auto-destroyed - disposition is always an explicit, logged action, and a legal hold overrides it.</div>
+            <div className="text-[11px] text-[var(--color-text-muted)]">Records are never auto-destroyed - disposition is always an explicit, logged action, and a legal hold overrides it.</div>
 
             <div className="flex justify-between gap-2 pt-2 border-t border-[var(--color-border)]">
               <button onClick={() => void remove()} disabled={busy || !existing} className="px-3 py-2 rounded-lg text-xs font-bold text-red-600 hover:bg-red-50 disabled:opacity-40">Remove</button>

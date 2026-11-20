@@ -73,10 +73,10 @@ export default function MentionsPanel({ orgId, assetId, tag }: Props) {
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-hidden mb-5">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between gap-2">
         <span className="text-sm font-black text-[var(--color-text)] inline-flex items-center gap-2">
-          <Link2 className="w-4 h-4 text-violet-500" /> Mentioned in
+          <Link2 className="w-4 h-4 text-[var(--color-text-muted)]" /> Mentioned in
         </span>
         {docs && docs.length > 0 && (
-          <span className="text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">
+          <span className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">
             {total} mention{total === 1 ? "" : "s"} across {docs.length} document{docs.length === 1 ? "" : "s"}
           </span>
         )}
@@ -129,7 +129,7 @@ function DocRow({ doc }: { doc: MentionedDocument }) {
           {open ? <ChevronDown className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-faint)]" />
                 : <ChevronRight className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-faint)]" />}
           <span className="text-xs font-bold text-[var(--color-text)] truncate flex-1">{doc.documentName}</span>
-          <span className="text-[10px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded shrink-0">
+          <span className="text-[11px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded shrink-0">
             {doc.totalMentions}× · {pageCount} page{pageCount === 1 ? "" : "s"}
           </span>
         </div>
@@ -148,14 +148,14 @@ function DocRow({ doc }: { doc: MentionedDocument }) {
             const body = (
               <>
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">
+                  <span className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">
                     Page {m.page}
                   </span>
-                  <span className="text-[10px] text-[var(--color-text-faint)]">
+                  <span className="text-[11px] text-[var(--color-text-faint)]">
                     {m.count}× · matched &ldquo;{m.matchedText}&rdquo;
                   </span>
                   {m.confidence < 0.9 && (
-                    <span className="text-[10px] font-bold text-amber-700">unconfirmed</span>
+                    <span className="text-[11px] font-bold text-amber-700">unconfirmed</span>
                   )}
                   {href && <ExternalLink className="w-3 h-3 text-[var(--color-text-faint)] ml-auto shrink-0" />}
                 </div>
@@ -167,7 +167,7 @@ function DocRow({ doc }: { doc: MentionedDocument }) {
                 {href ? (
                   <Link
                     href={href}
-                    className="block ml-5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 mt-1.5 hover:border-violet-300"
+                    className="block ml-5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 mt-1.5 hover:border-[var(--color-border)]"
                   >
                     {body}
                   </Link>

@@ -159,7 +159,7 @@ function CreatePlotPlanModal({
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Unit 200 Plot Plan" />
         </Field>
         <div>
-          <span className="block text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1.5">Background image</span>
+          <span className="block text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1.5">Background image</span>
           <label className="flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-6 cursor-pointer hover:border-[var(--color-accent-ring)] transition-colors">
             <ImageIcon className="w-6 h-6 text-[var(--color-text-faint)]" />
             <span className="text-xs font-medium text-[var(--color-text-muted)]">{file ? file.name : "Plot plan, P&ID, or unit layout (PNG/JPG)"}</span>

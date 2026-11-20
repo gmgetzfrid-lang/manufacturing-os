@@ -114,7 +114,7 @@ export default function Composer({
         : "border-[var(--color-border-strong)] focus-within:border-[var(--color-accent-ring)]"}`}
     >
       {dragging && (
-        <div className="absolute inset-0 z-10 rounded-2xl bg-[var(--color-accent-soft)]/80 flex items-center justify-center text-sm font-black text-[var(--color-accent)] pointer-events-none">
+        <div className="absolute inset-0 z-10 rounded-2xl bg-[var(--color-surface-2)] flex items-center justify-center text-sm font-black text-[var(--color-text)] pointer-events-none">
           Drop an image or PDF - context for this question only
         </div>
       )}
@@ -134,7 +134,7 @@ export default function Composer({
                   : <FileText className="w-4 h-4 shrink-0 text-rose-600" />}
               <span className="truncate">{a.name}</span>
               {a.att === null && !a.error
-                ? <span className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]"><Loader2 className="w-3 h-3 animate-spin" />{Math.round(a.percent)}%</span>
+                ? <span className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-muted)]"><Loader2 className="w-3 h-3 animate-spin" />{Math.round(a.percent)}%</span>
                 : a.att && <Check className="w-3 h-3 text-emerald-600 shrink-0" />}
               <button onClick={() => onRemoveAttachment(a.localId)} className="p-0.5 rounded hover:bg-[var(--color-surface)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]" title="Remove">
                 <X className="w-3 h-3" />
@@ -182,7 +182,7 @@ export default function Composer({
 
         {instructionsActive && (
           <button onClick={onToggleInstructions} title="Instructions apply to this conversation"
-            className="h-8 inline-flex items-center gap-1 px-2 rounded-lg text-[11px] font-black border border-violet-300 dark:border-violet-800 text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-950/30">
+            className="h-8 inline-flex items-center gap-1 px-2 rounded-lg text-[11px] font-black border border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]">
             <SlidersHorizontal className="w-3.5 h-3.5" /> {instructionCount}
           </button>
         )}

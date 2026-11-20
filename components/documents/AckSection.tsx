@@ -168,13 +168,13 @@ export default function AckSection({ doc, orgId, canManage }: {
     roster,
   );
 
-  const inp = "text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 outline-none focus:border-[var(--color-accent)]";
+  const inp = "text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 outline-none focus:border-[var(--color-border-strong)]";
   const src: Level | null = docPol ? "document" : folderPol ? "collection" : libPol ? "library" : null;
 
   const statusChip = (r: AckRosterRow) => {
-    if (r.status === "acknowledged") return <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700"><CheckCircle2 className="w-3 h-3" /> {r.acknowledgedAt?.slice(0, 10)}</span>;
-    if (r.status === "waived") return <span className="text-[10px] font-bold text-[var(--color-text-muted)]">Waived</span>;
-    return <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-600"><Clock className="w-3 h-3" /> Outstanding</span>;
+    if (r.status === "acknowledged") return <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700"><CheckCircle2 className="w-3 h-3" /> {r.acknowledgedAt?.slice(0, 10)}</span>;
+    if (r.status === "waived") return <span className="text-[11px] font-bold text-[var(--color-text-muted)]">Waived</span>;
+    return <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-600"><Clock className="w-3 h-3" /> Outstanding</span>;
   };
 
   return (
@@ -207,8 +207,8 @@ export default function AckSection({ doc, orgId, canManage }: {
           {roster.length > 0 && (
             <div className="space-y-1 pt-1 border-t border-[var(--color-border)]">
               <div className="flex items-center justify-between">
-                <div className="text-[10px] font-bold text-[var(--color-text-muted)]">{summary.done} of {summary.required} acknowledged{summary.waived ? ` · ${summary.waived} waived` : ""}</div>
-                {canManage && <button onClick={report} className="inline-flex items-center gap-1 text-[10px] font-bold text-[var(--color-accent)] hover:underline"><FileDown className="w-3 h-3" /> Report</button>}
+                <div className="text-[11px] font-bold text-[var(--color-text-muted)]">{summary.done} of {summary.required} acknowledged{summary.waived ? ` · ${summary.waived} waived` : ""}</div>
+                {canManage && <button onClick={report} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:underline"><FileDown className="w-3 h-3" /> Report</button>}
               </div>
               <div className="max-h-40 overflow-y-auto space-y-0.5">
                 {roster.map((r) => (
@@ -242,7 +242,7 @@ export default function AckSection({ doc, orgId, canManage }: {
               <div className="flex gap-1">
                 {(["document", "collection", "library"] as Level[]).map((lv) => (
                   <button key={lv} onClick={() => void changeScope(lv)} disabled={lv === "collection" && !doc.collectionId}
-                    className={`flex-1 px-2 py-1 rounded-lg text-[10px] font-bold disabled:opacity-30 ${scope === lv ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
+                    className={`flex-1 px-2 py-1 rounded-lg text-[11px] font-bold disabled:opacity-30 ${scope === lv ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
                     {lv === "document" ? "This doc" : lv === "collection" ? "This folder" : "Library"}
                   </button>
                 ))}
@@ -253,10 +253,10 @@ export default function AckSection({ doc, orgId, canManage }: {
               {enabled && (
                 <>
                   <div className="space-y-1">
-                    <div className="text-[10px] font-bold text-[var(--color-text-muted)]">Named people</div>
+                    <div className="text-[11px] font-bold text-[var(--color-text-muted)]">Named people</div>
                     <div className="flex flex-wrap gap-1">
                       {people.map((p) => (
-                        <span key={p.uid} className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[var(--color-text)]">{p.name || p.email}<button onClick={() => setPeople((prev) => prev.filter((x) => x.uid !== p.uid))}><X className="w-3 h-3" /></button></span>
+                        <span key={p.uid} className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-[11px] text-[var(--color-text)]">{p.name || p.email}<button onClick={() => setPeople((prev) => prev.filter((x) => x.uid !== p.uid))}><X className="w-3 h-3" /></button></span>
                       ))}
                     </div>
                     <input value={userQuery} onChange={(e) => setUserQuery(e.target.value)} placeholder="Search people…" className={`${inp} w-full`} />
@@ -269,24 +269,24 @@ export default function AckSection({ doc, orgId, canManage }: {
                     )}
                   </div>
                   <div className="space-y-1">
-                    <div className="text-[10px] font-bold text-[var(--color-text-muted)]">Whole roles</div>
+                    <div className="text-[11px] font-bold text-[var(--color-text-muted)]">Whole roles</div>
                     <div className="flex flex-wrap gap-1">
                       {ALL_ROLES.map((r) => (
-                        <button key={r} onClick={() => toggleRole(r)} className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors ${roles.includes(r) ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{r}</button>
+                        <button key={r} onClick={() => toggleRole(r)} className={`px-2 py-0.5 rounded-full text-[11px] font-bold border transition-colors ${roles.includes(r) ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{r}</button>
                       ))}
                     </div>
                   </div>
                   {allTeams.length > 0 && (
                     <div className="space-y-1">
-                      <div className="text-[10px] font-bold text-[var(--color-text-muted)]">Departments</div>
+                      <div className="text-[11px] font-bold text-[var(--color-text-muted)]">Departments</div>
                       <div className="flex flex-wrap gap-1">
                         {allTeams.map((t) => (
-                          <button key={t.id} onClick={() => toggleTeam(t.id)} className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors ${teamIds.includes(t.id) ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{t.name}</button>
+                          <button key={t.id} onClick={() => toggleTeam(t.id)} className={`px-2 py-0.5 rounded-full text-[11px] font-bold border transition-colors ${teamIds.includes(t.id) ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{t.name}</button>
                         ))}
                       </div>
                     </div>
                   )}
-                  <label className="flex items-start gap-2 text-[10px] text-[var(--color-text)]">
+                  <label className="flex items-start gap-2 text-[11px] text-[var(--color-text)]">
                     <input type="checkbox" checked={hardGate} onChange={(e) => setHardGate(e.target.checked)} className="mt-0.5" />
                     <span>Hard-gate (mark rev &ldquo;pending acknowledgment&rdquo; until everyone signs)</span>
                   </label>

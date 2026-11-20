@@ -57,14 +57,14 @@ export function BudgetDocDrop({ orgId, projectId, onRead, compact, label }: {
         className={`rounded-xl border-2 border-dashed transition-colors cursor-pointer flex items-center gap-3 ${compact ? "px-3 py-2.5" : "px-4 py-5"} ${
           over ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]/60" : "border-[var(--color-border-strong)] hover:border-[var(--color-accent-ring)] bg-[var(--color-surface-2)]/30"}`}
       >
-        <span className="p-2 rounded-lg bg-[var(--color-accent-soft)] text-[var(--color-accent)] shrink-0">
+        <span className="p-2 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)] shrink-0">
           {reading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileUp className="w-4 h-4" />}
         </span>
         <span className="min-w-0">
           <span className="block text-xs font-black text-[var(--color-text)]">
             {reading ? `Reading ${reading}…` : label ?? "Drop your AFE, estimate, or budget sheet"}
           </span>
-          <span className="block text-[10px] text-[var(--color-text-muted)]">
+          <span className="block text-[11px] text-[var(--color-text-muted)]">
             {reading
               ? "The AI is reading the pages - usually 20–60 seconds. Nothing is saved until you review it."
               : "PDF (scanned is fine), photo, Excel/CSV, Word, or text - any company's form. Read on your own AI key; you review before anything is created."}
@@ -129,14 +129,14 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
   };
 
   return (
-    <div className="border-b border-[var(--color-border)] bg-[var(--color-accent-soft)]/25">
+    <div className="border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
       <div className="px-4 pt-3 pb-2 flex items-start gap-3">
-        <span className="p-1.5 rounded-lg bg-[var(--color-accent-soft)] text-[var(--color-accent)]"><Sparkles className="w-4 h-4" /></span>
+        <span className="p-1.5 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)]"><Sparkles className="w-4 h-4" /></span>
         <div className="min-w-0 flex-1">
           <div className="text-sm font-black text-[var(--color-text)]">
             {[p.docType, p.docNumber].filter(Boolean).join(" ") || "Budget document"}{p.title ? ` - ${p.title}` : ""}
           </div>
-          <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5 flex flex-wrap gap-x-3">
+          <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 flex flex-wrap gap-x-3">
             <span>{result.source.fileName}</span>
             {p.chargeAccount && <span>Account <span className="font-mono">{p.chargeAccount}</span></span>}
             {p.docDate && <span>Dated {p.docDate}</span>}
@@ -175,7 +175,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
       <div className="px-4 pb-2 overflow-x-auto">
         <table className="w-full text-xs min-w-[640px]">
           <thead>
-            <tr className="text-left text-[9px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+            <tr className="text-left text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
               <th className="py-1.5 w-6" />
               <th className="py-1.5">Budget line</th>
               <th className="py-1.5">Type</th>
@@ -199,7 +199,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
                     <input value={l.name} onChange={(e) => patch(l.key, { name: e.target.value })}
                       className="w-full h-7 rounded-md border border-transparent hover:border-[var(--color-border)] focus:border-[var(--color-border-strong)] bg-transparent px-1.5 text-xs font-bold text-[var(--color-text)]" />
                     {(exists || upd || l.note) && (
-                      <div className="px-1.5 text-[10px] text-[var(--color-text-muted)]">
+                      <div className="px-1.5 text-[11px] text-[var(--color-text-muted)]">
                         {exists && <span className="font-bold text-[var(--color-text-muted)]">Already a budget line, same budget. </span>}
                         {upd && (
                           <label className="inline-flex items-center gap-1 font-bold text-amber-800 dark:text-amber-300">
@@ -224,7 +224,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
                         placeholder="-" className="w-36 h-7 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 text-[11px]" />
                       {l.supplier && !exists && (
                         <span title={known ? `Matches ${known.name} on this project` : "New company - will be added"}
-                          className={`text-[9px] font-black uppercase ${known ? "text-emerald-600" : "text-[var(--color-text-faint)]"}`}>
+                          className={`text-[11px] font-black uppercase ${known ? "text-emerald-600" : "text-[var(--color-text-faint)]"}`}>
                           {known ? <Check className="w-3 h-3" /> : "new"}
                         </span>
                       )}
@@ -249,7 +249,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
       </div>
 
       <div className="px-4 py-2.5 border-t border-[var(--color-border)] flex items-center gap-2 flex-wrap">
-        <span className="text-[10px] text-[var(--color-text-muted)] inline-flex items-center gap-1">
+        <span className="text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1">
           <Building2 className="w-3 h-3" />
           Creates {plan.accountsToCreate.length} budget line{plan.accountsToCreate.length === 1 ? "" : "s"}{updating ? `, changes ${updating} budget${updating === 1 ? "" : "s"}` : ""}
           {plan.partiesToCreate.length > 0 ? ` and ${plan.partiesToCreate.length} compan${plan.partiesToCreate.length === 1 ? "y" : "ies"} (${plan.partiesToCreate.join(", ")})` : ""}.
@@ -272,9 +272,9 @@ function Fact({ label, value, sub, tone }: { label: string; value: string; sub?:
   const ring = tone === "warn" ? "border-amber-500/50 bg-amber-500/[0.06]" : tone === "ok" ? "border-emerald-500/40 bg-emerald-500/[0.05]" : "border-[var(--color-border)] bg-[var(--color-surface)]";
   return (
     <div className={`rounded-xl border px-3 py-2 ${ring}`}>
-      <div className="text-[9px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">{label}</div>
+      <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">{label}</div>
       <div className="text-sm font-black tabular-nums text-[var(--color-text)]">{value}</div>
-      {sub && <div className={`text-[10px] font-bold ${tone === "warn" ? "text-amber-700 dark:text-amber-300" : "text-[var(--color-text-muted)]"}`}>{sub}</div>}
+      {sub && <div className={`text-[11px] font-bold ${tone === "warn" ? "text-amber-700 dark:text-amber-300" : "text-[var(--color-text-muted)]"}`}>{sub}</div>}
     </div>
   );
 }

@@ -78,8 +78,8 @@ export default function ExecutionGuide({ userId, worked }: {
 
       {/* First-run banner. */}
       {!bannerDismissed && (
-        <div className="w-full flex items-center gap-2 bg-gradient-to-r from-[var(--color-accent-soft)] to-white dark:to-[var(--color-surface)] border border-[var(--color-accent-ring)]/40 rounded-lg px-3 py-2 text-xs text-[var(--color-text)]">
-          <MousePointerClick className="w-4 h-4 text-[var(--color-accent)] shrink-0" />
+        <div className="w-full flex items-center gap-2 border border-[var(--color-accent-ring)]/40 rounded-lg px-3 py-2 text-xs text-[var(--color-text)] bg-[var(--color-surface-2)]">
+          <MousePointerClick className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
           <span className="flex-1">
             <b>New here?</b> This board runs the schedule day-by-day - move work, mark progress, and drill into sub-steps.
             <button onClick={() => { setOpen(true); markSeen(); }} className="ml-1 font-bold text-[var(--color-accent)] hover:underline">Show me how →</button>
@@ -93,18 +93,18 @@ export default function ExecutionGuide({ userId, worked }: {
         <div className="fixed inset-0 z-[300] flex items-start sm:items-center justify-center overflow-y-auto p-4" onClick={() => setOpen(false)}>
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-in fade-in" />
           <div className="relative w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl ring-1 ring-slate-900/10 overflow-hidden max-h-[85vh] flex flex-col animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
-            <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-2 bg-gradient-to-b from-white to-slate-50/50">
-              <HelpCircle className="w-5 h-5 text-[var(--color-accent)]" />
+            <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-2 bg-[var(--color-surface-2)]">
+              <HelpCircle className="w-5 h-5 text-[var(--color-text-muted)]" />
               <h2 className="font-black text-[var(--color-text)]">How the Execution board works</h2>
               <button onClick={() => setOpen(false)} className="ml-auto p-1.5 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors"><XIcon className="w-4 h-4" /></button>
             </div>
 
             <div className="overflow-y-auto p-5 space-y-5 text-sm text-[var(--color-text)]">
               <Section title="Two ways to look at the schedule">
-                <Row icon={<ListTree className="w-4 h-4 text-[var(--color-accent)]" />} label="Timeline">
+                <Row icon={<ListTree className="w-4 h-4 text-[var(--color-text-muted)]" />} label="Timeline">
                   The work breakdown on the left, bars on a time axis on the right. Best for seeing sequence and overlap.
                 </Row>
-                <Row icon={<CalendarDays className="w-4 h-4 text-[var(--color-accent)]" />} label="Calendar">
+                <Row icon={<CalendarDays className="w-4 h-4 text-[var(--color-text-muted)]" />} label="Calendar">
                   Each task sits on the day tiles it runs. Best for &quot;what&apos;s happening today.&quot;
                 </Row>
               </Section>
@@ -125,7 +125,7 @@ export default function ExecutionGuide({ userId, worked }: {
               </Section>
 
               <Section title="Move just ONE sub-step (not the whole task)">
-                <Row icon={<span className="inline-flex items-center justify-center w-4 h-4 rounded bg-[var(--color-accent)] text-[var(--color-accent-fg)]"><ChevronRight className="w-3 h-3" /></span>} label="Expand the task">
+                <Row icon={<span className="inline-flex items-center justify-center w-4 h-4 rounded bg-[var(--color-surface-2)] text-[var(--color-text)]"><ChevronRight className="w-3 h-3" /></span>} label="Expand the task">
                   On the calendar, click a task&apos;s <b>▸</b> arrow (or flip <b>Show → Sub-items</b>). Its steps drop onto their own days.
                 </Row>
                 <Row icon={<GripVertical className="w-4 h-4 text-[var(--color-text-muted)]" />} label="Then move the one step">

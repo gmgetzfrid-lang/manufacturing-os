@@ -153,16 +153,16 @@ function AddSourcesModal({ orgId, libraryId, existing, onClose, onAdded }: {
             <input type="checkbox" disabled={already || covered}
               checked={already || covered || selected.has(folderId)}
               onChange={() => toggle(folderId, "folder")}
-              className="accent-orange-600 w-4 h-4" />
+              className="accent-[var(--color-text)] w-4 h-4" />
             <FolderOpen className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
             <span className="font-bold text-[var(--color-text)] truncate">{f.name}</span>
           </label>
           {already ? (
-            <span className="shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]">LINKED</span>
+            <span className="shrink-0 text-[11px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]">LINKED</span>
           ) : covered ? (
-            <span className="shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400">INCLUDED</span>
+            <span className="shrink-0 text-[11px] font-black px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400">INCLUDED</span>
           ) : selected.has(folderId) ? (
-            <span className="shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded bg-orange-600 text-white">+ SUBFOLDERS</span>
+            <span className="shrink-0 text-[11px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text)]">+ SUBFOLDERS</span>
           ) : null}
         </div>
         {open && kids.map((kid) => renderFolder(kid, depth + 1))}
@@ -177,7 +177,7 @@ function AddSourcesModal({ orgId, libraryId, existing, onClose, onAdded }: {
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
           <div>
             <h2 className="text-base font-black text-[var(--color-text)] flex items-center gap-2">
-              <Link2 className="w-4 h-4 text-orange-600" /> Add sources from Document Control
+              <Link2 className="w-4 h-4 text-[var(--color-text-muted)]" /> Add sources from Document Control
             </h2>
             <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
               Linked containers feed this library LIVE - new documents index automatically, rev-ups
@@ -214,10 +214,10 @@ function AddSourcesModal({ orgId, libraryId, existing, onClose, onAdded }: {
                           <input type="checkbox" disabled={already}
                             checked={already || selected.has(l.id)}
                             onChange={() => toggle(l.id, "library")}
-                            className="accent-orange-600 w-4 h-4" />
-                          <Library className="w-3.5 h-3.5 text-orange-600 shrink-0" />
+                            className="accent-[var(--color-text)] w-4 h-4" />
+                          <Library className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
                           <span className="font-bold text-[var(--color-text)] flex-1 truncate">{l.name}</span>
-                          <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]">
+                          <span className="text-[11px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]">
                             {already ? "LINKED" : "WHOLE LIBRARY"}
                           </span>
                         </label>
@@ -233,10 +233,10 @@ function AddSourcesModal({ orgId, libraryId, existing, onClose, onAdded }: {
                           <input type="checkbox" disabled={already || covered}
                             checked={already || covered || selected.has(f.id)}
                             onChange={() => toggle(f.id, "folder")}
-                            className="accent-orange-600 w-4 h-4" />
+                            className="accent-[var(--color-text)] w-4 h-4" />
                           <FolderOpen className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
                           <span className="font-bold text-[var(--color-text)] flex-1 truncate" title={path}>{path}</span>
-                          <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]">
+                          <span className="text-[11px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]">
                             {already ? "LINKED" : covered ? "INCLUDED" : "FOLDER + SUBFOLDERS"}
                           </span>
                         </label>
@@ -269,15 +269,15 @@ function AddSourcesModal({ orgId, libraryId, existing, onClose, onAdded }: {
                               <input type="checkbox" disabled={already}
                                 checked={already || selected.has(l.id)}
                                 onChange={() => toggle(l.id, "library")}
-                                className="accent-orange-600 w-4 h-4" />
-                              <Library className="w-3.5 h-3.5 text-orange-600 shrink-0" />
+                                className="accent-[var(--color-text)] w-4 h-4" />
+                              <Library className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
                               <span className="font-black text-[var(--color-text)] truncate">{l.name}</span>
                             </label>
-                            <span className={`shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded ${
+                            <span className={`shrink-0 text-[11px] font-black px-1.5 py-0.5 rounded ${
                               already
                                 ? "bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]"
                                 : selected.has(l.id)
-                                  ? "bg-orange-600 text-white"
+                                  ? "bg-[var(--color-surface-2)] text-[var(--color-text)]"
                                   : "bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
                               {already ? "LINKED" : selected.has(l.id) ? "WHOLE LIBRARY" : "ALL"}
                             </span>
@@ -368,7 +368,7 @@ export default function SourcesPanel({ orgId, libraryId, isController, onChanged
   return (
     <div className="mb-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-3">
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
+        <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
           <Link2 className="w-3.5 h-3.5" /> Sources
         </span>
         {sources === null ? (
@@ -380,10 +380,10 @@ export default function SourcesPanel({ orgId, libraryId, isController, onChanged
         ) : (
           sources.map((s) => (
             <span key={s.id}
-              className="inline-flex items-center gap-1.5 text-[10px] font-black px-2 py-1 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text)]">
+              className="inline-flex items-center gap-1.5 text-[11px] font-black px-2 py-1 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text)]">
               {s.sourceType === "library"
-                ? <Library className="w-3 h-3 text-orange-600" />
-                : <FolderOpen className="w-3 h-3 text-orange-600" />}
+                ? <Library className="w-3 h-3 text-[var(--color-text-muted)]" />
+                : <FolderOpen className="w-3 h-3 text-[var(--color-text-muted)]" />}
               <span className="max-w-56 truncate" title={s.sourceName}>{s.sourceName}</span>
               <span className="text-[var(--color-text-muted)]">· {s.documentCount}</span>
               {isController && (
@@ -409,7 +409,7 @@ export default function SourcesPanel({ orgId, libraryId, isController, onChanged
         )}
       </div>
       {(sources?.length ?? 0) > 0 && (
-        <p className="mt-1.5 text-[10px] text-[var(--color-text-muted)]">
+        <p className="mt-1.5 text-[11px] text-[var(--color-text-muted)]">
           Live from Document Control: new documents index automatically, published revisions re-index,
           archived ones drop out. Answers always cite the current revision. Restricted documents are
           excluded from answers for people who can&apos;t read them.

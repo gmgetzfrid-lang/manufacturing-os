@@ -83,7 +83,7 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 mb-6">
       <div className="flex items-center gap-3 flex-wrap">
-        <div className="w-9 h-9 rounded-lg bg-indigo-600 flex items-center justify-center shrink-0">
+        <div className="w-9 h-9 rounded-lg bg-[var(--color-text-muted)] flex items-center justify-center shrink-0">
           <FlaskConical className="w-4 h-4 text-white" />
         </div>
         <button onClick={() => setOpen((v) => !v)} className="flex-1 min-w-0 text-left">
@@ -104,10 +104,10 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
           </button>
         ) : cases.length > 0 && (
           <div className="flex items-center gap-1.5">
-            <label className="text-[10px] text-[var(--color-text-muted)] flex items-center gap-1" title="The run stops when it has spent this much on your key">
+            <label className="text-[11px] text-[var(--color-text-muted)] flex items-center gap-1" title="The run stops when it has spent this much on your key">
               up to $<input value={cap} onChange={(e) => setCap(e.target.value.replace(/[^0-9.]/g, ""))} className="w-10 rounded border border-[var(--color-border)] bg-transparent px-1 py-0.5 text-xs" />
             </label>
-            <button onClick={() => void run()} className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-700">
+            <button onClick={() => void run()} className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-3 py-1.5 text-xs font-bold text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]">
               <Play className="w-3.5 h-3.5" /> Run tests
             </button>
           </div>
@@ -117,7 +117,7 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
       {running && (
         <div className="mt-3">
           <div className="h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-            <div className="h-full bg-indigo-600 transition-all" style={{ width: `${running.total ? (running.done / running.total) * 100 : 0}%` }} />
+            <div className="h-full bg-[var(--color-text-muted)] transition-all" style={{ width: `${running.total ? (running.done / running.total) * 100 : 0}%` }} />
           </div>
           <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
             <Loader2 className="w-3 h-3 animate-spin inline mr-1" />
@@ -141,7 +141,7 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
               <AnswerTestEditor initial={editing} onSave={save} onCancel={() => setEditing(null)} />
             </div>
           ) : (
-            <button onClick={() => setEditing({ question: "", expect: {}, tags: [] })} className="inline-flex items-center gap-1 text-xs font-bold text-indigo-600 hover:underline">
+            <button onClick={() => setEditing({ question: "", expect: {}, tags: [] })} className="inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent)] hover:underline">
               <Plus className="w-3.5 h-3.5" /> Add a test
             </button>
           )}
@@ -155,7 +155,7 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
                 ))}
               </select>
               {shownRun && !shownRun.is_baseline && shownRun.status !== "running" && (
-                <button onClick={() => void setAnswerTestBaseline(orgId, shownRun.id).then(() => load(shownRun.id))} className="inline-flex items-center gap-1 font-bold text-indigo-600 hover:underline">
+                <button onClick={() => void setAnswerTestBaseline(orgId, shownRun.id).then(() => load(shownRun.id))} className="inline-flex items-center gap-1 font-bold text-[var(--color-accent)] hover:underline">
                   <Flag className="w-3 h-3" /> Keep as baseline
                 </button>
               )}
@@ -177,16 +177,16 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
                     <button onClick={() => setExpanded(isOpen ? null : c.id)} className="flex-1 min-w-0 text-left">
                       <div className="text-xs text-[var(--color-text)]">
                         {c.question}
-                        {c.tags.includes("critical") && <span className="ml-1.5 rounded bg-amber-100 dark:bg-amber-950/40 px-1 text-[9px] font-black uppercase text-amber-800 dark:text-amber-200">critical</span>}
-                        {before === true && r?.pass === false && <span className="ml-1.5 text-[10px] font-bold text-rose-600">was passing</span>}
-                        {before === false && r?.pass === true && <span className="ml-1.5 text-[10px] font-bold text-emerald-600">now passing</span>}
+                        {c.tags.includes("critical") && <span className="ml-1.5 rounded bg-amber-100 dark:bg-amber-950/40 px-1 text-[11px] font-black uppercase text-amber-800 dark:text-amber-200">critical</span>}
+                        {before === true && r?.pass === false && <span className="ml-1.5 text-[11px] font-bold text-rose-600">was passing</span>}
+                        {before === false && r?.pass === true && <span className="ml-1.5 text-[11px] font-bold text-emerald-600">now passing</span>}
                       </div>
                       {r?.error && <div className="text-[11px] text-rose-600">Couldn&apos;t run: {r.error}</div>}
                       {!r?.error && failing.length > 0 && (
                         <div className="text-[11px] text-rose-700 dark:text-rose-300">{[...new Set(failing.map((k) => CHECK_LABEL[k.code] ?? k.code))].join(" · ")}</div>
                       )}
                     </button>
-                    <button aria-label="Run this test" title="Run this test" disabled={!!running} onClick={() => void run([c.id])} className="p-1 text-[var(--color-text-muted)] hover:text-indigo-600 disabled:opacity-40"><Play className="w-3.5 h-3.5" /></button>
+                    <button aria-label="Run this test" title="Run this test" disabled={!!running} onClick={() => void run([c.id])} className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-accent-hover)] disabled:opacity-40"><Play className="w-3.5 h-3.5" /></button>
                     <button aria-label="Edit test" title="Edit" onClick={() => setEditing(toDraft(c))} className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><Pencil className="w-3.5 h-3.5" /></button>
                     <button aria-label="Remove test" title="Remove" onClick={() => void archiveAnswerTest(orgId, c.id).then(() => load(state.runId ?? undefined))} className="p-1 text-[var(--color-text-muted)] hover:text-rose-600"><Trash2 className="w-3.5 h-3.5" /></button>
                   </div>

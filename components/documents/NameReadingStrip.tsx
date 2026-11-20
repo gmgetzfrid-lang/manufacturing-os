@@ -14,11 +14,11 @@ import { Wand2, ChevronDown, ChevronRight, AlertTriangle } from "lucide-react";
 import { ROLE_LABEL, type NameReading, type NameRole } from "@/lib/filenameRoles";
 
 const TONE: Record<NameRole, string> = {
-  number: "bg-indigo-100 text-indigo-900 border-indigo-200 dark:bg-indigo-950/40 dark:text-indigo-200 dark:border-indigo-900",
+  number: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)] dark:border-[var(--color-border)]",
   title: "bg-slate-100 text-slate-800 border-slate-200 dark:bg-slate-800/60 dark:text-slate-200 dark:border-slate-700",
   rev: "bg-emerald-100 text-emerald-900 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-200 dark:border-emerald-900",
-  sheet: "bg-sky-100 text-sky-900 border-sky-200 dark:bg-sky-950/40 dark:text-sky-200 dark:border-sky-900",
-  date: "bg-violet-100 text-violet-900 border-violet-200 dark:bg-violet-950/40 dark:text-violet-200 dark:border-violet-900",
+  sheet: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)] dark:border-[var(--color-border)]",
+  date: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)] dark:border-[var(--color-border)]",
   skip: "bg-transparent text-[var(--color-text-faint)] border-dashed border-[var(--color-border)] line-through",
 };
 const ROLES: NameRole[] = ["number", "title", "rev", "sheet", "date", "skip"];
@@ -63,7 +63,7 @@ export default function NameReadingStrip({ readings, onChange }: {
             {g.example.parts.map((p, i) => (
               <label key={i} className={`relative inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 ${TONE[p.role]} ${p.sure ? "" : "ring-2 ring-amber-400"}`} title={`“${p.text}” is read as ${ROLE_LABEL[p.role]}`}>
                 <span className="font-mono">{p.text}</span>
-                <span className="text-[9px] font-black uppercase opacity-70">{ROLE_LABEL[p.role]}</span>
+                <span className="text-[11px] font-black uppercase opacity-70">{ROLE_LABEL[p.role]}</span>
                 <select
                   aria-label={`What “${p.text}” is`}
                   value={p.role}
@@ -74,7 +74,7 @@ export default function NameReadingStrip({ readings, onChange }: {
                 </select>
               </label>
             ))}
-            <span className="text-[10px] text-[var(--color-text-faint)] ml-1">{g.count} file{g.count === 1 ? "" : "s"}{g.unsure ? ` · ${g.unsure} unsure` : ""}</span>
+            <span className="text-[11px] text-[var(--color-text-faint)] ml-1">{g.count} file{g.count === 1 ? "" : "s"}{g.unsure ? ` · ${g.unsure} unsure` : ""}</span>
           </div>
         ))}
       </div>

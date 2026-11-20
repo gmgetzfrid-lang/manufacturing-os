@@ -291,7 +291,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
         {/* Header + stepper */}
         <div className="px-6 py-4 border-b border-[var(--color-border)]">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-[var(--color-accent-soft)] rounded-lg"><Icon className="w-5 h-5 text-[var(--color-accent)]" /></div>
+            <div className="p-2 bg-[var(--color-surface-2)] rounded-lg"><Icon className="w-5 h-5 text-[var(--color-text-muted)]" /></div>
             <div className="flex-1 min-w-0">
               <div className="text-sm font-black text-[var(--color-text)]">New project - {STEPS[step].label}</div>
               <div className="text-xs text-[var(--color-text-muted)]">
@@ -335,7 +335,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                     <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Kind of project">
                       {[...PROJECT_TYPES.map((t) => t.word), "Other"].map((w) => (
                         <button key={w} type="button" role="radio" aria-checked={kind === w} onClick={() => setKindPick(w)}
-                          className={`rounded-lg border px-2.5 py-1.5 text-xs font-bold ${kind === w ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]/50 text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"}`}>
+                          className={`rounded-lg border px-2.5 py-1.5 text-xs font-bold ${kind === w ? "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"}`}>
                           {w}
                         </button>
                       ))}
@@ -347,9 +347,9 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                 <div className="grid sm:grid-cols-3 gap-2">
                   {JOB_KINDS.map((k) => (
                     <button key={k.v} onClick={() => setJobKind(k.v)}
-                      className={`rounded-xl border p-3 text-left transition-colors ${jobKind === k.v ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]/50" : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>
+                      className={`rounded-xl border p-3 text-left transition-colors ${jobKind === k.v ? "border-[var(--color-text)] bg-[var(--color-surface-2)]" : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>
                       <div className="text-xs font-black text-[var(--color-text)]">{k.label}</div>
-                      <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">{k.hint}</div>
+                      <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">{k.hint}</div>
                     </button>
                   ))}
                 </div>
@@ -367,7 +367,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
               </div>
               <Field label="Plant timezone">
                 <TimeZoneSelect value={timezone} onChange={setTimezone} />
-                <div className="mt-1 text-[10px] text-[var(--color-text-faint)]">Schedule days, times and shifts are shown in this zone for everyone on the project.</div>
+                <div className="mt-1 text-[11px] text-[var(--color-text-faint)]">Schedule days, times and shifts are shown in this zone for everyone on the project.</div>
               </Field>
               <Field label="Visibility">
                 <div className="flex bg-[var(--color-surface-2)] p-1 rounded-lg">
@@ -390,7 +390,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                 <div className="space-y-1.5">
                   {goals.map((g, i) => (
                     <div key={i} className="flex items-center gap-2 text-xs rounded-lg border border-[var(--color-border)] px-2.5 py-1.5">
-                      <Target className="w-3 h-3 text-[var(--color-accent)] shrink-0" />
+                      <Target className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
                       <span className="flex-1 text-[var(--color-text)]">{g}</span>
                       <button onClick={() => setGoals(goals.filter((_, j) => j !== i))} className="text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3 h-3" /></button>
                     </div>
@@ -570,7 +570,7 @@ function rows<T>(arr: T[], i: number, patch: Partial<T>): T[] {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">{label}</label>
+      <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">{label}</label>
       <div className="mt-1">{children}</div>
     </div>
   );
@@ -599,21 +599,21 @@ function FromDocSummary({ result, onClear }: { result: BudgetReadResult; onClear
             Prefilled from {[d.docType, d.docNumber].filter(Boolean).join(" ") || result.source.fileName}
             {d.authorizedAmount != null ? ` · ${fmtMoney(d.authorizedAmount, cur)} authorized` : ""}
           </div>
-          <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
+          <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
             {bits.length ? `${bits.join(", ")} - ` : ""}walk the steps to check each one. Fields you had already typed were kept.
           </div>
           {!recon.balanced && recon.unallocated != null && (
-            <div className="text-[10px] font-bold text-amber-700 dark:text-amber-300 mt-0.5">
+            <div className="text-[11px] font-bold text-amber-700 dark:text-amber-300 mt-0.5">
               Lines total {fmtMoney(recon.linesTotal, cur)} - {fmtMoney(Math.abs(recon.unallocated), cur)} {recon.unallocated > 0 ? "short of" : "over"} the authorized amount.
             </div>
           )}
           {result.blankPages.length > 0 && (
-            <div className="text-[10px] font-bold text-amber-700 dark:text-amber-300 mt-0.5">
+            <div className="text-[11px] font-bold text-amber-700 dark:text-amber-300 mt-0.5">
               Page{result.blankPages.length === 1 ? "" : "s"} {result.blankPages.join(", ")} came through blank (scanner compression) - anything only there wasn&apos;t read.
             </div>
           )}
           {recon.overBudgetBy != null && recon.overBudgetBy > 0 && (
-            <div className="text-[10px] font-bold text-amber-700 dark:text-amber-300 mt-0.5">
+            <div className="text-[11px] font-bold text-amber-700 dark:text-amber-300 mt-0.5">
               {fmtMoney(recon.overBudgetBy, cur)} over the approved budget it cites{d.varianceNote ? ` - ${d.varianceNote}` : "."}
             </div>
           )}

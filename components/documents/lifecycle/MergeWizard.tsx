@@ -302,7 +302,7 @@ function Step1Sources({
       </div>
 
       <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-3 space-y-2">
-        <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Sources ({others.length + 1})</div>
+        <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Sources ({others.length + 1})</div>
         <SourceChip doc={sourceDoc} primary />
         {others.map((d) => (
           <SourceChip key={d.id} doc={d} onRemove={() => remove(d.id!)} />
@@ -345,7 +345,7 @@ function Step1Sources({
 function SourceChip({ doc, primary, onRemove }: { doc: DocumentRecord; primary?: boolean; onRemove?: () => void }) {
   return (
     <div className="flex items-center gap-2 text-xs bg-[var(--color-surface)] border border-[var(--color-border)] rounded px-2 py-1.5">
-      <span className={`text-[9px] font-bold uppercase tracking-widest px-1 py-0.5 rounded ${primary ? "bg-amber-100 text-amber-800 border border-amber-200" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border border-[var(--color-border)]"}`}>
+      <span className={`text-[11px] font-bold uppercase tracking-widest px-1 py-0.5 rounded ${primary ? "bg-amber-100 text-amber-800 border border-amber-200" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border border-[var(--color-border)]"}`}>
         {primary ? "Primary" : "Source"}
       </span>
       <span className="font-mono font-bold text-[var(--color-text)]">{doc.documentNumber || "-"}</span>
@@ -406,7 +406,7 @@ function Step2Target(props: {
             <input type="file" accept="application/pdf" className="hidden" onChange={(e) => props.setNewFile(e.target.files?.[0] ?? null)} />
             {props.newFile ? (
               <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text)]">
-                <FileText className="w-3.5 h-3.5 text-blue-600" /> <span className="font-mono">{props.newFile.name}</span>
+                <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> <span className="font-mono">{props.newFile.name}</span>
               </span>
             ) : (
               <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
@@ -420,7 +420,7 @@ function Step2Target(props: {
 
       {mode === "extend_existing" && (
         <div className="border border-[var(--color-border)] rounded-lg p-3 bg-slate-50/40 space-y-2">
-          <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Pick the source to keep</div>
+          <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Pick the source to keep</div>
           <div className="space-y-1">
             {props.sources.map((s) => (
               <label key={s.id} className="flex items-center gap-2 text-xs cursor-pointer">
@@ -450,7 +450,7 @@ function Step2Target(props: {
                 <input type="file" accept="application/pdf" className="hidden" onChange={(e) => props.setExtendFile(e.target.files?.[0] ?? null)} />
                 {props.extendFile ? (
                   <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text)]">
-                    <FileText className="w-3.5 h-3.5 text-blue-600" /> <span className="font-mono">{props.extendFile.name}</span>
+                    <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> <span className="font-mono">{props.extendFile.name}</span>
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
@@ -518,7 +518,7 @@ function Step3TagsAndConfirm(props: {
 
       {props.tagUnion.length > 0 && (
         <div>
-          <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-1">Asset tag union - uncheck to exclude</div>
+          <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest mb-1">Asset tag union - uncheck to exclude</div>
           <div className="border border-[var(--color-border)] rounded-lg p-2 max-h-48 overflow-y-auto grid grid-cols-2 md:grid-cols-3 gap-1">
             {props.tagUnion.map((t) => {
               const k = tagKey(t);
@@ -536,7 +536,7 @@ function Step3TagsAndConfirm(props: {
       )}
 
       <label className="block">
-        <span className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Reason for merge *</span>
+        <span className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Reason for merge *</span>
         <textarea
           value={props.reason}
           onChange={(e) => props.setReason(e.target.value)}
@@ -546,12 +546,12 @@ function Step3TagsAndConfirm(props: {
         />
       </label>
       <label className="block">
-        <span className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">MOC Reference</span>
+        <span className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">MOC Reference</span>
         <input value={props.moc} onChange={(e) => props.setMoc(e.target.value)} className="mt-1 w-full text-sm border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 font-mono" />
       </label>
 
       <div className="border border-[var(--color-border)] rounded-lg p-3 bg-[var(--color-surface)]">
-        <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-2">Carry over from sources</div>
+        <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest mb-2">Carry over from sources</div>
         <div className="space-y-1.5 text-xs">
           <label className="flex items-center gap-2 cursor-pointer">
             <input type="checkbox" checked={props.copyHolds} onChange={(e) => props.setCopyHolds(e.target.checked)} />
@@ -570,7 +570,7 @@ function Step3TagsAndConfirm(props: {
 function StepLabel({ n, active, done, label }: { n: number; active: boolean; done: boolean; label: string }) {
   return (
     <div className={`inline-flex items-center gap-1.5 ${active ? "text-amber-700 font-bold" : done ? "text-emerald-700" : "text-[var(--color-text-faint)]"}`}>
-      <span className={`inline-flex items-center justify-center w-4 h-4 rounded-full text-[9px] font-black ${
+      <span className={`inline-flex items-center justify-center w-4 h-4 rounded-full text-[11px] font-black ${
         active ? "bg-amber-600 text-white" : done ? "bg-emerald-600 text-white" : "bg-slate-200 text-[var(--color-text-muted)]"
       }`}>{done ? "✓" : n}</span>
       {label}

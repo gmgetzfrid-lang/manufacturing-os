@@ -142,7 +142,7 @@ export default function DuplicateUploadsModal({
                   <li key={g.key} className="px-3 py-2 flex items-center gap-2 min-w-0">
                     <span className="min-w-0 flex-1">
                       <span className="block font-mono truncate text-[var(--color-text)]" title={g.name}>{g.name}</span>
-                      <span className="block text-[10px] text-[var(--color-text-faint)] truncate">{folderName(g.folderId)}</span>
+                      <span className="block text-[11px] text-[var(--color-text-faint)] truncate">{folderName(g.folderId)}</span>
                     </span>
                     <span className="shrink-0 font-black text-amber-700 dark:text-amber-400">×{g.extras.length + 1}</span>
                   </li>

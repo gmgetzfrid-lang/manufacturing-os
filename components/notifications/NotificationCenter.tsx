@@ -118,7 +118,7 @@ function CenterPanel({
         style={{ transitionTimingFunction: "var(--ease-spring)" }}
       >
         <div className="px-4 py-3.5 border-b border-[var(--color-border)] flex items-center gap-3 shrink-0 bg-[var(--color-surface-2)]">
-          <span className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-[var(--color-accent)] text-white shadow-lg shadow-orange-500/25 shrink-0">
+          <span className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-[var(--color-surface-2)] text-[var(--color-text)] shadow-lg shrink-0">
             <BellRing className="w-4.5 h-4.5" />
           </span>
           <div className="flex-1 min-w-0">

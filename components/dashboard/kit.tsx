@@ -157,7 +157,7 @@ export function Tabs<T extends string>({ value, onChange, options, className = "
             }`}>
             {o.label}
             {o.count !== undefined && (
-              <span className={`tabular-nums text-[10px] px-1 rounded ${on ? "bg-white/20" : "bg-[var(--color-surface-2)]"}`}>{o.count}</span>
+              <span className={`tabular-nums text-[11px] px-1 rounded ${on ? "bg-white/20" : "bg-[var(--color-surface-2)]"}`}>{o.count}</span>
             )}
           </button>
         );
@@ -178,7 +178,7 @@ export function SearchField({ value, onChange, onSubmit, placeholder, title, aut
   return (
     <form
       onSubmit={(e) => { e.preventDefault(); const v = value.trim(); if (v && onSubmit) onSubmit(v); }}
-      className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)]/60 px-2 py-1 focus-within:border-[var(--color-accent)] focus-within:bg-[var(--color-surface)] transition-colors"
+      className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)]/60 px-2 py-1 focus-within:border-[var(--color-border-strong)] focus-within:bg-[var(--color-surface)] transition-colors"
       title={title}
     >
       <Search className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />

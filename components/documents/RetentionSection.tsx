@@ -124,7 +124,7 @@ export default function RetentionSection({ doc, orgId, canManage }: {
     finally { setBusy(false); }
   };
 
-  const inp = "text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 outline-none focus:border-[var(--color-accent)]";
+  const inp = "text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 outline-none focus:border-[var(--color-border-strong)]";
 
   return (
     <div className={`rounded-xl border p-3 space-y-2.5 ${hold.on ? "border-red-300 bg-red-50/40" : "border-[var(--color-border)] bg-[var(--color-surface)]"}`}>
@@ -169,7 +169,7 @@ export default function RetentionSection({ doc, orgId, canManage }: {
               <div className="flex gap-1">
                 {(["document", "collection", "library"] as Level[]).map((lv) => (
                   <button key={lv} onClick={() => { setScope(lv); prefill(lv); }} disabled={lv === "collection" && !doc.collectionId}
-                    className={`flex-1 px-2 py-1 rounded-lg text-[10px] font-bold disabled:opacity-30 ${scope === lv ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
+                    className={`flex-1 px-2 py-1 rounded-lg text-[11px] font-bold disabled:opacity-30 ${scope === lv ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
                     {lv === "document" ? "This doc" : lv === "collection" ? "This folder" : "Library"}
                   </button>
                 ))}

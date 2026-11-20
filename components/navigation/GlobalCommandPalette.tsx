@@ -44,10 +44,10 @@ const KIND_ICON: Record<GlobalHitKind, React.ComponentType<{ className?: string 
   transmittal: Send,
 };
 const KIND_TONE: Record<GlobalHitKind, string> = {
-  document: "text-blue-700 bg-blue-50 border-blue-200",
-  ticket: "text-orange-700 bg-orange-50 border-orange-200",
-  project: "text-indigo-700 bg-indigo-50 border-indigo-200",
-  asset: "text-purple-700 bg-purple-50 border-purple-200",
+  document: "text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]",
+  ticket: "text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]",
+  project: "text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]",
+  asset: "text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]",
   note: "text-slate-700 bg-slate-50 border-slate-200",
   transmittal: "text-emerald-700 bg-emerald-50 border-emerald-200",
 };
@@ -383,7 +383,7 @@ export default function GlobalCommandPalette() {
                         <div className="text-xs font-bold text-slate-900 truncate">{it.label}</div>
                         {it.subtitle && <div className="text-[11px] text-slate-500 truncate">{it.subtitle}</div>}
                       </div>
-                      {it.badge && <span className="text-[10px] font-bold uppercase text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded shrink-0">{it.badge}</span>}
+                      {it.badge && <span className="text-[11px] font-bold uppercase text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded shrink-0">{it.badge}</span>}
                       {isActive && <CornerDownLeft className="w-3.5 h-3.5 text-slate-400 shrink-0" />}
                     </button>
                   </li>
@@ -393,7 +393,7 @@ export default function GlobalCommandPalette() {
           </ul>
         )}
 
-        <div className="px-4 py-2 border-t border-slate-200 bg-slate-50 flex items-center justify-between text-[10px] text-slate-500">
+        <div className="px-4 py-2 border-t border-slate-200 bg-slate-50 flex items-center justify-between text-[11px] text-slate-500">
           <div className="flex items-center gap-3">
             <span className="inline-flex items-center gap-1"><ArrowUp className="w-2.5 h-2.5" /><ArrowDown className="w-2.5 h-2.5" /> navigate</span>
             <span className="inline-flex items-center gap-1"><CornerDownLeft className="w-2.5 h-2.5" /> open</span>
@@ -403,7 +403,7 @@ export default function GlobalCommandPalette() {
             {query.trim().length >= 2 && !showShortcuts && (
               <button
                 onClick={() => { setOpen(false); router.push(`/search?q=${encodeURIComponent(query)}`); }}
-                className="font-bold text-blue-700 hover:text-blue-900"
+                className="font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]"
               >
                 See all results →
               </button>
@@ -421,21 +421,21 @@ export default function GlobalCommandPalette() {
 function Shortcuts() {
   return (
     <div className="p-4 max-h-[60vh] overflow-y-auto">
-      <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Quick Navigation</div>
+      <div className="text-[11px] font-black text-slate-500 uppercase tracking-widest mb-2">Quick Navigation</div>
       <ul className="space-y-1 text-xs mb-4">
         {QUICK_NAV.map((n) => (
           <li key={n.href} className="flex items-center gap-2">
-            <kbd className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-[10px]">{n.keys}</kbd>
+            <kbd className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-[11px]">{n.keys}</kbd>
             <span className="text-slate-700">{n.label}</span>
           </li>
         ))}
       </ul>
-      <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Global</div>
+      <div className="text-[11px] font-black text-slate-500 uppercase tracking-widest mb-2">Global</div>
       <ul className="space-y-1 text-xs">
-        <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-[10px]">⌘ K</kbd><span>Open this palette</span></li>
-        <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-[10px]">/</kbd><span>Open this palette (when not typing)</span></li>
-        <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-[10px]">esc</kbd><span>Close any modal</span></li>
-        <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-[10px]">?</kbd><span>Show shortcuts</span></li>
+        <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-[11px]">⌘ K</kbd><span>Open this palette</span></li>
+        <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-[11px]">/</kbd><span>Open this palette (when not typing)</span></li>
+        <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-[11px]">esc</kbd><span>Close any modal</span></li>
+        <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-[11px]">?</kbd><span>Show shortcuts</span></li>
       </ul>
     </div>
   );

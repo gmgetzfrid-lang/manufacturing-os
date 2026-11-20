@@ -120,7 +120,7 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
                   {shownValues.map((v) => (
                     <li key={v.value}>
                       <button onClick={() => { setFrom(v.value); setClear(false); }}
-                        className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-[13px] ${from === v.value ? "bg-[var(--color-accent-soft)] font-bold text-[var(--color-text)]" : "text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+                        className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-[13px] ${from === v.value ? "bg-[var(--color-surface-2)] font-bold text-[var(--color-text)]" : "text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
                         <span className="flex-1 truncate">{v.value}</span>
                         <span className="shrink-0 text-[11px] text-[var(--color-text-muted)]">{v.count} task{v.count === 1 ? "" : "s"}</span>
                       </button>

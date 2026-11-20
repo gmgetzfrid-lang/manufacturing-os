@@ -17,7 +17,7 @@ export const metadata = {
 
 export default function DataPortabilityPage() {
   return (
-    <div className="min-h-dvh bg-gradient-to-b from-slate-50 to-white">
+    <div className="min-h-dvh bg-[var(--color-surface-2)]">
       <header className="border-b border-[var(--color-border)] bg-[var(--color-surface)]">
         <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
           <Link href="/" className="text-sm font-black text-[var(--color-text)]">Manufacturing OS</Link>
@@ -49,8 +49,8 @@ export default function DataPortabilityPage() {
 
         <Section title="What's in the export">
           <ul className="space-y-3 text-sm text-[var(--color-text)]">
-            <Bullet icon={<FileJson className="w-4 h-4 text-blue-600" />} title="One JSON file" body="Self-describing. Every Postgres column from our schema preserved verbatim. Read it with jq, import into Postgres, or open it in any text editor." />
-            <Bullet icon={<Layers className="w-4 h-4 text-purple-600" />} title="Every record type" body="Documents, document_versions, tickets, projects, project_activity, audit_logs, checkout sessions, markup requests, comments, history, configuration - every org-scoped table." />
+            <Bullet icon={<FileJson className="w-4 h-4 text-[var(--color-text-muted)]" />} title="One JSON file" body="Self-describing. Every Postgres column from our schema preserved verbatim. Read it with jq, import into Postgres, or open it in any text editor." />
+            <Bullet icon={<Layers className="w-4 h-4 text-[var(--color-text-muted)]" />} title="Every record type" body="Documents, document_versions, tickets, projects, project_activity, audit_logs, checkout sessions, markup requests, comments, history, configuration - every org-scoped table." />
             <Bullet icon={<Inbox className="w-4 h-4 text-emerald-600" />} title="File manifest with presigned URLs" body="Every PDF, DWG, redline, IFC stamp - listed with size + a 24-hour signed download URL so you can pull binaries with curl, wget, or any S3 SDK." />
             <Bullet icon={<Database className="w-4 h-4 text-amber-600" />} title="Schema DDL in the public repo" body="The complete database schema lives at supabase/schema.sql in our source tree. You can reconstruct the data layer in your own Postgres in minutes." />
           </ul>

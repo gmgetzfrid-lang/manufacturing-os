@@ -109,7 +109,7 @@ export default function SupersedeModal({
           </div>
 
           <div>
-            <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Reason *</label>
+            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Reason *</label>
             <textarea
               value={reason}
               onChange={(e) => setReason(e.target.value)}
@@ -120,10 +120,10 @@ export default function SupersedeModal({
           </div>
 
           <div>
-            <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">
+            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">
               Replacement Document Numbers
             </label>
-            <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
+            <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
               Optional. Add by document number - they must already exist in this library.
             </div>
             <div className="mt-1.5 flex gap-1.5">
@@ -167,7 +167,7 @@ export default function SupersedeModal({
           </div>
 
           <div>
-            <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">MOC Reference</label>
+            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">MOC Reference</label>
             <input
               value={mocRef}
               onChange={(e) => setMocRef(e.target.value)}

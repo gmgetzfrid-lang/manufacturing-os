@@ -235,7 +235,7 @@ export default function GraphShapeWizard({
                 <>
                   {rows.length > 0 && (
                     <div className="space-y-2">
-                      <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+                      <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
                         Proposed attributions · accept, reject, or rewrite
                       </div>
                       {rows.map((r, i) => (
@@ -259,7 +259,7 @@ export default function GraphShapeWizard({
                                 <ArrowRight className="w-3 h-3 text-[var(--color-text-faint)] shrink-0" />
                                 {chip(r.b)}
                                 {r.aiAssisted && (
-                                  <span className="inline-flex items-center gap-0.5 text-[9px] font-black uppercase tracking-wide text-violet-600">
+                                  <span className="inline-flex items-center gap-0.5 text-[11px] font-black uppercase tracking-wide text-violet-600">
                                     <Sparkles className="w-2.5 h-2.5" /> AI
                                   </span>
                                 )}
@@ -284,7 +284,7 @@ export default function GraphShapeWizard({
 
                   {candidates.length >= 2 && (
                     <div className="rounded-xl border border-dashed border-[var(--color-border-strong)] p-3 space-y-2">
-                      <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+                      <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
                         Connect manually - same verified entities
                       </div>
                       <div className="flex items-center gap-1.5 flex-wrap">

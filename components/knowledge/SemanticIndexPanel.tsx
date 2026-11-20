@@ -212,12 +212,12 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
     <div className="mt-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
       <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
         <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500 to-fuchsia-600 flex items-center justify-center">
+          <div className="w-7 h-7 rounded-lg flex items-center justify-center bg-[var(--color-text)]">
             <Brain className="w-4 h-4 text-white" />
           </div>
           <div>
             <div className="text-xs font-black text-[var(--color-text)]">Meaning-based search</div>
-            <div className="text-[10px] text-[var(--color-text-muted)]">
+            <div className="text-[11px] text-[var(--color-text-muted)]">
               Finds &ldquo;pipe supports&rdquo; in a standard that says &ldquo;hanger and support details&rdquo;.
               Keyword search still handles exact tags, and always will.
             </div>
@@ -249,7 +249,7 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
 
       <div className="h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
         <div
-          className="h-full bg-gradient-to-r from-violet-500 to-fuchsia-500 transition-all"
+          className="h-full transition-all bg-[var(--color-text)]"
           style={{ width: `${pct}%` }}
         />
       </div>
@@ -279,7 +279,7 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
           buildNote.tone === "ok"
             ? "border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20 text-emerald-800 dark:text-emerald-200"
             : buildNote.tone === "info"
-              ? "border-sky-300 dark:border-sky-800 bg-sky-50/60 dark:bg-sky-950/20 text-sky-900 dark:text-sky-200"
+              ? "border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]"
               : "border-rose-300 dark:border-rose-800 bg-rose-50/60 dark:bg-rose-950/20 text-rose-800 dark:text-rose-200"}`}>
           {buildNote.text}
         </div>
@@ -292,7 +292,7 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
       )}
 
       {!complete && !needsKey && (
-        <p className="mt-1 text-[10px] text-[var(--color-text-faint)]">
+        <p className="mt-1 text-[11px] text-[var(--color-text-faint)]">
           {covered === 0
             ? "Not built yet - questions use keyword search alone, which is exactly what this library did before."
             : "Partly built - questions already use both, and the remaining passages are keyword-only until this finishes."}

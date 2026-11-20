@@ -47,7 +47,7 @@ function useRecordWriter(): { write: RecordWriter | null; by: string | null } {
  *  chip, which shows it as 2:30 PM). */
 const clockOf = (at: number, tz: string) => toDateTimeInput(at, tz).slice(11, 16);
 
-const smallBtn = "px-1.5 py-1 text-[10.5px] font-semibold rounded hover:bg-[var(--color-surface-2)]";
+const smallBtn = "px-1.5 py-1 text-[11px] font-semibold rounded hover:bg-[var(--color-surface-2)]";
 
 /** "Removed. Undo" - right after a removal, until dismissed. */
 function UndoLine({ text, onUndo, onDismiss }: { text: string; onUndo: () => void; onDismiss: () => void }) {
@@ -190,7 +190,7 @@ export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, on
       {items.length > 0 && (
         <ul className="mt-1 space-y-0.5">
           {[...items].sort((a, b) => a.at - b.at).map((x) => (
-            <li key={x.id} className={`flex items-baseline gap-1.5 ${editingId === x.id ? "rounded bg-[var(--color-accent-soft)]/50" : ""}`}>
+            <li key={x.id} className={`flex items-baseline gap-1.5 ${editingId === x.id ? "rounded bg-[var(--color-surface-2)]" : ""}`}>
               <span className="shrink-0 font-mono text-[11px] text-[var(--color-text-muted)]">{T(x.at)}</span>
               <b className="shrink-0 whitespace-nowrap text-rose-700 dark:text-rose-400">{x.kind}</b>
               <span className="min-w-0 break-words">{x.text}</span>
@@ -306,12 +306,12 @@ export function ShiftNotesBox({ notes, edit, print, shift, tz, T, D, onAdd, onCl
       {sorted.length > 0 && (
         <ul className={`space-y-0.5 ${print ? "text-[8pt]" : "text-[12px]"}`}>
           {sorted.map((n) => (
-            <li key={`${n.shiftKey}:${n.id}`} className={`flex items-baseline gap-1.5 ${editing?.id === n.id ? "rounded bg-[var(--color-accent-soft)]/50" : ""}`}>
+            <li key={`${n.shiftKey}:${n.id}`} className={`flex items-baseline gap-1.5 ${editing?.id === n.id ? "rounded bg-[var(--color-surface-2)]" : ""}`}>
               <span className="font-mono text-[11px] text-[var(--color-text-muted)] whitespace-nowrap">{n.from ? `${D(n.at)} ${T(n.at)}` : T(n.at)}</span>
               <span className="min-w-0 break-words">
                 {n.text}
-                {n.followUp && !n.cleared && <span className="ml-1.5 text-[10.5px] font-bold text-amber-800 dark:text-amber-300">{n.from ? `follow-up, open since ${n.from}` : "follow-up"}</span>}
-                {n.followUp && n.cleared && <span className="ml-1.5 text-[10.5px] font-bold text-emerald-700 dark:text-emerald-400">follow-up, cleared{n.cleared.by ? ` by ${n.cleared.by}` : ""}</span>}
+                {n.followUp && !n.cleared && <span className="ml-1.5 text-[11px] font-bold text-amber-800 dark:text-amber-300">{n.from ? `follow-up, open since ${n.from}` : "follow-up"}</span>}
+                {n.followUp && n.cleared && <span className="ml-1.5 text-[11px] font-bold text-emerald-700 dark:text-emerald-400">follow-up, cleared{n.cleared.by ? ` by ${n.cleared.by}` : ""}</span>}
               </span>
               {edit && !print && (
                 <span className="ml-auto flex gap-1 shrink-0">
@@ -384,7 +384,7 @@ export function TimeLogButton({ busy, msg, onExport, shiftLabel }: { busy: boole
           </span>
         </>
       )}
-      {msg && !open && <span role="status" className="absolute right-0 top-full mt-1 z-[39] whitespace-nowrap rounded bg-[var(--color-surface)] border border-[var(--color-border)] px-2 py-0.5 text-[10.5px] font-semibold text-[var(--color-text-muted)] shadow-sm">{msg}</span>}
+      {msg && !open && <span role="status" className="absolute right-0 top-full mt-1 z-[39] whitespace-nowrap rounded bg-[var(--color-surface)] border border-[var(--color-border)] px-2 py-0.5 text-[11px] font-semibold text-[var(--color-text-muted)] shadow-sm">{msg}</span>}
     </span>
   );
 }

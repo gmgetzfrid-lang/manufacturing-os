@@ -154,7 +154,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
         <div className="flex items-center gap-3 mb-1">
           <div className="p-2.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200"><Building2 className="w-5 h-5" /></div>
           <div className="min-w-0">
-            <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Quote submission portal</div>
+            <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Quote submission portal</div>
             <h1 className="text-base font-black text-[var(--color-text)] truncate">{data.projectName}{data.orgName ? ` · ${data.orgName}` : ""}</h1>
             <div className="text-xs text-[var(--color-text-muted)]">
               Submitting as <b>{data.companyName}</b>{data.rfqGroup ? <> · scope: <b>{data.rfqGroup}</b></> : null}
@@ -168,7 +168,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
             and any <b>exclusions</b> - bids are compared on all three, so what you state is what gets credited.
           </div>
           <label className="flex items-center gap-2 rounded-lg border border-dashed border-[var(--color-border-strong)] px-3 py-2.5 cursor-pointer hover:border-[var(--color-accent-ring)]">
-            <UploadCloud className="w-4 h-4 text-[var(--color-accent)]" />
+            <UploadCloud className="w-4 h-4 text-[var(--color-text-muted)]" />
             <span className="text-sm text-[var(--color-text-muted)] truncate">{file ? file.name : "Choose your quote (PDF, up to 100 MB)"}</span>
             <input type="file" accept=".pdf,application/pdf" className="hidden" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
           </label>
@@ -200,7 +200,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
               </li>
             ))}
           </ul>
-          <div className="mt-3 text-[10px] text-[var(--color-text-faint)]">Quotes go straight to {data.orgName ?? "the client"}&apos;s bid tabulation. This portal is upload-only.</div>
+          <div className="mt-3 text-[11px] text-[var(--color-text-faint)]">Quotes go straight to {data.orgName ?? "the client"}&apos;s bid tabulation. This portal is upload-only.</div>
         </div>
       </Shell>
     );
@@ -209,9 +209,9 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
   return (
     <Shell>
       <div className="flex items-center gap-3 mb-1">
-        <div className="p-2.5 rounded-lg bg-blue-50 text-blue-700 border border-blue-200"><Building2 className="w-5 h-5" /></div>
+        <div className="p-2.5 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)]"><Building2 className="w-5 h-5" /></div>
         <div className="min-w-0">
-          <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Drawing &amp; file submission portal</div>
+          <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Drawing &amp; file submission portal</div>
           <h1 className="text-base font-black text-[var(--color-text)] truncate">{data.projectName}{data.orgName ? ` · ${data.orgName}` : ""}</h1>
           <div className="text-xs text-[var(--color-text-muted)]">Submitting as <b>{data.companyName}</b>{data.allowAutoSupersede ? " · trusted: your revisions publish immediately" : " · submissions are reviewed before becoming current"}</div>
         </div>
@@ -240,7 +240,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
           )}
           <input value={changeNote} onChange={(e) => setChangeNote(e.target.value)} placeholder="What changed? (goes on the record)" className="w-full h-9 rounded-lg border border-[var(--color-border-strong)] px-2.5 text-sm bg-[var(--color-surface)]" />
           <label className="flex items-center gap-2 rounded-lg border border-dashed border-[var(--color-border-strong)] px-3 py-2.5 cursor-pointer hover:border-[var(--color-accent-ring)]">
-            <UploadCloud className="w-4 h-4 text-[var(--color-accent)]" />
+            <UploadCloud className="w-4 h-4 text-[var(--color-text-muted)]" />
             <span className="text-sm text-[var(--color-text-muted)] truncate">{file ? file.name : "Choose the file (PDF, DWG, ZIP… up to 100 MB)"}</span>
             <input type="file" className="hidden" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
           </label>
@@ -286,7 +286,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
         <ul className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)] overflow-hidden">
           {data.items.map((i) => (
             <li key={i.docId} className="flex items-center gap-2 px-3 py-2 text-sm">
-              <FileText className="w-4 h-4 text-blue-500 shrink-0" />
+              <FileText className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
               <span className="font-bold text-[var(--color-text)] truncate">{i.label}</span>
               <span className="text-xs text-[var(--color-text-muted)]">Rev {i.rev ?? "-"}</span>
               {i.pendingReview
@@ -297,7 +297,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
             </li>
           ))}
         </ul>
-        <div className="mt-3 text-[10px] text-[var(--color-text-faint)]">Every submission is recorded with your company name on {data.orgName ?? "the client"}&apos;s revision history. This portal is upload-only.</div>
+        <div className="mt-3 text-[11px] text-[var(--color-text-faint)]">Every submission is recorded with your company name on {data.orgName ?? "the client"}&apos;s revision history. This portal is upload-only.</div>
       </div>
     </Shell>
   );

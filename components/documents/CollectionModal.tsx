@@ -299,8 +299,8 @@ export default function CollectionModal({
         {/* Header */}
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3 min-w-0">
-            <div className={`p-2 rounded-lg shrink-0 ${scope === "org" ? "bg-purple-100" : "bg-[var(--color-surface-2)]"}`}>
-              <ListChecks className={`w-5 h-5 ${scope === "org" ? "text-purple-700" : "text-[var(--color-text-muted)]"}`} />
+            <div className={`p-2 rounded-lg shrink-0 ${scope === "org" ? "bg-[var(--color-surface-2)]" : "bg-[var(--color-surface-2)]"}`}>
+              <ListChecks className={`w-5 h-5 ${scope === "org" ? "text-[var(--color-text-muted)]" : "text-[var(--color-text-muted)]"}`} />
             </div>
             <div className="min-w-0">
               <div className="text-sm font-black text-[var(--color-text)] truncate">
@@ -332,7 +332,7 @@ export default function CollectionModal({
                   </Field>
                   <Field label="Lives in" hint="The folder this book belongs to. It only appears when browsing that folder.">
                     <div className="flex items-center gap-2">
-                      <Folder className="w-4 h-4 text-purple-600 shrink-0" />
+                      <Folder className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
                       <select
                         value={targetFolderId ?? ""}
                         onChange={(e) => setTargetFolderId(e.target.value || null)}
@@ -369,7 +369,7 @@ export default function CollectionModal({
                 <div className="p-6">
                   {mode === "view" && (
                     <div className="mb-3 inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1">
-                      <Folder className="w-3.5 h-3.5 text-purple-600" /> {folderLabel(collection.folder_id)}
+                      <Folder className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {folderLabel(collection.folder_id)}
                     </div>
                   )}
                   {mode === "view" && collection.description && (
@@ -377,7 +377,7 @@ export default function CollectionModal({
                   )}
 
                   <div className="flex items-center justify-between mb-2 gap-2">
-                    <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest shrink-0">
+                    <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest shrink-0">
                       Documents ({itemsHydrated.length})
                     </div>
                     {mode === "edit" && (
@@ -385,14 +385,14 @@ export default function CollectionModal({
                         <button onClick={() => void sortBySheet()} disabled={busy || itemsHydrated.length < 2} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40" title="Reorder the book by sheet number - the book opens in this order">
                           <ArrowUpDown className="w-3 h-3" /> Sort by Sheet #
                         </button>
-                        <button onClick={() => setShowPicker(true)} className="inline-flex items-center gap-1 text-[11px] font-bold text-purple-700 hover:text-purple-800">
+                        <button onClick={() => setShowPicker(true)} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">
                           <Plus className="w-3 h-3" /> Add documents
                         </button>
                       </div>
                     )}
                   </div>
                   {mode === "edit" && itemsHydrated.length > 1 && (
-                    <div className="text-[10px] text-[var(--color-text-faint)] mb-1.5 -mt-1">Drag rows to set the page order (or use the arrows).</div>
+                    <div className="text-[11px] text-[var(--color-text-faint)] mb-1.5 -mt-1">Drag rows to set the page order (or use the arrows).</div>
                   )}
 
                   {itemsHydrated.length === 0 ? (
@@ -410,11 +410,11 @@ export default function CollectionModal({
                           onDragOver={(e) => { if (mode !== "edit" || dragItemIdx === null) return; e.preventDefault(); if (hoverItemIdx !== idx) setHoverItemIdx(idx); }}
                           onDrop={(e) => { if (mode !== "edit") return; e.preventDefault(); if (dragItemIdx !== null && dragItemIdx !== idx) void reorderItemsTo(dragItemIdx, idx); setDragItemIdx(null); setHoverItemIdx(null); }}
                           onDragEnd={() => { setDragItemIdx(null); setHoverItemIdx(null); }}
-                          className={`bg-[var(--color-surface-2)] border rounded-lg px-3 py-2 flex items-center gap-2 transition-all ${dragItemIdx === idx ? "opacity-40 border-purple-400" : (hoverItemIdx === idx && dragItemIdx !== null ? "border-purple-400 ring-1 ring-purple-300" : "border-[var(--color-border)]")} ${mode === "edit" ? "cursor-grab active:cursor-grabbing" : ""}`}
+                          className={`bg-[var(--color-surface-2)] border rounded-lg px-3 py-2 flex items-center gap-2 transition-all ${dragItemIdx === idx ? "opacity-40 border-[var(--color-border-strong)]" : (hoverItemIdx === idx && dragItemIdx !== null ? "border-[var(--color-border-strong)] ring-1 ring-[var(--color-border-strong)]" : "border-[var(--color-border)]")} ${mode === "edit" ? "cursor-grab active:cursor-grabbing" : ""}`}
                         >
                           {mode === "edit" && <GripVertical className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />}
-                          <span className="text-[10px] font-mono text-[var(--color-text-faint)] w-5 text-right">{idx + 1}.</span>
-                          <FileText className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                          <span className="text-[11px] font-mono text-[var(--color-text-faint)] w-5 text-right">{idx + 1}.</span>
+                          <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
                           <div className="flex-1 min-w-0">
                             {doc ? (
                               <>
@@ -426,7 +426,7 @@ export default function CollectionModal({
                             )}
                           </div>
                           {doc?.rev && (
-                            <span className="text-[10px] font-bold text-[var(--color-text-muted)] shrink-0">Rev {doc.rev}</span>
+                            <span className="text-[11px] font-bold text-[var(--color-text-muted)] shrink-0">Rev {doc.rev}</span>
                           )}
                           {mode === "edit" && (
                             <div className="flex items-center gap-0.5 shrink-0">
@@ -475,12 +475,12 @@ export default function CollectionModal({
                             disabled={busy}
                             className="w-full text-left flex items-center gap-2 px-2 py-2 rounded-lg hover:bg-[var(--color-surface-2)] disabled:opacity-50"
                           >
-                            <FileText className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                            <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
                             <div className="flex-1 min-w-0">
                               <div className="text-xs font-bold text-[var(--color-text)] truncate">{d.documentNumber}</div>
                               <div className="text-[11px] text-[var(--color-text-muted)] truncate">{d.title}</div>
                             </div>
-                            {d.rev && <span className="text-[10px] text-[var(--color-text-faint)]">Rev {d.rev}</span>}
+                            {d.rev && <span className="text-[11px] text-[var(--color-text-faint)]">Rev {d.rev}</span>}
                             <Plus className="w-3.5 h-3.5 text-[var(--color-text-faint)]" />
                           </button>
                         ))
@@ -522,13 +522,13 @@ export default function CollectionModal({
                   onClose();
                 }}
                 title="Open every document in this collection as a single book in the multi-doc viewer."
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 shadow"
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] shadow"
               >
                 <BookOpen className="w-3.5 h-3.5" /> Open as Book
               </button>
             )}
             {mode === "view" && canEdit && (
-              <button onClick={() => setMode("edit")} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-purple-600 hover:bg-purple-500 shadow">
+              <button onClick={() => setMode("edit")} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] shadow">
                 <Edit3 className="w-3.5 h-3.5" /> Edit
               </button>
             )}
@@ -552,8 +552,8 @@ export default function CollectionModal({
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">{label}</label>
-      {hint && <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">{hint}</div>}
+      <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">{label}</label>
+      {hint && <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">{hint}</div>}
       <div className="mt-1">{children}</div>
     </div>
   );

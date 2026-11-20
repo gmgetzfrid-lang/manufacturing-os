@@ -94,7 +94,7 @@ export default function ProtectionRecord({ orgId }: { orgId: string }) {
     <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border ${tone}`}>
       {icon}
       <span className="text-lg font-black tabular-nums">{value}</span>
-      <span className="text-[10px] font-bold leading-tight opacity-80">{label}</span>
+      <span className="text-[11px] font-bold leading-tight opacity-80">{label}</span>
     </div>
   );
 
@@ -102,7 +102,7 @@ export default function ProtectionRecord({ orgId }: { orgId: string }) {
     <div className="mb-4">
       <div className="flex items-center gap-1.5 mb-1.5">
         <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-        <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">
+        <span className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">
           Protection record - last {WINDOW_DAYS} days
         </span>
       </div>
@@ -114,16 +114,16 @@ export default function ProtectionRecord({ orgId }: { orgId: string }) {
           "border-emerald-200 bg-emerald-50 text-emerald-900",
         )}
         {(counts.branchesOpened > 0 || counts.branchesResolved > 0) && stat(
-          <GitBranch className="w-4 h-4 text-purple-600" />,
+          <GitBranch className="w-4 h-4 text-[var(--color-text-muted)]" />,
           counts.branchesResolved,
           `of ${counts.branchesOpened} branches reconciled`,
-          "border-purple-200 bg-purple-50 text-purple-900",
+          "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text-muted)]",
         )}
         {counts.autoReleases > 0 && stat(
-          <Clock className="w-4 h-4 text-blue-600" />,
+          <Clock className="w-4 h-4 text-[var(--color-text-muted)]" />,
           counts.autoReleases,
           "forgotten checkouts auto-released",
-          "border-blue-200 bg-blue-50 text-blue-900",
+          "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text-muted)]",
         )}
         {counts.flaggedPublishes > 0 && stat(
           <FileWarning className="w-4 h-4 text-amber-600" />,

@@ -252,13 +252,13 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
     libraryId ? `/documents/${libraryId}?doc=${docId}` : "/documents";
 
   return (
-    <div className="mb-4 rounded-2xl border-2 border-orange-200 bg-orange-50/40 overflow-hidden">
-      <div className="px-4 py-2.5 bg-orange-100/60 border-b border-orange-200 flex items-center gap-2">
-        <Flag className="w-4 h-4 text-orange-700" />
-        <span className="text-xs font-black text-orange-900 uppercase tracking-widest">
+    <div className="mb-4 rounded-2xl border-2 border-[var(--color-border)] bg-[var(--color-surface-2)] overflow-hidden">
+      <div className="px-4 py-2.5 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] flex items-center gap-2">
+        <Flag className="w-4 h-4 text-[var(--color-text-muted)]" />
+        <span className="text-xs font-black text-[var(--color-text)] uppercase tracking-widest">
           Document Control - open items ({total})
         </span>
-        <span className="text-[10px] text-orange-800">resolved on the record, never dismissed</span>
+        <span className="text-[11px] text-[var(--color-text)]">resolved on the record, never dismissed</span>
       </div>
 
       <div className="p-3 space-y-2">
@@ -266,12 +266,12 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
         {branches.map((b) => {
           const meta = docLabels.get(b.documentId);
           return (
-            <div key={b.id} className="rounded-xl border border-purple-200 bg-white p-3">
+            <div key={b.id} className="rounded-xl border border-[var(--color-border)] bg-white p-3">
               <div className="flex items-start gap-2">
-                <GitBranch className="w-4 h-4 mt-0.5 text-purple-600 shrink-0" />
+                <GitBranch className="w-4 h-4 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
                 <div className="flex-1 min-w-0 text-xs">
                   <b>Unreconciled branch</b> on{" "}
-                  <Link href={docLink(b.documentId, meta?.libraryId ?? null)} className="font-bold text-blue-700 hover:underline">
+                  <Link href={docLink(b.documentId, meta?.libraryId ?? null)} className="font-bold text-[var(--color-accent)] hover:underline">
                     {meta?.label ?? "Document"}
                   </Link>{" "}
                   by <b>{b.createdByName || b.createdBy}</b> · {new Date(b.createdAt).toLocaleDateString()}
@@ -280,7 +280,7 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
                 {resolveFor === b.id ? null : (
                   <button
                     onClick={() => { setResolveFor(b.id); setResolveNote(""); setError(null); }}
-                    className="shrink-0 px-2 py-1 rounded-lg text-[10px] font-bold border border-purple-300 text-purple-700 hover:bg-purple-50"
+                    className="shrink-0 px-2 py-1 rounded-lg text-[11px] font-bold border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                   >
                     Resolve…
                   </button>
@@ -294,20 +294,20 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
                     placeholder='How was it reconciled? e.g. "both changes merged into Rev 5"'
                     className="w-full px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[11px]"
                   />
-                  {error && <div className="text-[10px] text-red-600 font-bold">{error}</div>}
+                  {error && <div className="text-[11px] text-red-600 font-bold">{error}</div>}
                   <div className="flex gap-1.5 justify-end">
-                    <button onClick={() => setResolveFor(null)} className="px-2 py-1 rounded-lg text-[10px] font-bold border border-[var(--color-border)]">Cancel</button>
+                    <button onClick={() => setResolveFor(null)} className="px-2 py-1 rounded-lg text-[11px] font-bold border border-[var(--color-border)]">Cancel</button>
                     <button
                       onClick={() => void handleResolve(b, "withdrawn")}
                       disabled={busyId === b.id}
-                      className="px-2 py-1 rounded-lg text-[10px] font-bold border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-50"
+                      className="px-2 py-1 rounded-lg text-[11px] font-bold border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-50"
                     >
                       Withdrawn
                     </button>
                     <button
                       onClick={() => void handleResolve(b, "merged")}
                       disabled={busyId === b.id}
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50"
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
                     >
                       {busyId === b.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
                       Merged
@@ -325,19 +325,19 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
             <Flag className="w-4 h-4 mt-0.5 text-red-600 shrink-0" />
             <div className="flex-1 min-w-0 text-xs">
               <b>Rev {rev.revisionLabel}</b> of{" "}
-              <Link href={docLink(rev.recordId, rev.libraryId)} className="font-bold text-blue-700 hover:underline">
+              <Link href={docLink(rev.recordId, rev.libraryId)} className="font-bold text-[var(--color-accent)] hover:underline">
                 {rev.docLabel}
               </Link>{" "}
               was published with <b>no recorded checkout or download trail</b>
               {rev.createdByName ? <> by <b>{rev.createdByName}</b></> : null} · {new Date(rev.createdAt).toLocaleDateString()}.
-              <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
+              <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
                 Confirm with the author what their work was based on, then verify.
               </div>
             </div>
             <button
               onClick={() => void handleVerify(rev)}
               disabled={busyId === rev.id}
-              className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold border border-emerald-300 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+              className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold border border-emerald-300 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
             >
               {busyId === rev.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
               Verified with author
@@ -352,12 +352,12 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
             <div key={s.sessionId} className="rounded-xl border border-amber-200 bg-white p-3 flex items-start gap-2">
               <KeyRound className="w-4 h-4 mt-0.5 text-amber-600 shrink-0" />
               <div className="flex-1 min-w-0 text-xs">
-                <Link href={docLink(s.documentId, s.libraryId)} className="font-bold text-blue-700 hover:underline">
+                <Link href={docLink(s.documentId, s.libraryId)} className="font-bold text-[var(--color-accent)] hover:underline">
                   {s.docLabel}
                 </Link>{" "}
                 has been checked out by <b>{s.userName || "a user"}</b> for <b>{days} days</b>
                 {s.purpose ? <> ({s.purpose})</> : null}.
-                <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
+                <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
                   Nudge them, or force-release from the document&apos;s checkout popover if the work is done.
                 </div>
               </div>
@@ -370,19 +370,19 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
           <div key={req.auditId} className="rounded-xl border border-rose-200 bg-white p-3 flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 mt-0.5 text-rose-600 shrink-0" />
             <div className="flex-1 min-w-0 text-xs">
-              <Link href={docLink(req.documentId, req.libraryId)} className="font-bold text-blue-700 hover:underline">
+              <Link href={docLink(req.documentId, req.libraryId)} className="font-bold text-[var(--color-accent)] hover:underline">
                 {req.label}
               </Link>{" "}
               - <b>deletion requested</b> by {req.requestedBy || "the owner"} on {new Date(req.requestedAt).toLocaleDateString()}.
               {req.reason && <div className="text-[11px] italic text-[var(--color-text-muted)] mt-0.5">&ldquo;{req.reason}&rdquo;</div>}
-              <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
+              <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
                 Review the document, then delete/archive it (or decline) - and mark this request handled.
               </div>
             </div>
             <button
               onClick={() => void handleResolveDeletion(req)}
               disabled={busyId === req.auditId}
-              className="shrink-0 px-2 py-1 rounded-md text-[10px] font-bold border border-rose-300 text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+              className="shrink-0 px-2 py-1 rounded-md text-[11px] font-bold border border-rose-300 text-rose-700 hover:bg-rose-50 disabled:opacity-50"
             >
               Mark handled
             </button>

@@ -40,7 +40,7 @@ function PickRow({ orgId, label, people, setPeople, roles, setRoles, allTeams, t
     })();
     return () => { alive = false; };
   }, [q, orgId]);
-  const inp = "text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 outline-none focus:border-[var(--color-accent)]";
+  const inp = "text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 outline-none focus:border-[var(--color-border-strong)]";
   const toggleRole = (r: Role) => setRoles(roles.includes(r) ? roles.filter((x) => x !== r) : [...roles, r]);
   return (
     <div className="space-y-1">
@@ -60,16 +60,16 @@ function PickRow({ orgId, label, people, setPeople, roles, setRoles, allTeams, t
       )}
       <div className="flex flex-wrap gap-1">
         {ALL_ROLES.map((r) => (
-          <button key={r} onClick={() => toggleRole(r)} className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors ${roles.includes(r) ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{r}</button>
+          <button key={r} onClick={() => toggleRole(r)} className={`px-2 py-0.5 rounded-full text-[11px] font-bold border transition-colors ${roles.includes(r) ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{r}</button>
         ))}
       </div>
       {allTeams && teamIds && setTeamIds && allTeams.length > 0 && (
         <>
-          <div className="text-[10px] font-bold text-[var(--color-text-muted)]">Departments</div>
+          <div className="text-[11px] font-bold text-[var(--color-text-muted)]">Departments</div>
           <div className="flex flex-wrap gap-1">
             {allTeams.map((t) => (
               <button key={t.id} onClick={() => setTeamIds(teamIds.includes(t.id) ? teamIds.filter((x) => x !== t.id) : [...teamIds, t.id])}
-                className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors ${teamIds.includes(t.id) ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{t.name}</button>
+                className={`px-2 py-0.5 rounded-full text-[11px] font-bold border transition-colors ${teamIds.includes(t.id) ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{t.name}</button>
             ))}
           </div>
         </>
@@ -191,7 +191,7 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
     <div className="fixed inset-0 z-[520] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4" onClick={onClose}>
       <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3">
-          <ShieldCheck className="w-5 h-5 text-[var(--color-accent)]" />
+          <ShieldCheck className="w-5 h-5 text-[var(--color-text-muted)]" />
           <div className="flex-1 min-w-0">
             <div className="text-sm font-bold text-[var(--color-text)]">Pre-publish review</div>
             <div className="text-[11px] text-[var(--color-text-muted)] truncate">Change-control for this {scopeLabel}{name ? ` · ${name}` : ""}</div>
@@ -221,7 +221,7 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
                   </button>
                 ))}
               </div>
-              <div className="text-[10px] text-[var(--color-text-muted)] mt-1">
+              <div className="text-[11px] text-[var(--color-text-muted)] mt-1">
                 {docClass === "drawing"
                   ? "PSM applies: a non-minor revision requires its MOC number, and check-in routes redlines to drafting."
                   : docClass === "procedure"
@@ -244,7 +244,7 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
 
             {gated && (
               <>
-                <div className="text-[10px] text-[var(--color-text-muted)] -mb-1">A Minor/Correction change and a rev from a drafting ticket always skip the gate.</div>
+                <div className="text-[11px] text-[var(--color-text-muted)] -mb-1">A Minor/Correction change and a rev from a drafting ticket always skip the gate.</div>
                 <PickRow orgId={orgId} label="Primary reviewers (must sign off)" people={reviewers} setPeople={setReviewers} roles={reviewerRoles} setRoles={setReviewerRoles} allTeams={allTeams} teamIds={reviewerTeams} setTeamIds={setReviewerTeams} />
                 <PickRow orgId={orgId} label="Alternates (step in if a primary is slow / out)" people={alternates} setPeople={setAlternates} roles={alternateRoles} setRoles={setAlternateRoles} allTeams={allTeams} teamIds={alternateTeams} setTeamIds={setAlternateTeams} />
                 <div className="flex items-center gap-2">

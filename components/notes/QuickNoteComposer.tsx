@@ -81,7 +81,7 @@ export default function QuickNoteComposer({ orgId, userId, userEmail, userName, 
 
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
-      <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest flex items-center gap-1 mb-2">
+      <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest flex items-center gap-1 mb-2">
         <StickyNote className="w-3 h-3 text-[var(--color-text-muted)]" /> Notes
         {notes.length > 0 && <span className="text-[var(--color-text-faint)] font-mono">{notes.length}</span>}
       </div>
@@ -96,7 +96,7 @@ export default function QuickNoteComposer({ orgId, userId, userEmail, userName, 
             <li key={n.id} className="group flex items-start gap-2 text-xs">
               <div className="flex-1 min-w-0 bg-[var(--color-surface)] rounded-md border border-[var(--color-border)] px-2 py-1.5">
                 <CommentBody text={n.body} currentUserId={userId} className="text-[var(--color-text)] text-xs" />
-                <div className="text-[9px] text-[var(--color-text-faint)] mt-1">{n.createdByName ?? "-"} · {formatAgo(n.createdAt)}</div>
+                <div className="text-[11px] text-[var(--color-text-faint)] mt-1">{n.createdByName ?? "-"} · {formatAgo(n.createdAt)}</div>
               </div>
               {String(n.createdBy) === String(userId) && (
                 <button

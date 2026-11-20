@@ -199,7 +199,7 @@ function SetupWizard({ items: given, start, critical, onClose: close, ...rest }:
               return (
                 <button key={i.id} onClick={() => setAt(i.id)} aria-current={on ? "step" : undefined}
                   className={`shrink-0 flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] ${on ? "bg-[var(--color-surface-2)] font-bold text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
-                  <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black shrink-0 ${i.done
+                  <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-black shrink-0 ${i.done
                     ? "bg-emerald-600 text-white" : i.required ? "bg-rose-600 text-white" : i.extra ? "bg-slate-400 text-white dark:bg-slate-600" : "bg-amber-500 text-white"}`}>
                     {i.done ? <Check className="w-3 h-3" /> : n + 1}
                   </span>
@@ -502,7 +502,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
     }
     return [...out];
   }, [saved, crews, jobs]);
-  const seg = (on: boolean, night: boolean) => `px-2.5 py-1.5 border-l first:border-l-0 border-[var(--color-border-strong)] ${on ? (night ? "bg-violet-700 text-white" : "bg-sky-700 text-white") : "bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`;
+  const seg = (on: boolean, night: boolean) => `px-2.5 py-1.5 border-l first:border-l-0 border-[var(--color-border-strong)] ${on ? (night ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-surface-2)] text-[var(--color-text)]") : "bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`;
 
   return (
     <div className="space-y-3">
@@ -526,12 +526,12 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
               const mode = modeOf(j);
               const p = picks.get(j.id);
               return (
-                <div key={j.id} className={`px-3 py-2.5 space-y-2 ${mode !== "day" ? "bg-violet-50/70 dark:bg-violet-950/25" : ""}`}>
+                <div key={j.id} className={`px-3 py-2.5 space-y-2 ${mode !== "day" ? "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]" : ""}`}>
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                     <div className="min-w-[160px] flex-1">
                       <div className="text-[14px] font-bold text-[var(--color-text)]" title={j.crumbs}>{j.name}</div>
                       <div className="text-[11.5px] text-[var(--color-text-muted)]">
-                        {j.crews.map(crewName).join(", ")} · <span className="text-violet-700 dark:text-violet-300">{j.nightSteps} of {j.steps} step{j.steps === 1 ? "" : "s"} in night hours</span>
+                        {j.crews.map(crewName).join(", ")} · <span className="text-[var(--color-text)] dark:text-[var(--color-text)]">{j.nightSteps} of {j.steps} step{j.steps === 1 ? "" : "s"} in night hours</span>
                       </div>
                     </div>
                     <div className="inline-flex rounded-lg border border-[var(--color-border-strong)] overflow-hidden text-[12px] font-bold" role="radiogroup" aria-label={`${j.name}: shifts`}>
@@ -553,7 +553,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
                                 if (has != null) cur.delete(has); else cur.add(c);
                                 setJob(j.id, cur.size === 0 ? null : j.crews.every((x) => [...cur].some((y) => y.trim().toLowerCase() === x.trim().toLowerCase())) ? new Set(["*"]) : cur);
                               }}
-                              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] font-semibold ${on ? "bg-violet-700 border-violet-700 text-white" : "bg-[var(--color-surface)] border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+                              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] font-semibold ${on ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface)] border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
                               {on ? <Moon className="w-3 h-3" aria-hidden /> : null}{crewName(c)}
                             </button>
                           );
@@ -587,8 +587,8 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
               const list = shiftJobs(k, b);
               const night = b === "night";
               return (
-                <div className={`min-w-0 rounded-md border ${night ? "border-violet-200 dark:border-violet-900 bg-violet-50/60 dark:bg-violet-950/20" : "border-sky-200 dark:border-sky-900 bg-sky-50/60 dark:bg-sky-950/20"}`}>
-                  <div className={`px-2.5 py-1 flex items-center gap-1.5 text-[11.5px] font-black ${night ? "text-violet-900 dark:text-violet-200" : "text-sky-900 dark:text-sky-200"}`}>
+                <div className={`min-w-0 rounded-md border ${night ? "border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]" : "border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]"}`}>
+                  <div className={`px-2.5 py-1 flex items-center gap-1.5 text-[11.5px] font-black ${night ? "text-[var(--color-text)] dark:text-[var(--color-text)]" : "text-[var(--color-text)] dark:text-[var(--color-text)]"}`}>
                     {night ? <Moon className="w-3.5 h-3.5" aria-hidden /> : <Sun className="w-3.5 h-3.5" aria-hidden />}{night ? "Night" : "Day"}
                     <span className="font-semibold opacity-80">{clockF.format(w.start)}</span>
                     <span className="ml-auto font-semibold opacity-80">{list.reduce((n, x) => n + x.steps, 0)} step{list.reduce((n, x) => n + x.steps, 0) === 1 ? "" : "s"}</span>
@@ -632,7 +632,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
       </div>
 
       {/* The whole choice, in a line */}
-      <div className="rounded-lg border-2 border-violet-200 dark:border-violet-900 bg-violet-50/60 dark:bg-violet-950/30 px-4 py-2.5 text-[13px] text-[var(--color-text)]">
+      <div className="rounded-lg border-2 border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] px-4 py-2.5 text-[13px] text-[var(--color-text)]">
         <b>Days and nights:</b> {fileMode ? "whatever the schedule file puts in night hours." : onJobs.length === 0 ? "none - every job works days only." : onJobs.map((j) => {
           const p = picks.get(j.id)!;
           return `${short(j.name)}${p.has("*") ? "" : ` (${[...p].map(crewName).join(", ")} on nights)`}`;
@@ -697,7 +697,7 @@ function CriticalStep({ projectId, milestones, canManage, critical, onSaved }: P
   return (
     <div className="space-y-2">
       {CRITICAL_MODES.map((o) => (
-        <label key={o.value} className={`flex items-start gap-2.5 rounded-lg border px-3 py-2 cursor-pointer ${pick === o.value ? "border-orange-400 bg-orange-50 dark:border-orange-700 dark:bg-orange-950/40" : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
+        <label key={o.value} className={`flex items-start gap-2.5 rounded-lg border px-3 py-2 cursor-pointer ${pick === o.value ? "border-[var(--color-text)] bg-[var(--color-surface-2)] dark:border-[var(--color-border)] dark:bg-[var(--color-surface-2)]" : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
           <input type="radio" name="crit" disabled={!canManage} checked={pick === o.value} onChange={() => setPick(o.value)} className="mt-1" />
           <span className="flex-1 min-w-0">
             <span className="block text-[13px] font-bold text-[var(--color-text)]">{o.label}</span>

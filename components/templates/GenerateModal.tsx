@@ -169,7 +169,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between sticky top-0 bg-[var(--color-surface)] rounded-t-2xl z-10">
           <div>
             <h2 className="text-base font-black text-[var(--color-text)] flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-orange-600" /> Generate - {template.name}
+              <Sparkles className="w-4 h-4 text-[var(--color-text-muted)]" /> Generate - {template.name}
             </h2>
             <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
               Drop your data, review the drafted wording, download finished files.
@@ -181,7 +181,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
         <div className="p-5 space-y-4">
           {/* ── 1. Data ─────────────────────────────────────────────────── */}
           <div className="rounded-xl border border-[var(--color-border)] p-3.5">
-            <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-2">
+            <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-2">
               1 · Data
             </div>
             <div className="flex items-center gap-2 flex-wrap">
@@ -204,7 +204,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
             </div>
             {sheetNames.length > 1 && (
               <label className="block mt-2">
-                <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Sheet</span>
+                <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Sheet</span>
                 <Select value={sheet} onChange={(e) => setSheet(e.target.value)}>
                   {sheetNames.map((s) => <option key={s} value={s}>{s}</option>)}
                 </Select>
@@ -213,11 +213,11 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
             {template.mode === "both" && (
               <div className="mt-2 inline-flex rounded-xl border border-[var(--color-border)] p-0.5">
                 <button onClick={() => setMode("per_row")}
-                  className={`px-3 py-1.5 rounded-[10px] text-[11px] font-black ${mode === "per_row" ? "bg-orange-600 text-white" : "text-[var(--color-text-muted)]"}`}>
+                  className={`px-3 py-1.5 rounded-[10px] text-[11px] font-black ${mode === "per_row" ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)]"}`}>
                   One per row
                 </button>
                 <button onClick={() => setMode("summary")}
-                  className={`px-3 py-1.5 rounded-[10px] text-[11px] font-black ${mode === "summary" ? "bg-orange-600 text-white" : "text-[var(--color-text-muted)]"}`}>
+                  className={`px-3 py-1.5 rounded-[10px] text-[11px] font-black ${mode === "summary" ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)]"}`}>
                   One summary document
                 </button>
               </div>
@@ -243,7 +243,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
               <ul className="space-y-1.5">
                 {mapping.missing.map((m) => (
                   <li key={m.tag} className="flex items-center gap-2 text-xs">
-                    <code className="font-mono font-black text-orange-600 w-40 truncate">{`{${m.tag}}`}</code>
+                    <code className="font-mono font-black text-[var(--color-text)] w-40 truncate">{`{${m.tag}}`}</code>
                     <Select className="flex-1"
                       value={mapping.columnMap[m.tag] ?? ""}
                       onChange={(e) => setMapping((prev) => prev && ({
@@ -268,11 +268,11 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
           {docs.length > 0 && (
             <div className="rounded-xl border border-[var(--color-border)] p-3.5">
               <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
-                <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+                <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
                   2 · Review - {docs.length} document{docs.length === 1 ? "" : "s"} drafted
                 </div>
                 {cost > 0 && (
-                  <span className="text-[10px] text-[var(--color-text-muted)]">
+                  <span className="text-[11px] text-[var(--color-text-muted)]">
                     drafting cost ≈ ${cost.toFixed(2)} on your key
                   </span>
                 )}
@@ -283,24 +283,24 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
                     <button onClick={() => setExpanded(expanded === i ? null : i)}
                       className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-[var(--color-surface-2)] rounded-lg">
                       {expanded === i ? <ChevronDown className="w-3.5 h-3.5 shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 shrink-0" />}
-                      <FileText className="w-3.5 h-3.5 text-orange-600 shrink-0" />
+                      <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
                       <span className="text-xs font-bold text-[var(--color-text)] truncate">{d.filename}</span>
                       {d.sourceRow && (
-                        <span className="ml-auto text-[10px] text-[var(--color-text-muted)] shrink-0">row {d.sourceRow}</span>
+                        <span className="ml-auto text-[11px] text-[var(--color-text-muted)] shrink-0">row {d.sourceRow}</span>
                       )}
                     </button>
                     {expanded === i && (
                       <div className="px-3 pb-3 space-y-2 border-t border-[var(--color-border)] pt-2">
                         <label className="block">
-                          <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">File name</span>
+                          <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">File name</span>
                           <Input value={d.filename} onChange={(e) => updateFilename(i, e.target.value)} className="text-xs font-mono" />
                         </label>
                         {Object.entries(d.values).map(([tag, value]) => (
                           <label key={tag} className="block">
-                            <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
+                            <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
                               {tag}
                               {aiTags.has(tag) && (
-                                <span className="inline-flex items-center gap-0.5 text-[9px] px-1 py-0.5 rounded bg-orange-500/10 border border-orange-300 dark:border-orange-800 text-orange-700 dark:text-orange-400">
+                                <span className="inline-flex items-center gap-0.5 text-[11px] px-1 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)]">
                                   <Sparkles className="w-2.5 h-2.5" /> AI
                                 </span>
                               )}
@@ -331,7 +331,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
           {/* ── 3. Generate ────────────────────────────────────────────── */}
           {docs.length > 0 && (
             <div className="rounded-xl border border-[var(--color-border)] p-3.5 space-y-2.5">
-              <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+              <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
                 3 · Generate
               </div>
               <p className="text-[11px] text-[var(--color-text-muted)]">
@@ -349,7 +349,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
                 </div>
               )}
               {filing && (
-                <div className="text-[11px] font-bold text-orange-600 inline-flex items-center gap-1.5">
+                <div className="text-[11px] font-bold text-[var(--color-text)] inline-flex items-center gap-1.5">
                   <Loader2 className="w-3.5 h-3.5 animate-spin" /> Filing {filing.done} of {filing.total}…
                 </div>
               )}

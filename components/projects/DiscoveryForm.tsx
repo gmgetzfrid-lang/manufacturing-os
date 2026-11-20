@@ -341,7 +341,7 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
               {busy ? "Adding…" : "Add to the schedule"}
             </button>
           </div>
-          <div className="text-[10.5px] text-[var(--color-text-faint)]">{isNew
+          <div className="text-[11px] text-[var(--color-text-faint)]">{isNew
             ? <>It goes in as a new work order{underId ? ` under ${groups.find((g) => g.id === underId)?.label.split(" › ").pop()}` : ""}, its steps marked as {k.lower}. No other step&apos;s planned dates change.</>
             : <>It goes in as steps under {taskName}, marked as {k.lower}, linked after the step it follows; what it holds up waits on it. No other step&apos;s planned dates change - the delay shows as the forecast finish, against the plan.</>}</div>
         </div>

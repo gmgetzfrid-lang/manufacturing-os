@@ -388,7 +388,7 @@ function CustomCategoriesSection({
 
   return (
     <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm overflow-hidden">
-      <div className="px-6 py-4 bg-violet-50 border-b border-violet-100 flex flex-wrap justify-between items-center gap-3">
+      <div className="px-6 py-4 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] flex flex-wrap justify-between items-center gap-3">
         <div>
           <h3 className="font-bold text-[var(--color-text)]">Custom Categories</h3>
           <p className="text-xs text-[var(--color-text-muted)]">
@@ -453,7 +453,7 @@ function CategoryCard({
         <input
           value={cat.label}
           onChange={(e) => onChange({ label: e.target.value })}
-          className="flex-1 min-w-[140px] px-2 py-1 border border-[var(--color-border)] rounded text-sm font-bold text-[var(--color-text)] focus:ring-2 focus:ring-violet-500 outline-none"
+          className="flex-1 min-w-[140px] px-2 py-1 border border-[var(--color-border)] rounded text-sm font-bold text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
           placeholder="Category label"
         />
         <label className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-muted)]">
@@ -521,7 +521,7 @@ function FieldEditor({
         >
           {FIELD_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
         </select>
-        <label className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]">
+        <label className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-muted)]">
           <input type="checkbox" checked={!!field.required} onChange={(e) => onChange({ required: e.target.checked })} className="accent-[var(--color-accent)]" />
           Required
         </label>
@@ -545,7 +545,7 @@ function FieldEditor({
       />
       {isChoice && (
         <div className="mt-2 space-y-1">
-          <div className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-wider">Choices</div>
+          <div className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-wider">Choices</div>
           {(field.options ?? []).map((opt, oi) => (
             <div key={oi} className="flex gap-1 items-center">
               <input
@@ -578,7 +578,7 @@ function FieldEditor({
           ))}
           <button
             onClick={() => onChange({ options: [...(field.options ?? []), { label: "Option", value: "" }] })}
-            className="text-[10px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-colors inline-flex items-center"
+            className="text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-colors inline-flex items-center"
           >
             <Plus className="w-3 h-3 mr-1" /> Add Choice
           </button>

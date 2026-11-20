@@ -94,7 +94,7 @@ export default function BulkEditModal({
     <div className="fixed inset-0 z-[300] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
-          <div className="p-2 rounded-lg bg-violet-100 text-violet-700"><Pencil className="w-5 h-5" /></div>
+          <div className="p-2 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)]"><Pencil className="w-5 h-5" /></div>
           <div className="flex-1">
             <div className="text-sm font-black text-[var(--color-text)]">Bulk edit · {docs.length} document{docs.length === 1 ? "" : "s"}</div>
             <div className="text-xs text-[var(--color-text-muted)]">Apply one change to every selected row. Each insert is independent - a single failure doesn&apos;t roll back the rest.</div>
@@ -106,7 +106,7 @@ export default function BulkEditModal({
 
         <div className="px-5 py-4 space-y-4">
           <div>
-            <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-1.5 block">Field to change</label>
+            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest mb-1.5 block">Field to change</label>
             <select
               value={target.kind === "custom" ? `custom:${target.def.key}` : target.kind}
               onChange={(e) => {
@@ -136,7 +136,7 @@ export default function BulkEditModal({
           </div>
 
           <div>
-            <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-1.5 block">New value</label>
+            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest mb-1.5 block">New value</label>
             {target.kind === "status" ? (
               <select
                 value={newValue} onChange={(e) => setNewValue(e.target.value)}
@@ -193,7 +193,7 @@ export default function BulkEditModal({
             <button
               onClick={apply}
               disabled={busy || !newValue}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold disabled:opacity-50"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-xs font-bold disabled:opacity-50"
             >
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Pencil className="w-3.5 h-3.5" />}
               {busy ? "Applying…" : `Apply to ${docs.length}`}

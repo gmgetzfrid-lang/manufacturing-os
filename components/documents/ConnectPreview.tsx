@@ -15,8 +15,8 @@ import LibraryAiSwitch from "@/components/documents/LibraryAiSwitch";
 import type { ConnectPlan, PlanFileState } from "@/lib/estate/connectPlan";
 
 const STATE: Record<PlanFileState, { label: string; tone: string; sent: boolean }> = {
-  new: { label: "new - will be read", tone: "bg-sky-50 border-sky-200 text-sky-800", sent: true },
-  revised: { label: "new revision - read again", tone: "bg-sky-50 border-sky-200 text-sky-800", sent: true },
+  new: { label: "new - will be read", tone: "bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text)]", sent: true },
+  revised: { label: "new revision - read again", tone: "bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text)]", sent: true },
   read: { label: "already read - reused, nothing sent", tone: "bg-emerald-50 border-emerald-200 text-emerald-800", sent: false },
   held_back: { label: "held back from AI", tone: "bg-rose-50 border-rose-200 text-rose-700", sent: false },
   not_current: { label: "superseded or archived - never read", tone: "bg-slate-50 border-slate-200 text-slate-600", sent: false },
@@ -51,8 +51,8 @@ export default function ConnectPreview({ orgId, plan, loading, canChange, onStar
         </div>
 
         <div className="p-4 space-y-3 text-xs">
-          <div className="rounded-xl border border-violet-200 bg-violet-50/60 dark:bg-violet-950/20 p-3 space-y-1">
-            <div className="font-bold inline-flex items-center gap-1.5"><Send className="w-3.5 h-3.5 text-violet-700" /> What leaves the server, on {model ? <>your key ({model})</> : <>your AI key</>}</div>
+          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] p-3 space-y-1">
+            <div className="font-bold inline-flex items-center gap-1.5"><Send className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> What leaves the server, on {model ? <>your key ({model})</> : <>your AI key</>}</div>
             <ul className="list-disc pl-5 space-y-0.5 text-[var(--color-text)]">
               <li><b>{totals.toRead}</b> file{totals.toRead === 1 ? "" : "s"} will be read. Their text is read on our server and is <b>not</b> sent anywhere. Only pages with no usable text are sent to your model as images.</li>
               <li><b>{totals.census}</b> drawing{totals.census === 1 ? "" : "s"} will be sent to your model whole, plus four zoomed tiles each, to read their equipment.</li>
@@ -81,8 +81,8 @@ export default function ConnectPreview({ orgId, plan, loading, canChange, onStar
                   {l.selected && (
                     <div className="mt-1.5 pl-5">
                       <div className="flex flex-wrap gap-1">
-                        {(Object.keys(STATE) as PlanFileState[]).filter((k) => l.counts[k]).map((k) => <span key={k} className={`rounded-full border px-1.5 py-0.5 text-[10px] font-semibold ${STATE[k].tone}`}>{l.counts[k]} {STATE[k].label}</span>)}
-                        {l.toCensus > 0 && <span className="rounded-full border border-violet-300 bg-violet-50 text-violet-800 px-1.5 py-0.5 text-[10px] font-semibold">{l.toCensus} drawings to your model</span>}
+                        {(Object.keys(STATE) as PlanFileState[]).filter((k) => l.counts[k]).map((k) => <span key={k} className={`rounded-full border px-1.5 py-0.5 text-[11px] font-semibold ${STATE[k].tone}`}>{l.counts[k]} {STATE[k].label}</span>)}
+                        {l.toCensus > 0 && <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] px-1.5 py-0.5 text-[11px] font-semibold">{l.toCensus} drawings to your model</span>}
                       </div>
                       <button onClick={() => setOpen(isOpen ? null : l.id)} className="mt-1 text-[11px] text-[var(--color-text-muted)] hover:underline inline-flex items-center gap-0.5">{isOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />} {isOpen ? "Hide the files" : "Show every file"}</button>
                       {isOpen && (
@@ -90,8 +90,8 @@ export default function ConnectPreview({ orgId, plan, loading, canChange, onStar
                           {l.sample.map((f) => (
                             <li key={f.id} className="flex items-center gap-2">
                               <span className="truncate flex-1">{f.name}</span>
-                              {f.census && <span className="shrink-0 text-[10px] font-semibold text-violet-700">to your model</span>}
-                              <span className={`shrink-0 rounded-full border px-1.5 text-[10px] ${STATE[f.state].tone}`}>{STATE[f.state].sent ? "will be read" : STATE[f.state].label.split(" - ")[0]}</span>
+                              {f.census && <span className="shrink-0 text-[11px] font-semibold text-[var(--color-text)]">to your model</span>}
+                              <span className={`shrink-0 rounded-full border px-1.5 text-[11px] ${STATE[f.state].tone}`}>{STATE[f.state].sent ? "will be read" : STATE[f.state].label.split(" - ")[0]}</span>
                             </li>
                           ))}
                           {l.files > l.sample.length && <li className="text-[var(--color-text-muted)]">…and {l.files - l.sample.length} more</li>}

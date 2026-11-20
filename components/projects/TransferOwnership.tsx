@@ -61,7 +61,7 @@ export function TransferOwnershipModal({ project, members, preselect, actorUserI
     } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   };
 
-  const radio = (on: boolean) => `flex items-start gap-2 rounded-lg border px-3 py-2 text-left ${on ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]/40" : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`;
+  const radio = (on: boolean) => `flex items-start gap-2 rounded-lg border px-3 py-2 text-left ${on ? "border-[var(--color-border-strong)] bg-[var(--color-surface-2)]" : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`;
   return (
     <Modal onClose={onClose} size="md">
       <ModalHeader icon={Crown} title="Transfer ownership" subtitle={project.name} onClose={onClose} />

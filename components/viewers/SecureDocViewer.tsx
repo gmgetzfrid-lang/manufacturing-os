@@ -219,13 +219,13 @@ export default function SecureDocViewer({
             <span className="text-xs font-bold text-slate-300 truncate max-w-[200px]" title={title}>
               {title}
             </span>
-            <span className="text-[10px] font-bold text-slate-500 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-700">
+            <span className="text-[11px] font-bold text-slate-500 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-700">
               Rev {rev}
             </span>
         </div>
         
         <div className="flex items-center space-x-2">
-            <div className="flex items-center text-[10px] text-red-400 bg-red-950/20 px-2 py-1 rounded border border-red-500/10" title="Browser Print/Save Disabled">
+            <div className="flex items-center text-[11px] text-red-400 bg-red-950/20 px-2 py-1 rounded border border-red-500/10" title="Browser Print/Save Disabled">
                 <ShieldAlert className="w-3 h-3 mr-1.5" />
                 <span className="font-bold">SECURE VIEW</span>
             </div>

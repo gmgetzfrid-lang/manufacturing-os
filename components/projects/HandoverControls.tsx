@@ -32,9 +32,9 @@ export function TryControl({ kind, decision, suggestions, crews, disabled, onCha
     <div className="flex flex-wrap items-center gap-1.5 pb-1 print:hidden">
       <button type="button" disabled={disabled} aria-pressed={on} title={on ? "Click to take it off the list" : undefined}
         onClick={() => onChange({ ...decision, tryIt: !on, crew: !on ? decision?.crew ?? suggestions[0]?.crew ?? null : decision?.crew })}
-        className={`shrink-0 whitespace-nowrap inline-flex items-center rounded-full border px-2 py-0.5 text-[10.5px] font-bold transition-colors disabled:opacity-60 ${on
-          ? "border-indigo-500 bg-indigo-600 text-white"
-          : "border-indigo-300 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40"}`}>
+        className={`shrink-0 whitespace-nowrap inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-bold transition-colors disabled:opacity-60 ${on
+          ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]"
+          : "border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-accent)] dark:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] dark:hover:bg-[var(--color-surface-2)]"}`}>
         {on ? "✓ " : "+ "}{kind === "night" ? "Night" : "Day"} could try
       </button>
       {on && (

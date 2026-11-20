@@ -26,11 +26,11 @@ export default function StatusFooter({
 }: StatusFooterProps) {
   return (
     <div
-      className="h-7 shrink-0 border-t border-slate-200 bg-white/80 flex items-center gap-4 px-4 text-[10px] font-mono text-slate-500 z-20"
+      className="h-7 shrink-0 border-t border-slate-200 bg-white/80 flex items-center gap-4 px-4 text-[11px] font-mono text-slate-500 z-20"
       style={{ backdropFilter: "blur(12px)" }}
     >
       <div className="flex items-center gap-1.5">
-        <Activity className={`w-2.5 h-2.5 ${loading ? "text-blue-500 animate-pulse" : "text-emerald-500"}`} />
+        <Activity className={`w-2.5 h-2.5 ${loading ? "text-[var(--color-text-muted)] animate-pulse" : "text-emerald-500"}`} />
         <span className="font-bold">{loading ? "SYNCING" : "LIVE"}</span>
       </div>
 
@@ -47,13 +47,13 @@ export default function StatusFooter({
       </div>
 
       {selectedCount > 0 && (
-        <div className="flex items-center gap-1 text-blue-600 font-bold">
+        <div className="flex items-center gap-1 text-[var(--color-text)] font-bold">
           <span>● {selectedCount} selected</span>
         </div>
       )}
 
       {stagedCount > 0 && (
-        <div className="flex items-center gap-1 text-orange-600 font-bold">
+        <div className="flex items-center gap-1 text-[var(--color-text)] font-bold">
           <Layers className="w-2.5 h-2.5" />
           <span>{stagedCount} staged</span>
         </div>
@@ -65,7 +65,7 @@ export default function StatusFooter({
       <div className="flex items-center gap-1 border border-slate-200 rounded-md p-0.5 bg-slate-50/80">
         <button
           onClick={() => onDensityChange("compact")}
-          className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-colors ${
+          className={`px-1.5 py-0.5 rounded text-[11px] font-bold transition-colors ${
             density === "compact" ? "bg-slate-900 text-white" : "text-slate-500 hover:text-slate-700"
           }`}
         >
@@ -73,7 +73,7 @@ export default function StatusFooter({
         </button>
         <button
           onClick={() => onDensityChange("comfy")}
-          className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-colors ${
+          className={`px-1.5 py-0.5 rounded text-[11px] font-bold transition-colors ${
             density === "comfy" ? "bg-slate-900 text-white" : "text-slate-500 hover:text-slate-700"
           }`}
         >

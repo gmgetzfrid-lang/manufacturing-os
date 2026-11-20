@@ -189,7 +189,7 @@ export default function ScopePage() {
               <div key={plant.id} className="border border-[var(--color-border)] rounded-xl bg-[var(--color-surface)] overflow-hidden">
                 {/* Plant row */}
                 <ScopeRow
-                  icon={<Factory className="w-4 h-4 text-blue-600" />}
+                  icon={<Factory className="w-4 h-4 text-[var(--color-text-muted)]" />}
                   open={plantOpen}
                   onToggle={() => setExpandedPlants((s) => {
                     const next = new Set(s);
@@ -209,7 +209,7 @@ export default function ScopePage() {
 
                 {/* Add-unit inline form */}
                 {addingChildOf?.kind === "plant" && addingChildOf.parentId === plant.id && (
-                  <div className="px-4 py-3 bg-blue-50/40 border-t border-blue-100">
+                  <div className="px-4 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)]">
                     <NewScopeRowForm
                       title={`New Unit in ${plant.name}`}
                       fields={["name", "code", "description"]}
@@ -232,7 +232,7 @@ export default function ScopePage() {
                           <div key={unit.id} className="border-t border-[var(--color-border)] first:border-t-0">
                             <ScopeRow
                               indent={1}
-                              icon={<Layers className="w-4 h-4 text-purple-600" />}
+                              icon={<Layers className="w-4 h-4 text-[var(--color-text-muted)]" />}
                               open={unitOpen}
                               onToggle={() => setExpandedUnits((s) => {
                                 const next = new Set(s);
@@ -251,7 +251,7 @@ export default function ScopePage() {
                             />
 
                             {addingChildOf?.kind === "unit" && addingChildOf.parentId === unit.id && (
-                              <div className="px-4 py-3 ml-6 bg-purple-50/40 border-t border-purple-100">
+                              <div className="px-4 py-3 ml-6 bg-[var(--color-surface-2)] border-t border-[var(--color-border)]">
                                 <NewScopeRowForm
                                   title={`New System in ${unit.name}`}
                                   fields={["name", "code", "description"]}
@@ -330,20 +330,20 @@ function ScopeRow({
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="text-sm font-bold text-[var(--color-text)] truncate">{name}</span>
-          {code && <span className="text-[10px] font-mono text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{code}</span>}
-          {archived && <span className="text-[10px] font-bold text-[var(--color-text-muted)] bg-slate-200 px-1.5 py-0.5 rounded uppercase">Archived</span>}
+          {code && <span className="text-[11px] font-mono text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{code}</span>}
+          {archived && <span className="text-[11px] font-bold text-[var(--color-text-muted)] bg-slate-200 px-1.5 py-0.5 rounded uppercase">Archived</span>}
         </div>
       </div>
-      {badge && <span className="text-[10px] text-[var(--color-text-muted)] font-mono shrink-0">{badge}</span>}
+      {badge && <span className="text-[11px] text-[var(--color-text-muted)] font-mono shrink-0">{badge}</span>}
       {canEdit && (
         <div className="flex items-center gap-1 shrink-0">
           {onAdd && addLabel && (
-            <button onClick={onAdd} title={addLabel} className="p-1.5 rounded text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] transition-colors">
+            <button onClick={onAdd} title={addLabel} className="p-1.5 rounded text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] transition-colors">
               <Plus className="w-3.5 h-3.5" />
             </button>
           )}
           {onEdit && (
-            <button onClick={onEdit} title="Edit" className="p-1.5 rounded text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] transition-colors">
+            <button onClick={onEdit} title="Edit" className="p-1.5 rounded text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] transition-colors">
               <Pencil className="w-3.5 h-3.5" />
             </button>
           )}
@@ -386,7 +386,7 @@ function NewScopeRowForm({
   };
 
   return (
-    <form onSubmit={onSubmit} className="bg-[var(--color-surface)] border border-blue-200 rounded-lg p-3 space-y-2">
+    <form onSubmit={onSubmit} className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-3 space-y-2">
       <div className="text-[11px] font-bold text-[var(--color-text)] uppercase tracking-wider">{title}</div>
       <div className="grid grid-cols-2 gap-2">
         {fields.map((f) => {
@@ -410,7 +410,7 @@ function NewScopeRowForm({
               placeholder={f === "name" ? "Name (required)" : f[0].toUpperCase() + f.slice(1)}
               value={values[f] ?? ""}
               onChange={(e) => setValues((v) => ({ ...v, [f]: e.target.value }))}
-              className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-ring)]"
             />
           );
         })}

@@ -212,11 +212,11 @@ export default function SetupPage() {
               return (
                 <div key={s.key} className="relative pl-11"
                   style={{ animation: "rise 0.45s var(--ease-fluid) both", animationDelay: `${i * 60}ms` }}>
-                  <span className={`absolute left-0 top-3 w-8 h-8 rounded-full flex items-center justify-center text-white text-[12px] font-black ring-4 ring-[var(--color-canvas)] bg-gradient-to-br ${done ? "from-emerald-500 to-teal-600" : s.hue} ${active ? "shadow-lg" : ""}`}>
+                  <span className={`absolute left-0 top-3 w-8 h-8 rounded-full flex items-center justify-center text-[var(--color-text)] text-[12px] font-black ring-4 ring-[var(--color-canvas)] bg-[var(--color-surface-2)] ${done ? "from-emerald-500 to-teal-600" : s.hue} ${active ? "shadow-lg" : ""}`}>
                     {done ? <CheckCircle2 className="w-4 h-4" /> : i + 1}
                   </span>
                   <div className={`rounded-2xl border p-4 ${active
-                    ? "border-violet-300 dark:border-violet-800 bg-violet-50/40 dark:bg-violet-950/20 shadow-md"
+                    ? "border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] shadow-md"
                     : "border-[var(--color-border)] bg-[var(--color-surface)]"} ${done ? "opacity-80" : ""}`}>
                     <div className="flex items-start gap-3 flex-wrap">
                       <div className="flex-1 min-w-[16rem]">
@@ -224,7 +224,7 @@ export default function SetupPage() {
                           <Icon className="w-4 h-4 text-[var(--color-text-muted)]" />
                           <span className="text-sm font-black text-[var(--color-text)]">{s.title}</span>
                           {active && (
-                            <span className="px-1.5 py-0.5 rounded-full bg-violet-600 text-white text-[9px] font-black uppercase tracking-wide">
+                            <span className="px-1.5 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)] text-[11px] font-black uppercase tracking-wide">
                               Continue here
                             </span>
                           )}
@@ -242,13 +242,13 @@ export default function SetupPage() {
                       <div className="flex flex-col items-stretch gap-1.5 shrink-0">
                         <Link href={s.href}
                           className={`inline-flex items-center justify-center gap-1 px-3 py-2 rounded-lg text-[11px] font-black transition-colors ${active
-                            ? "text-white bg-violet-600 hover:bg-violet-500"
+                            ? "text-[var(--color-surface)] bg-[var(--color-text)]"
                             : "text-[var(--color-text)] border border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]"}`}>
                           {s.cta} <ArrowRight className="w-3 h-3" />
                         </Link>
                         {s.extraHref && (
                           <Link href={s.extraHref}
-                            className="inline-flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+                            className="inline-flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
                             {s.extraCta}
                           </Link>
                         )}

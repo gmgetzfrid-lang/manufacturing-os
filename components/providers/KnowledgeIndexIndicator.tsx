@@ -161,7 +161,7 @@ export default function KnowledgeIndexIndicator() {
           className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg px-3 py-1.5 text-[11px] font-black text-[var(--color-text)] hover:shadow-xl transition-shadow"
         >
           {working
-            ? <><Loader2 className="w-3.5 h-3.5 animate-spin text-violet-600" /> Indexing {pctLabel}</>
+            ? <><Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-muted)]" /> Indexing {pctLabel}</>
             : <><CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Indexed</>}
         </button>
       </CornerPortal>
@@ -173,7 +173,7 @@ export default function KnowledgeIndexIndicator() {
     <div className="pointer-events-auto w-[330px] max-w-[calc(100vw-2.5rem)] rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl p-3.5 animate-in slide-in-from-bottom-4">
       <div className="flex items-center gap-2">
         {working
-          ? <BookOpenText className="w-4 h-4 text-violet-600 shrink-0" />
+          ? <BookOpenText className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
           : <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />}
         <span className="text-xs font-black text-[var(--color-text)] flex-1 truncate">
           {working ? "Indexing knowledge in the background" : state.heldBack ? "Knowledge indexing paused for some files" : "Knowledge indexing caught up"}
@@ -199,23 +199,23 @@ export default function KnowledgeIndexIndicator() {
           {state.total !== null && state.total > 0 && (
             <div className="h-1 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
               <div
-                className="h-full bg-violet-500 transition-all"
+                className="h-full bg-[var(--color-text-muted)] transition-all"
                 style={{ width: `${Math.min(100, Math.round((state.indexed / state.total) * 100))}%` }}
               />
             </div>
           )}
           {state.visionPages > 0 && (
-            <div className="text-[10px] text-violet-700 flex items-center gap-1">
+            <div className="text-[11px] text-[var(--color-text)] flex items-center gap-1">
               <Eye className="w-3 h-3" /> {state.visionPages} page{state.visionPages === 1 ? "" : "s"} read by AI vision
             </div>
           )}
           {state.visionSkipReason && (
-            <div className="text-[10px] text-amber-700">{state.visionSkipReason}</div>
+            <div className="text-[11px] text-amber-700">{state.visionSkipReason}</div>
           )}
           {state.waiting && (
-            <div role="status" className="text-[10px] text-amber-700 dark:text-amber-300">{state.waiting}</div>
+            <div role="status" className="text-[11px] text-amber-700 dark:text-amber-300">{state.waiting}</div>
           )}
-          <div className="text-[10px] text-[var(--color-text-faint)]">
+          <div className="text-[11px] text-[var(--color-text-faint)]">
             Keeps going anywhere in the app - only closing the tab pauses it.
           </div>
         </div>

@@ -278,7 +278,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
                     const ok = x.notNeeded || listOk(x.list);
                     return (
                       <div key={p.id} className="px-3 py-2 flex items-center gap-2 flex-wrap text-[12.5px]">
-                        <span className={`w-5 h-5 shrink-0 rounded-full flex items-center justify-center ${ok ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300" : "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300"}`}>{ok ? <Check className="w-3 h-3" /> : <span className="text-[10px] font-black">!</span>}</span>
+                        <span className={`w-5 h-5 shrink-0 rounded-full flex items-center justify-center ${ok ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300" : "bg-[var(--color-surface-2)] text-[var(--color-text)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)]"}`}>{ok ? <Check className="w-3 h-3" /> : <span className="text-[11px] font-black">!</span>}</span>
                         <span className="min-w-0 flex-1 basis-40"><b className="text-[var(--color-text)]">{p.name}</b> <span className="text-[var(--color-text-muted)]">{x.notNeeded ? "· not needed" : x.list ? `· ${x.list.list.title}: ${x.list.satisfied} of ${x.list.applicable} items done${x.list.list.status === "complete" ? ", complete" : ""}` : "· not uploaded"}</span></span>
                         {x.list && <button type="button" onClick={() => onTab("quality")} className={btn}>Open</button>}
                         {!x.list && !x.notNeeded && canManage && <>
@@ -295,7 +295,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
                       {canManage && (
                         <select value="" aria-label={`Phase for ${x.list.title}`} disabled={!!busy}
                           onChange={(e) => { const id = e.target.value; if (id) void run("pssr", () => saveCloseoutSettings(projectId, { pssrByPhase: { [id]: { checklistId: x.list.id, notNeeded: false } } })); }}
-                          className="h-8 rounded-lg border border-orange-400 bg-[var(--color-surface)] px-2 text-[12.5px]">
+                          className="h-8 rounded-lg border border-[var(--color-accent)] bg-[var(--color-surface)] px-2 text-[12.5px]">
                           <option value="">Pick the phase</option>
                           {phases.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                         </select>
@@ -488,9 +488,9 @@ function Progress({ stats, tz, look, lookById, ids, loading, records, mp }: {
             return (
               <div key={r.start} className={`grid grid-cols-[116px_minmax(0,1fr)_auto] gap-2 items-center py-1 text-[12px] ${r.kind === "night" ? "bg-[var(--color-surface-2)]/50" : ""}`}>
                 <span className="text-[var(--color-text)] leading-tight pl-1">{shiftLabel(r)}
-                  {r.planEnds && stats.plannedFinish != null && <span className="block text-[10.5px] font-bold text-[#000A72] dark:text-indigo-300">plan finish {fmtInTz(stats.plannedFinish, tz, { hour: "numeric", minute: "2-digit", hour12: true })}</span>}
-                  {r.finishes && stats.finishedAt != null && <span className="block text-[10.5px] font-bold text-emerald-700 dark:text-emerald-400">all done {fmtInTz(stats.finishedAt, tz, { hour: "numeric", minute: "2-digit", hour12: true })}</span>}
-                  {r.current && <span className="block text-[10.5px] text-[var(--color-text-muted)]">now</span>}</span>
+                  {r.planEnds && stats.plannedFinish != null && <span className="block text-[11px] font-bold text-[#000A72] dark:text-[var(--color-text)]">plan finish {fmtInTz(stats.plannedFinish, tz, { hour: "numeric", minute: "2-digit", hour12: true })}</span>}
+                  {r.finishes && stats.finishedAt != null && <span className="block text-[11px] font-bold text-emerald-700 dark:text-emerald-400">all done {fmtInTz(stats.finishedAt, tz, { hour: "numeric", minute: "2-digit", hour12: true })}</span>}
+                  {r.current && <span className="block text-[11px] text-[var(--color-text-muted)]">now</span>}</span>
                 <div className="space-y-0.5">
                   {r.plan != null
                     ? <div className="h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden"><div className="h-full rounded-full bg-slate-400" style={{ width: `${Math.min(100, r.plan)}%` }} /></div>
@@ -499,7 +499,7 @@ function Progress({ stats, tz, look, lookById, ids, loading, records, mp }: {
                 </div>
                 <span className="text-right tabular-nums text-[var(--color-text-muted)] leading-tight pr-1">
                   {r.plan != null ? `${r.plan}%` : "past plan"}{r.done != null ? <> / <b className={red ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}>{r.done}%</b>{r.plan == null && red && <b className="text-rose-700 dark:text-rose-400"> late</b>}</> : " / to come"}
-                  {r.addedKnown > 0 && <span className="block text-[10.5px] text-amber-700 dark:text-amber-400">added {Math.round((r.addedDone ?? 0) * 10) / 10} of {r.addedKnown} h</span>}
+                  {r.addedKnown > 0 && <span className="block text-[11px] text-amber-700 dark:text-amber-400">added {Math.round((r.addedDone ?? 0) * 10) / 10} of {r.addedKnown} h</span>}
                 </span>
               </div>
             );
@@ -663,7 +663,7 @@ function WholeManpower({ shifts, records, mp }: { shifts: ReturnType<typeof phas
 function Step({ n, ok, title, detail, action, children }: { n: number; ok: boolean | null; title: string; detail: string; action?: React.ReactNode; children?: React.ReactNode }) {
   return (
     <li className="px-4 py-3 flex items-start gap-3">
-      <span className={`mt-0.5 w-6 h-6 shrink-0 rounded-full flex items-center justify-center text-[12px] font-black ${ok ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300" : ok === false ? "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
+      <span className={`mt-0.5 w-6 h-6 shrink-0 rounded-full flex items-center justify-center text-[12px] font-black ${ok ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300" : ok === false ? "bg-[var(--color-surface-2)] text-[var(--color-text)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
         {ok ? <Check className="w-3.5 h-3.5" /> : n}
       </span>
       <div className="min-w-0 flex-1">
@@ -691,8 +691,8 @@ function Tile({ k, v, s, tone }: { k: string; v: string; s: string; tone?: "good
 }
 
 const STATUS: Record<TurnoverItem["status"], { word: string; cls: string }> = {
-  open: { word: "Needed", cls: "bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300" },
-  received: { word: "Received", cls: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300" },
+  open: { word: "Needed", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)]" },
+  received: { word: "Received", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)]" },
   accepted: { word: "Accepted", cls: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" },
   rejected: { word: "Rejected", cls: "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300" },
   waived: { word: "Waived", cls: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300" },

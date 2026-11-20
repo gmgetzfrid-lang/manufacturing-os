@@ -25,11 +25,11 @@ export default function FileTagChip({ tag, type = "Linked drawings", orgId, user
   const interactive = !!orgId;
   const hasFiles = fileCount > 0;
 
-  const base = "inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border mr-1 mb-1 whitespace-nowrap shadow-sm transition-all";
+  const base = "inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold border mr-1 mb-1 whitespace-nowrap shadow-sm transition-all";
   const state = hasFiles
-    ? "bg-gradient-to-br from-orange-50 to-orange-100/70 text-orange-800 border-orange-200 hover:border-orange-300 hover:from-orange-100 hover:to-orange-200 cursor-pointer"
+    ? "text-[var(--color-text)] border-[var(--color-border)] hover:border-[var(--color-border)] cursor-pointer bg-[var(--color-surface-2)]"
     : interactive
-      ? "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)] hover:bg-orange-50 hover:border-orange-300 hover:text-orange-700 cursor-pointer"
+      ? "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border)] hover:text-[var(--color-text)] cursor-pointer"
       : "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]";
 
   return (
@@ -45,10 +45,10 @@ export default function FileTagChip({ tag, type = "Linked drawings", orgId, user
         }
         className={`${base} ${state}`}
       >
-        <span className={hasFiles ? "text-orange-500 mr-1" : "text-[var(--color-text-faint)] mr-1"}><FileText className="w-3 h-3" /></span>
+        <span className={hasFiles ? "text-[var(--color-text-muted)] mr-1" : "text-[var(--color-text-faint)] mr-1"}><FileText className="w-3 h-3" /></span>
         <span>{tag}</span>
         {hasFiles ? (
-          <span className="ml-1.5 inline-flex items-center gap-0.5 px-1 py-px rounded bg-white/80 text-orange-700 text-[9px] font-black">
+          <span className="ml-1.5 inline-flex items-center gap-0.5 px-1 py-px rounded bg-white/80 text-[var(--color-text)] text-[11px] font-black">
             <Files className="w-2.5 h-2.5" />{fileCount}
           </span>
         ) : interactive ? (

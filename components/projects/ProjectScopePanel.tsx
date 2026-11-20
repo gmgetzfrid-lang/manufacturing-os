@@ -75,7 +75,7 @@ export default function ProjectScopePanel({ orgId, projectId, projectName, canMa
   };
 
   const L = (id: string) => labels.get(id) ?? { label: id };
-  const Icon = ({ id }: { id: string }) => (id.startsWith("cbunit:") ? <Factory className="w-3.5 h-3.5 text-purple-600" /> : id.startsWith("asset:") ? <Cpu className="w-3.5 h-3.5 text-emerald-600" /> : <FileText className="w-3.5 h-3.5 text-blue-600" />);
+  const Icon = ({ id }: { id: string }) => (id.startsWith("cbunit:") ? <Factory className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> : id.startsWith("asset:") ? <Cpu className="w-3.5 h-3.5 text-emerald-600" /> : <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />);
 
   return (
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-hidden">
@@ -97,8 +97,8 @@ export default function ProjectScopePanel({ orgId, projectId, projectName, canMa
                   <span key={e.id} title={e.summary} className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs ${e.status === "pending" ? "border-amber-300 bg-amber-50" : "border-[var(--color-border)] bg-[var(--color-canvas)]"}`}>
                     <Icon id={e.b} />
                     {l.href ? <Link href={l.href} className="font-bold hover:underline">{l.label}</Link> : <span className="font-bold">{l.label}</span>}
-                    {e.status === "pending" && <span className="text-[10px] text-amber-700">proposed · {Math.round(e.confidence * 100)}%</span>}
-                    {canManage && e.status === "pending" && <button onClick={() => accept(e)} disabled={busy} className="text-[10px] font-bold text-emerald-700 hover:underline">accept</button>}
+                    {e.status === "pending" && <span className="text-[11px] text-amber-700">proposed · {Math.round(e.confidence * 100)}%</span>}
+                    {canManage && e.status === "pending" && <button onClick={() => accept(e)} disabled={busy} className="text-[11px] font-bold text-emerald-700 hover:underline">accept</button>}
                     {canManage && <button onClick={() => drop(e)} disabled={busy} className="opacity-50 hover:opacity-100" title={e.origin === "human" ? "Remove" : "Dismiss"}><X className="w-3 h-3" /></button>}
                   </span>
                 );

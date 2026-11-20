@@ -12,8 +12,8 @@ import { fmtInTz } from "@/lib/scheduleTz";
 
 /** The tag's colours: discovery violet, added scope teal. */
 export const ADDED_TONE: Record<AddedKind, string> = {
-  discovery: "border-violet-300 bg-violet-50 text-violet-800 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-200",
-  added: "border-teal-300 bg-teal-50 text-teal-800 dark:border-teal-800 dark:bg-teal-950/40 dark:text-teal-200",
+  discovery: "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] dark:border-[var(--color-border)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)]",
+  added: "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] dark:border-[var(--color-border)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)]",
 };
 
 /** "Added scope, raised Wed 5:00 PM: clean the downcomers. Known work that wasn't on the schedule — not in the original plan." */
@@ -30,7 +30,7 @@ export default function DiscoveryTag({ m, tz, className = "" }: { m: Milestone; 
   const tip = discoveryTip(m, tz);
   if (!d || !tip) return null;
   return (
-    <span title={tip} className={`inline-block whitespace-nowrap rounded border px-1 py-px text-[9.5px] font-bold uppercase tracking-wide leading-none align-middle ${ADDED_TONE[kindOf(d)]} ${className}`}>
+    <span title={tip} className={`inline-block whitespace-nowrap rounded border px-1 py-px text-[11px] font-bold uppercase tracking-wide leading-none align-middle ${ADDED_TONE[kindOf(d)]} ${className}`}>
       {ADDED[kindOf(d)].word}
     </span>
   );

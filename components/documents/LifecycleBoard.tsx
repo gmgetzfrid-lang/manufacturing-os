@@ -49,15 +49,15 @@ type Column = (typeof COLUMNS)[number];
 
 const COLUMN_TONE: Record<Column, string> = {
   "Draft": "border-[var(--color-border-strong)] bg-[var(--color-surface-2)]",
-  "In Review": "border-violet-300 bg-violet-50/60",
-  "IFC": "border-blue-300 bg-blue-50/60",
+  "In Review": "border-[var(--color-border)] bg-[var(--color-surface-2)]",
+  "IFC": "border-[var(--color-border)] bg-[var(--color-surface-2)]",
   "As-Built": "border-emerald-300 bg-emerald-50/60",
   "Superseded": "border-rose-300 bg-rose-50/60",
 };
 const COLUMN_DOT: Record<Column, string> = {
   "Draft": "bg-slate-400",
-  "In Review": "bg-violet-500",
-  "IFC": "bg-blue-500",
+  "In Review": "bg-[var(--color-text-muted)]",
+  "IFC": "bg-[var(--color-text-muted)]",
   "As-Built": "bg-emerald-500",
   "Superseded": "bg-rose-500",
 };
@@ -200,7 +200,7 @@ export default function LifecycleBoard() {
                     <span className={`w-2.5 h-2.5 rounded-full ${COLUMN_DOT[col]}`} />
                     <span className="text-sm font-black text-[var(--color-text)]">{col}</span>
                     <span className="text-[11px] font-bold text-[var(--color-text-muted)] bg-white/70 rounded-full px-1.5">{items.length}</span>
-                    {bottleneck && <span className="ml-auto inline-flex items-center gap-1 text-[10px] font-bold text-rose-700"><AlertTriangle className="w-3 h-3" /> bottleneck</span>}
+                    {bottleneck && <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-rose-700"><AlertTriangle className="w-3 h-3" /> bottleneck</span>}
                   </div>
                   {items.length > 0 && (
                     <div className="mt-2" title="Aging mix: green=fresh, red=90d+">
@@ -229,12 +229,12 @@ export default function LifecycleBoard() {
                       >
                         <div className="flex items-center gap-1.5">
                           <span className="font-mono text-xs font-bold text-[var(--color-text)] truncate flex-1">{d.number}</span>
-                          {d.rev && <span className="text-[9px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1 py-0.5 rounded shrink-0">R{d.rev}</span>}
+                          {d.rev && <span className="text-[11px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1 py-0.5 rounded shrink-0">R{d.rev}</span>}
                         </div>
                         {d.title && d.number !== d.title && <div className="text-[11px] text-[var(--color-text-muted)] truncate mt-0.5">{d.title}</div>}
                         <div className="flex items-center gap-1.5 mt-1.5">
-                          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${chip.cls}`} title={`${days} days in this state`}>{chip.label}</span>
-                          {d.checkedOutByName && <span className="text-[9px] font-bold text-blue-700 inline-flex items-center gap-0.5"><Lock className="w-2.5 h-2.5" />{d.checkedOutByName}</span>}
+                          <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded ${chip.cls}`} title={`${days} days in this state`}>{chip.label}</span>
+                          {d.checkedOutByName && <span className="text-[11px] font-bold text-[var(--color-text)] inline-flex items-center gap-0.5"><Lock className="w-2.5 h-2.5" />{d.checkedOutByName}</span>}
                         </div>
                       </Link>
                     );

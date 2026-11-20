@@ -139,7 +139,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
         {/* HEADER */}
         <div className="h-16 border-b border-[var(--color-border)] flex items-center justify-between px-6 bg-slate-50/50 shrink-0">
           <div className="flex items-center">
-            <BookOpen className="w-5 h-5 mr-3 text-[var(--color-accent)]" />
+            <BookOpen className="w-5 h-5 mr-3 text-[var(--color-text-muted)]" />
             <div>
               <h2 className="text-lg font-bold text-[var(--color-text)]">Binder Management</h2>
               <p className="text-xs text-[var(--color-text-muted)] font-medium">Manage Document Sets & P&ID Packs</p>
@@ -173,7 +173,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                 >
                   <div className="flex items-center justify-between mb-1">
                     <span className="font-bold text-sm text-[var(--color-text)] truncate">{set.title}</span>
-                    <span className="text-[10px] bg-slate-200 px-1.5 rounded text-[var(--color-text-muted)]">Rev {set.currentSetRev}</span>
+                    <span className="text-[11px] bg-slate-200 px-1.5 rounded text-[var(--color-text-muted)]">Rev {set.currentSetRev}</span>
                   </div>
                   <div className="flex items-center text-xs text-[var(--color-text-faint)]">
                     <Layers className="w-3 h-3 mr-1" /> {set.sheetCount || 0} Sheets
@@ -227,12 +227,12 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                     {searchResults.length > 0 && (
                       <div className="absolute top-full right-0 w-80 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg shadow-xl mt-2 p-1 z-50 animate-in fade-in zoom-in-95 duration-150">
                         {searchResults.map(res => (
-                          <div key={res.id} onClick={() => addToSet(res)} className="p-2 hover:bg-[var(--color-accent-soft)] rounded cursor-pointer flex justify-between items-center group">
+                          <div key={res.id} onClick={() => addToSet(res)} className="p-2 hover:bg-[var(--color-surface-2)] rounded cursor-pointer flex justify-between items-center group">
                             <div className="flex flex-col truncate">
                               <span className="text-xs font-bold text-[var(--color-text)]">{res.documentNumber}</span>
-                              <span className="text-[10px] text-[var(--color-text-faint)] truncate w-48">{res.title}</span>
+                              <span className="text-[11px] text-[var(--color-text-faint)] truncate w-48">{res.title}</span>
                             </div>
-                            <Plus className="w-4 h-4 text-[var(--color-text-faint)] group-hover:text-[var(--color-accent)]" />
+                            <Plus className="w-4 h-4 text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)]" />
                           </div>
                         ))}
                       </div>
@@ -277,7 +277,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                               </div>
                             </td>
                             <td className="px-4 py-3">
-                              <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded text-xs font-bold border border-blue-100">{doc.rev}</span>
+                              <span className="bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-0.5 rounded text-xs font-bold border border-[var(--color-border)]">{doc.rev}</span>
                             </td>
                             <td className="px-4 py-3">
                               {doc.status === 'Locked' ? <span className="text-red-500 text-xs font-bold flex items-center"><AlertCircle className="w-3 h-3 mr-1" /> Locked</span> : <span className="text-green-600 text-xs font-bold flex items-center"><CheckCircle2 className="w-3 h-3 mr-1" /> Active</span>}

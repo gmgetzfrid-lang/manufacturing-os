@@ -26,7 +26,7 @@ export function LetterheadPreview({ lh, which, width = 220 }: { lh: Letterhead; 
         <div className="absolute left-0 top-0 origin-top-left" style={{ width: `${lh.page.w}in`, height: `${lh.page.h}in`, transform: `scale(${scale})` }}>
           {/* Built from the checked letterhead: text escaped, pictures only pictures. */}
           {layer && <div className="absolute inset-0" dangerouslySetInnerHTML={{ __html: layerHtml(layer, lh.page) }} />}
-          <div className="absolute border-2 border-dashed border-sky-500/70 bg-sky-50/40"
+          <div className="absolute border-2 border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface-2)]"
             style={{ left: `${m.left}in`, top: `${m.top}in`, right: `${m.right}in`, bottom: `${m.bottom}in` }}>
             <div className="p-[0.15in] space-y-[0.09in]">
               <div className="h-[0.16in] w-1/2 rounded bg-slate-700/70" />

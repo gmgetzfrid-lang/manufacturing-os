@@ -131,7 +131,7 @@ export default function HoldStrip({
           <IsoGuidance topic="hold" />
         </span>
         {holds.length > 0 && (
-          <span className={`text-[10px] font-mono ${holds.length > 0 ? "text-amber-700 bg-amber-50 border-amber-200" : "text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]"} border px-1.5 py-0.5 rounded`}>
+          <span className={`text-[11px] font-mono ${holds.length > 0 ? "text-amber-700 bg-amber-50 border-amber-200" : "text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]"} border px-1.5 py-0.5 rounded`}>
             {holds.length} active
           </span>
         )}
@@ -164,7 +164,7 @@ export default function HoldStrip({
 
       {canEdit && (
         <div className="pt-1 border-t border-[var(--color-border)] space-y-2">
-          <div className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-wider">Place hold</div>
+          <div className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-wider">Place hold</div>
           <div className="flex flex-wrap gap-1.5">
             {PREDEFINED_HOLD_REASONS.map((r) => (
               <span key={r} className="inline-flex items-center gap-0.5">
@@ -277,7 +277,7 @@ function ActiveHoldRow({
             <Lock className="w-3 h-3 text-amber-700 shrink-0" />
             <span className="text-xs font-bold text-amber-900">{hold.reason}</span>
           </div>
-          <div className="mt-1 text-[10px] text-[var(--color-text-muted)] flex items-center gap-2 flex-wrap">
+          <div className="mt-1 text-[11px] text-[var(--color-text-muted)] flex items-center gap-2 flex-wrap">
             <span className="inline-flex items-center gap-0.5">
               <Clock className="w-2.5 h-2.5" />
               {ageDays === 0 ? "today" : `${ageDays}d`}
@@ -296,7 +296,7 @@ function ActiveHoldRow({
             onClick={() => void printCard()}
             disabled={busy}
             title="Print a HOLD card for the field - scanning its QR shows whether this hold is still active"
-            className="text-[10px] font-bold text-red-700 hover:text-red-800 bg-red-50 hover:bg-red-100 border border-red-200 px-1.5 py-1 rounded inline-flex items-center gap-1 transition-colors disabled:opacity-40"
+            className="text-[11px] font-bold text-red-700 hover:text-red-800 bg-red-50 hover:bg-red-100 border border-red-200 px-1.5 py-1 rounded inline-flex items-center gap-1 transition-colors disabled:opacity-40"
           >
             <Printer className="w-3 h-3" /> Card
           </button>
@@ -304,7 +304,7 @@ function ActiveHoldRow({
             <button
               onClick={onStartRelease}
               disabled={busy}
-              className="text-[10px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-1.5 py-1 rounded inline-flex items-center gap-1 transition-colors disabled:opacity-40"
+              className="text-[11px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-1.5 py-1 rounded inline-flex items-center gap-1 transition-colors disabled:opacity-40"
             >
               <Check className="w-3 h-3" /> Release
             </button>
@@ -324,7 +324,7 @@ function ActiveHoldRow({
           <button
             onClick={onConfirmRelease}
             disabled={busy}
-            className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white transition-colors disabled:opacity-40"
+            className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white transition-colors disabled:opacity-40"
           >
             <Check className="w-3 h-3" /> Release
           </button>

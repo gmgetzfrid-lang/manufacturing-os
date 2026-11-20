@@ -31,13 +31,13 @@ export default function FavoritesStrip({
   if (favs.length === 0) return null;
 
   return (
-    <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-gradient-to-b from-amber-50/40 to-white">
+    <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
       <div className="flex items-center gap-2 mb-1.5">
         <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-400" />
-        <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text)]">
+        <span className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text)]">
           My Favorites
         </span>
-        <span className="text-[10px] text-[var(--color-text-faint)]">· {favs.length}</span>
+        <span className="text-[11px] text-[var(--color-text-faint)]">· {favs.length}</span>
       </div>
       <div className="flex gap-2 overflow-x-auto pb-0.5 -mx-0.5 px-0.5">
         {favs.map((d) => (
@@ -47,9 +47,9 @@ export default function FavoritesStrip({
             className="shrink-0 max-w-[14rem] text-left rounded-2xl border border-amber-200 bg-[var(--color-surface)] hover:border-amber-300 hover-lift transition-all p-2 group"
           >
             <div className="flex items-center gap-1.5 mb-0.5">
-              <FileText className="w-3 h-3 text-blue-500 shrink-0" />
+              <FileText className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
               <span className="text-[11px] font-bold text-[var(--color-text)] truncate">{d.documentNumber}</span>
-              {d.rev && <span className="text-[9px] text-[var(--color-text-faint)] shrink-0">Rev {d.rev}</span>}
+              {d.rev && <span className="text-[11px] text-[var(--color-text-faint)] shrink-0">Rev {d.rev}</span>}
               <button
                 onClick={(e) => { e.stopPropagation(); void toggle(d.id); }}
                 className="ml-auto opacity-60 group-hover:opacity-100"
@@ -58,7 +58,7 @@ export default function FavoritesStrip({
                 <Star className="w-3 h-3 text-amber-500 fill-amber-400" />
               </button>
             </div>
-            <div className="text-[10px] text-[var(--color-text-muted)] truncate">{d.title}</div>
+            <div className="text-[11px] text-[var(--color-text-muted)] truncate">{d.title}</div>
           </button>
         ))}
       </div>

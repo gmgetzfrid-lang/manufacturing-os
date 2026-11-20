@@ -510,7 +510,7 @@ export default function PdfRevisionDiff({
             <span className="w-2.5 h-2.5 rounded-sm bg-green-700" /> Added · only in {compareLabel}
           </span>
           {regLabel && (
-            <span className="inline-flex items-center gap-1 text-[10px] text-sky-300" title="Registration warped the base layer (scale + shift) to line up with the compare layer before diffing">
+            <span className="inline-flex items-center gap-1 text-[11px] text-sky-300" title="Registration warped the base layer (scale + shift) to line up with the compare layer before diffing">
               <Crosshair className="w-3 h-3" /> {regLabel}
             </span>
           )}

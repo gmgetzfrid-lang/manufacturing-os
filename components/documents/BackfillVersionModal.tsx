@@ -160,8 +160,8 @@ export default function BackfillVersionModal({
         </div>
 
         {/* Distinction banner — make it impossible to confuse with rev-up */}
-        <div className="px-5 py-3 bg-blue-50 border-b border-blue-200 flex items-start gap-2 text-xs text-blue-900">
-          <Info className="w-4 h-4 mt-0.5 shrink-0 text-blue-600" />
+        <div className="px-5 py-3 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] flex items-start gap-2 text-xs text-[var(--color-text)]">
+          <Info className="w-4 h-4 mt-0.5 shrink-0 text-[var(--color-text-muted)]" />
           <div>
             <div className="font-bold">This is a historical / backfill upload.</div>
             <div className="mt-0.5">
@@ -175,7 +175,7 @@ export default function BackfillVersionModal({
         <div className="p-5 space-y-4">
           {/* File picker */}
           <div>
-            <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">File (PDF) *</label>
+            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">File (PDF) *</label>
             <div
               className={`mt-1 border-2 border-dashed border-[var(--color-border-strong)] rounded-xl p-4 hover:bg-[var(--color-surface-2)] transition-colors cursor-pointer text-center ${fileDrag.ring}`}
               onClick={() => inputRef.current?.click()}
@@ -190,7 +190,7 @@ export default function BackfillVersionModal({
               />
               {file ? (
                 <div className="flex items-center justify-center gap-2 text-sm text-[var(--color-text)]">
-                  <FileText className="w-4 h-4 text-blue-600" />
+                  <FileText className="w-4 h-4 text-[var(--color-text-muted)]" />
                   <span className="font-mono">{file.name}</span>
                   <span className="text-[11px] text-[var(--color-text-muted)] font-mono">({(file.size / 1024).toFixed(0)} KB)</span>
                 </div>
@@ -311,7 +311,7 @@ export default function BackfillVersionModal({
             <button
               type="submit"
               disabled={busy || !file || !revisionLabel.trim() || !changeLog.trim()}
-              className="inline-flex items-center gap-1.5 text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 text-sm font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40"
             >
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowUpFromLine className="w-3.5 h-3.5" />}
               Backfill Revision
@@ -326,7 +326,7 @@ export default function BackfillVersionModal({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">{label}</span>
+      <span className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">{label}</span>
       <div className="mt-1">{children}</div>
     </label>
   );

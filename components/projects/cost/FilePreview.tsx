@@ -55,7 +55,7 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
     <div className="fixed inset-0 z-[400] bg-slate-900/70 backdrop-blur-sm flex items-stretch sm:items-center justify-center sm:p-4" role="dialog" aria-modal="true" aria-label={file.name ?? "File"} onClick={onClose}>
       <div className="w-full sm:max-w-5xl h-full sm:h-[92vh] flex flex-col bg-[var(--color-surface)] sm:rounded-2xl shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-3 sm:px-4 py-2.5 border-b border-[var(--color-border)]">
-          <FileText className="w-4 h-4 shrink-0 text-[var(--color-accent)]" />
+          <FileText className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" />
           <div className="min-w-0 flex-1">
             <div className="text-[13px] font-black text-[var(--color-text)] truncate">{file.name ?? "File"}</div>
             {file.sub && <div className="text-[11.5px] text-[var(--color-text-muted)] truncate">{file.sub}</div>}
@@ -93,7 +93,7 @@ export function PreviewButton({ file, label = "Preview", className = "" }: { fil
   return (
     <>
       <button type="button" onClick={(e) => { e.stopPropagation(); setOpen(true); }} title={`See ${file.name ?? "the file"}`}
-        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10.5px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] ${className}`}>
+        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] ${className}`}>
         <Eye className="w-3 h-3" /> {label}
       </button>
       {open && <FilePreviewModal file={file} onClose={() => setOpen(false)} />}

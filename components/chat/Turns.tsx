@@ -57,9 +57,9 @@ export function UserTurn({ m, mine, onOpenAttachment }: {
           {(focus?.length || inputs) ? (
             <div className="mt-1.5 flex flex-wrap gap-1">
               {focus?.map((f) => (
-                <span key={f} className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-sky-100 dark:bg-sky-950/50 text-sky-800 dark:text-sky-300">{f}</span>
+                <span key={f} className="text-[11px] font-black px-1.5 py-0.5 rounded-md bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]">{f}</span>
               ))}
-              {inputs && <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-indigo-100 dark:bg-indigo-950/50 text-indigo-800 dark:text-indigo-300">{inputs}</span>}
+              {inputs && <span className="text-[11px] font-black px-1.5 py-0.5 rounded-md bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]">{inputs}</span>}
             </div>
           ) : null}
           {m.attachments.length > 0 && (
@@ -67,7 +67,7 @@ export function UserTurn({ m, mine, onOpenAttachment }: {
               {m.attachments.map((a) => <AttachmentCard key={a.id || a.path} a={a} onOpen={() => onOpenAttachment(a)} />)}
             </div>
           )}
-          <div className="mt-1 text-[10px] text-[var(--color-text-faint)] text-right">
+          <div className="mt-1 text-[11px] text-[var(--color-text-faint)] text-right">
             {who} · {relativeTime(m.createdAt)}
           </div>
         </div>
@@ -83,7 +83,7 @@ export function UserTurn({ m, mine, onOpenAttachment }: {
             onClick={() => bubbleRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
             title="Back to the question"
             className="max-w-[70%] inline-flex items-center gap-2 h-8 px-3 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-md text-[12px] text-[var(--color-text)] animate-pop">
-            <span className="shrink-0 text-[10px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">{who}</span>
+            <span className="shrink-0 text-[11px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">{who}</span>
             <span className="truncate">{m.content}</span>
           </button>
         </div>
@@ -193,14 +193,14 @@ export function AssistantTurn({
 
   if (answer.mode === "internet") {
     return (
-      <div className="rounded-2xl border border-sky-200 dark:border-sky-900 bg-sky-50/40 dark:bg-sky-950/10 p-4">
-        <div className="mb-3 flex items-center gap-2 text-[11px] font-bold text-sky-800 dark:text-sky-300">
+      <div className="rounded-2xl border border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] p-4">
+        <div className="mb-3 flex items-center gap-2 text-[11px] font-bold text-[var(--color-text)] dark:text-[var(--color-text)]">
           <Globe className="w-3.5 h-3.5 shrink-0" />
           Internet answer - {answer.liveWeb ? "from a live web search" : "from the model's general knowledge"}, not your controlled documents.
         </div>
         <AnswerView answer={answer.answer} citations={answer.citations} onCite={onCite} />
         <CitationChips citations={answer.citations} onOpen={onCite} />
-        <p className="mt-3 pt-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)]">
+        <p className="mt-3 pt-2 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)]">
           {answer.provider} · {answer.model} · carries no doc-control weight - cross-check before relying on it.
         </p>
       </div>
@@ -210,7 +210,7 @@ export function AssistantTurn({
   return (
     <div>
       {replayed && (
-        <div className="mb-2 flex items-center gap-2 rounded-xl border border-violet-300 dark:border-violet-800 bg-violet-50 dark:bg-violet-950/30 px-3 py-2 text-[11px] font-bold text-violet-800 dark:text-violet-300">
+        <div className="mb-2 flex items-center gap-2 rounded-xl border border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] px-3 py-2 text-[11px] font-bold text-[var(--color-text)] dark:text-[var(--color-text)]">
           <History className="w-3.5 h-3.5 shrink-0" />
           Reused from the team&apos;s record - answered {relativeTime(replayed.createdAt)} ago for {(replayed.userName ?? "someone").split("@")[0]}. No new AI run.
         </div>

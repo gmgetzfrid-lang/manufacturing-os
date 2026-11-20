@@ -93,7 +93,7 @@ export default function SetupChecklist() {
             <Link
               key={s.key}
               href={s.href}
-              className={`flex items-center gap-3 rounded-xl border p-3 transition-colors ${s.done ? "border-emerald-200 bg-emerald-50/60" : "border-[var(--color-border)] bg-[var(--color-surface)] hover:border-orange-300"}`}
+              className={`flex items-center gap-3 rounded-xl border p-3 transition-colors ${s.done ? "border-emerald-200 bg-emerald-50/60" : "border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-border)]"}`}
             >
               {s.done ? <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" /> : <Circle className="w-5 h-5 text-slate-300 shrink-0" />}
               <div className="flex-1 min-w-0">

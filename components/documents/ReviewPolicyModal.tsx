@@ -101,13 +101,13 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
     finally { setBusy(false); }
   };
 
-  const inp = "text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 outline-none focus:border-[var(--color-accent)]";
+  const inp = "text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 outline-none focus:border-[var(--color-border-strong)]";
 
   return (
     <div className="fixed inset-0 z-[520] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4" onClick={onClose}>
       <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3">
-          <CalendarClock className="w-5 h-5 text-[var(--color-accent)]" />
+          <CalendarClock className="w-5 h-5 text-[var(--color-text-muted)]" />
           <div className="flex-1 min-w-0">
             <div className="text-sm font-bold text-[var(--color-text)]">Responsibility &amp; review</div>
             <div className="text-[11px] text-[var(--color-text-muted)] truncate">Applies to every document in this {scopeLabel}{name ? ` · ${name}` : ""}</div>
@@ -139,7 +139,7 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
                   )}
                 </>
               )}
-              <div className="text-[10px] text-[var(--color-text-muted)]">The owner gets this scope&apos;s notifications and review reminders; if they fall behind, Admin/DocCtrl are escalated.</div>
+              <div className="text-[11px] text-[var(--color-text-muted)]">The owner gets this scope&apos;s notifications and review reminders; if they fall behind, Admin/DocCtrl are escalated.</div>
             </div>
 
             <label className="flex items-center gap-2 text-sm text-[var(--color-text)]">

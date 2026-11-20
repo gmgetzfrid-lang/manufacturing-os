@@ -71,7 +71,7 @@ export default function ColumnHeaderMenu({ onAdd, isController }: ColumnHeaderMe
                     onClick={() => { onAdd(t.type); setIsOpen(false); }}
                     className="w-full flex items-center px-3 py-2 text-sm text-[var(--color-text)] rounded-lg hover:bg-[var(--color-surface-2)] transition-colors group"
                   >
-                    <div className="mr-3 p-1.5 bg-[var(--color-surface-2)] rounded-md text-[var(--color-text-faint)] group-hover:text-blue-600 group-hover:bg-blue-50">
+                    <div className="mr-3 p-1.5 bg-[var(--color-surface-2)] rounded-md text-[var(--color-text-faint)] group-hover:text-[var(--color-text)] group-hover:bg-[var(--color-surface-2)]">
                       <Icon className="w-4 h-4" />
                     </div>
                     {t.label}
@@ -82,7 +82,7 @@ export default function ColumnHeaderMenu({ onAdd, isController }: ColumnHeaderMe
           </div>
           <div className="border-t border-[var(--color-border)] p-2 bg-[var(--color-surface-2)]">
              <button 
-               className="w-full text-center text-xs font-bold text-[var(--color-text-muted)] hover:text-blue-600 py-1"
+               className="w-full text-center text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent-hover)] py-1"
                onClick={() => { onAdd('text'); setIsOpen(false); }} // Should trigger full wizard step 1 ideally, but text is fine default
              >
                More...

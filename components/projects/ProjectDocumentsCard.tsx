@@ -25,8 +25,8 @@ interface LinkedDoc {
 }
 
 const SOURCE_BADGE: Record<string, { label: string; cls: string; hint: string }> = {
-  checkout: { label: "via checkout", cls: "bg-sky-500/10 text-sky-700 dark:text-sky-300 border-sky-500/30", hint: "Linked automatically when someone checked it out under this project" },
-  manual: { label: "attached", cls: "bg-violet-500/10 text-violet-700 dark:text-violet-300 border-violet-500/30", hint: "Attached by hand (or adopted from intake)" },
+  checkout: { label: "via checkout", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)] border-[var(--color-border-strong)]", hint: "Linked automatically when someone checked it out under this project" },
+  manual: { label: "attached", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)] border-[var(--color-border-strong)]", hint: "Attached by hand (or adopted from intake)" },
 };
 
 export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid, userEmail }: {
@@ -146,9 +146,9 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
   return (
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
-        <FileStack className="w-4 h-4 text-[var(--color-accent)]" />
+        <FileStack className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-sm font-bold text-[var(--color-text)]">Project documents</span>
-        <span className="text-[10px] font-mono text-[var(--color-text-muted)]">{rows.length}</span>
+        <span className="text-[11px] font-mono text-[var(--color-text-muted)]">{rows.length}</span>
         {canManage && (
           <button
             onClick={() => { setAttachOpen((v) => !v); setQ(""); setResults([]); }}
@@ -173,7 +173,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
               className="h-8 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-8 pr-2 text-xs focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
             />
           </div>
-          {searching && <div className="mt-1.5 text-[10px] text-[var(--color-text-faint)]">Searching…</div>}
+          {searching && <div className="mt-1.5 text-[11px] text-[var(--color-text-faint)]">Searching…</div>}
           {results.length > 0 && (
             <ul className="mt-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)] overflow-hidden">
               {results.filter((r) => !rows.some((x) => x.docId === r.id)).map((r) => (
@@ -207,14 +207,14 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs font-bold text-[var(--color-text)] truncate">{r.label}</span>
-                    {r.rev && <span className="text-[10px] font-mono text-[var(--color-text-muted)]">Rev {r.rev}</span>}
-                    {r.status && <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{r.status}</span>}
-                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${badge.cls}`} title={badge.hint}>{badge.label}</span>
+                    {r.rev && <span className="text-[11px] font-mono text-[var(--color-text-muted)]">Rev {r.rev}</span>}
+                    {r.status && <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{r.status}</span>}
+                    <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded border ${badge.cls}`} title={badge.hint}>{badge.label}</span>
                   </div>
-                  {r.lastSeenAt && <div className="text-[10px] text-[var(--color-text-faint)] mt-0.5">last activity {new Date(r.lastSeenAt).toLocaleDateString()}</div>}
+                  {r.lastSeenAt && <div className="text-[11px] text-[var(--color-text-faint)] mt-0.5">last activity {new Date(r.lastSeenAt).toLocaleDateString()}</div>}
                 </div>
                 {r.libraryId && (
-                  <Link href={`/documents/${r.libraryId}?doc=${r.docId}`} className="shrink-0 inline-flex items-center gap-1 text-[10px] font-bold text-[var(--color-accent)] hover:underline">
+                  <Link href={`/documents/${r.libraryId}?doc=${r.docId}`} className="shrink-0 inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:underline">
                     <ExternalLink className="w-3 h-3" /> Open
                   </Link>
                 )}

@@ -379,7 +379,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
       ) : (
         <div className="p-3 space-y-2">
           <div className="flex items-center gap-2">
-            <NotebookPen className="w-4 h-4 text-[var(--color-accent)]" />
+            <NotebookPen className="w-4 h-4 text-[var(--color-text-muted)]" />
             <span className="flex-1 text-[13px] font-bold text-[var(--color-text)]">Update by note</span>
             <button type="button" onClick={() => { recRef.current?.stop(); setOpen(false); }} aria-label="Close" className="p-1 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
           </div>
@@ -453,7 +453,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
                 {parts.map((p) => {
                   const on = !skip.has(p.key);
                   return (
-                    <label key={p.key} className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-semibold cursor-pointer ${on ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] line-through"}`}>
+                    <label key={p.key} className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-semibold cursor-pointer ${on ? "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] line-through"}`}>
                       <input type="checkbox" checked={on} onChange={() => setSkip((s0) => { const n = new Set(s0); if (n.has(p.key)) n.delete(p.key); else n.add(p.key); return n; })} className="h-3.5 w-3.5 accent-[var(--color-accent)]" />
                       {partLabel(p.window, tz)}
                     </label>
@@ -467,7 +467,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
                     {found.map((f) => {
                       const on = !omit.has(f.kind);
                       return (
-                        <label key={f.kind} className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 cursor-pointer ${on ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] font-semibold text-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`}>
+                        <label key={f.kind} className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 cursor-pointer ${on ? "border-[var(--color-text)] bg-[var(--color-surface-2)] font-semibold text-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`}>
                           <input type="checkbox" checked={on} onChange={() => flipOmit(f.kind)} className="h-3.5 w-3.5 accent-[var(--color-accent)]" />
                           {SECTION_WORD[f.kind]} <span className="opacity-70">· {f.lines}</span>
                         </label>
@@ -667,7 +667,7 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
                   </button>
                 ))}
                 {onAll && options.length > 1 && (
-                  <button type="button" onClick={onAll} className="rounded-lg border border-dashed border-[var(--color-accent)] px-2.5 py-1.5 text-[12px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]">
+                  <button type="button" onClick={onAll} className="rounded-lg border border-dashed border-[var(--color-accent)] px-2.5 py-1.5 text-[12px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]">
                     All {options.length} of these
                   </button>
                 )}
@@ -690,7 +690,7 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
             {([["start", "Started"], ["progress", "%"], ["done", "Done"], ["hold", "On hold"], ["resume", "Back on"], ["comment", "Comment only"]] as const).map(([a, label]) => (
               <button key={a} type="button" aria-pressed={l.action === a}
                 onClick={() => onEdit({ action: a, expected: false, ...(a === "progress" && l.action !== "progress" ? { percent: null, percentFrom: "said" } : {}) })}
-                className={`rounded-md border px-2 py-0.5 text-[11.5px] font-semibold ${l.action === a ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{label}</button>
+                className={`rounded-md border px-2 py-0.5 text-[11.5px] font-semibold ${l.action === a ? "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{label}</button>
             ))}
           </div>
           {l.action === "progress" && step && l.percent != null && l.percentFrom !== "guess" && (

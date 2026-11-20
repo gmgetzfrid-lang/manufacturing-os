@@ -487,7 +487,7 @@ export default function PermissionsDrawer(props: {
               </div>
               <button
                 onClick={() => setShowBulkSelector(!showBulkSelector)}
-                className="text-xs flex items-center bg-blue-600/20 text-blue-300 px-2 py-1 rounded-lg hover:bg-blue-600/30 transition-colors"
+                className="text-xs flex items-center bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-2 py-1 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors"
               >
                 <Users className="w-3 h-3 mr-1" />
                 {showBulkSelector ? "Manual Entry" : "Use Directory Tree"}

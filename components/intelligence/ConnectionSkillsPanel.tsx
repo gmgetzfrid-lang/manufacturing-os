@@ -86,7 +86,7 @@ export default function ConnectionSkillsPanel() {
     <div className="mb-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
       <button type="button" onClick={() => setOpen((v) => !v)}
         className="w-full flex items-center gap-2.5 px-3.5 py-3 text-left">
-        <Puzzle className="w-4 h-4 text-violet-600 shrink-0" />
+        <Puzzle className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
         <div className="flex-1 min-w-0">
           <div className="text-xs font-black text-[var(--color-text)]">Connection skills</div>
           <div className="text-[11px] text-[var(--color-text-muted)]">
@@ -117,13 +117,13 @@ export default function ConnectionSkillsPanel() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="text-xs font-black text-[var(--color-text)]">{r.name}</span>
-                      <span className="px-1.5 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[9px] font-black uppercase tracking-wide text-[var(--color-text-muted)]">
+                      <span className="px-1.5 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[11px] font-black uppercase tracking-wide text-[var(--color-text-muted)]">
                         {KIND_LABELS[r.kind] ?? r.kind}
                       </span>
                       {r.builtin_key ? (
-                        <span className="text-[9px] font-black uppercase tracking-wide text-violet-600">Built-in</span>
+                        <span className="text-[11px] font-black uppercase tracking-wide text-[var(--color-text)]">Built-in</span>
                       ) : (
-                        <span className="inline-flex items-center gap-0.5 text-[9px] font-black uppercase tracking-wide text-[var(--color-text-faint)]">
+                        <span className="inline-flex items-center gap-0.5 text-[11px] font-black uppercase tracking-wide text-[var(--color-text-faint)]">
                           {r.visibility === "org" ? <Users className="w-2.5 h-2.5" /> : <Lock className="w-2.5 h-2.5" />}
                           {r.visibility === "org" ? "Org-wide" : "Private"}
                         </span>
@@ -135,7 +135,7 @@ export default function ConnectionSkillsPanel() {
                     {(r.config?.patterns?.length ?? 0) > 0 && (
                       <div className="flex items-center gap-1 flex-wrap mt-1">
                         {r.config.patterns!.slice(0, 4).map((p) => (
-                          <code key={p} className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[10px] font-mono text-[var(--color-text)]">{p}</code>
+                          <code key={p} className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[11px] font-mono text-[var(--color-text)]">{p}</code>
                         ))}
                       </div>
                     )}
@@ -158,7 +158,7 @@ export default function ConnectionSkillsPanel() {
                     {mayManage && (
                       <button type="button" onClick={() => void toggle(r)} disabled={busyId === r.id}
                         title={r.enabled ? "Disable - the engine skips this skill" : "Enable"}
-                        className={`inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-[10px] font-black border transition-colors ${r.enabled
+                        className={`inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-[11px] font-black border transition-colors ${r.enabled
                           ? "border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40"
                           : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`}>
                         {busyId === r.id ? <Loader2 className="w-3 h-3 animate-spin" />
@@ -174,11 +174,11 @@ export default function ConnectionSkillsPanel() {
 
           <div className="flex items-center gap-1.5">
             <button type="button" onClick={() => setWizardOpen(true)}
-              className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border-2 border-dashed border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text-muted)] hover:border-violet-400 hover:text-violet-700 transition-colors">
+              className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border-2 border-dashed border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-accent-hover)] transition-colors">
               <Plus className="w-3.5 h-3.5" /> New skill - teach the engine your numbering convention
             </button>
             <Link href="/intelligence/skills"
-              className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-[11px] font-black text-violet-700 border border-violet-300 dark:border-violet-800 hover:bg-violet-50 dark:hover:bg-violet-950/40">
+              className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-[11px] font-black text-[var(--color-text)] border border-[var(--color-border)] dark:border-[var(--color-border)] hover:bg-[var(--color-surface-2)] dark:hover:bg-[var(--color-surface-2)]">
               Skill library <ArrowUpRight className="w-3.5 h-3.5" />
             </Link>
           </div>

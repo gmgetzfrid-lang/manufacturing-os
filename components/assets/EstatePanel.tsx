@@ -32,7 +32,7 @@ export default function EstatePanel({ orgId, assetId, tag }: { orgId: string; as
   return (
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-hidden mb-5">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between">
-        <div className="text-sm font-black text-[var(--color-text)] inline-flex items-center gap-2"><Waypoints className="w-4 h-4 text-sky-600" /> Across the estate</div>
+        <div className="text-sm font-black text-[var(--color-text)] inline-flex items-center gap-2"><Waypoints className="w-4 h-4 text-[var(--color-text-muted)]" /> Across the estate</div>
         <Link href={`/documents/graph?q=${encodeURIComponent(tag)}`} className="text-xs font-bold text-[var(--color-accent)] hover:underline">Explore on the map →</Link>
       </div>
       <div className="p-4 space-y-4">

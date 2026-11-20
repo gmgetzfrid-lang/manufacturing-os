@@ -78,7 +78,7 @@ export default function DateTimePicker({ label, value, onChange, tz, times, plan
   const iso = time ? fromDateTimeInput(value, tz) : null;
   const t = iso ? Date.parse(iso) : NaN;
   const sh = Number.isFinite(t) ? shiftAt(t, tz, times) : null;
-  const chip = (on: boolean, empty: boolean) => `inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border text-[13px] font-semibold disabled:opacity-50 ${on ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface)]" : empty ? "border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"}`;
+  const chip = (on: boolean, empty: boolean) => `inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border text-[13px] font-semibold disabled:opacity-50 ${on ? "border-[var(--color-border-strong)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface)]" : empty ? "border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"}`;
   const small = "h-7 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-semibold hover:bg-[var(--color-surface-2)] disabled:opacity-50";
 
   return (
@@ -293,7 +293,7 @@ function Month({ value, today, planned, onPick, future, earliest }: { value: str
         <span className="text-[13px] font-bold">{new Date(Date.UTC(y, mo, 1)).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" })}</span>
         <button type="button" aria-label="Next month" disabled={latest} onClick={() => setYm(ym + 1)} className={nav}><ChevronRight className="w-4 h-4" /></button>
       </div>
-      <div className="grid grid-cols-7 text-center text-[10.5px] font-semibold text-[var(--color-text-muted)]">
+      <div className="grid grid-cols-7 text-center text-[11px] font-semibold text-[var(--color-text-muted)]">
         {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => <span key={i} className="py-1">{d}</span>)}
       </div>
       <div className="grid grid-cols-7 gap-y-0.5">
@@ -304,12 +304,12 @@ function Month({ value, today, planned, onPick, future, earliest }: { value: str
             <button key={k} type="button" disabled={later} aria-pressed={on} aria-label={dayWords(k)} onClick={() => onPick(k)}
               className={`relative mx-auto w-9 h-9 rounded-full text-[13px] tabular-nums ${on ? "bg-[var(--color-text)] text-[var(--color-surface)] font-bold" : later ? "text-[var(--color-text-faint)] opacity-40" : `hover:bg-[var(--color-surface-2)] ${k === today ? "font-bold text-[var(--color-accent)] ring-1 ring-inset ring-[var(--color-accent)]" : ""}`}`}>
               {i + 1}
-              {k === planned && <span title="Planned" className={`absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full ${on ? "bg-[var(--color-accent-fg)]" : "bg-[var(--color-accent)]"}`} />}
+              {k === planned && <span title="Planned" className={`absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full ${on ? "bg-[var(--color-accent-fg)]" : "bg-[var(--color-surface-2)]"}`} />}
             </button>
           );
         })}
       </div>
-      {planned && <div className="mt-1 text-[10.5px] text-[var(--color-text-muted)]"><span className="inline-block w-1 h-1 rounded-full bg-[var(--color-accent)] align-middle mr-1" />planned day</div>}
+      {planned && <div className="mt-1 text-[11px] text-[var(--color-text-muted)]"><span className="inline-block w-1 h-1 rounded-full bg-[var(--color-surface-2)] align-middle mr-1" />planned day</div>}
     </div>
   );
 }

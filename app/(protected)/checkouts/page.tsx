@@ -296,11 +296,11 @@ function ProjectGroup({ project, items }: { project: Project | null; items: Chec
   return (
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
       <div className={`px-5 py-3 border-b border-[var(--color-border)] flex items-center justify-between ${
-        project ? "bg-[var(--color-accent-soft)]" : "bg-[var(--color-surface-2)]"
+        project ? "bg-[var(--color-surface-2)]" : "bg-[var(--color-surface-2)]"
       }`}>
         <div className="flex items-center gap-3 min-w-0">
           {project ? (
-            <Briefcase className="w-5 h-5 text-[var(--color-accent)] shrink-0" />
+            <Briefcase className="w-5 h-5 text-[var(--color-text-muted)] shrink-0" />
           ) : (
             <Clock className="w-5 h-5 text-[var(--color-text-faint)] shrink-0" />
           )}
@@ -312,7 +312,7 @@ function ProjectGroup({ project, items }: { project: Project | null; items: Chec
             ) : (
               <div className="text-sm font-black text-[var(--color-text)]">Ad-hoc checkouts</div>
             )}
-            <div className="text-[10px] text-[var(--color-text-muted)] flex items-center gap-2 mt-0.5">
+            <div className="text-[11px] text-[var(--color-text-muted)] flex items-center gap-2 mt-0.5">
               {project ? (
                 <>
                   <span>{project.ownerUserName}</span>
@@ -325,7 +325,7 @@ function ProjectGroup({ project, items }: { project: Project | null; items: Chec
             </div>
           </div>
         </div>
-        <span className="text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface)] border border-[var(--color-border)] px-2 py-0.5 rounded-full">
+        <span className="text-[11px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface)] border border-[var(--color-border)] px-2 py-0.5 rounded-full">
           {items.length} file{items.length === 1 ? "" : "s"}
         </span>
       </div>
@@ -357,13 +357,13 @@ function CheckoutRow({ row, showProject }: { row: CheckoutWithContext; showProje
           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
             <span className="font-mono text-sm font-bold text-[var(--color-text)] truncate">{row.docNumber || "-"}</span>
             <span className="text-xs text-[var(--color-text-muted)] truncate">{row.docTitle}</span>
-            {row.libraryName && <span className="text-[10px] text-[var(--color-text-faint)] truncate">in {row.libraryName}</span>}
+            {row.libraryName && <span className="text-[11px] text-[var(--color-text-faint)] truncate">in {row.libraryName}</span>}
           </div>
           <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[var(--color-text-muted)]">
             <span className="inline-flex items-center gap-1">
               <UserIcon className="w-3 h-3" /><b className="text-[var(--color-text)] font-medium">{row.userName}</b>
             </span>
-            <span className="inline-flex items-center gap-1 uppercase text-[10px] font-bold bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{row.mode}</span>
+            <span className="inline-flex items-center gap-1 uppercase text-[11px] font-bold bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{row.mode}</span>
             <span className="inline-flex items-center gap-1">
               <Clock className="w-3 h-3" />since {formatRelative(row.startedAt)}
             </span>
@@ -509,7 +509,7 @@ function OverlapCard({
             onClick={doNudge}
             disabled={nudging || nudged}
             title="Send everyone here an in-app heads-up to coordinate"
-            className={`shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold transition-colors ${
+            className={`shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold transition-colors ${
               nudged ? "bg-emerald-100 text-emerald-700"
                      : "bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] disabled:opacity-60"
             }`}

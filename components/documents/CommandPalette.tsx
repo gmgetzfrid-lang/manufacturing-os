@@ -239,7 +239,7 @@ export default function CommandPalette({
             placeholder="Search documents, folders, or actions…"
             className="flex-1 bg-transparent text-[var(--color-text)] text-sm placeholder-[var(--color-text-faint)] focus:outline-none"
           />
-          <kbd className="text-[10px] font-mono text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded">ESC</kbd>
+          <kbd className="text-[11px] font-mono text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded">ESC</kbd>
         </div>
 
         {/* Results */}
@@ -287,18 +287,18 @@ export default function CommandPalette({
                   onClick={() => execute(item)}
                   onMouseEnter={() => setActiveIdx(idx)}
                   className={`w-full flex items-center gap-3 px-4 py-2 text-left transition-colors ${
-                    active ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]" : "hover:bg-[var(--color-surface-2)]"
+                    active ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "hover:bg-[var(--color-surface-2)]"
                   }`}
                 >
                   <div
                     className={`w-7 h-7 rounded-md flex items-center justify-center shrink-0 ${
-                      active ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"
+                      active ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"
                     }`}
                   >
                     <Icon className="w-3.5 h-3.5" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className={`text-sm font-medium truncate ${active ? "text-[var(--color-accent)]" : "text-[var(--color-text)]"}`}>
+                    <div className={`text-sm font-medium truncate ${active ? "text-[var(--color-text)]" : "text-[var(--color-text)]"}`}>
                       {primary}
                     </div>
                     {secondary && (
@@ -306,7 +306,7 @@ export default function CommandPalette({
                     )}
                   </div>
                   <div className="shrink-0 flex items-center gap-2">
-                    <span className="text-[9px] font-bold text-[var(--color-text-faint)] uppercase tracking-wider">{kindLabel}</span>
+                    <span className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase tracking-wider">{kindLabel}</span>
                     {active && <CornerDownLeft className="w-3 h-3 text-[var(--color-text-muted)]" />}
                   </div>
                 </button>
@@ -316,7 +316,7 @@ export default function CommandPalette({
         </div>
 
         {/* Footer hint */}
-        <div className="px-4 py-2 border-t border-[var(--color-border)] flex items-center justify-between text-[10px] text-[var(--color-text-muted)]">
+        <div className="px-4 py-2 border-t border-[var(--color-border)] flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1">
               <kbd className="font-mono bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1 rounded">↑</kbd>

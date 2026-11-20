@@ -98,20 +98,20 @@ export function DailyBrief({ data }: { data: InboxSnapshot }) {
     : `You have ${sentences[0]}${sentences.length > 1 ? `, plus ${sentences.length - 1} more thing${sentences.length - 1 === 1 ? "" : "s"} below` : ""}.`;
 
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-gradient-to-br from-[var(--color-surface)] to-[var(--color-surface-2)] shadow-sm p-5">
+    <div className="rounded-2xl border border-[var(--color-border)] shadow-sm p-5 bg-[var(--color-surface-2)]">
       <div className="flex items-start gap-3">
-        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-orange-700 flex items-center justify-center shadow-sm shrink-0">
+        <div className="w-10 h-10 rounded-xl flex items-center justify-center shadow-sm shrink-0 bg-[var(--color-text)]">
           <Zap className="w-5 h-5 text-[var(--color-text)]" />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <h2 className="text-sm font-black uppercase tracking-widest text-[var(--color-text-muted)]">Daily brief</h2>
-            {urgent > 0 && <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-rose-600 bg-rose-50 border border-rose-100 rounded-full px-2 py-0.5">{urgent} urgent</span>}
+            {urgent > 0 && <span className="inline-flex items-center gap-1 text-[11px] font-black uppercase tracking-wider text-rose-600 bg-rose-50 border border-rose-100 rounded-full px-2 py-0.5">{urgent} urgent</span>}
           </div>
           <p className="text-sm text-[var(--color-text-faint)] mt-1 leading-relaxed">{narrative}</p>
           {next && (
             <Link href={next.href} className="inline-flex items-center gap-1.5 mt-3 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-bold hover:bg-[var(--color-accent-hover)] transition-colors">
-              <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-accent)]">Start here</span>
+              <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text)]">Start here</span>
               {next.label}
               <ChevronRight className="w-3.5 h-3.5" />
             </Link>

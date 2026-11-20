@@ -48,8 +48,8 @@ function ruleCount(acl: AccessControl | null): number {
 }
 
 function VisBadge({ v }: { v: string }) {
-  if (v === "private") return <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-300 text-[10px] font-bold"><Lock className="w-2.5 h-2.5" /> private</span>;
-  if (v === "hidden") return <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-[10px] font-bold"><EyeOff className="w-2.5 h-2.5" /> hidden</span>;
+  if (v === "private") return <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-300 text-[11px] font-bold"><Lock className="w-2.5 h-2.5" /> private</span>;
+  if (v === "hidden") return <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-[11px] font-bold"><EyeOff className="w-2.5 h-2.5" /> hidden</span>;
   return null;
 }
 
@@ -121,13 +121,13 @@ export default function PermissionsConsolePage() {
       <span className="text-sm font-medium text-[var(--color-text)] truncate">{node.name}</span>
       <VisBadge v={node.visibility} />
       {ruleCount(node.acl) > 0 && (
-        <span className="text-[10px] font-bold text-[var(--color-text-muted)]">{ruleCount(node.acl)} rule{ruleCount(node.acl) === 1 ? "" : "s"}</span>
+        <span className="text-[11px] font-bold text-[var(--color-text-muted)]">{ruleCount(node.acl)} rule{ruleCount(node.acl) === 1 ? "" : "s"}</span>
       )}
       <button
         onClick={() => openDrawer(nodeType, node, node.name, chain)}
         className="ml-auto inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[11px] font-bold text-[var(--color-text)] hover:border-[var(--color-accent-ring)]"
       >
-        <KeyRound className="w-3 h-3 text-[var(--color-accent)]" /> {canEdit ? "Edit permissions" : "View permissions"}
+        <KeyRound className="w-3 h-3 text-[var(--color-text-muted)]" /> {canEdit ? "Edit permissions" : "View permissions"}
       </button>
     </div>
   );
@@ -150,7 +150,7 @@ export default function PermissionsConsolePage() {
       {/* ── Content permissions: the real editor ── */}
       <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] mb-5 overflow-hidden">
         <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
-          <KeyRound className="w-4 h-4 text-[var(--color-accent)]" />
+          <KeyRound className="w-4 h-4 text-[var(--color-text-muted)]" />
           <span className="text-base font-bold text-[var(--color-text)]">Content permissions</span>
           <span className="text-xs text-[var(--color-text-muted)]">every library → folder → document; deny beats allow; child rules can cut inheritance</span>
         </div>
@@ -165,14 +165,14 @@ export default function PermissionsConsolePage() {
                 <summary className="cursor-pointer list-none flex items-center gap-2 py-2 select-none">
                   <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)] transition-transform group-open/lib:rotate-90" />
                   <span className="text-sm font-bold text-[var(--color-text)]">{lib.name}</span>
-                  <span className="text-[10px] text-[var(--color-text-faint)]">library</span>
+                  <span className="text-[11px] text-[var(--color-text-faint)]">library</span>
                   <VisBadge v={lib.visibility} />
-                  {ruleCount(lib.acl) > 0 && <span className="text-[10px] font-bold text-[var(--color-text-muted)]">{ruleCount(lib.acl)} rules</span>}
+                  {ruleCount(lib.acl) > 0 && <span className="text-[11px] font-bold text-[var(--color-text-muted)]">{ruleCount(lib.acl)} rules</span>}
                   <button
                     onClick={(e) => { e.preventDefault(); openDrawer("library", lib, lib.name, []); }}
                     className="ml-auto inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[11px] font-bold hover:border-[var(--color-accent-ring)]"
                   >
-                    <KeyRound className="w-3 h-3 text-[var(--color-accent)]" /> {canEdit ? "Edit permissions" : "View permissions"}
+                    <KeyRound className="w-3 h-3 text-[var(--color-text-muted)]" /> {canEdit ? "Edit permissions" : "View permissions"}
                   </button>
                 </summary>
                 <div className="ml-5 border-l border-[var(--color-border)] pl-2 pb-1">
@@ -183,19 +183,19 @@ export default function PermissionsConsolePage() {
                         <FolderOpen className="w-3.5 h-3.5 text-amber-500" />
                         <span className="text-sm font-medium text-[var(--color-text)]">{f.name}</span>
                         <VisBadge v={f.visibility} />
-                        {ruleCount(f.acl) > 0 && <span className="text-[10px] font-bold text-[var(--color-text-muted)]">{ruleCount(f.acl)} rules</span>}
+                        {ruleCount(f.acl) > 0 && <span className="text-[11px] font-bold text-[var(--color-text-muted)]">{ruleCount(f.acl)} rules</span>}
                         <button
                           onClick={(e) => { e.preventDefault(); openDrawer("collection", f, f.name, [lib.acl ?? undefined]); }}
                           className="ml-auto inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[11px] font-bold hover:border-[var(--color-accent-ring)]"
                         >
-                          <KeyRound className="w-3 h-3 text-[var(--color-accent)]" /> {canEdit ? "Edit" : "View"}
+                          <KeyRound className="w-3 h-3 text-[var(--color-text-muted)]" /> {canEdit ? "Edit" : "View"}
                         </button>
                       </summary>
                       <div className="ml-5">
                         {loadingDocsFor === f.id && <div className="py-2 text-xs text-[var(--color-text-muted)]"><Loader2 className="w-3 h-3 animate-spin inline mr-1" />Loading documents…</div>}
                         {(docsByFolder.get(f.id) ?? []).map((d) =>
                           nodeRow(d, "document", [lib.acl ?? undefined, f.acl ?? undefined],
-                            <FileText className="w-3.5 h-3.5 text-blue-500 shrink-0" />, ""),
+                            <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />, ""),
                         )}
                         {docsByFolder.has(f.id) && (docsByFolder.get(f.id) ?? []).length === 0 && (
                           <div className="py-1.5 text-[11px] italic text-[var(--color-text-faint)]">No documents directly in this folder.</div>

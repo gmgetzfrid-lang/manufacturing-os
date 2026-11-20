@@ -66,8 +66,8 @@ export default function MarkupRequestModal({
     <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
-          <div className="p-2 bg-purple-100 rounded-lg">
-            <MessageSquare className="w-5 h-5 text-purple-700" />
+          <div className="p-2 bg-[var(--color-surface-2)] rounded-lg">
+            <MessageSquare className="w-5 h-5 text-[var(--color-text-muted)]" />
           </div>
           <div className="flex-1">
             <div className="text-sm font-black text-[var(--color-text)]">Request markups</div>
@@ -86,7 +86,7 @@ export default function MarkupRequestModal({
             The holder can decline, share their current markup PDF, or upload a stamped copy in response.
           </p>
           <div>
-            <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Message *</label>
+            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Message *</label>
             <textarea
               value={message}
               onChange={(e) => setMessage(e.target.value)}

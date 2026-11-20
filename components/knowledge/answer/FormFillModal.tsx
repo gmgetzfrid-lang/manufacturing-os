@@ -89,7 +89,7 @@ export default function FormFillModal({ orgId, documentId, formName, question, a
           <>
             {draft.notes && (
               <div className="flex items-start gap-2 rounded-lg bg-[var(--color-surface-2)] px-3 py-2.5 text-[13px] text-[var(--color-text)]">
-                <Sparkles className="w-4 h-4 mt-0.5 shrink-0 text-orange-600" /> {draft.notes}
+                <Sparkles className="w-4 h-4 mt-0.5 shrink-0 text-[var(--color-text-muted)]" /> {draft.notes}
               </div>
             )}
             {missing.length > 0 && (
@@ -110,7 +110,7 @@ export default function FormFillModal({ orgId, documentId, formName, question, a
         <span className="mr-auto text-[11px] text-[var(--color-text-muted)]">Review every field before you submit - you own what&apos;s on this form.</span>
         {draft && (
           <button type="button" onClick={() => void copyAll()}
-            className="inline-flex items-center gap-1.5 text-[13px] font-bold px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-orange-400">
+            className="inline-flex items-center gap-1.5 text-[13px] font-bold px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-[var(--color-accent)]">
             {copied ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />} {copied ? "Copied" : "Copy as text"}
           </button>
         )}
@@ -130,18 +130,18 @@ function FieldInput({ field: f, value, onChange, needsYou }: {
   const ring = needsYou
     ? "border-amber-400 dark:border-amber-700 bg-amber-50/40 dark:bg-amber-950/10"
     : "border-[var(--color-border)] bg-[var(--color-surface)]";
-  const base = `w-full rounded-lg border px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-orange-400 ${ring}`;
+  const base = `w-full rounded-lg border px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-border-strong)] ${ring}`;
   return (
     <div>
       <label htmlFor={id} className="flex items-center gap-2 text-[12px] font-bold text-[var(--color-text-muted)] mb-1">
         {f.label}
-        {needsYou && <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">needs you</span>}
+        {needsYou && <span className="text-[11px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">needs you</span>}
       </label>
       {f.kind === "long" ? (
         <textarea id={id} value={value} onChange={(e) => onChange(e.target.value)} rows={Math.min(14, Math.max(4, Math.ceil(value.length / 90)))} className={`${base} leading-relaxed`} />
       ) : f.kind === "check" ? (
         <label className="inline-flex items-center gap-2 text-sm text-[var(--color-text)]">
-          <input id={id} type="checkbox" checked={/^(y|yes|true|x|checked|on|1)$/i.test(value)} onChange={(e) => onChange(e.target.checked ? "Yes" : "")} className="w-4 h-4 accent-orange-600" />
+          <input id={id} type="checkbox" checked={/^(y|yes|true|x|checked|on|1)$/i.test(value)} onChange={(e) => onChange(e.target.checked ? "Yes" : "")} className="w-4 h-4 accent-[var(--color-text)]" />
           {f.label}
         </label>
       ) : f.kind === "choice" && f.options && f.options.length > 0 ? (

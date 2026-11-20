@@ -337,10 +337,10 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
         {!query && idHit && (!guessHit || guessHit.id !== idHit.id) && (
           <div className="space-y-2" data-id-hit>
             <button type="button" disabled={!!busy} onClick={() => void link(idHit)}
-              className="w-full flex items-center gap-2 rounded-lg border-2 border-[var(--color-accent)] bg-[var(--color-accent-soft)] px-3 min-h-12 text-left">
-              <span className="text-[12px] font-semibold text-[var(--color-accent)] shrink-0">From its ID</span>
+              className="w-full flex items-center gap-2 rounded-lg border-2 border-[var(--color-accent)] bg-[var(--color-surface-2)] px-3 min-h-12 text-left">
+              <span className="text-[12px] font-semibold text-[var(--color-text)] shrink-0">From its ID</span>
               <AssetText a={idHit} />
-              {busy === idHit.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4 text-[var(--color-accent)]" />}
+              {busy === idHit.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4 text-[var(--color-text-muted)]" />}
             </button>
             {twoAnswers && guessHit && (
               <p className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2.5 text-[12.5px] text-amber-900 dark:text-amber-200" data-two-answers>
@@ -366,10 +366,10 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
         )}
         {!query && guessHit && (
           <button type="button" disabled={!!busy} onClick={() => void link(guessHit)}
-            className="w-full flex items-center gap-2 rounded-lg border-2 border-[var(--color-accent)] bg-[var(--color-accent-soft)] px-3 min-h-12 text-left">
-            <span className="text-[12px] font-semibold text-[var(--color-accent)] shrink-0">From its name</span>
+            className="w-full flex items-center gap-2 rounded-lg border-2 border-[var(--color-accent)] bg-[var(--color-surface-2)] px-3 min-h-12 text-left">
+            <span className="text-[12px] font-semibold text-[var(--color-text)] shrink-0">From its name</span>
             <AssetText a={guessHit} />
-            {busy === guessHit.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4 text-[var(--color-accent)]" />}
+            {busy === guessHit.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4 text-[var(--color-text-muted)]" />}
           </button>
         )}
         <ul className="max-h-[42vh] overflow-y-auto rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
@@ -377,10 +377,10 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
             const on = current?.assetId === a.id;
             return (
               <li key={a.id}>
-                <button type="button" disabled={!!busy} onClick={() => void link(a)} className={`w-full flex items-center gap-2 px-3 min-h-11 text-left hover:bg-[var(--color-surface-2)] ${on ? "bg-[var(--color-accent-soft)]" : ""}`}>
+                <button type="button" disabled={!!busy} onClick={() => void link(a)} className={`w-full flex items-center gap-2 px-3 min-h-11 text-left hover:bg-[var(--color-surface-2)] ${on ? "bg-[var(--color-surface-2)]" : ""}`}>
                   <AssetText a={a} />
                   {units.length > 1 && <span className="text-[11px] text-[var(--color-text-muted)] shrink-0">{a.unitCode}</span>}
-                  {busy === a.id ? <Loader2 className="w-4 h-4 animate-spin" /> : on ? <Check className="w-4 h-4 text-[var(--color-accent)]" /> : null}
+                  {busy === a.id ? <Loader2 className="w-4 h-4 animate-spin" /> : on ? <Check className="w-4 h-4 text-[var(--color-text-muted)]" /> : null}
                 </button>
               </li>
             );

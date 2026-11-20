@@ -84,11 +84,11 @@ export function ShiftPlanPicker({ next, groups, pool, byId, plan, locked, fmt, b
     const when = r.start >= next.end ? `planned ${fmt.DTs(r.start)}` : r.carryOver ? `was due ${fmt.DTs(r.dueAt)}` : r.start < next.start ? "under way" : `planned ${fmt.T(r.start)}`;
     const left = Math.round(Math.min(r.hoursLeft, shiftHours) * 10) / 10;
     return (
-      <div key={id} className={`flex items-start gap-3 px-4 py-2.5 ${yes ? "bg-indigo-50/70 dark:bg-indigo-950/30" : ""}`}>
+      <div key={id} className={`flex items-start gap-3 px-4 py-2.5 ${yes ? "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]" : ""}`}>
         <label className="flex flex-1 min-w-0 items-start gap-3 cursor-pointer">
           <input type="checkbox" checked={yes} disabled={locked || (isHeld && !yes)} onChange={(e) => toggle(id, e.target.checked)}
             aria-label={`${yes ? "Take off" : "Put on"} the plan: ${r.leaf.name}`}
-            className="mt-0.5 h-5 w-5 shrink-0 rounded border-[var(--color-border-strong)] accent-indigo-600" />
+            className="mt-0.5 h-5 w-5 shrink-0 rounded border-[var(--color-border-strong)] accent-[var(--color-text)]" />
           <span className="min-w-0 flex-1">
             <span className="flex flex-wrap items-center gap-1.5">
               <span className="text-[13px] font-bold text-[var(--color-text)] break-words">{r.leaf.name}</span>
@@ -203,5 +203,5 @@ export function ShiftPlanPicker({ next, groups, pool, byId, plan, locked, fmt, b
 
 function Tag({ tone, children }: { tone: "rose" | "amber"; children: React.ReactNode }) {
   const c = tone === "rose" ? "border-rose-300 text-rose-700 dark:border-rose-800 dark:text-rose-300" : "border-amber-300 text-amber-800 dark:border-amber-800 dark:text-amber-300";
-  return <span className={`inline-flex items-center rounded-full border px-1.5 py-px text-[10px] font-bold ${c}`}>{children}</span>;
+  return <span className={`inline-flex items-center rounded-full border px-1.5 py-px text-[11px] font-bold ${c}`}>{children}</span>;
 }

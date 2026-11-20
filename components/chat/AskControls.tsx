@@ -80,9 +80,9 @@ export function SourcesMenu({ scope, libraryId, libraries, onScopeChange, scopeL
   const libName = fixedLibrary ?? (scope !== "tools" ? libraries.find((l) => l.id === libraryId)?.name ?? "Pick a library" : null);
   const label = scope === "tools" ? "System tools" : scope === "internet" ? "Internet only" : `${libName}${webOn ? " + web" : ""}`;
   const Icon = scope === "tools" ? Bot : scope === "internet" ? Globe : BookOpen;
-  const tone = scope === "internet" ? "border-sky-300 dark:border-sky-800 text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-950/30"
-    : scope === "tools" ? "border-violet-300 dark:border-violet-800 text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-950/30"
-      : "border-orange-300 dark:border-orange-800 text-orange-700 dark:text-orange-300 bg-orange-50 dark:bg-orange-950/30";
+  const tone = scope === "internet" ? "border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]"
+    : scope === "tools" ? "border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]"
+      : "border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]";
   return (
     <div ref={ref} className="relative">
       <button type="button" onClick={() => setOpen((v) => !v)} aria-haspopup="menu" aria-expanded={open}
@@ -94,7 +94,7 @@ export function SourcesMenu({ scope, libraryId, libraries, onScopeChange, scopeL
       {open && (
         <div className={`absolute left-0 ${down ? "top-10" : "bottom-10"} z-50 w-80 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl p-1.5`}>
           <Head>Where answers come from</Head>
-          {scopeLocked && <div className="px-2 pb-1 text-[10px] font-bold text-[var(--color-text-muted)]">Picking another source starts a new conversation</div>}
+          {scopeLocked && <div className="px-2 pb-1 text-[11px] font-bold text-[var(--color-text-muted)]">Picking another source starts a new conversation</div>}
           {fixedLibrary ? (
             <Item active label={fixedLibrary} sub="This library's documents, cited to the page" icon={BookOpen} />
           ) : (
@@ -112,7 +112,7 @@ export function SourcesMenu({ scope, libraryId, libraries, onScopeChange, scopeL
               <Toggle on={webOn} />
               <span className="min-w-0">
                 <span className="block text-xs font-bold text-[var(--color-text)]">Also search the web</span>
-                <span className="block text-[10px] text-[var(--color-text-muted)]">Your documents first - they govern. Every web statement links to its page.</span>
+                <span className="block text-[11px] text-[var(--color-text-muted)]">Your documents first - they govern. Every web statement links to its page.</span>
               </span>
             </button>
           )}
@@ -154,7 +154,7 @@ export function AnswerMenu({ answerMode, onAnswerMode, skills, picked, onPick, q
     <div ref={ref} className="relative">
       <button type="button" onClick={() => setOpen((v) => !v)} aria-haspopup="menu" aria-expanded={open}
         title="How to answer: the answer's shape and the skills it uses"
-        className={`${pill} ${answerMode || picked ? "border-orange-400 dark:border-orange-700 text-orange-800 dark:text-orange-200 bg-orange-50 dark:bg-orange-950/30" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+        className={`${pill} ${answerMode || picked ? "border-[var(--color-text)] dark:border-[var(--color-border)] text-[var(--color-surface)] dark:text-[var(--color-text)] bg-[var(--color-text)] dark:bg-[var(--color-surface-2)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
         <Sparkles className="w-3.5 h-3.5" /> {modeLabel} · {on.length} skill{on.length === 1 ? "" : "s"} <ChevronDown className="w-3 h-3" />
       </button>
       {open && (
@@ -163,18 +163,18 @@ export function AnswerMenu({ answerMode, onAnswerMode, skills, picked, onPick, q
           {[{ id: null as AnswerMode | null, label: "Auto", hint: AUTO_MODE_HINT }, ...ANSWER_MODES].map((m) => (
             <button key={m.id ?? "auto"} type="button" role="menuitemradio" aria-checked={answerMode === m.id}
               onClick={() => onAnswerMode(m.id)}
-              className={`w-full text-left px-2 py-1.5 rounded-lg flex items-start gap-2 hover:bg-[var(--color-surface-2)] ${answerMode === m.id ? "bg-[var(--color-accent-soft)]" : ""}`}>
-              <span className="w-3.5 mt-0.5 shrink-0">{answerMode === m.id && <Check className="w-3.5 h-3.5 text-[var(--color-accent)]" />}</span>
+              className={`w-full text-left px-2 py-1.5 rounded-lg flex items-start gap-2 hover:bg-[var(--color-surface-2)] ${answerMode === m.id ? "bg-[var(--color-surface-2)]" : ""}`}>
+              <span className="w-3.5 mt-0.5 shrink-0">{answerMode === m.id && <Check className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />}</span>
               <span className="min-w-0"><span className="block text-xs font-bold text-[var(--color-text)]">{m.label}</span>
-                <span className="block text-[10px] text-[var(--color-text-muted)]">{m.hint}</span></span>
+                <span className="block text-[11px] text-[var(--color-text-muted)]">{m.hint}</span></span>
             </button>
           ))}
           <div className="my-1.5 h-px bg-[var(--color-border)]" />
           <div className="flex items-center justify-between pr-1">
             <Head>Skills for this question</Head>
-            {picked && <button type="button" onClick={() => onPick(null)} className="text-[10px] font-bold text-[var(--color-accent)] hover:underline">Back to workspace defaults</button>}
+            {picked && <button type="button" onClick={() => onPick(null)} className="text-[11px] font-bold text-[var(--color-accent)] hover:underline">Back to workspace defaults</button>}
           </div>
-          <div className="px-2 pb-1 text-[10px] text-[var(--color-text-muted)]">Each skill applies itself when the question fits - the ones marked <b>fits</b> match what you typed.</div>
+          <div className="px-2 pb-1 text-[11px] text-[var(--color-text-muted)]">Each skill applies itself when the question fits - the ones marked <b>fits</b> match what you typed.</div>
           {skills === null && <div className="px-2 py-1.5 text-[11px] text-[var(--color-text-muted)]">Loading skills…</div>}
           {[...(skills ?? [])].sort((a, b) => Number(skillFits(b, question)) - Number(skillFits(a, question))).map((s) => {
             const fits = skillFits(s, question);
@@ -185,10 +185,10 @@ export function AnswerMenu({ answerMode, onAnswerMode, skills, picked, onPick, q
                 <span className="min-w-0">
                   <span className="flex items-center gap-1.5 text-xs font-bold text-[var(--color-text)]">
                     {s.name}
-                    {fits && <span className="rounded bg-emerald-100 dark:bg-emerald-950/40 px-1 text-[9px] font-black uppercase text-emerald-800 dark:text-emerald-200">fits</span>}
-                    {s.visibility === "private" && <span className="text-[9px] font-bold text-[var(--color-text-faint)]">yours</span>}
+                    {fits && <span className="rounded bg-emerald-100 dark:bg-emerald-950/40 px-1 text-[11px] font-black uppercase text-emerald-800 dark:text-emerald-200">fits</span>}
+                    {s.visibility === "private" && <span className="text-[11px] font-bold text-[var(--color-text-faint)]">yours</span>}
                   </span>
-                  {s.description && <span className="block text-[10px] text-[var(--color-text-muted)] line-clamp-2">{s.description}</span>}
+                  {s.description && <span className="block text-[11px] text-[var(--color-text-muted)] line-clamp-2">{s.description}</span>}
                 </span>
               </button>
             );
@@ -215,7 +215,7 @@ export function SkillHint({ skills, picked, question, answerMode }: { skills: An
   const off = (skills ?? []).filter((s) => !on.has(s.id) && skillFits(s, question));
   if (fit.length === 0 && off.length === 0 && !answerMode) return null;
   return (
-    <div className="flex items-center gap-1.5 flex-wrap text-[10.5px] text-[var(--color-text-muted)]">
+    <div className="flex items-center gap-1.5 flex-wrap text-[11px] text-[var(--color-text-muted)]">
       {fit.length > 0 && <><Sparkles className="w-3 h-3 text-emerald-600" /> <span>Will apply: {fit.map((s) => <b key={s.id} className="text-[var(--color-text)]">{s.name}</b>).reduce<React.ReactNode[]>((a, x, i) => (i ? [...a, ", ", x] : [x]), [])}</span></>}
       {off.length > 0 && <span className="text-[var(--color-text-faint)]">· fits but switched off: {off.map((s) => s.name).join(", ")}</span>}
       {answerMode && <span>· shape: <b className="text-[var(--color-text)]">{ANSWER_MODES.find((m) => m.id === answerMode)?.label}</b></span>}
@@ -224,7 +224,7 @@ export function SkillHint({ skills, picked, question, answerMode }: { skills: An
 }
 
 function Head({ children }: { children: React.ReactNode }) {
-  return <div className="px-2 pt-1 pb-0.5 text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">{children}</div>;
+  return <div className="px-2 pt-1 pb-0.5 text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">{children}</div>;
 }
 
 function Toggle({ on }: { on: boolean }) {
@@ -240,11 +240,11 @@ function Item({ active, icon: Icon, label, sub, onClick }: {
 }) {
   return (
     <button type="button" onClick={onClick} disabled={!onClick}
-      className={`w-full flex items-start gap-2 px-2 py-1.5 rounded-lg text-left ${active ? "bg-[var(--color-accent-soft)]" : "hover:bg-[var(--color-surface-2)]"}`}>
-      <Icon className={`w-3.5 h-3.5 mt-0.5 shrink-0 ${active ? "text-[var(--color-accent)]" : "text-[var(--color-text-muted)]"}`} />
+      className={`w-full flex items-start gap-2 px-2 py-1.5 rounded-lg text-left ${active ? "bg-[var(--color-surface-2)]" : "hover:bg-[var(--color-surface-2)]"}`}>
+      <Icon className={`w-3.5 h-3.5 mt-0.5 shrink-0 ${active ? "text-[var(--color-text-muted)]" : "text-[var(--color-text-muted)]"}`} />
       <span className="min-w-0">
         <span className="block text-xs font-bold text-[var(--color-text)] truncate">{label}</span>
-        {sub && <span className="block text-[10px] text-[var(--color-text-muted)] truncate">{sub}</span>}
+        {sub && <span className="block text-[11px] text-[var(--color-text-muted)] truncate">{sub}</span>}
       </span>
     </button>
   );

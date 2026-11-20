@@ -48,7 +48,7 @@ export function HourlyLogExport({ formats, what, letterhead, onExport, label = "
           </span>
         </>
       )}
-      {msg && !open && <span role="status" className="absolute right-0 top-full mt-1 z-[39] whitespace-nowrap rounded bg-[var(--color-surface)] border border-[var(--color-border)] px-2 py-0.5 text-[10.5px] font-semibold text-[var(--color-text-muted)] shadow-sm">{msg}</span>}
+      {msg && !open && <span role="status" className="absolute right-0 top-full mt-1 z-[39] whitespace-nowrap rounded bg-[var(--color-surface)] border border-[var(--color-border)] px-2 py-0.5 text-[11px] font-semibold text-[var(--color-text-muted)] shadow-sm">{msg}</span>}
     </span>
   );
 }

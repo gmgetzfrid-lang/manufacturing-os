@@ -16,9 +16,9 @@ import type { ShiftWindow } from "@/lib/shiftReport";
 
 // Each card's color: the job in blue, the risks in red and orange.
 const TONE = [
-  { bar: "border-t-sky-500", num: "bg-sky-600", kick: "text-sky-800 dark:text-sky-300", dot: "bg-sky-500" },
+  { bar: "border-t-[var(--color-border-strong)]", num: "bg-[var(--color-text-muted)]", kick: "text-[var(--color-text)] dark:text-[var(--color-text)]", dot: "bg-[var(--color-text-muted)]" },
   { bar: "border-t-rose-500", num: "bg-rose-600", kick: "text-rose-800 dark:text-rose-300", dot: "bg-rose-500" },
-  { bar: "border-t-orange-500", num: "bg-orange-600", kick: "text-orange-800 dark:text-orange-300", dot: "bg-orange-500" },
+  { bar: "border-t-[var(--color-border-strong)]", num: "bg-[var(--color-text-muted)]", kick: "text-[var(--color-text)] dark:text-[var(--color-text)]", dot: "bg-[var(--color-text-muted)]" },
 ];
 
 export function SafetyMomentBox({ jobs, shift, T, print, project, recent, label, onUse, chosen }: {
@@ -50,7 +50,7 @@ export function SafetyMomentBox({ jobs, shift, T, print, project, recent, label,
     // Printed: a page of its own — the cards may break between, never inside.
     <div className={print ? "space-y-[6pt]" : "keep space-y-1.5"}>
       <div className="flex flex-wrap items-baseline gap-x-2">
-        <span className={`inline-flex items-center gap-1 font-semibold text-orange-800 dark:text-orange-300 ${print ? "text-[10pt]" : "text-[12px]"}`}>
+        <span className={`inline-flex items-center gap-1 font-semibold text-[var(--color-text)] dark:text-[var(--color-text)] ${print ? "text-[10pt]" : "text-[12px]"}`}>
           <ShieldAlert className="w-3.5 h-3.5 self-center" aria-hidden="true" /> Safety topics{label ? ` - ${label}` : ""}
         </span>
         {!print && <span className="text-[11px] text-[var(--color-text-muted)]">Tap one to present it full screen</span>}
@@ -78,7 +78,7 @@ function TopicCard({ t, n, tone, print, onPresent, onUse, chosen }: { t: SafetyT
       onClick={print ? undefined : onPresent}
       className={`snap-start shrink-0 min-w-0 flex flex-col rounded-lg border border-[var(--color-border)] border-t-4 ${tone.bar} bg-[var(--color-surface)] ${print ? "w-full p-[7pt] break-inside-avoid" : "w-[86%] sm:w-auto p-2.5 cursor-pointer hover:shadow-md transition-shadow"}`}>
       <div className="flex items-center gap-1.5">
-        <span className={`shrink-0 rounded-full ${tone.num} text-white font-bold flex items-center justify-center ${print ? "w-[13pt] h-[13pt] text-[8pt]" : "w-4 h-4 text-[10px]"}`}>{n}</span>
+        <span className={`shrink-0 rounded-full ${tone.num} text-white font-bold flex items-center justify-center ${print ? "w-[13pt] h-[13pt] text-[8pt]" : "w-4 h-4 text-[11px]"}`}>{n}</span>
         <span className={`min-w-0 truncate font-semibold ${tone.kick} ${print ? "text-[9pt]" : "text-[11px]"}`}>{t.kicker}</span>
         {!print && (
           <button type="button" onClick={(e) => { e.stopPropagation(); onPresent(); }} title="Present this topic full screen" aria-label={`Present ${t.title}`}
@@ -113,7 +113,7 @@ function TopicCard({ t, n, tone, print, onPresent, onUse, chosen }: { t: SafetyT
         </div>
       )}
       {sources.length > 0 && (
-        <div className={`mt-auto pt-1.5 text-[var(--color-text-faint)] truncate ${print ? "text-[8pt]" : "text-[10.5px]"}`}>
+        <div className={`mt-auto pt-1.5 text-[var(--color-text-faint)] truncate ${print ? "text-[8pt]" : "text-[11px]"}`}>
           From {sources.map((s, i) => (
             <span key={s.url}>{i > 0 && " · "}<a href={s.url} target="_blank" rel="noreferrer" title={s.title} onClick={(e) => e.stopPropagation()} className="underline underline-offset-2 hover:text-[var(--color-text)]">{s.label}</a></span>
           ))}
@@ -141,7 +141,7 @@ function Presenter({ topics, at, label, onMove, onClose }: { topics: SafetyTopic
   return (
     <div className="fixed inset-0 z-[400] bg-slate-950 text-white flex flex-col" role="dialog" aria-modal="true" aria-label={`Safety topic ${at + 1} of ${topics.length}`}>
       <div className="flex items-center gap-3 px-5 py-3 border-b border-white/10">
-        <ShieldAlert className="w-5 h-5 text-orange-400" aria-hidden />
+        <ShieldAlert className="w-5 h-5 text-[var(--color-text-muted)]" aria-hidden />
         <span className="text-[13px] font-black uppercase tracking-widest text-white/70">Safety{label ? ` - ${label}` : ""}</span>
         <span className="ml-auto text-[13px] font-bold text-white/60 tabular-nums">{at + 1} / {topics.length}</span>
         <button type="button" onClick={onClose} aria-label="Close" className="p-1.5 rounded-md hover:bg-white/10"><X className="w-5 h-5" /></button>

@@ -387,19 +387,19 @@ export default function DayAgendaPanel({
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header: the day, navigation, and the day's completion. */}
-        <div className="px-4 py-3 border-b border-[var(--color-border)] bg-gradient-to-b from-white dark:from-[var(--color-surface)] to-slate-50/40 dark:to-[var(--color-surface)]">
+        <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
           <div className="flex items-center gap-2">
             <button onClick={() => onChangeDay(dayKey(addDays(dayMs, -1, tz), tz))} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Previous day"><ChevronLeft className="w-4 h-4" /></button>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
-                <CalendarDays className="w-4 h-4 text-[var(--color-accent)] shrink-0" />
+                <CalendarDays className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
                 <span className="text-sm font-black truncate">{label}</span>
-                <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title={`Plant time: ${tz}`}>{tzAbbrev(tz, dayMs)}</span>
+                <span className="text-[11px] font-mono font-bold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title={`Plant time: ${tz}`}>{tzAbbrev(tz, dayMs)}</span>
               </div>
               <div className="text-[11px] text-[var(--color-text-muted)]">
                 {totals.n === 0 ? "Nothing scheduled this day." : <>{totals.n} step{totals.n === 1 ? "" : "s"} · {totals.done} done · {totals.avg}% complete</>}
                 {isToday && live.overdue.length > 0 && <span className="ml-2 font-bold text-rose-700 dark:text-rose-300">{live.overdue.length} carried over</span>}
-                {aheadCount > 0 && <span className="ml-2 font-bold text-blue-700 dark:text-blue-300">{aheadCount} worked ahead of plan</span>}
+                {aheadCount > 0 && <span className="ml-2 font-bold text-[var(--color-text)] dark:text-[var(--color-text)]">{aheadCount} worked ahead of plan</span>}
               </div>
             </div>
             <button onClick={() => onChangeDay(dayKey(addDays(dayMs, 1, tz), tz))} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Next day"><ChevronRight className="w-4 h-4" /></button>
@@ -407,12 +407,12 @@ export default function DayAgendaPanel({
           </div>
           {totals.n > 0 && (
             <div className="mt-2 h-1.5 rounded-full bg-black/10 overflow-hidden">
-              <div className={`h-full ${totals.avg >= 100 ? "bg-emerald-500" : "bg-[var(--color-accent)]"}`} style={{ width: `${totals.avg}%` }} />
+              <div className={`h-full ${totals.avg >= 100 ? "bg-emerald-500" : "bg-[var(--color-surface-2)]"}`} style={{ width: `${totals.avg}%` }} />
             </div>
           )}
           {onAddWork && (
             <button type="button" onClick={onAddWork}
-              className="mt-2 inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-dashed border-[var(--color-accent)] text-[12px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]">
+              className="mt-2 inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-dashed border-[var(--color-accent)] text-[12px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]">
               <Plus className="w-3.5 h-3.5" /> Add discovery or added scope
             </button>
           )}
@@ -440,19 +440,19 @@ export default function DayAgendaPanel({
           {shownSections.map((sec) => (
             <React.Fragment key={sec.key}>
             {sec.shift === "day" && (
-              <div className="sticky top-0 z-[1] px-4 py-1.5 flex items-center gap-2 border-b border-sky-200 bg-sky-100 text-sky-900 dark:border-sky-900 dark:bg-sky-950/70 dark:text-sky-100">
+              <div className="sticky top-0 z-[1] px-4 py-1.5 flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] dark:border-[var(--color-border)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)]">
                 <Sun className="w-3.5 h-3.5" aria-hidden />
                 <span className="text-[12px] font-black">Day shift</span>
                 <span className="text-[11px] opacity-80">{shiftTimes.dayStart}–{shiftTimes.nightStart}</span>
-                <span className="ml-auto text-[10.5px] font-semibold opacity-80">{sec.groups.reduce((a, g) => a + g.rows.length, 0)} steps</span>
+                <span className="ml-auto text-[11px] font-semibold opacity-80">{sec.groups.reduce((a, g) => a + g.rows.length, 0)} steps</span>
               </div>
             )}
             {sec.shift === "night" && (
-              <div ref={nightRef} className="sticky top-0 z-[1] px-4 py-1.5 flex items-center gap-2 bg-violet-800 text-white dark:bg-violet-950">
-                <Moon className="w-3.5 h-3.5 text-violet-200" aria-hidden />
+              <div ref={nightRef} className="sticky top-0 z-[1] px-4 py-1.5 flex items-center gap-2 bg-[var(--color-surface-2)] text-[var(--color-text)] dark:bg-[var(--color-surface-2)]">
+                <Moon className="w-3.5 h-3.5 text-[var(--color-text-muted)]" aria-hidden />
                 <span className="text-[12px] font-black">Night shift</span>
-                <span className="text-[11px] text-violet-200">{shiftTimes.nightStart} → {fmtInTz(addDays(dayMs, 1, tz), tz, { weekday: "short" })} {shiftTimes.dayStart}</span>
-                <span className="ml-auto text-[10.5px] font-semibold text-violet-200">{sec.groups.reduce((a, g) => a + g.rows.length, 0)} steps</span>
+                <span className="text-[11px] text-[var(--color-text-muted)]">{shiftTimes.nightStart} → {fmtInTz(addDays(dayMs, 1, tz), tz, { weekday: "short" })} {shiftTimes.dayStart}</span>
+                <span className="ml-auto text-[11px] font-semibold text-[var(--color-text-muted)]">{sec.groups.reduce((a, g) => a + g.rows.length, 0)} steps</span>
               </div>
             )}
             {sec.groups.map((g) => {
@@ -471,7 +471,7 @@ export default function DayAgendaPanel({
                     {/* Just the area it's in (Exchangers, Towers) — the full path
                         is on the task itself. */}
                     {g.crumbs.length > 0 && (
-                      <div className={`text-[9px] font-bold uppercase tracking-wide truncate ${color.text}`} title={g.crumbs.map((c) => c.name).join(" › ")}>
+                      <div className={`text-[11px] font-bold uppercase tracking-wide truncate ${color.text}`} title={g.crumbs.map((c) => c.name).join(" › ")}>
                         {g.crumbs[g.crumbs.length - 1].name}
                       </div>
                     )}
@@ -482,7 +482,7 @@ export default function DayAgendaPanel({
                     </button>
                     {/* Under the name, so the name keeps the width: how the
                         equipment stands overall and how many steps today. */}
-                    <div className="text-[10px] font-mono text-[var(--color-text-muted)]" title="This equipment overall">
+                    <div className="text-[11px] font-mono text-[var(--color-text-muted)]" title="This equipment overall">
                       {g.parent && headInfo ? <>
                         {headInfo.percent}%{head.id && planNow.get(head.id) != null ? <> of {planNow.get(head.id)}% planned</> : null} · {headInfo.leafDone}/{headInfo.leafTotal} steps · </> : null}
                       {g.rows.length} today
@@ -494,11 +494,11 @@ export default function DayAgendaPanel({
                     const pct = pctOf(r.leaf);
                     const note = spanNote(r);
                     return (
-                      <li key={r.leaf.id} className={openId === r.leaf.id ? "bg-[var(--color-accent-soft)]/40" : ""}>
-                      <div className={`px-4 py-2 flex items-center gap-3 ${openId === r.leaf.id ? "" : r.live === "overdue" ? "bg-rose-50 dark:bg-rose-950/40" : r.live === "started-early" ? "bg-blue-50/60 dark:bg-blue-950/30" : ""}`}>
+                      <li key={r.leaf.id} className={openId === r.leaf.id ? "bg-[var(--color-surface-2)]" : ""}>
+                      <div className={`px-4 py-2 flex items-center gap-3 ${openId === r.leaf.id ? "" : r.live === "overdue" ? "bg-rose-50 dark:bg-rose-950/40" : r.live === "started-early" ? "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]" : ""}`}>
                         {/* Day-only or night-only work is marked; round the clock is the norm. */}
                         {(() => { const w = workShiftOf(r.leaf, tz, shiftTimes); return w === "both" ? <span className="w-4 shrink-0" aria-hidden /> : <ShiftMark work={w} />; })()}
-                        <span className={`w-[80px] shrink-0 text-[11px] font-mono tabular-nums ${r.live === "overdue" ? "font-black text-rose-700 dark:text-rose-300" : r.live === "started-early" ? "font-bold text-blue-700 dark:text-blue-300" : r.live === "done-ahead" ? "font-bold text-emerald-700 dark:text-emerald-300" : "text-[var(--color-text-muted)]"}`}>{windowOf(r)}</span>
+                        <span className={`w-[80px] shrink-0 text-[11px] font-mono tabular-nums ${r.live === "overdue" ? "font-black text-rose-700 dark:text-rose-300" : r.live === "started-early" ? "font-bold text-[var(--color-text)] dark:text-[var(--color-text)]" : r.live === "done-ahead" ? "font-bold text-emerald-700 dark:text-emerald-300" : "text-[var(--color-text-muted)]"}`}>{windowOf(r)}</span>
                         <span className="shrink-0">
                           <StatusControl
                             status={r.leaf.status} size="sm" variant="dot" disabled={!canEdit || !onSetStatus || !r.leaf.id}
@@ -511,19 +511,19 @@ export default function DayAgendaPanel({
                         <button onClick={() => setOpenId(openId === r.leaf.id ? null : r.leaf.id ?? null)} className="flex-1 min-w-0 text-left" aria-expanded={openId === r.leaf.id}
                           title={canEdit ? "Update this step here - % done, status, what's blocking it, a note" : "Show this step"}>
                           <span className={`block text-[12px] leading-snug break-words font-semibold ${r.leaf.status === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{r.leaf.name} <PathTag id={r.leaf.id} marks={pathMarks} /> <DiscoveryTag m={r.leaf} tz={tz} /></span>
-                          <span className="block text-[9.5px] text-[var(--color-text-faint)] truncate">
+                          <span className="block text-[11px] text-[var(--color-text-faint)] truncate">
                             {[note, r.leaf.responsibleParty, woOf(r.leaf) ? `WO ${woOf(r.leaf)}` : null].filter(Boolean).join(" · ")}
                           </span>
                           {r.leaf.id && latestByStep.get(r.leaf.id) && (
-                            <span className="block text-[10px] italic text-[var(--color-text-muted)] break-words">&ldquo;{latestByStep.get(r.leaf.id)!.body}&rdquo;{latestByStep.get(r.leaf.id)!.t < dayStartsAt ? ` · ${fmtInTz(latestByStep.get(r.leaf.id)!.t, tz, { weekday: "short", month: "short", day: "numeric" })}` : ""}</span>
+                            <span className="block text-[11px] italic text-[var(--color-text-muted)] break-words">&ldquo;{latestByStep.get(r.leaf.id)!.body}&rdquo;{latestByStep.get(r.leaf.id)!.t < dayStartsAt ? ` · ${fmtInTz(latestByStep.get(r.leaf.id)!.t, tz, { weekday: "short", month: "short", day: "numeric" })}` : ""}</span>
                           )}
                           {r.leaf.status !== "completed" && waitsOn(r.leaf).length > 0 && (
-                            <span className="block text-[10px] font-semibold text-amber-700 dark:text-amber-400 break-words">
+                            <span className="block text-[11px] font-semibold text-amber-700 dark:text-amber-400 break-words">
                               Waits on {waitsOn(r.leaf).map((p) => `${ancestorsOf(p)[0]?.name ? `${ancestorsOf(p)[0].name} · ` : ""}${p.name}${p.responsibleParty ? ` (${p.responsibleParty})` : ""}`).join("; ")}
                             </span>
                           )}
                           {(r.leaf.status === "on_hold" || r.leaf.status === "blocked") && (
-                            <span className={`block text-[10px] font-semibold break-words ${r.leaf.status === "blocked" ? "text-rose-700 dark:text-rose-400" : "text-amber-700 dark:text-amber-400"}`}>
+                            <span className={`block text-[11px] font-semibold break-words ${r.leaf.status === "blocked" ? "text-rose-700 dark:text-rose-400" : "text-amber-700 dark:text-amber-400"}`}>
                               {r.leaf.status === "blocked" ? "Blocked" : "On hold"}: {r.leaf.statusReason || "no reason recorded"}
                             </span>
                           )}
@@ -531,7 +531,7 @@ export default function DayAgendaPanel({
                         <span className="shrink-0 w-[76px] flex flex-col items-end gap-0.5">
                         <span className="flex items-center justify-end gap-1">
                           <span className="h-1 w-8 rounded-full bg-black/10 overflow-hidden">
-                            <span className={`block h-full ${pct >= 100 ? "bg-emerald-500" : "bg-[var(--color-accent)]"}`} style={{ width: `${pct}%` }} />
+                            <span className={`block h-full ${pct >= 100 ? "bg-emerald-500" : "bg-[var(--color-surface-2)]"}`} style={{ width: `${pct}%` }} />
                           </span>
                           <ProgressControl
                             percent={pct}
@@ -546,7 +546,7 @@ export default function DayAgendaPanel({
                           const short = g - pct >= 5;
                           return (
                             <span title={`The plan has this step at ${g}% by ${goalLabel}`}
-                              className={`text-right text-[9.5px] font-bold tabular-nums leading-tight ${short ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-faint)]"}`}>
+                              className={`text-right text-[11px] font-bold tabular-nums leading-tight ${short ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-faint)]"}`}>
                               goal {g}%<span className="block font-semibold opacity-80">by {goalLabel}</span>
                             </span>
                           );
@@ -607,10 +607,10 @@ export default function DayAgendaPanel({
                     <li key={m.id}>
                       <button onClick={() => { setQuery(""); setOpenId(m.id ?? null); onChangeDay(d); }}
                         className="w-full px-4 py-2 flex items-start gap-3 text-left hover:bg-[var(--color-surface-2)]">
-                        <span className="w-[80px] shrink-0 text-[11px] font-mono font-bold text-[var(--color-accent)]">{fmtInTz(startMsOf(m), tz, { weekday: "short", month: "short", day: "numeric" })}</span>
+                        <span className="w-[80px] shrink-0 text-[11px] font-mono font-bold text-[var(--color-text)]">{fmtInTz(startMsOf(m), tz, { weekday: "short", month: "short", day: "numeric" })}</span>
                         <span className="flex-1 min-w-0">
                           <span className="block text-[12px] font-semibold break-words">{m.name}</span>
-                          <span className="block text-[9.5px] text-[var(--color-text-faint)] truncate">{[ancestorsOf(m)[0]?.name, m.responsibleParty, `${pctOf(m)}%`].filter(Boolean).join(" · ")}</span>
+                          <span className="block text-[11px] text-[var(--color-text-faint)] truncate">{[ancestorsOf(m)[0]?.name, m.responsibleParty, `${pctOf(m)}%`].filter(Boolean).join(" · ")}</span>
                         </span>
                       </button>
                     </li>
@@ -621,7 +621,7 @@ export default function DayAgendaPanel({
           )}
         </div>
 
-        <div className="px-4 py-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-text-faint)]">
+        <div className="px-4 py-2 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-faint)]">
           Click a step to update it here · Next moves down the list · an ellipsis means the step continues past this day.
         </div>
       </div>
@@ -632,7 +632,7 @@ export default function DayAgendaPanel({
 // ─── Update one step in place ────────────────────────────────────────
 
 const STATUS_BTNS: Array<{ s: MilestoneStatus; label: string; on: string }> = [
-  { s: "in_progress", label: "Working", on: "bg-blue-600 text-white border-blue-600" },
+  { s: "in_progress", label: "Working", on: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border-strong)]" },
   { s: "completed", label: "Done", on: "bg-emerald-600 text-white border-emerald-600" },
   { s: "on_hold", label: "On hold", on: "bg-amber-500 text-white border-amber-500" },
   { s: "blocked", label: "Blocked", on: "bg-rose-600 text-white border-rose-600" },
@@ -839,7 +839,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
   return (
     <div className="px-4 pb-3 pt-1 space-y-2 text-[11px]" onKeyDown={(e) => { if (e.key === "Escape") onClose(); }}>
       <div className="flex items-center gap-1.5 flex-wrap">
-        <span className="w-16 shrink-0 font-black uppercase tracking-wider text-[9.5px] text-[var(--color-text-muted)]">% done</span>
+        <span className="w-16 shrink-0 font-black uppercase tracking-wider text-[11px] text-[var(--color-text-muted)]">% done</span>
         {PCTS.map((v) => (
           <button key={v} disabled={ro} onClick={() => pickPct(v)}
             className={`h-7 min-w-[38px] px-1.5 rounded-md border font-bold tabular-nums pointer-coarse:h-9 ${(stagedPct ?? Math.round(pct)) === v ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"} disabled:opacity-40`}>
@@ -857,7 +857,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
         </span>
       </div>
       <div className="flex items-center gap-1.5 flex-wrap">
-        <span className="w-16 shrink-0 font-black uppercase tracking-wider text-[9.5px] text-[var(--color-text-muted)]">Status</span>
+        <span className="w-16 shrink-0 font-black uppercase tracking-wider text-[11px] text-[var(--color-text-muted)]">Status</span>
         {STATUS_BTNS.map((b) => (
           <button key={b.s} disabled={ro} onClick={() => void setStatus(b.s)}
             className={`h-7 px-2.5 rounded-md border font-bold pointer-coarse:h-9 ${(starting ? "in_progress" : stage != null && stage >= 100 ? "completed" : stage != null && stage > 0 ? "in_progress" : active) === b.s ? b.on : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"} disabled:opacity-40`}>
@@ -867,7 +867,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
       </div>
       {hold && (
         <div className="flex items-center gap-1.5">
-          <span className={`w-16 shrink-0 font-black uppercase tracking-wider text-[9.5px] ${timed && holdTouched && !reason.trim() ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-muted)]"}`}>
+          <span className={`w-16 shrink-0 font-black uppercase tracking-wider text-[11px] ${timed && holdTouched && !reason.trim() ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-muted)]"}`}>
             Blocking it{timed && holdTouched && <span className="block normal-case tracking-normal">required</span>}
           </span>
           <input value={reason} disabled={ro} autoFocus onChange={(e) => { setReason(e.target.value); setHoldTouched(true); setNeedMsg(null); }}
@@ -888,7 +888,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
         <div className="flex flex-wrap items-center gap-1.5">
           {/* When it happened: the shift (this one, or a card further on
               done ahead of plan: now or before) and the time. */}
-          <span className={`w-16 shrink-0 font-black uppercase tracking-wider text-[9.5px] ${whenAt == null ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-muted)]"}`}>
+          <span className={`w-16 shrink-0 font-black uppercase tracking-wider text-[11px] ${whenAt == null ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-muted)]"}`}>
             When<span className="block normal-case tracking-normal">{whenAt == null ? "required" : "24-hour"}</span>
           </span>
           <span className="inline-flex flex-wrap gap-1" role="group" aria-label="Which shift">
@@ -897,7 +897,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
                 className={`h-7 px-2 rounded-md border font-bold pointer-coarse:h-9 ${i === wi && !otherDay ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>{c.label}</button>
             ))}
             {picking || otherDay
-              ? <DayPick value={otherDay} onChange={(d) => { setOtherDay(d); setNeedMsg(null); }} tz={tz} disabled={ro} className={`h-7 pointer-coarse:h-9 ${otherDay ? "ring-1 ring-[var(--color-accent)] border-[var(--color-accent)]" : ""}`} />
+              ? <DayPick value={otherDay} onChange={(d) => { setOtherDay(d); setNeedMsg(null); }} tz={tz} disabled={ro} className={`h-7 pointer-coarse:h-9 ${otherDay ? "ring-1 ring-[var(--color-accent)] border-[var(--color-border-strong)]" : ""}`} />
               : <button type="button" disabled={ro} onClick={() => setPicking(true)} className="h-7 px-2 rounded-md border border-dashed border-[var(--color-border-strong)] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] pointer-coarse:h-9">Other day…</button>}
           </span>
           <input ref={clockRef} value={clock} disabled={ro} inputMode="numeric" placeholder="hh:mm" aria-label="Time it happened, 24-hour"
@@ -914,14 +914,14 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
       )}
       {onAddNote && latest && noteMode === "new" && (
         <div className="flex items-start gap-1.5">
-          <span className="w-16 shrink-0 font-black uppercase tracking-wider text-[9.5px] text-[var(--color-text-muted)]">Latest</span>
+          <span className="w-16 shrink-0 font-black uppercase tracking-wider text-[11px] text-[var(--color-text-muted)]">Latest</span>
           <span className="flex-1 italic text-[var(--color-text-muted)]">&ldquo;{latest.body}&rdquo; - {latest.by ?? "someone"}{latest.at ? `, ${new Date(latest.at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}</span>
         </div>
       )}
       {onAddNote && (
         <div className="flex flex-wrap items-center gap-1.5">
           {/* A % being saved needs its comment — said right on the box. */}
-          <span className={`w-16 shrink-0 font-black uppercase tracking-wider text-[9.5px] ${needsNote() ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-muted)]"}`}>
+          <span className={`w-16 shrink-0 font-black uppercase tracking-wider text-[11px] ${needsNote() ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-muted)]"}`}>
             {needsNote() ? <>{timed && stagedPct === 0 && !starting ? "Why" : starting && (stagedPct ?? 0) <= Math.round(pct) ? "What started" : "What got done"}<span className="block normal-case tracking-normal">required</span></> : noteMode === "edit" ? "Comment" : "Note"}
           </span>
           <input ref={noteRef} value={note} disabled={ro} onChange={(e) => { setNote(e.target.value); setNeedMsg(null); }}
@@ -938,7 +938,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
           )}
           {own && (
             <button disabled={ro} onClick={() => { if (noteMode === "edit") { setNoteMode("new"); setNote(""); sentNote.current = null; } else { setNoteMode("edit"); setNote(latest!.body); sentNote.current = latest!.body.trim(); } }}
-              className="shrink-0 text-[10.5px] font-bold text-[var(--color-accent)] hover:underline">
+              className="shrink-0 text-[11px] font-bold text-[var(--color-accent)] hover:underline">
               {noteMode === "edit" ? "New comment instead" : "Edit my last one"}
             </button>
           )}

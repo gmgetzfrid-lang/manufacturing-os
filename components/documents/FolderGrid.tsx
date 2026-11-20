@@ -295,16 +295,16 @@ export default function FolderGrid({
           className={`
             group relative flex flex-col p-4 rounded-2xl border transition-all duration-200 cursor-pointer hover-lift
             ${(dropTarget && dropTarget.id === folder.id && dropTarget.zone === "into")
-              ? 'bg-blue-50/80 dark:bg-blue-950/30 border-blue-400 ring-2 ring-blue-300'
+              ? 'bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] border-[var(--color-border-strong)] ring-2 ring-[var(--color-border-strong)]'
               : (dropTarget && dropTarget.id === folder.id && dropTarget.zone === "before")
-              ? 'border-l-4 border-l-blue-500 border-[var(--color-border)]'
+              ? 'border-l-4 border-l-[var(--color-border-strong)] border-[var(--color-border)]'
               : (dropTarget && dropTarget.id === folder.id && dropTarget.zone === "after")
-              ? 'border-r-4 border-r-blue-500 border-[var(--color-border)]'
+              ? 'border-r-4 border-r-[var(--color-border-strong)] border-[var(--color-border)]'
               : selectedIds?.has(folder.id!)
-              ? 'bg-blue-50/80 dark:bg-blue-950/30 border-blue-300 ring-1 ring-blue-200'
+              ? 'bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] border-[var(--color-border)] ring-1 ring-[var(--color-border-strong)]'
               : contextMenu?.id === folder.id
-              ? 'bg-[var(--color-accent-soft)]/60 border-[var(--color-accent)]/50 shadow-md ring-1 ring-[var(--color-accent)]/30'
-              : 'bg-[var(--color-surface)] border-[var(--color-border)] hover:border-[var(--color-accent)]/50'}
+              ? 'bg-[var(--color-surface-2)] border-[var(--color-border-strong)] shadow-md ring-1 ring-[var(--color-accent)]/30'
+              : 'bg-[var(--color-surface)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]'}
           `}
         >
           <div className="flex items-start justify-between mb-3">
@@ -338,7 +338,7 @@ export default function FolderGrid({
 
           <h3 className="text-sm font-bold text-[var(--color-text)] truncate mb-0.5 select-none">{folder.name}</h3>
           <div className="flex items-center justify-between gap-2 min-w-0">
-            <p className="text-[10px] text-[var(--color-text-faint)] font-medium truncate select-none min-w-0">
+            <p className="text-[11px] text-[var(--color-text-faint)] font-medium truncate select-none min-w-0">
               {(() => {
                 const n = docTotals?.get(folder.id!);
                 const parts: string[] = [];
@@ -351,7 +351,7 @@ export default function FolderGrid({
               })()}
             </p>
             {/* Open affordance — appears on hover, keeps the card scannable at rest. */}
-            <span className="shrink-0 w-5 h-5 rounded-md grid place-items-center text-[var(--color-accent)] bg-[var(--color-accent-soft)] opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200">
+            <span className="shrink-0 w-5 h-5 rounded-md grid place-items-center text-[var(--color-text)] bg-[var(--color-surface-2)] opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200">
               <ArrowRight className="w-3 h-3" />
             </span>
           </div>

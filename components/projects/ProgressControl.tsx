@@ -306,7 +306,7 @@ export default function ProgressControl({ percent, onPick, disabled, onDisabledC
   const tone = pct >= 100
     ? "text-emerald-700 bg-emerald-50 border-emerald-200"
     : pct > 0
-      ? "text-blue-700 bg-blue-50 border-blue-200"
+      ? "text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]"
       : "text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]";
 
   return (
@@ -316,7 +316,7 @@ export default function ProgressControl({ percent, onPick, disabled, onDisabledC
         onClick={(e) => { e.stopPropagation(); openMenu(); }}
         title={disabled ? `${pct}% complete` : `${pct}% complete - click to set`}
         className={`relative inline-flex items-center justify-center rounded-md border font-bold tabular-nums after:absolute after:-inset-1 pointer-coarse:after:-inset-2.5 after:content-[''] ${
-          size === "sm" ? "px-1 py-0 text-[9px]" : "px-1.5 py-0.5 text-[10px]"
+          size === "sm" ? "px-1 py-0 text-[11px]" : "px-1.5 py-0.5 text-[11px]"
         } ${tone} ${disabled ? "cursor-default opacity-80" : "cursor-pointer hover:brightness-95"}`}
       >
         {pct}%

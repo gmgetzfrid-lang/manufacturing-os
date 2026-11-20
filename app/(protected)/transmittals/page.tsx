@@ -46,7 +46,7 @@ interface DocHit {
 
 const TONE_CHIP: Record<string, string> = {
   slate: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
-  blue: "bg-blue-100 text-blue-800 border-blue-200",
+  blue: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
   emerald: "bg-emerald-100 text-emerald-800 border-emerald-200",
   rose: "bg-rose-100 text-rose-800 border-rose-200",
 };
@@ -233,10 +233,10 @@ export default function TransmittalsPage() {
                   <div className="flex-1 min-w-[200px]">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-mono text-sm font-black text-[var(--color-text)]">{t.number}</span>
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${TONE_CHIP[meta.tone]}`}>{meta.label}</span>
-                      {t.purpose && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-50 text-orange-700 border border-orange-100">{t.purpose}</span>}
+                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${TONE_CHIP[meta.tone]}`}>{meta.label}</span>
+                      {t.purpose && <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)]">{t.purpose}</span>}
                       {staleIds.has(t.id) && (
-                        <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200" title="At least one transmitted document has revved since - the recipient holds a superseded revision. Consider issuing a superseding transmittal.">
+                        <span className="text-[11px] font-black px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200" title="At least one transmitted document has revved since - the recipient holds a superseded revision. Consider issuing a superseding transmittal.">
                           superseded rev in circulation
                         </span>
                       )}
@@ -262,7 +262,7 @@ export default function TransmittalsPage() {
                           showToast({ type: "success", title: "Portal link copied", message: `Send it to ${t.recipientName || t.recipientCompany || "the recipient"} - they can download the files and acknowledge receipt themselves.` });
                         }}
                         title="Copy the recipient's secure portal link - no account needed on their side"
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-[var(--color-accent-soft)] border-[var(--color-accent-ring)]/40 text-[var(--color-accent)] hover:brightness-95 transition-[filter]"
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-[var(--color-surface-2)] border-[var(--color-accent-ring)]/40 text-[var(--color-accent)] hover:brightness-95 transition-[filter]"
                       >
                         <LinkIcon className="w-3.5 h-3.5" /> Portal link
                       </button>
@@ -439,7 +439,7 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
       <div className="bg-[var(--color-surface)] w-full sm:max-w-2xl sm:rounded-2xl rounded-t-2xl shadow-2xl max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
           <h2 className="text-base font-black text-[var(--color-text)] flex items-center gap-2">
-            <Send className="w-5 h-5 text-orange-500" /> {editing ? `Edit ${editing.number}` : "New transmittal"}
+            <Send className="w-5 h-5 text-[var(--color-text-muted)]" /> {editing ? `Edit ${editing.number}` : "New transmittal"}
           </h2>
           <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-[var(--color-surface-2)] flex items-center justify-center text-[var(--color-text-faint)] transition-colors"><X className="w-4 h-4" /></button>
         </div>
@@ -499,9 +499,9 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
                     <button key={h.id} onClick={() => addDoc(h)} disabled={added} className="w-full text-left px-3 py-2 hover:bg-[var(--color-surface-2)] transition-colors flex items-center gap-2 disabled:opacity-50">
                       <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
                       <span className="font-mono text-xs font-bold text-[var(--color-text)]">{h.number}</span>
-                      {h.rev && <span className="text-[9px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1 rounded">R{h.rev}</span>}
+                      {h.rev && <span className="text-[11px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1 rounded">R{h.rev}</span>}
                       {h.title && h.title !== h.number && <span className="text-xs text-[var(--color-text-muted)] truncate">{h.title}</span>}
-                      <span className="ml-auto text-[10px] font-bold text-orange-600">{added ? "Added" : "+ Add"}</span>
+                      <span className="ml-auto text-[11px] font-bold text-[var(--color-text)]">{added ? "Added" : "+ Add"}</span>
                     </button>
                   );
                 })}
@@ -516,7 +516,7 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
                       <DocThumb documentId={it.documentId} width={28} />
                     </DocHoverPreview>
                     <span className="font-mono text-xs font-bold text-[var(--color-text)]">{it.number}</span>
-                    {it.rev && <span className="text-[9px] font-bold bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-muted)] px-1 rounded">R{it.rev}</span>}
+                    {it.rev && <span className="text-[11px] font-bold bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-muted)] px-1 rounded">R{it.rev}</span>}
                     {it.title && it.title !== it.number && <span className="text-xs text-[var(--color-text-muted)] truncate">{it.title}</span>}
                     <button onClick={() => removeItem(it.documentId)} className="ml-auto text-[var(--color-text-faint)] hover:text-rose-600 transition-colors"><X className="w-3.5 h-3.5" /></button>
                   </li>

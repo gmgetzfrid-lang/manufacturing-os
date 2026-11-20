@@ -217,7 +217,7 @@ function Plan({
     <div className={`hover-lift rounded-2xl border p-5 flex flex-col ${featured ? "bg-slate-900 text-white border-slate-700" : "bg-[var(--color-surface)] border-[var(--color-border)]"}`}>
       <div className="flex items-center justify-between mb-1">
         <div className={`text-sm font-black ${featured ? "text-white" : "text-[var(--color-text)]"}`}>{name}</div>
-        {featured && <span className="text-[10px] font-black uppercase tracking-widest bg-orange-500 text-white px-1.5 py-0.5 rounded">Popular</span>}
+        {featured && <span className="text-[11px] font-black uppercase tracking-widest bg-[var(--color-surface-2)] text-[var(--color-text)] px-1.5 py-0.5 rounded">Popular</span>}
       </div>
       <div className={`text-xs ${featured ? "text-slate-300" : "text-[var(--color-text-muted)]"} mb-3`}>{tagline}</div>
       <div className={`text-3xl font-black ${featured ? "text-white" : "text-[var(--color-text)]"} mb-1`}>{price}{price !== "Contact" && <span className="text-sm font-bold text-[var(--color-text-faint)]">/mo</span>}</div>
@@ -240,7 +240,7 @@ function Plan({
         <button
           onClick={onSubscribe} disabled={busy}
           className={`mt-4 inline-flex items-center justify-center gap-1 w-full py-2 rounded-lg text-xs font-black transition-colors disabled:opacity-50 ${
-            featured ? "bg-orange-500 hover:bg-orange-400 text-white" : "bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)]"
+            featured ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)]"
           }`}
         >
           {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}

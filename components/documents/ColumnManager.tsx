@@ -169,8 +169,8 @@ export default function ColumnManager(props: {
         </div>
 
         {isController && onRenameColumn && (
-          <div className="px-5 py-2 bg-blue-50/50 border-b border-blue-100 text-[11px] text-[var(--color-text)] flex items-start gap-2">
-            <Pencil className="w-3 h-3 text-blue-600 mt-0.5 shrink-0" />
+          <div className="px-5 py-2 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] text-[11px] text-[var(--color-text)] flex items-start gap-2">
+            <Pencil className="w-3 h-3 text-[var(--color-text-muted)] mt-0.5 shrink-0" />
             <span>
               <b>Tip:</b> Every column has a <Pencil className="inline w-2.5 h-2.5 align-baseline" /> pencil to rename - including the built-in ones (e.g. <i>Doc No</i> → <i>Sheet No</i>). Renames affect the displayed label only, the underlying data is untouched.
             </span>
@@ -223,7 +223,7 @@ export default function ColumnManager(props: {
                 // now governs deletion only (system columns can't be removed).
                 const isLastVisible = on && draft.length <= 1;
                 return (
-                  <div key={col.key} className={`flex items-center gap-1 ${isEditing ? "p-1.5 rounded-lg bg-[var(--color-accent-soft)] ring-1 ring-[var(--color-accent)]/30" : ""}`}>
+                  <div key={col.key} className={`flex items-center gap-1 ${isEditing ? "p-1.5 rounded-lg bg-[var(--color-surface-2)] ring-1 ring-[var(--color-accent)]/30" : ""}`}>
                     {isEditing ? (
                       <>
                         <input
@@ -272,7 +272,7 @@ export default function ColumnManager(props: {
                         {canRename && (
                           <button
                             onClick={() => startRename(col.key, col.label)}
-                            className="shrink-0 p-2 rounded-lg border-2 border-[var(--color-accent)]/25 bg-[var(--color-accent-soft)] text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] hover:border-[var(--color-accent)]/50 transition-colors"
+                            className="shrink-0 p-2 rounded-lg border-2 border-[var(--color-accent)]/25 bg-[var(--color-surface-2)] text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] hover:border-[var(--color-accent)]/50 transition-colors"
                             title={`Rename "${col.label}" - works for built-in columns too`}
                           >
                             <Pencil className="h-3.5 w-3.5" />
@@ -295,7 +295,7 @@ export default function ColumnManager(props: {
               })}
               {renameError && (
                 <div className="mt-3 p-3 bg-red-50 border-2 border-red-300 rounded-lg text-xs text-red-800 leading-relaxed font-medium">
-                  <div className="font-black uppercase tracking-widest text-[10px] mb-1">Rename failed</div>
+                  <div className="font-black uppercase tracking-widest text-[11px] mb-1">Rename failed</div>
                   {renameError}
                 </div>
               )}
@@ -305,7 +305,7 @@ export default function ColumnManager(props: {
           <div className="border border-[var(--color-border)] rounded-xl p-3">
             <div className="flex items-center justify-between mb-2">
               <div className="text-xs font-bold text-[var(--color-text-muted)]">Visible order</div>
-              <div className="text-[10px] text-[var(--color-text-faint)]">Drag rows to reorder · arrows still work</div>
+              <div className="text-[11px] text-[var(--color-text-faint)]">Drag rows to reorder · arrows still work</div>
             </div>
             <div className="space-y-1 max-h-[320px] overflow-auto">
               {options.map((col, idx) => {
@@ -314,7 +314,7 @@ export default function ColumnManager(props: {
                 const showBelow = hoverIndex === idx && dragIndex !== null && dragIndex < idx;
                 return (
                   <div key={col.key} className="relative">
-                    {showAbove && <div className="absolute -top-0.5 left-0 right-0 h-0.5 bg-[var(--color-accent)] rounded-full" />}
+                    {showAbove && <div className="absolute -top-0.5 left-0 right-0 h-0.5 bg-[var(--color-surface-2)] rounded-full" />}
                     <div
                       draggable
                       onDragStart={(e) => {
@@ -332,7 +332,7 @@ export default function ColumnManager(props: {
                       }}
                       onDragEnd={() => { setDragIndex(null); setHoverIndex(null); }}
                       className={`flex items-center justify-between rounded-lg border bg-[var(--color-surface)] px-2 py-2 transition-all ${
-                        dragging ? "opacity-40 border-[var(--color-accent)]" : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]"
+                        dragging ? "opacity-40 border-[var(--color-border-strong)]" : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]"
                       }`}
                     >
                       <div className="flex items-center min-w-0 gap-1.5">
@@ -361,7 +361,7 @@ export default function ColumnManager(props: {
                         </button>
                       </div>
                     </div>
-                    {showBelow && <div className="absolute -bottom-0.5 left-0 right-0 h-0.5 bg-[var(--color-accent)] rounded-full" />}
+                    {showBelow && <div className="absolute -bottom-0.5 left-0 right-0 h-0.5 bg-[var(--color-surface-2)] rounded-full" />}
                   </div>
                 );
               })}

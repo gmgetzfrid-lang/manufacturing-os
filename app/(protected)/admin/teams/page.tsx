@@ -105,7 +105,7 @@ export default function AdminTeamsPage() {
   if (!isAdmin) {
     return (
       <div className="p-8 max-w-2xl">
-        <div className="flex items-center gap-3 p-4 rounded-xl bg-[var(--color-accent-soft)] text-[var(--color-text)]">
+        <div className="flex items-center gap-3 p-4 rounded-xl bg-[var(--color-surface-2)] text-[var(--color-text)]">
           <ShieldAlert className="w-5 h-5" />
           <span>Only Admins and Managers can manage teams.</span>
         </div>
@@ -162,7 +162,7 @@ export default function AdminTeamsPage() {
             )}
             {teams.map((t) => (
               <button key={t.id} onClick={() => openTeam(t)}
-                className={`group w-full flex items-center gap-3 p-3 rounded-2xl border text-left transition-colors ${selected?.id === t.id ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]" : "border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-border-strong)]"}`}>
+                className={`group w-full flex items-center gap-3 p-3 rounded-2xl border text-left transition-colors ${selected?.id === t.id ? "border-[var(--color-text)] bg-[var(--color-surface-2)]" : "border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-border-strong)]"}`}>
                 <span className="w-9 h-9 rounded-xl grid place-items-center text-white shrink-0" style={{ backgroundColor: t.color ?? "#4f46e5" }}>
                   <UsersRound className="w-4 h-4" />
                 </span>
@@ -201,7 +201,7 @@ export default function AdminTeamsPage() {
                       {members.map((m) => <option key={m.uid} value={m.uid}>{m.display_name || m.email || m.uid}</option>)}
                     </select>
                   </div>
-                  <div className="text-[10px] text-[var(--color-text-muted)]">The supervisor becomes the effective owner of any library this department owns (unless a more specific owner is set).</div>
+                  <div className="text-[11px] text-[var(--color-text-muted)]">The supervisor becomes the effective owner of any library this department owns (unless a more specific owner is set).</div>
                   <div>
                     <div className="text-[11px] font-bold text-[var(--color-text-muted)] mb-1">Owns libraries</div>
                     <div className="flex flex-wrap gap-1.5">

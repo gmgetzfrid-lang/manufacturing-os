@@ -139,7 +139,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
-        <ArrowRightCircle className="w-4 h-4 text-[var(--color-accent)]" />
+        <ArrowRightCircle className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-base font-bold text-[var(--color-text)]">Transition in</span>
         <span className="text-xs text-[var(--color-text-muted)]">
           {candidates.length} sheet{candidates.length === 1 ? "" : "s"} in intake ·{" "}
@@ -156,7 +156,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
 
       {canManage && (
         <div className="flex items-center gap-2 flex-wrap rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface-2)]/40 p-2.5">
-          <span className="text-[10px] font-bold text-[var(--color-text-muted)]">Adopt into</span>
+          <span className="text-[11px] font-bold text-[var(--color-text-muted)]">Adopt into</span>
           <select value={destLib} onChange={(e) => setDestLib(e.target.value)} className="h-7 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
             <option value="">Library…</option>
             {libs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
@@ -186,17 +186,17 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
                 <span className="ml-auto flex items-center gap-1.5 shrink-0">
                   {!impact && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-faint)]" />}
                   {impact?.matchedAssets.length ? (
-                    <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-sky-700 dark:text-sky-300" title={`Equipment in the registry: ${impact.matchedAssets.map((a) => a.tag).join(", ")}`}>
+                    <span className="inline-flex items-center gap-0.5 text-[11px] font-bold text-[var(--color-text)] dark:text-[var(--color-text)]" title={`Equipment in the registry: ${impact.matchedAssets.map((a) => a.tag).join(", ")}`}>
                       <Cable className="w-3 h-3" /> {impact.matchedAssets.length}
                     </span>
                   ) : null}
                   {impact?.numberCollision && (
-                    <span className="inline-flex items-center gap-0.5 text-[10px] font-black text-rose-700 dark:text-rose-300"><ShieldAlert className="w-3 h-3" /> number collision</span>
+                    <span className="inline-flex items-center gap-0.5 text-[11px] font-black text-rose-700 dark:text-rose-300"><ShieldAlert className="w-3 h-3" /> number collision</span>
                   )}
                   {impact && impact.overlapDocs.length > 0 && (
-                    <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-400"><Layers className="w-3 h-3" /> {impact.overlapDocs.length} overlap{impact.overlapDocs.length === 1 ? "" : "s"}</span>
+                    <span className="inline-flex items-center gap-0.5 text-[11px] font-bold text-amber-700 dark:text-amber-400"><Layers className="w-3 h-3" /> {impact.overlapDocs.length} overlap{impact.overlapDocs.length === 1 ? "" : "s"}</span>
                   )}
-                  {impact?.clean && <span className="text-[10px] font-bold text-emerald-600">clean</span>}
+                  {impact?.clean && <span className="text-[11px] font-bold text-emerald-600">clean</span>}
                 </span>
               </button>
 

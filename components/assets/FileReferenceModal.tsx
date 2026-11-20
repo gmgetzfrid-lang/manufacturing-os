@@ -201,7 +201,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
       >
         {/* Header */}
         <div className="px-4 py-2.5 border-b border-slate-800 flex items-center gap-3 bg-slate-900 shrink-0">
-          <FileText className="w-4 h-4 text-orange-400 shrink-0" />
+          <FileText className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
           <div className="min-w-0">
             <div className="text-sm font-bold text-white truncate">{tag} <span className="text-[11px] font-medium text-slate-400">· {type || "Linked drawings"}</span></div>
           </div>
@@ -211,7 +211,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
                 <button onClick={() => setZoom((z) => Math.max(0.4, Math.round((z - 0.15) * 100) / 100))} className="p-1.5 rounded-lg hover:bg-white/10 text-slate-300 hover:text-white" title="Zoom out"><ZoomOut className="w-4 h-4" /></button>
                 <button onClick={() => setZoom(1)} className="w-9 text-center text-[11px] font-mono text-slate-300 hover:text-white" title="Fit to width (Ctrl + scroll to zoom)">{Math.round(zoom * 100)}%</button>
                 <button onClick={() => setZoom((z) => Math.min(3, Math.round((z + 0.15) * 100) / 100))} className="p-1.5 rounded-lg hover:bg-white/10 text-slate-300 hover:text-white" title="Zoom in"><ZoomIn className="w-4 h-4" /></button>
-                <button onClick={() => panZoom.setPanMode((v) => !v)} className={`p-1.5 rounded-lg hover:bg-white/10 ${panZoom.panMode ? "text-orange-300" : "text-slate-300 hover:text-white"}`} title={panZoom.panMode ? "Pan tool (drag to move) - click for cursor" : "Cursor - click for the pan/grab hand"}>
+                <button onClick={() => panZoom.setPanMode((v) => !v)} className={`p-1.5 rounded-lg hover:bg-white/10 ${panZoom.panMode ? "text-[var(--color-accent)]" : "text-slate-300 hover:text-white"}`} title={panZoom.panMode ? "Pan tool (drag to move) - click for cursor" : "Cursor - click for the pan/grab hand"}>
                   {panZoom.panMode ? <Hand className="w-4 h-4" /> : <MousePointer2 className="w-4 h-4" />}
                 </button>
               </div>
@@ -222,7 +222,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
               </button>
             )}
             {canManage && (
-              <button onClick={() => setPickerOpen(true)} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-[11px] font-bold"><Plus className="w-3.5 h-3.5" /> Link a drawing</button>
+              <button onClick={() => setPickerOpen(true)} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[11px] font-bold"><Plus className="w-3.5 h-3.5" /> Link a drawing</button>
             )}
             <button onClick={() => void toggleFull()} className="p-1.5 rounded-lg hover:bg-white/10 text-slate-300 hover:text-white transition-colors" title={isFull ? "Exit full screen" : "Full screen"}>
               {isFull ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
@@ -236,10 +236,10 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
           {(files.length > 1 || canManage) && (
             <div className="w-56 shrink-0 border-r border-slate-800 bg-slate-900/60 overflow-y-auto">
               {files.map((f) => (
-                <div key={f.id} className={`group flex items-stretch border-b border-slate-800/60 ${activeId === f.id ? "bg-orange-500/10" : ""}`}>
-                  <button onClick={() => setActiveId(f.id)} className={`flex-1 min-w-0 text-left px-3 py-2.5 ${activeId === f.id ? "text-orange-300" : "text-slate-300 hover:text-white"}`}>
+                <div key={f.id} className={`group flex items-stretch border-b border-slate-800/60 ${activeId === f.id ? "bg-[var(--color-surface-2)]" : ""}`}>
+                  <button onClick={() => setActiveId(f.id)} className={`flex-1 min-w-0 text-left px-3 py-2.5 ${activeId === f.id ? "text-[var(--color-accent)]" : "text-slate-300 hover:text-white"}`}>
                     <div className="text-[11px] font-mono font-bold truncate">{f.document?.document_number || f.document?.title || "Document"}</div>
-                    <div className="text-[10px] text-slate-500 truncate">{f.document?.title || f.document?.name || ""}{f.document?.rev ? ` · Rev ${f.document.rev}` : ""}</div>
+                    <div className="text-[11px] text-slate-500 truncate">{f.document?.title || f.document?.name || ""}{f.document?.rev ? ` · Rev ${f.document.rev}` : ""}</div>
                   </button>
                   {canManage && (
                     <button onClick={() => void handleUnlink(f.id)} title="Remove link" className="shrink-0 px-2 flex items-center text-slate-600 hover:text-red-400"><Trash2 className="w-3.5 h-3.5" /></button>

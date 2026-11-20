@@ -23,14 +23,14 @@ import {
 // ─── Drafting requests ───────────────────────────────────────────
 
 const TICKET_STATUS: Record<string, { label: string; cls: string }> = {
-  NEW: { label: "New", cls: "bg-blue-50 text-blue-700 border-blue-200" },
-  PENDING_ENG_INITIAL: { label: "Eng review", cls: "bg-indigo-50 text-indigo-700 border-indigo-200" },
-  PENDING_ENG_TEAM: { label: "Eng team", cls: "bg-indigo-50 text-indigo-700 border-indigo-200" },
-  PENDING_ASSIGNMENT: { label: "Unassigned", cls: "bg-purple-50 text-purple-700 border-purple-200" },
-  DRAFTING: { label: "Drafting", cls: "bg-blue-50 text-blue-700 border-blue-200" },
+  NEW: { label: "New", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
+  PENDING_ENG_INITIAL: { label: "Eng review", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
+  PENDING_ENG_TEAM: { label: "Eng team", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
+  PENDING_ASSIGNMENT: { label: "Unassigned", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
+  DRAFTING: { label: "Drafting", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
   PENDING_REVIEW: { label: "In review", cls: "bg-yellow-50 text-yellow-700 border-yellow-200" },
   REVISION_REQ: { label: "Revisions", cls: "bg-amber-50 text-amber-700 border-amber-200" },
-  PENDING_IFC: { label: "Pending IFC", cls: "bg-teal-50 text-teal-700 border-teal-200" },
+  PENDING_IFC: { label: "Pending IFC", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
   FINAL_DRAFT: { label: "Final draft", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
   PENDING_FINAL_APPROVAL: { label: "Final appr.", cls: "bg-lime-50 text-lime-700 border-lime-200" },
   CLOSED: { label: "Closed", cls: "bg-gray-100 text-gray-500 border-gray-200" },
@@ -122,7 +122,7 @@ export function DraftingRequestsBody() {
         <div className="mt-2 shrink-0 flex flex-wrap gap-1">
           {stageCounts.filter((s) => s.count > 0).map((s) => (
             <button key={s.key} type="button" onClick={() => setStage(stage === s.key ? null : s.key)}
-              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border transition-colors ${
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold border transition-colors ${
                 stage === s.key ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-accent)]"}`}>
               {s.label} <span className="tabular-nums">{s.count}</span>
             </button>
@@ -145,10 +145,10 @@ export function DraftingRequestsBody() {
             return (
               <Link key={t.id} href={`/requests/${t.id}`} className="group block p-2 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
                 <div className="flex items-center gap-2">
-                  <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)] shrink-0">{t.ticket_id ?? "-"}</span>
-                  <span className="flex-1 min-w-0 text-[13px] font-semibold text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)]">{t.title ?? "Untitled request"}</span>
-                  {(t.priority ?? 0) >= 3 && <span className="shrink-0 text-[9px] font-black px-1 rounded bg-rose-600 text-white">P{t.priority}</span>}
-                  <span className={`shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded border ${st.cls}`}>{st.label}</span>
+                  <span className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)] shrink-0">{t.ticket_id ?? "-"}</span>
+                  <span className="flex-1 min-w-0 text-[13px] font-semibold text-[var(--color-text)] truncate group-hover:text-[var(--color-text)]">{t.title ?? "Untitled request"}</span>
+                  {(t.priority ?? 0) >= 3 && <span className="shrink-0 text-[11px] font-black px-1 rounded bg-rose-600 text-white">P{t.priority}</span>}
+                  <span className={`shrink-0 text-[11px] font-bold px-1.5 py-0.5 rounded border ${st.cls}`}>{st.label}</span>
                 </div>
                 <div className="mt-0.5 pl-0.5 flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)] min-w-0">
                   <span className="truncate">{t.requester_id === uid ? "You" : t.requester_name || "Unknown requester"}</span>
@@ -156,7 +156,7 @@ export function DraftingRequestsBody() {
                   <span className={`truncate ${t.assigned_drafter_name ? "font-semibold text-[var(--color-text)]" : "italic text-amber-700 dark:text-amber-500"}`}>
                     {t.assigned_drafter_id === uid ? "you" : t.assigned_drafter_name || "unassigned"}
                   </span>
-                  <span className="ml-auto shrink-0 text-[10px] text-[var(--color-text-faint)] tabular-nums">
+                  <span className="ml-auto shrink-0 text-[11px] text-[var(--color-text-faint)] tabular-nums">
                     {timeAgo(t.created_at)}{t.updated_at && t.updated_at !== t.created_at ? ` · touched ${timeAgo(t.updated_at)}` : ""}
                   </span>
                 </div>
@@ -242,14 +242,14 @@ export function ProjectsBody() {
             <Link key={p.id} href={`/projects/${p.id}`} className="group flex items-center gap-2 p-2 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
               <span aria-hidden className={`w-2 h-2 rounded-full shrink-0 ${p.quietDays == null ? "bg-slate-300" : p.quietDays <= 7 ? "bg-emerald-500" : p.quietDays <= 14 ? "bg-amber-500" : "bg-slate-300"}`} />
               <span className="min-w-0 flex-1">
-                <span className="block text-[13px] font-semibold text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)]">{p.name ?? "Untitled project"}</span>
-                <span className="block text-[10px] text-[var(--color-text-muted)] truncate">
+                <span className="block text-[13px] font-semibold text-[var(--color-text)] truncate group-hover:text-[var(--color-text)]">{p.name ?? "Untitled project"}</span>
+                <span className="block text-[11px] text-[var(--color-text-muted)] truncate">
                   {p.owner_user_id === uid ? "You" : p.owner_user_name ?? "-"}{p.moc_reference ? ` · MOC ${p.moc_reference}` : ""}
                   {p.last_activity_at ? ` · active ${timeAgo(p.last_activity_at)} ago` : ""}
                 </span>
               </span>
               {p.due && (
-                <span data-project-due className={`shrink-0 text-[10px] font-black px-1.5 py-0.5 rounded ${
+                <span data-project-due className={`shrink-0 text-[11px] font-black px-1.5 py-0.5 rounded ${
                   p.due.kind === "past target" ? "bg-rose-600 text-white" : (p.due.kind === "ends" || p.due.kind === "target") && p.due.days <= 7 ? "bg-amber-100 text-amber-800" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
                   {projectDueWords(p.due)}
                 </span>
@@ -343,7 +343,7 @@ function ActivityFeed({ adminView }: { adminView: boolean }) {
           { value: "knowledge", label: "Knowledge", count: count("knowledge") },
           { value: "admin", label: "Admin", count: count("admin") },
         ]} />
-        <label className="shrink-0 inline-flex items-center gap-1 text-[10px] font-bold text-[var(--color-text-muted)] cursor-pointer select-none">
+        <label className="shrink-0 inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-muted)] cursor-pointer select-none">
           <input type="checkbox" checked={onlyMine} onChange={(e) => setOnlyMine(e.target.checked)} className="accent-[var(--color-accent)]" />
           Only mine
         </label>
@@ -351,7 +351,7 @@ function ActivityFeed({ adminView }: { adminView: boolean }) {
       {sum(buckets.counts) > 0 && (
         <div className="shrink-0 mt-2 flex items-center gap-2">
           <div className="flex-1"><Sparkline values={buckets.counts} labels={buckets.labels} height={28} /></div>
-          {adminView && <span className="shrink-0 text-[10px] font-bold text-[var(--color-text-muted)] tabular-nums">{(data?.total ?? 0).toLocaleString()} events on record</span>}
+          {adminView && <span className="shrink-0 text-[11px] font-bold text-[var(--color-text-muted)] tabular-nums">{(data?.total ?? 0).toLocaleString()} events on record</span>}
         </div>
       )}
       {shown.length === 0 ? (
@@ -371,9 +371,9 @@ function ActivityFeed({ adminView }: { adminView: boolean }) {
                     <span className="font-semibold">{humanize(r.action)}</span>
                     {label ? <span className="text-[var(--color-text-muted)]"> · <span className="font-mono">{label}</span></span> : null}
                   </span>
-                  <span className="block text-[10px] text-[var(--color-text-faint)] truncate">{who}</span>
+                  <span className="block text-[11px] text-[var(--color-text-faint)] truncate">{who}</span>
                 </span>
-                <span className="shrink-0 text-[10px] text-[var(--color-text-muted)] tabular-nums" title={r.timestamp ? new Date(r.timestamp).toLocaleString() : undefined}>{timeAgo(r.timestamp)}</span>
+                <span className="shrink-0 text-[11px] text-[var(--color-text-muted)] tabular-nums" title={r.timestamp ? new Date(r.timestamp).toLocaleString() : undefined}>{timeAgo(r.timestamp)}</span>
               </>
             );
             return (
@@ -425,7 +425,7 @@ export function EquipmentBody() {
   return (
     <div className={FILL}>
       <div className="flex items-center gap-2 shrink-0">
-        <span className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-[var(--color-accent)] text-white">
+        <span className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-[var(--color-surface-2)] text-[var(--color-text)]">
           {(data?.count ?? 0).toLocaleString()}<span className="font-medium opacity-80">assets</span>
         </span>
         <div className="flex-1 min-w-0">
@@ -437,12 +437,12 @@ export function EquipmentBody() {
         <Empty>{dq ? `No assets match “${dq}”.` : "No assets in the registry yet."}</Empty>
       ) : (
         <div className={`mt-2 space-y-0.5 ${SCROLL}`}>
-          {!dq && <div className="px-2 text-[10px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">Newest in the registry</div>}
+          {!dq && <div className="px-2 text-[11px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">Newest in the registry</div>}
           {rows.map((a) => (
             <Link key={a.id} href={`/assets/${encodeURIComponent(a.tag)}`}
               className="group flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)]">
-              <Tag className="w-3.5 h-3.5 shrink-0 text-purple-500" />
-              <span className="shrink-0 font-mono text-[12px] font-black text-[var(--color-text)] group-hover:text-[var(--color-accent)]">{a.tag}</span>
+              <Tag className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" />
+              <span className="shrink-0 font-mono text-[12px] font-black text-[var(--color-text)] group-hover:text-[var(--color-text)]">{a.tag}</span>
               <span className="min-w-0 flex-1 truncate text-[11px] text-[var(--color-text-muted)]">
                 {a.description ?? ""}{a.location ? <span className="text-[var(--color-text-faint)]"> · {a.location}</span> : null}
               </span>
@@ -477,11 +477,11 @@ export function RecentDocsBody() {
             <DocThumb documentId={r.documentId} width={28} />
           </DocHoverPreview>
           <span className="min-w-0 flex-1">
-            <span className="block text-[12px] font-bold text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)]">{r.documentNumber || r.title || "Document"}</span>
-            {r.title && r.title !== r.documentNumber && <span className="block text-[10px] text-[var(--color-text-muted)] truncate">{r.title}</span>}
+            <span className="block text-[12px] font-bold text-[var(--color-text)] truncate group-hover:text-[var(--color-text)]">{r.documentNumber || r.title || "Document"}</span>
+            {r.title && r.title !== r.documentNumber && <span className="block text-[11px] text-[var(--color-text-muted)] truncate">{r.title}</span>}
           </span>
-          {r.rev && <span className="shrink-0 text-[10px] font-bold text-[var(--color-text-muted)]">Rev {r.rev}</span>}
-          <span className="shrink-0 text-[10px] text-[var(--color-text-faint)] tabular-nums">{timeAgo(r.viewedAt)}</span>
+          {r.rev && <span className="shrink-0 text-[11px] font-bold text-[var(--color-text-muted)]">Rev {r.rev}</span>}
+          <span className="shrink-0 text-[11px] text-[var(--color-text-faint)] tabular-nums">{timeAgo(r.viewedAt)}</span>
         </Link>
       ))}
     </div>
@@ -540,9 +540,9 @@ export function AdminUsersBody() {
             <Link href="/admin/users" className="group flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)]">
               <User className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-faint)]" />
               <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-[var(--color-text)]">{m.display_name || m.email || m.uid.slice(0, 8)}</span>
-              <span className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">{m.role || "Member"}</span>
+              <span className="shrink-0 text-[11px] font-bold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">{m.role || "Member"}</span>
               {(m.roles ?? []).filter((r) => r !== m.role).slice(0, 2).map((r) => (
-                <span key={r} className="shrink-0 text-[10px] font-bold px-1 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-faint)]">+{r}</span>
+                <span key={r} className="shrink-0 text-[11px] font-bold px-1 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-faint)]">+{r}</span>
               ))}
             </Link>
           </li>

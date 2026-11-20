@@ -15,7 +15,7 @@ import {
 import { PreviewButton, type PreviewFile } from "@/components/projects/cost/FilePreview";
 
 const field = "h-9 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px] text-[var(--color-text)]";
-const label = "block text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1";
+const label = "block text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1";
 const primary = "inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50";
 const quiet = "inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
 
@@ -119,7 +119,7 @@ function AfeEditor({ orgId, projectId, afe, actor, cur, onCancel, onSaved }: {
     onSaved(`AFE saved${delta}.${res.historyKept ? "" : ` The change history needs the database update (${COST_CONTROLS_SQL}).`}`);
   };
   return (
-    <div className="rounded-xl border border-[var(--color-accent)] bg-[var(--color-surface)] p-3 space-y-3">
+    <div className="rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] p-3 space-y-3">
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div><label className={label} htmlFor="afe-num">AFE number</label><input id="afe-num" value={num} onChange={(e) => setNum(e.target.value)} className={`${field} font-mono`} placeholder="25008" /></div>
         <div><label className={label} htmlFor="afe-amt">Authorized amount ({cur})</label><input id="afe-amt" value={amt} onChange={(e) => setAmt(e.target.value)} inputMode="decimal" className={`${field} font-mono tabular-nums`} placeholder="1250000" /></div>
@@ -190,7 +190,7 @@ export function LineEditor({ orgId, projectId, account, parties, actor, onCancel
       : `${name.trim()} saved.`);
   };
   return (
-    <div className="rounded-xl border border-[var(--color-accent)] bg-[var(--color-surface)] p-3 space-y-3" onClick={(e) => e.stopPropagation()}>
+    <div className="rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] p-3 space-y-3" onClick={(e) => e.stopPropagation()}>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <div className="lg:col-span-2"><label className={label} htmlFor={`ln-${account.id}`}>Budget line</label><input id={`ln-${account.id}`} value={name} onChange={(e) => setName(e.target.value)} className={field} /></div>
         <div><label className={label} htmlFor={`lb-${account.id}`}>Budget ({cur})</label><input id={`lb-${account.id}`} value={budget} onChange={(e) => setBudget(e.target.value)} inputMode="decimal" className={`${field} font-mono tabular-nums`} /></div>
@@ -228,7 +228,7 @@ export function BudgetHistory({ changes, cur }: { changes: BudgetChange[]; cur: 
   if (!changes.length) return null;
   return (
     <div className="text-[11.5px]">
-      <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-0.5">Budget changes</div>
+      <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-0.5">Budget changes</div>
       <ol className="space-y-0.5">
         {changes.map((c, i) => (
           <li key={i} className="text-[var(--color-text)]">
@@ -259,7 +259,7 @@ export function EntryRevise({ orgId, projectId, entry, cur, actor, onDone, onCan
     onDone(`${fmtMoney(entry.amount, cur)} → ${fmtMoney(n, cur)}. The old amount stays on the record, struck through.`);
   };
   return (
-    <div className="w-full mt-1.5 flex flex-wrap items-end gap-2 rounded-lg border border-[var(--color-accent)] bg-[var(--color-surface)] p-2">
+    <div className="w-full mt-1.5 flex flex-wrap items-end gap-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] p-2">
       <div><label className={label} htmlFor={`ea-${entry.id}`}>New amount ({cur})</label><input id={`ea-${entry.id}`} value={amt} onChange={(e) => setAmt(e.target.value)} inputMode="decimal" className={`${field} w-36 font-mono tabular-nums`} /></div>
       <div className="flex-1 min-w-[12rem]"><label className={label} htmlFor={`ew-${entry.id}`}>Why</label><input id={`ew-${entry.id}`} value={note} onChange={(e) => setNote(e.target.value)} className={field} placeholder="e.g. Revised quote 11/02" /></div>
       <button type="button" onClick={() => void save()} disabled={busy} className={primary}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save</button>

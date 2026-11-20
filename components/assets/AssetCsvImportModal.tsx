@@ -146,7 +146,7 @@ export default function AssetCsvImportModal({
     <div className="fixed inset-0 z-[400] bg-slate-900/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
-          <div className="p-2 rounded-lg bg-purple-100 text-purple-700"><KeyRound className="w-5 h-5" /></div>
+          <div className="p-2 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)]"><KeyRound className="w-5 h-5" /></div>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-black text-[var(--color-text)]">Import assets from CSV</div>
             <div className="text-xs text-[var(--color-text-muted)]">Bulk-create equipment tags with type, description, and location.</div>
@@ -165,7 +165,7 @@ export default function AssetCsvImportModal({
 
           {step === "paste" && (
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Paste CSV</label>
+              <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Paste CSV</label>
               <textarea
                 value={raw}
                 onChange={(e) => setRaw(e.target.value)}
@@ -173,13 +173,13 @@ export default function AssetCsvImportModal({
                 rows={10}
                 className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-mono"
               />
-              <div className="text-[10px] text-[var(--color-text-muted)]">First row = headers. The <code>type</code> column matches an existing asset-type by name (case-insensitive); unmatched types are left blank.</div>
+              <div className="text-[11px] text-[var(--color-text-muted)]">First row = headers. The <code>type</code> column matches an existing asset-type by name (case-insensitive); unmatched types are left blank.</div>
             </div>
           )}
 
           {step === "map" && (
             <div className="space-y-3">
-              <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Map columns</div>
+              <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Map columns</div>
               <div className="text-[11px] text-[var(--color-text-muted)]">Detected {rows.length} data row{rows.length === 1 ? "" : "s"} · {headers.length} columns.</div>
               <div className="space-y-2">
                 {CANONICAL_FIELDS.map((f) => (
@@ -201,13 +201,13 @@ export default function AssetCsvImportModal({
 
           {step === "preview" && (
             <div>
-              <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-2">Preview (first 10)</div>
+              <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest mb-2">Preview (first 10)</div>
               <div className="rounded-lg border border-[var(--color-border)] overflow-auto">
                 <table className="w-full text-[11px]">
                   <thead className="bg-[var(--color-surface-2)] border-b border-[var(--color-border)]">
                     <tr>
                       {CANONICAL_FIELDS.filter((f) => mapping[f.key]).map((f) => (
-                        <th key={f.key} className="text-left px-2 py-1.5 font-black text-[var(--color-text)] uppercase tracking-wider text-[10px]">
+                        <th key={f.key} className="text-left px-2 py-1.5 font-black text-[var(--color-text)] uppercase tracking-wider text-[11px]">
                           {f.label.replace(/\*/g, "").trim()}
                         </th>
                       ))}
@@ -225,7 +225,7 @@ export default function AssetCsvImportModal({
                   </tbody>
                 </table>
               </div>
-              {rows.length > 10 && <div className="text-[10px] text-[var(--color-text-muted)] mt-1">+ {rows.length - 10} more row{rows.length - 10 === 1 ? "" : "s"} will be imported.</div>}
+              {rows.length > 10 && <div className="text-[11px] text-[var(--color-text-muted)] mt-1">+ {rows.length - 10} more row{rows.length - 10 === 1 ? "" : "s"} will be imported.</div>}
             </div>
           )}
 
@@ -271,7 +271,7 @@ export default function AssetCsvImportModal({
               </button>
             )}
             {step === "preview" && (
-              <button onClick={commit} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold disabled:opacity-50">
+              <button onClick={commit} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-xs font-bold disabled:opacity-50">
                 {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
                 {busy ? "Importing…" : `Create ${rows.length} asset${rows.length === 1 ? "" : "s"}`}
               </button>

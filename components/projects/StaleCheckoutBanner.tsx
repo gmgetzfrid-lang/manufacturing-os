@@ -127,20 +127,20 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
                 <span className="font-mono">{r.docNumber || "-"}</span>
                 {r.docTitle && <span className="ml-2 text-amber-800 font-medium">{r.docTitle}</span>}
               </div>
-              <div className="text-[10px] text-amber-700">
+              <div className="text-[11px] text-amber-700">
                 Started {formatRelative(r.startedAt)} · expected release {formatRelative(r.expectedReleaseAt)}
               </div>
             </div>
             <Link
               href={r.libraryId ? `/documents/${r.libraryId}?doc=${r.documentId}` : "#"}
-              className="text-[10px] font-bold text-amber-900 underline hover:text-amber-700 transition-colors"
+              className="text-[11px] font-bold text-amber-900 underline hover:text-amber-700 transition-colors"
             >
               Open
             </Link>
             <button
               onClick={() => void release(r)}
               disabled={releasingId === r.id}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-700 hover:bg-amber-800 text-white text-[10px] font-bold disabled:opacity-50 transition-colors"
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-700 hover:bg-amber-800 text-white text-[11px] font-bold disabled:opacity-50 transition-colors"
             >
               {releasingId === r.id ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
               Release

@@ -65,7 +65,7 @@ function Inline({ text, onCite }: { text: string; onCite: (n: number) => void })
         if (cite) {
           return cite[1].split(/\s*,\s*/).map((n) => (
             <button key={`${i}-${n}`} type="button" onClick={() => onCite(Number(n))}
-              className="align-super mx-px px-1 rounded bg-[var(--color-accent-soft)] text-[var(--color-accent)] text-[9px] font-black hover:bg-[var(--color-accent)] hover:text-white transition-colors">
+              className="align-super mx-px px-1 rounded bg-[var(--color-surface-2)] text-[var(--color-accent)] text-[11px] font-black hover:bg-[var(--color-accent)] hover:text-white transition-colors">
               {n}
             </button>
           ));
@@ -231,8 +231,8 @@ export default function AskKnowledgeBody() {
 
       {/* Ask */}
       <form onSubmit={(e) => { e.preventDefault(); void ask(q); }}
-        className="shrink-0 flex items-center gap-1.5 rounded-xl border-2 border-[var(--color-border)] bg-[var(--color-surface)] pl-2.5 pr-1 py-1 focus-within:border-[var(--color-accent)] transition-colors">
-        <Sparkles className="w-4 h-4 text-[var(--color-accent)] shrink-0" />
+        className="shrink-0 flex items-center gap-1.5 rounded-xl border-2 border-[var(--color-border)] bg-[var(--color-surface)] pl-2.5 pr-1 py-1 focus-within:border-[var(--color-border-strong)] transition-colors">
+        <Sparkles className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
         <input value={q} onChange={(e) => setQ(e.target.value)} disabled={busy || !lib}
           placeholder={threadId ? "Ask a follow-up…" : lib ? `Ask ${lib.name}…` : "Loading libraries…"}
           className="flex-1 min-w-0 bg-transparent text-[13px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none py-1" />
@@ -249,7 +249,7 @@ export default function AskKnowledgeBody() {
           <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 p-3">
             <div className="text-[12px] font-bold text-[var(--color-text)] truncate">{last?.question}</div>
             <div className="mt-2 flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
-              <span className="relative flex w-2 h-2"><span className="absolute inset-0 rounded-full bg-[var(--color-accent)] animate-ping opacity-60" /><span className="relative w-2 h-2 rounded-full bg-[var(--color-accent)]" /></span>
+              <span className="relative flex w-2 h-2"><span className="absolute inset-0 rounded-full bg-[var(--color-surface-2)] animate-ping opacity-60" /><span className="relative w-2 h-2 rounded-full bg-[var(--color-surface-2)]" /></span>
               {status ?? "Working…"}
             </div>
             <div className="mt-2 space-y-1.5">
@@ -274,7 +274,7 @@ export default function AskKnowledgeBody() {
             ) : parts && (
               <>
                 {parts.v?.verdict && (
-                  <span className={`mt-2 inline-flex px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-[0.08em] ${VERDICT[parts.v.verdict].cls}`}>
+                  <span className={`mt-2 inline-flex px-2 py-0.5 rounded-md text-[11px] font-black uppercase tracking-[0.08em] ${VERDICT[parts.v.verdict].cls}`}>
                     {VERDICT[parts.v.verdict].label}
                   </span>
                 )}
@@ -283,7 +283,7 @@ export default function AskKnowledgeBody() {
                 </p>
                 {parts.p.settle.length > 0 && (
                   <div className="mt-2 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/20 px-2.5 py-1.5">
-                    <div className="text-[10px] font-black uppercase tracking-wider text-amber-800 dark:text-amber-300">To settle this</div>
+                    <div className="text-[11px] font-black uppercase tracking-wider text-amber-800 dark:text-amber-300">To settle this</div>
                     <ul className="mt-0.5 space-y-0.5">
                       {parts.p.settle.slice(0, 2).map((b, i) => (
                         <li key={i} className="text-[11px] text-[var(--color-text)]"><Inline text={b.text} onCite={(n) => openCite(citeByN(n))} /></li>
@@ -300,15 +300,15 @@ export default function AskKnowledgeBody() {
                 )}
                 {proof.length > 0 && (
                   <div className="mt-2.5 space-y-1.5">
-                    <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">The proof</div>
+                    <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">The proof</div>
                     {proof.map((c) => {
                       const win = c.quote ? (c.highlight ? quoteWindow(c.quote, c.highlight) : null) : null;
                       const clause = c.quote ? clauseFor(c.quote, c.highlight, c.section) : null;
                       return (
                         <button key={c.n} type="button" onClick={() => openCite(c)}
                           className="w-full text-left rounded-lg border border-[var(--color-border)] hover:border-[var(--color-accent)] bg-[var(--color-surface-2)]/40 px-2.5 py-1.5 transition-colors">
-                          <div className="flex items-center gap-1.5 text-[10px] font-black text-[var(--color-text-muted)]">
-                            <span className="px-1 rounded bg-[var(--color-accent-soft)] text-[var(--color-accent)]">{c.n}</span>
+                          <div className="flex items-center gap-1.5 text-[11px] font-black text-[var(--color-text-muted)]">
+                            <span className="px-1 rounded bg-[var(--color-surface-2)] text-[var(--color-text)]">{c.n}</span>
                             <FileText className="w-3 h-3" />
                             <span className="truncate">
                               {c.url ? (c.title ?? c.url) : docDesignation(c.documentName ?? "Document")}
@@ -329,19 +329,19 @@ export default function AskKnowledgeBody() {
                 )}
                 {/* The library asking YOU something back — answer it in the box above. */}
                 {parts.followup && (
-                  <div className="mt-2 text-[11px] rounded-lg border border-dashed border-[var(--color-accent)]/60 px-2.5 py-1.5 text-[var(--color-text)]">
-                    <span className="font-black text-[var(--color-accent)]">One question for you: </span>{parts.followup.question}
+                  <div className="mt-2 text-[11px] rounded-lg border border-dashed border-[var(--color-border-strong)] px-2.5 py-1.5 text-[var(--color-text)]">
+                    <span className="font-black text-[var(--color-text)]">One question for you: </span>{parts.followup.question}
                     {parts.followup.options.length > 0 ? (
                       <span className="mt-1 flex flex-wrap gap-1">
                         {parts.followup.options.slice(0, 4).map((o) => (
                           <button key={o} type="button" onClick={() => void ask(o)}
-                            className="px-2 py-0.5 rounded-md border border-[var(--color-accent)]/50 text-[10px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-white">
+                            className="px-2 py-0.5 rounded-md border border-[var(--color-accent)]/50 text-[11px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-white">
                             {o}
                           </button>
                         ))}
                       </span>
                     ) : (
-                      <span className="block text-[10px] text-[var(--color-text-muted)] mt-0.5">Answer it in the box above - it continues this conversation.</span>
+                      <span className="block text-[11px] text-[var(--color-text-muted)] mt-0.5">Answer it in the box above - it continues this conversation.</span>
                     )}
                   </div>
                 )}
@@ -356,7 +356,7 @@ export default function AskKnowledgeBody() {
                 className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
                 <RotateCcw className="w-3.5 h-3.5" /> New question
               </button>
-              {turns.length > 1 && <span className="text-[10px] text-[var(--color-text-faint)]">{turns.length} questions in this conversation</span>}
+              {turns.length > 1 && <span className="text-[11px] text-[var(--color-text-faint)]">{turns.length} questions in this conversation</span>}
             </div>
           </div>
         )}
@@ -365,15 +365,15 @@ export default function AskKnowledgeBody() {
         {!busy && !last && (
           (recent ?? []).length > 0 ? (
             <div>
-              <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-faint)] mb-1">Your recent questions</div>
+              <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-faint)] mb-1">Your recent questions</div>
               <ul className="space-y-0.5">
                 {(recent ?? []).map((t) => (
                   <li key={t.id}>
                     <Link href={`/assistant?thread=${t.id}&library=${t.libraryId ?? lib?.id ?? ""}`}
                       className="group flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)]">
                       <MessageSquare className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
-                      <span className="flex-1 min-w-0 truncate text-[12px] font-semibold text-[var(--color-text)] group-hover:text-[var(--color-accent)]">{t.title || "Untitled"}</span>
-                      <span className="shrink-0 text-[10px] text-[var(--color-text-faint)] tabular-nums">{timeAgo(t.lastMessageAt)}</span>
+                      <span className="flex-1 min-w-0 truncate text-[12px] font-semibold text-[var(--color-text)] group-hover:text-[var(--color-text)]">{t.title || "Untitled"}</span>
+                      <span className="shrink-0 text-[11px] text-[var(--color-text-faint)] tabular-nums">{timeAgo(t.lastMessageAt)}</span>
                     </Link>
                   </li>
                 ))}

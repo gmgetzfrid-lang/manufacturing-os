@@ -11,8 +11,8 @@ import Link from "next/link";
 import { Send, Briefcase, Zap, RefreshCw, ArrowRight } from "lucide-react";
 
 export const QUICK_ACTIONS: Array<{ label: string; sub: string; href?: string; icon: React.ComponentType<{ className?: string }>; tone: string; action?: "search" }> = [
-  { label: "New request", sub: "Drafting / design", href: "/requests/new", icon: Send, tone: "text-[var(--color-accent)] bg-orange-50" },
-  { label: "Documents", sub: "Browse & check out", href: "/documents", icon: Briefcase, tone: "text-blue-600 bg-blue-50" },
+  { label: "New request", sub: "Drafting / design", href: "/requests/new", icon: Send, tone: "text-[var(--color-text)] bg-[var(--color-surface-2)]" },
+  { label: "Documents", sub: "Browse & check out", href: "/documents", icon: Briefcase, tone: "text-[var(--color-text)] bg-[var(--color-surface-2)]" },
   { label: "Coordination", sub: "Collisions & blockers", href: "/coordination", icon: Zap, tone: "text-rose-600 bg-rose-50" },
   { label: "Search", sub: "⌘K everything", action: "search", icon: RefreshCw, tone: "text-[var(--color-text-faint)] bg-[var(--color-surface-2)]" },
 ];

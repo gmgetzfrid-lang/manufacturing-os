@@ -31,8 +31,8 @@ export default function CommentBody({ text, currentUserId, className }: CommentB
               key={idx}
               className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[12px] font-bold align-baseline mr-0.5 ${
                 isMe
-                  ? "bg-orange-100 text-orange-700 ring-1 ring-orange-200"
-                  : "bg-[var(--color-accent-soft)] text-[var(--color-accent)] ring-1 ring-[var(--color-accent-ring)]"
+                  ? "bg-[var(--color-surface-2)] text-[var(--color-text)] ring-1 ring-[var(--color-border-strong)]"
+                  : "bg-[var(--color-surface-2)] text-[var(--color-text)] ring-1 ring-[var(--color-accent-ring)]"
               }`}
               title={`Mentioned: ${t.name}`}
             >

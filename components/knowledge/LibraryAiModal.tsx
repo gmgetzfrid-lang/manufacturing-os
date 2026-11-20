@@ -106,7 +106,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
           <div>
             <h2 className="text-base font-black text-[var(--color-text)] flex items-center gap-2">
-              <Wand2 className="w-4 h-4 text-orange-600" /> Library AI setup
+              <Wand2 className="w-4 h-4 text-[var(--color-text-muted)]" /> Library AI setup
             </h2>
             <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
               Mold how the AI answers questions asked of <b>{library.name}</b>.
@@ -117,7 +117,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
 
         <div className="p-5 space-y-5">
           <div>
-            <label htmlFor="library-kind" className="block text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+            <label htmlFor="library-kind" className="block text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
               What&apos;s in this library
             </label>
             <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
@@ -141,7 +141,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
           </div>
 
           <div>
-            <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+            <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
               Standing instructions
             </div>
             <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
@@ -153,7 +153,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
           </div>
 
           <div>
-            <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+            <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
               Numbering &amp; code decoder
             </div>
             <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
@@ -167,7 +167,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
           </div>
 
           <div>
-            <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+            <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
               Pinned reference documents
             </div>
             <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
@@ -191,10 +191,10 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
                             if (next.has(d.id)) next.delete(d.id); else next.add(d.id);
                             return next;
                           })}
-                          className="accent-orange-600 w-4 h-4" />
+                          className="accent-[var(--color-text)] w-4 h-4" />
                         <span className="text-xs font-bold text-[var(--color-text)] flex-1 truncate">{d.name}</span>
                         {on && (
-                          <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-orange-500/10 border border-orange-300 dark:border-orange-800 text-orange-700 dark:text-orange-400">PINNED</span>
+                          <span className="text-[11px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)]">PINNED</span>
                         )}
                       </label>
                     </li>
@@ -205,12 +205,12 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
           </div>
 
           <div>
-            <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+            <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
               AI features
             </div>
             <label className="flex items-start gap-2.5 rounded-xl border border-[var(--color-border)] px-3 py-2.5 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors">
               <input type="checkbox" checked={clarifyFacets} onChange={(e) => setClarifyFacets(e.target.checked)}
-                className="accent-orange-600 w-4 h-4 mt-0.5" />
+                className="accent-[var(--color-text)] w-4 h-4 mt-0.5" />
               <span className="min-w-0">
                 <span className="block text-xs font-bold text-[var(--color-text)]">Ask before broad answers</span>
                 <span className="block text-[11px] text-[var(--color-text-muted)] mt-0.5">
@@ -222,7 +222,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
             </label>
             <label className="mt-1.5 flex items-start gap-2.5 rounded-xl border border-[var(--color-border)] px-3 py-2.5 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors">
               <input type="checkbox" checked={visionPages} onChange={(e) => setVisionPages(e.target.checked)}
-                className="accent-orange-600 w-4 h-4 mt-0.5" />
+                className="accent-[var(--color-text)] w-4 h-4 mt-0.5" />
               <span className="min-w-0">
                 <span className="block text-xs font-bold text-[var(--color-text)]">Deep read - see pages as printed (ON by default)</span>
                 <span className="block text-[11px] text-[var(--color-text-muted)] mt-0.5">
@@ -235,7 +235,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
             </label>
             <label className="mt-1.5 flex items-start gap-2.5 rounded-xl border border-[var(--color-border)] px-3 py-2.5 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors">
               <input type="checkbox" checked={visionAllPages} onChange={(e) => setVisionAllPages(e.target.checked)}
-                className="accent-orange-600 w-4 h-4 mt-0.5" />
+                className="accent-[var(--color-text)] w-4 h-4 mt-0.5" />
               <span className="min-w-0">
                 <span className="block text-xs font-bold text-[var(--color-text)]">
                   Text doesn&apos;t extract from these files - index every page as an image
@@ -254,7 +254,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
             </label>
             <label className="mt-1.5 flex items-start gap-2.5 rounded-xl border border-[var(--color-border)] px-3 py-2.5 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors">
               <input type="checkbox" checked={drawingIntel} onChange={(e) => setDrawingIntel(e.target.checked)}
-                className="accent-orange-600 w-4 h-4 mt-0.5" />
+                className="accent-[var(--color-text)] w-4 h-4 mt-0.5" />
               <span className="min-w-0">
                 <span className="block text-xs font-bold text-[var(--color-text)]">
                   This is a drawing set - enable Drawing Intelligence
@@ -270,7 +270,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
           </div>
 
           <div>
-            <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1 flex items-center gap-1.5">
+            <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1 flex items-center gap-1.5">
               <Link2 className="w-3.5 h-3.5" /> Linked reference libraries
             </div>
             <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
@@ -288,10 +288,10 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
                   <li key={l.id}>
                     <label className="flex items-center gap-2.5 rounded-xl border border-[var(--color-border)] px-3 py-2 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors">
                       <input type="checkbox" checked={linked.has(l.id)} onChange={() => toggle(l.id)}
-                        className="accent-orange-600 w-4 h-4" />
+                        className="accent-[var(--color-text)] w-4 h-4" />
                       <span className="text-xs font-bold text-[var(--color-text)] flex-1">{l.name}</span>
                       {linked.has(l.id) && (
-                        <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]">REFERENCE</span>
+                        <span className="text-[11px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]">REFERENCE</span>
                       )}
                     </label>
                   </li>

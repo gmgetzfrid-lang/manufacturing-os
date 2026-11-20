@@ -15,7 +15,7 @@ export default function FileThumb({ file, size = 40 }: { file: File; size?: numb
   ) : (
     <span className="rounded-md bg-[var(--color-surface-2)] text-[var(--color-text-muted)] shrink-0 inline-flex flex-col items-center justify-center" style={{ width: size, height: size }}>
       <FileText className="w-4 h-4" />
-      {ext && <span className="text-[8px] font-black leading-none mt-0.5">{ext}</span>}
+      {ext && <span className="text-[11px] font-black leading-none mt-0.5">{ext}</span>}
     </span>
   );
 }

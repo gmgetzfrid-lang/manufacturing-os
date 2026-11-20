@@ -827,7 +827,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
                 const tip = x.unsure === "unset" ? "When it happened wasn't saved - tap to set it" : x.unsure === "order" ? "This time is after what came next - check it" : undefined;
                 return (
                   <li key={x.key} className="text-[12px] break-words">
-                    {head && <div className={`mt-1.5 text-[12px] font-semibold ${sh.night ? "text-violet-700 dark:text-violet-300" : "text-sky-700 dark:text-sky-300"}`}>{sh.label}</div>}
+                    {head && <div className={`mt-1.5 text-[12px] font-semibold ${sh.night ? "text-[var(--color-text)] dark:text-[var(--color-text)]" : "text-[var(--color-text)] dark:text-[var(--color-text)]"}`}>{sh.label}</div>}
                     <div className="py-0.5 pl-2 border-l-2 border-[var(--color-border)]">
                       {x.unsure && editable
                         ? <button type="button" onClick={() => openFix(x)} title={tip} className={`mr-1.5 whitespace-nowrap ${timeCls}`}>{time}</button>

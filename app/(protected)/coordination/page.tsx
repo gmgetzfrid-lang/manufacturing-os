@@ -142,7 +142,7 @@ function CoordinationInner() {
   if (!snap) {
     return (
       <div className="min-h-full bg-[var(--color-canvas)] flex flex-col items-center justify-center text-center p-6">
-        <Network className="w-10 h-10 text-[var(--color-accent)] mb-3" />
+        <Network className="w-10 h-10 text-[var(--color-text-muted)] mb-3" />
         <h1 className="text-lg font-black text-[var(--color-text)]">Coordination</h1>
         <p className="text-sm text-[var(--color-text-muted)] mt-2 max-w-sm">Couldn&apos;t load the operational picture. Try refresh - if this persists, the database migrations may not be applied yet.</p>
         <button onClick={() => void load()} className="mt-4 px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-bold">Refresh</button>
@@ -162,7 +162,7 @@ function CoordinationInner() {
         <div className="flex items-start justify-between mb-2 flex-wrap gap-3">
           <div>
             <h1 className="text-2xl font-black text-[var(--color-text)] flex items-center gap-3">
-              <Network className="w-7 h-7 text-[var(--color-accent)]" /> Coordination
+              <Network className="w-7 h-7 text-[var(--color-text-muted)]" /> Coordination
             </h1>
             <p className="text-sm text-[var(--color-text-muted)] mt-1">Where work overlaps, what&apos;s blocking it, and how the floor is tracking - org-wide and live.</p>
           </div>
@@ -234,9 +234,9 @@ function CoordinationInner() {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
           {/* Equipment state distribution */}
-          <Panel title="Equipment state" icon={Boxes} accent="text-cyan-600 dark:text-cyan-400" span={2}>
+          <Panel title="Equipment state" icon={Boxes} accent="text-[var(--color-text-muted)] dark:text-[var(--color-text)]" span={2}>
             {totalEquip === 0 ? (
-              <div className="text-xs text-[var(--color-text-muted)]">No equipment tracked yet - <Link href="/admin/assets" className="text-cyan-600 dark:text-cyan-400 font-bold">register assets</Link> to see the turnaround distribution.</div>
+              <div className="text-xs text-[var(--color-text-muted)]">No equipment tracked yet - <Link href="/admin/assets" className="text-[var(--color-accent)] dark:text-[var(--color-text)] font-bold">register assets</Link> to see the turnaround distribution.</div>
             ) : (
               <>
                 <div className="flex items-end gap-4 mb-3">
@@ -280,7 +280,7 @@ function CoordinationInner() {
             {snap.holds.activeByReason.length > 0 && (
               <div className="mt-3 flex flex-wrap gap-1.5">
                 {snap.holds.activeByReason.slice(0, 4).map((r) => (
-                  <span key={r.reason} className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-rose-500/10 text-rose-700 dark:text-rose-300 border border-rose-500/20">
+                  <span key={r.reason} className="inline-flex items-center gap-1 text-[11px] font-bold px-1.5 py-0.5 rounded-md bg-rose-500/10 text-rose-700 dark:text-rose-300 border border-rose-500/20">
                     {r.reason} <span className="text-rose-800 dark:text-rose-200">{r.count}</span>
                   </span>
                 ))}
@@ -292,14 +292,14 @@ function CoordinationInner() {
           </Panel>
 
           {/* Plot plans */}
-          <Panel title="Spatial boards" icon={MapIcon} accent="text-cyan-600 dark:text-cyan-400" span={3}>
+          <Panel title="Spatial boards" icon={MapIcon} accent="text-[var(--color-text-muted)] dark:text-[var(--color-text)]" span={3}>
             {snap.plotPlans.length === 0 ? (
-              <div className="text-xs text-[var(--color-text-muted)]">No plot plans yet - <Link href="/plot-plans" className="text-cyan-600 dark:text-cyan-400 font-bold">create one</Link> to navigate equipment spatially.</div>
+              <div className="text-xs text-[var(--color-text-muted)]">No plot plans yet - <Link href="/plot-plans" className="text-[var(--color-accent)] dark:text-[var(--color-text)] font-bold">create one</Link> to navigate equipment spatially.</div>
             ) : (
               <div className="flex flex-wrap gap-2">
                 {snap.plotPlans.slice(0, 8).map((p) => (
-                  <Link key={p.id} href={`/plot-plans/${p.id}`} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-xs font-bold text-[var(--color-text)] hover:border-cyan-500/50">
-                    <MapIcon className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" /> {p.name} <span className="text-[var(--color-text-muted)]">{p.markers.length}</span>
+                  <Link key={p.id} href={`/plot-plans/${p.id}`} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-xs font-bold text-[var(--color-text)] hover:border-[var(--color-border-strong)]">
+                    <MapIcon className="w-3.5 h-3.5 text-[var(--color-text-muted)] dark:text-[var(--color-text)]" /> {p.name} <span className="text-[var(--color-text-muted)]">{p.markers.length}</span>
                   </Link>
                 ))}
               </div>
@@ -339,10 +339,10 @@ function CoordinationRadar({
   const Header = (
     <div className="px-5 pt-4 pb-3">
       <div className="flex items-center gap-2">
-        <Radar className="w-5 h-5 text-[var(--color-accent)]" />
+        <Radar className="w-5 h-5 text-[var(--color-text-muted)]" />
         <span className="text-base font-black text-[var(--color-text)]">Collision radar</span>
-        <span className="ml-auto inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
-          <span className="relative flex h-1.5 w-1.5"><span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-orange-500" /></span>
+        <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
+          <span className="relative flex h-1.5 w-1.5"><span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-[var(--color-text-muted)]" /></span>
           live
         </span>
       </div>
@@ -364,7 +364,7 @@ function CoordinationRadar({
   // STATE 1 — collisions found.
   if (overlaps.length > 0) {
     return (
-      <div className="rounded-2xl border border-amber-500/40 bg-gradient-to-br from-amber-500/10 to-[var(--color-canvas)] overflow-hidden">
+      <div className="rounded-2xl border border-amber-500/40 overflow-hidden bg-[var(--color-surface-2)]">
         {Header}
         <div className="px-5 pb-2 flex items-center gap-2">
           <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
@@ -384,7 +384,7 @@ function CoordinationRadar({
                 <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-bold text-[var(--color-text)] truncate">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-700/80 dark:text-amber-300/80 mr-1.5">{scope.kind}</span>
+                    <span className="text-[11px] font-black uppercase tracking-wider text-amber-700/80 dark:text-amber-300/80 mr-1.5">{scope.kind}</span>
                     {scope.tag}
                   </div>
                   <div className="text-[11px] text-[var(--color-text-muted)] flex items-center gap-1.5 mt-0.5">
@@ -411,7 +411,7 @@ function CoordinationRadar({
   // STATE 2 — genuinely clear: it had enough to compare, found no overlap.
   if (canCompare) {
     return (
-      <div className="rounded-2xl border border-emerald-500/30 bg-gradient-to-br from-emerald-500/10 to-[var(--color-canvas)] overflow-hidden">
+      <div className="rounded-2xl border border-emerald-500/30 overflow-hidden bg-[var(--color-surface-2)]">
         {Header}
         <div className="px-5 pb-4 pt-1 flex items-center gap-3 border-t border-emerald-500/15">
           <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center shrink-0 mt-1">
@@ -431,12 +431,12 @@ function CoordinationRadar({
   // STATE 3 — standing by: not enough scope-linked docs to compare. Explain how
   // to light it up instead of implying everything's fine.
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-gradient-to-br from-sky-500/[0.06] to-[var(--color-canvas)] overflow-hidden">
+    <div className="rounded-2xl border border-[var(--color-border)] overflow-hidden bg-[var(--color-surface-2)]">
       {Header}
       <div className="px-5 pb-4 pt-1 border-t border-[var(--color-border)]">
         <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-xl bg-sky-500/10 border border-sky-500/25 flex items-center justify-center shrink-0 mt-0.5">
-            <Info className="w-5 h-5 text-sky-700 dark:text-sky-300" />
+          <div className="w-10 h-10 rounded-xl bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] flex items-center justify-center shrink-0 mt-0.5">
+            <Info className="w-5 h-5 text-[var(--color-text-muted)] dark:text-[var(--color-text)]" />
           </div>
           <div className="min-w-0">
             <div className="text-sm font-black text-[var(--color-text)]">Radar is standing by - nothing to compare yet</div>
@@ -447,10 +447,10 @@ function CoordinationRadar({
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               <Link href="/documents" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)] text-xs font-bold hover:bg-[var(--color-border-strong)]">
-                <Tag className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" /> Tag documents to equipment
+                <Tag className="w-3.5 h-3.5 text-[var(--color-text-muted)] dark:text-[var(--color-text)]" /> Tag documents to equipment
               </Link>
               <Link href="/admin/assets" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)] text-xs font-bold hover:bg-[var(--color-border-strong)]">
-                <Boxes className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" /> Equipment registry
+                <Boxes className="w-3.5 h-3.5 text-[var(--color-text-muted)] dark:text-[var(--color-text)]" /> Equipment registry
               </Link>
             </div>
           </div>
@@ -462,9 +462,9 @@ function CoordinationRadar({
 
 function Coverage({ icon: Icon, label, value, highlight }: { icon: React.ComponentType<{ className?: string }>; label: string; value: number; highlight?: boolean }) {
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] font-bold ${highlight ? "bg-orange-500/10 border-orange-500/30 text-orange-200" : "bg-black/[0.03] dark:bg-[var(--color-surface)]/[0.03] border-black/10 dark:border-white/10 text-[var(--color-text-muted)]"}`}>
-      <Icon className={`w-3 h-3 ${highlight ? "text-orange-300" : "text-[var(--color-text-muted)]"}`} />
-      <span className={highlight ? "text-orange-100" : "text-[var(--color-text)]"}>{value}</span> {label}
+    <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] font-bold ${highlight ? "bg-[var(--color-surface-2)] border-[var(--color-border-strong)] text-[var(--color-text-muted)]" : "bg-black/[0.03] dark:bg-[var(--color-surface)]/[0.03] border-black/10 dark:border-white/10 text-[var(--color-text-muted)]"}`}>
+      <Icon className={`w-3 h-3 ${highlight ? "text-[var(--color-text-muted)]" : "text-[var(--color-text-muted)]"}`} />
+      <span className={highlight ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}>{value}</span> {label}
     </span>
   );
 }

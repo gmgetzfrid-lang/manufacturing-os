@@ -56,7 +56,7 @@ interface Props {
 const STATUS_META: Record<MilestoneStatus, { label: string; tone: string; bar: string; Icon: React.ComponentType<{ className?: string }> }> = {
   // The same colours as the timeline and calendar dots.
   planned:     { label: "Planned",     tone: "text-slate-600 dark:text-slate-300",  bar: "bg-slate-400",   Icon: Circle },
-  in_progress: { label: "In progress", tone: "text-blue-700 dark:text-blue-300",    bar: "bg-blue-500",    Icon: PauseCircle },
+  in_progress: { label: "In progress", tone: "text-[var(--color-text)] dark:text-[var(--color-text)]",    bar: "bg-[var(--color-text-muted)]",    Icon: PauseCircle },
   completed:   { label: "Completed",   tone: "text-emerald-700 dark:text-emerald-300", bar: "bg-emerald-500", Icon: CheckCircle2 },
   missed:      { label: "Missed",      tone: "text-rose-700 dark:text-rose-300",    bar: "bg-rose-600",    Icon: XCircle },
   blocked:     { label: "Blocked",     tone: "text-rose-700 dark:text-rose-300",    bar: "bg-rose-500",    Icon: MinusCircle },
@@ -224,7 +224,7 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
         <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
           <div className="flex items-baseline justify-between mb-2">
             <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">Next 14 days</div>
-            <div className="text-[10px] text-[var(--color-text-faint)]">{upcoming.length}</div>
+            <div className="text-[11px] text-[var(--color-text-faint)]">{upcoming.length}</div>
           </div>
           {upcoming.length === 0 ? (
             <div className="text-[11px] text-[var(--color-text-faint)] italic">Nothing scheduled.</div>
@@ -235,7 +235,7 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
                   <Flag className={`w-3 h-3 mt-0.5 shrink-0 ${STATUS_META[m.status].tone}`} />
                   <div className="min-w-0 flex-1">
                     <div className="font-bold text-[var(--color-text)] truncate">{m.name}</div>
-                    <div className="text-[10px] text-[var(--color-text-muted)] inline-flex items-center gap-1">
+                    <div className="text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1">
                       <CalendarClock className="w-2.5 h-2.5" /> {humanRelative(due, tz)}
                     </div>
                   </div>
@@ -245,7 +245,7 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
           )}
         </div>
 
-        <div className="text-[10px] text-[var(--color-text-muted)] italic px-1">
+        <div className="text-[11px] text-[var(--color-text-muted)] italic px-1">
           {total} milestone{total === 1 ? "" : "s"} total
         </div>
       </div>

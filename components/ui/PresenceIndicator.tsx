@@ -47,7 +47,7 @@ export default function PresenceIndicator({
         ))}
       </div>
       {extra > 0 && (
-        <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-1.5">
+        <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-1.5">
           +{extra}
         </span>
       )}

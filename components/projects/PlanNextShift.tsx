@@ -209,7 +209,7 @@ function Picker({ items, out, next, span, onBack, onPick }: {
                 ))}
               </div>
               <button type="button" onClick={() => setReadyOnly((v) => !v)} aria-pressed={readyOnly}
-                className={`rounded-full border px-2.5 py-1 font-semibold ${readyOnly ? "border-[var(--color-accent)] bg-orange-50 dark:bg-orange-950/40 text-orange-800 dark:text-orange-200" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
+                className={`rounded-full border px-2.5 py-1 font-semibold ${readyOnly ? "border-[var(--color-text)] bg-[var(--color-text)] dark:bg-[var(--color-surface-2)] text-[var(--color-surface)] dark:text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
                 {readyOnly ? "✓ " : ""}Ready to start
               </button>
             </>
@@ -330,7 +330,7 @@ function Confirm({ milestones, action, next, now, tz, times, mode, crews, when, 
           {busy ? "Saving…" : "Save to the schedule"}
         </button>
       </div>
-      <div className="text-[10.5px] text-[var(--color-text-faint)]">The planned dates move; the baseline doesn&apos;t, so the close-out still shows what was planned. Undo is offered after saving.</div>
+      <div className="text-[11px] text-[var(--color-text-faint)]">The planned dates move; the baseline doesn&apos;t, so the close-out still shows what was planned. Undo is offered after saving.</div>
     </div>
   );
 }
@@ -356,7 +356,7 @@ function Tag({ tone, children }: { tone: "rose" | "amber" | "emerald" | "slate";
     : tone === "amber" ? "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-900"
       : tone === "emerald" ? "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-200 dark:border-emerald-900"
         : "bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700";
-  return <span className={`inline-block max-w-full break-words px-1.5 py-px rounded border text-[9.5px] font-black uppercase tracking-wider ${cls}`}>{children}</span>;
+  return <span className={`inline-block max-w-full break-words px-1.5 py-px rounded border text-[11px] font-black uppercase tracking-wider ${cls}`}>{children}</span>;
 }
 
 function Ready({ x }: { x: LookAheadItem }) {

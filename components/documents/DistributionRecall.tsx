@@ -66,15 +66,15 @@ export default function DistributionRecall({
         onClick={() => setOpen((v) => !v)}
         className="w-full px-3.5 py-2.5 flex items-center gap-2 hover:bg-[var(--color-surface-2)] transition-colors"
       >
-        <FileDown className="w-4 h-4 text-teal-600 shrink-0" />
+        <FileDown className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
         <span className="text-xs font-bold text-[var(--color-text)]">Copies in circulation</span>
         <span className="ml-auto flex items-center gap-1.5">
           {outdated.length > 0 ? (
-            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800">
+            <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800">
               {outdated.length} of {holders.length} outdated
             </span>
           ) : (
-            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700">
+            <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700">
               all {holders.length} current
             </span>
           )}
@@ -96,7 +96,7 @@ export default function DistributionRecall({
             </div>
           ))}
           {holders.length > 10 && (
-            <div className="text-[10px] text-[var(--color-text-faint)]">…and {holders.length - 10} more</div>
+            <div className="text-[11px] text-[var(--color-text-faint)]">…and {holders.length - 10} more</div>
           )}
 
           {outdated.length > 0 && (

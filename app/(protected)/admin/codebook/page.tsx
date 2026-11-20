@@ -108,11 +108,11 @@ export default function CodebookPage() {
               label={<>Attach your P&amp;ID <b>legend</b> sheets (optional but recommended - the AI reads them on every question).</>}
               onGo={() => setTab("legend")} goLabel="Legend tab" />
             <li className="flex items-start gap-2 text-[var(--color-text-muted)]">
-              <span className="shrink-0 w-4 h-4 rounded-full border border-[var(--color-border-strong)] text-[9px] font-black flex items-center justify-center mt-0.5">5</span>
+              <span className="shrink-0 w-4 h-4 rounded-full border border-[var(--color-border-strong)] text-[11px] font-black flex items-center justify-center mt-0.5">5</span>
               <span>Then open your P&amp;ID <b>document library</b> → the orange <b>Equipment</b> button → pick your equipment column → Sweep → Apply. From then on it runs on every newly indexed drawing.</span>
             </li>
           </ol>
-          <p className="text-[10px] text-[var(--color-text-faint)] mt-2">
+          <p className="text-[11px] text-[var(--color-text-faint)] mt-2">
             The Equipment registry breaks into operating areas automatically once step 1 has units. Drafting request unit dropdowns fill from step 1 too.
           </p>
         </div>
@@ -173,7 +173,7 @@ function SetupStep({ done, n, label, onGo, goLabel, optional }: {
       {done ? (
         <span className="shrink-0 w-4 h-4 rounded-full bg-emerald-500 text-white flex items-center justify-center mt-0.5"><Check className="w-2.5 h-2.5" /></span>
       ) : (
-        <span className="shrink-0 w-4 h-4 rounded-full border border-[var(--color-border-strong)] text-[9px] font-black text-[var(--color-text-muted)] flex items-center justify-center mt-0.5">{n}</span>
+        <span className="shrink-0 w-4 h-4 rounded-full border border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text-muted)] flex items-center justify-center mt-0.5">{n}</span>
       )}
       <span className={done ? "text-[var(--color-text-muted)] line-through decoration-emerald-500/40" : "text-[var(--color-text)]"}>
         {label}{optional && !done && <span className="text-[var(--color-text-faint)]"> (optional)</span>}
@@ -225,7 +225,7 @@ function EntryTable({ kind, title, entries, canWrite, codeHint, labelHint, withP
       <div className="px-4 py-2.5 border-b border-[var(--color-border)] text-xs font-black text-[var(--color-text)]">{title} · {entries.length}</div>
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
-          <thead className="bg-[var(--color-surface-2)] text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+          <thead className="bg-[var(--color-surface-2)] text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
             <tr>
               <th className="text-left px-4 py-1.5 w-24">Code</th>
               <th className="text-left px-2 py-1.5">Label</th>
@@ -298,7 +298,7 @@ function EntryRow({ entry, withPrefixes, canWrite, orgId, uid, onChanged, onErro
         </td>
       )}
       <td className="px-2 py-1.5">
-        {entry.origin === "import" && <span className="text-[9px] font-black uppercase tracking-wider text-violet-600 bg-violet-50 border border-violet-200 rounded px-1 py-0.5">imported</span>}
+        {entry.origin === "import" && <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded px-1 py-0.5">imported</span>}
       </td>
       {canWrite && (
         <td className="px-2 py-1.5">
@@ -368,7 +368,7 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
         <div className="space-y-1.5">
           {segments.map((seg, i) => (
             <div key={i} className="flex items-center gap-2 flex-wrap">
-              <span className="text-[10px] font-black text-[var(--color-text-faint)] w-4">{i + 1}.</span>
+              <span className="text-[11px] font-black text-[var(--color-text-faint)] w-4">{i + 1}.</span>
               <select value={seg.kind} disabled={!canWrite}
                 onChange={(e) => setSegments(segments.map((s, j) => j === i ? { kind: e.target.value as DrawingSegment["kind"], digits: 2, letters: 1 } : s))}
                 className="h-8 px-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold">
@@ -451,7 +451,7 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
 function PreviewChip({ label, value, extra }: { label: string; value: string | null; extra?: string | null }) {
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border font-bold ${value ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"}`}>
-      <span className="text-[9px] uppercase tracking-wider opacity-70">{label}</span>
+      <span className="text-[11px] uppercase tracking-wider opacity-70">{label}</span>
       <span className="font-mono">{value ?? "-"}</span>
       {extra && <span className="opacity-80">· {extra}</span>}
     </span>
@@ -722,7 +722,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
     <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4 animate-in fade-in">
       <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl flex flex-col max-h-[88vh] animate-in zoom-in-95">
         <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2.5">
-          <Sparkles className="w-4 h-4 text-violet-600" />
+          <Sparkles className="w-4 h-4 text-[var(--color-text-muted)]" />
           <div className="flex-1">
             <div className="text-sm font-black text-[var(--color-text)]">Build the codebook from a document</div>
             <div className="text-[11px] text-[var(--color-text-muted)]">Runs on your own AI key. Nothing is written until you review and apply.</div>
@@ -750,18 +750,18 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
                     className={`w-full border-2 border-dashed border-[var(--color-border-strong)] rounded-xl px-4 py-5 text-center hover:bg-[var(--color-surface-2)] transition-colors ${codeDrag.ring}`}
                   >
                     <div className="text-xs font-bold text-[var(--color-text)]">{codeDrag.over ? codeDrag.say : "Drop your standards document here, or click to pick"}</div>
-                    <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">PDF, Word (.docx), TXT, CSV, MD · up to 3 MB · CAD-exported and scanned PDFs are read visually, page by page</div>
+                    <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">PDF, Word (.docx), TXT, CSV, MD · up to 3 MB · CAD-exported and scanned PDFs are read visually, page by page</div>
                   </button>
                 )}
               </div>
-              <div className="text-center text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">or</div>
+              <div className="text-center text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">or</div>
               <div>
                 <div className="text-[11px] font-black text-[var(--color-text)] mb-1">Paste your standard</div>
                 <textarea value={text} onChange={(e) => setText(e.target.value)} rows={7}
                   placeholder={"Paste the unit list / identifier tables / numbering convention…\n\ne.g.  20  Crude Unit\n      25  DHT\n      Equipment: 30 Exchangers (E-), 10 Vessels (V-) …"}
                   className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 px-3 py-2 text-xs font-mono resize-y" />
               </div>
-              <div className="text-center text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">or</div>
+              <div className="text-center text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">or</div>
               <div>
                 <div className="text-[11px] font-black text-[var(--color-text)] mb-1">Pick an indexed document</div>
                 {pickedDoc ? (
@@ -798,7 +798,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
                 <b className="text-[var(--color-text)]">{diff.adds.length}</b> new · <b className="text-[var(--color-text)]">{diff.changes.length}</b> changed · {diff.unchanged.length} already match - check what to apply.
               </div>
               {notes && (
-                <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-[11px] text-sky-900">
+                <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 text-[11px] text-[var(--color-text)]">
                   <b>AI notes on your numbering convention:</b> {notes} <span className="opacity-70">(configure segments in the Drawing numbers tab.)</span>
                 </div>
               )}
@@ -806,7 +806,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
                   standing instruction — taught once, obeyed on every future
                   import. */}
               <Link href="/admin/ai-instructions?scope=codebook"
-                className="inline-flex items-center gap-1.5 text-[11px] font-bold text-violet-700 hover:underline">
+                className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-accent)] hover:underline">
                 <GraduationCap className="w-3.5 h-3.5" />
                 Spotted something it keeps getting wrong? Teach the AI a standing rule →
               </Link>
@@ -817,11 +817,11 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
                   return (
                     <label key={k} className="flex items-center gap-2.5 px-3 py-2 text-xs cursor-pointer hover:bg-[var(--color-surface-2)]/60">
                       <input type="checkbox" checked={accepted.has(k)} onChange={() => toggle(k)} className="w-3.5 h-3.5 accent-[var(--color-accent)]" />
-                      <span className="text-[9px] font-black uppercase tracking-wider text-[var(--color-text-faint)] w-16">{KIND_LABEL[p.kind]}</span>
+                      <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-faint)] w-16">{KIND_LABEL[p.kind]}</span>
                       <span className="font-mono font-black text-[var(--color-text)] w-14">{p.code}</span>
                       <span className="font-bold text-[var(--color-text)] flex-1">{p.label}</span>
                       {p.tagPrefixes && p.tagPrefixes.length > 0 && <span className="font-mono text-[var(--color-text-muted)]">{p.tagPrefixes.join(", ")}-</span>}
-                      {change && <span className="text-[9px] font-black uppercase text-amber-700 bg-amber-50 border border-amber-200 rounded px-1 py-0.5" title={`Currently: ${change.label}`}>replaces “{change.label}”</span>}
+                      {change && <span className="text-[11px] font-black uppercase text-amber-700 bg-amber-50 border border-amber-200 rounded px-1 py-0.5" title={`Currently: ${change.label}`}>replaces “{change.label}”</span>}
                     </label>
                   );
                 })}

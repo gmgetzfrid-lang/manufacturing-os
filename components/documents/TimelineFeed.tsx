@@ -78,12 +78,12 @@ function visualsFor(event: TimelineEvent): RowVisuals {
   // feed develops muscle memory ("green dot = file released").
   if (event.kind === "version") {
     if (event.action === "VERSION_REVERT") {
-      return { Icon: Rewind, ringClass: "border-purple-500", bgClass: "bg-purple-100", iconColor: "text-purple-700" };
+      return { Icon: Rewind, ringClass: "border-[var(--color-border-strong)]", bgClass: "bg-[var(--color-surface-2)]", iconColor: "text-[var(--color-text-muted)]" };
     }
     return { Icon: GitCommitVertical, ringClass: "border-emerald-500", bgClass: "bg-emerald-100", iconColor: "text-emerald-700" };
   }
   if (event.kind === "project_activity") {
-    if (event.action === "comment") return { Icon: MessageSquare, ringClass: "border-blue-400", bgClass: "bg-blue-50", iconColor: "text-blue-600" };
+    if (event.action === "comment") return { Icon: MessageSquare, ringClass: "border-[var(--color-border-strong)]", bgClass: "bg-[var(--color-surface-2)]", iconColor: "text-[var(--color-text-muted)]" };
     return { Icon: Activity, ringClass: "border-slate-400", bgClass: "bg-[var(--color-surface-2)]", iconColor: "text-[var(--color-text-muted)]" };
   }
   if (event.kind === "hold") {
@@ -93,17 +93,17 @@ function visualsFor(event: TimelineEvent): RowVisuals {
   // audit kind
   switch (event.action) {
     case "VIEW":          return { Icon: Eye,         ringClass: "border-[var(--color-border-strong)]", bgClass: "bg-[var(--color-surface-2)]", iconColor: "text-[var(--color-text-muted)]" };
-    case "DOWNLOAD":      return { Icon: DownloadIcon, ringClass: "border-blue-400", bgClass: "bg-blue-50",   iconColor: "text-blue-600" };
+    case "DOWNLOAD":      return { Icon: DownloadIcon, ringClass: "border-[var(--color-border-strong)]", bgClass: "bg-[var(--color-surface-2)]",   iconColor: "text-[var(--color-text)]" };
     case "CHECK_OUT":     return { Icon: LogOut,       ringClass: "border-amber-400", bgClass: "bg-amber-50", iconColor: "text-amber-700" };
     case "CHECK_IN":      return { Icon: LogIn,        ringClass: "border-emerald-400", bgClass: "bg-emerald-50", iconColor: "text-emerald-700" };
-    case "ABANDON":       return { Icon: AlertTriangle, ringClass: "border-orange-400", bgClass: "bg-orange-50", iconColor: "text-orange-700" };
+    case "ABANDON":       return { Icon: AlertTriangle, ringClass: "border-[var(--color-border-strong)]", bgClass: "bg-[var(--color-surface-2)]", iconColor: "text-[var(--color-text)]" };
     case "FORCE_RELEASE": return { Icon: AlertTriangle, ringClass: "border-red-400",   bgClass: "bg-red-50",   iconColor: "text-red-700" };
     case "JOIN":          return { Icon: LogIn,        ringClass: "border-[var(--color-border-strong)]", bgClass: "bg-[var(--color-surface-2)]", iconColor: "text-[var(--color-text-muted)]" };
     case "REV_UP":        return { Icon: GitBranch,    ringClass: "border-emerald-500", bgClass: "bg-emerald-100", iconColor: "text-emerald-700" };
     case "REV_BACKFILL":        return { Icon: HistoryIcon,  ringClass: "border-slate-400",   bgClass: "bg-[var(--color-surface-2)]",   iconColor: "text-[var(--color-text-muted)]" };
-    case "REVERT":              return { Icon: Rewind,       ringClass: "border-purple-500", bgClass: "bg-purple-100",  iconColor: "text-purple-700" };
-    case "MILESTONE_CREATED":   return { Icon: Flag,         ringClass: "border-indigo-300", bgClass: "bg-indigo-50",   iconColor: "text-indigo-600" };
-    case "MILESTONE_UPDATED":   return { Icon: Flag,         ringClass: "border-indigo-300", bgClass: "bg-indigo-50",   iconColor: "text-indigo-500" };
+    case "REVERT":              return { Icon: Rewind,       ringClass: "border-[var(--color-border-strong)]", bgClass: "bg-[var(--color-surface-2)]",  iconColor: "text-[var(--color-text)]" };
+    case "MILESTONE_CREATED":   return { Icon: Flag,         ringClass: "border-[var(--color-border)]", bgClass: "bg-[var(--color-surface-2)]",   iconColor: "text-[var(--color-text)]" };
+    case "MILESTONE_UPDATED":   return { Icon: Flag,         ringClass: "border-[var(--color-border)]", bgClass: "bg-[var(--color-surface-2)]",   iconColor: "text-[var(--color-text-muted)]" };
     case "MILESTONE_COMPLETED": return { Icon: Flag,         ringClass: "border-emerald-500", bgClass: "bg-emerald-100", iconColor: "text-emerald-700" };
     case "MILESTONE_MISSED":    return { Icon: Flag,         ringClass: "border-red-500",    bgClass: "bg-red-50",      iconColor: "text-red-700" };
     case "MILESTONE_BLOCKED":   return { Icon: Flag,         ringClass: "border-amber-500",  bgClass: "bg-amber-50",    iconColor: "text-amber-700" };
@@ -117,7 +117,7 @@ function visualsFor(event: TimelineEvent): RowVisuals {
     case "DOC_SPLIT_REVERSED":  return { Icon: Undo2,        ringClass: "border-slate-400",  bgClass: "bg-[var(--color-surface-2)]",   iconColor: "text-[var(--color-text-muted)]" };
     case "DOC_MERGE_REVERSED":  return { Icon: Undo2,        ringClass: "border-slate-400",  bgClass: "bg-[var(--color-surface-2)]",   iconColor: "text-[var(--color-text-muted)]" };
     case "DOC_RENUMBER_REVERSED": return { Icon: Undo2,      ringClass: "border-slate-400",  bgClass: "bg-[var(--color-surface-2)]",   iconColor: "text-[var(--color-text-muted)]" };
-    case "EQUIPMENT_STATE_CHANGED": return { Icon: Wrench,   ringClass: "border-blue-400",   bgClass: "bg-blue-50",     iconColor: "text-blue-700" };
+    case "EQUIPMENT_STATE_CHANGED": return { Icon: Wrench,   ringClass: "border-[var(--color-border-strong)]",   bgClass: "bg-[var(--color-surface-2)]",     iconColor: "text-[var(--color-text)]" };
     case "SUPERSEDE_DOC": return { Icon: Stamp,        ringClass: "border-amber-500", bgClass: "bg-amber-50", iconColor: "text-amber-700" };
     case "ARCHIVE_DOC":   return { Icon: Archive,      ringClass: "border-slate-400", bgClass: "bg-[var(--color-surface-2)]", iconColor: "text-[var(--color-text-muted)]" };
     default:              return { Icon: HistoryIcon,  ringClass: "border-[var(--color-border-strong)]", bgClass: "bg-[var(--color-surface-2)]", iconColor: "text-[var(--color-text-muted)]" };
@@ -148,12 +148,12 @@ function TimelineRow({ event, showScope, onReverseRequest }: { event: TimelineEv
                   <span>{event.userName || event.userEmail}</span>
                 </>
               )}
-              <span className="text-[9px] font-bold uppercase tracking-widest text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded border border-[var(--color-border)]">
+              <span className="text-[11px] font-bold uppercase tracking-widest text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded border border-[var(--color-border)]">
                 {event.kind === "version" ? "Rev" : event.kind === "audit" ? "Audit" : event.kind === "hold" ? "Hold" : "Activity"}
               </span>
             </div>
             {showScope && event.scope && (event.scope.plantName || event.scope.unitName || event.scope.systemName) && (
-              <div className="mt-1.5 flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]">
+              <div className="mt-1.5 flex items-center gap-1 text-[11px] text-[var(--color-text-muted)]">
                 {event.scope.plantName && <ScopeChip label={event.scope.plantName} tone="blue" />}
                 {event.scope.unitName && <ScopeChip label={event.scope.unitName} tone="purple" />}
                 {event.scope.systemName && <ScopeChip label={event.scope.systemName} tone="emerald" />}
@@ -163,7 +163,7 @@ function TimelineRow({ event, showScope, onReverseRequest }: { event: TimelineEv
           {reversible && (
             <button
               onClick={() => onReverseRequest?.(event)}
-              className="shrink-0 inline-flex items-center gap-1 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-1 rounded"
+              className="shrink-0 inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-1 rounded"
               title="Reverse this operation (audit-preserving)"
             >
               <Undo2 className="w-3 h-3" /> Reverse
@@ -188,8 +188,8 @@ function TimelineRow({ event, showScope, onReverseRequest }: { event: TimelineEv
 
 function ScopeChip({ label, tone }: { label: string; tone: "blue" | "purple" | "emerald" }) {
   const toneClass =
-    tone === "blue" ? "bg-blue-50 text-blue-700 border-blue-200"
-    : tone === "purple" ? "bg-purple-50 text-purple-700 border-purple-200"
+    tone === "blue" ? "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]"
+    : tone === "purple" ? "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]"
     : "bg-emerald-50 text-emerald-700 border-emerald-200";
   return (
     <span className={`inline-flex items-center gap-1 ${toneClass} border px-1.5 py-0.5 rounded font-mono`}>

@@ -164,12 +164,12 @@ export default function RegisterPage() {
                   <td className="px-3 py-2">{r.ack ? <AckPill summary={r.ack} compact /> : <span className="text-[var(--color-text-faint)]">-</span>}</td>
                   <td className="px-3 py-2 hidden lg:table-cell">
                     {r.distributionAcksOutstanding > 0
-                      ? <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700" title={`${r.distributionAcksOutstanding} distribution confirmation${r.distributionAcksOutstanding === 1 ? "" : "s"} outstanding`}>{r.distributionAcksOutstanding} unconfirmed</span>
+                      ? <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-bold text-amber-700" title={`${r.distributionAcksOutstanding} distribution confirmation${r.distributionAcksOutstanding === 1 ? "" : "s"} outstanding`}>{r.distributionAcksOutstanding} unconfirmed</span>
                       : <span className="text-[var(--color-text-faint)]">-</span>}
                   </td>
                   <td className="px-3 py-2">
                     {r.review?.inReview
-                      ? <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${r.review.ready ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-violet-50 text-violet-700 border-violet-200"}`}><ShieldCheck className="w-3 h-3" /> {r.review.revisionLabel || "in review"} · {r.review.signed}/{r.review.requiredPrimaries}</span>
+                      ? <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${r.review.ready ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]"}`}><ShieldCheck className="w-3 h-3" /> {r.review.revisionLabel || "in review"} · {r.review.signed}/{r.review.requiredPrimaries}</span>
                       : <span className="text-[var(--color-text-faint)]">-</span>}
                   </td>
                   <td className="px-3 py-2">{(r.legalHold || r.dispositionEligible) ? <RetentionPill retentionUntil={r.retentionUntil} dispositionState={r.dispositionEligible ? "eligible" : null} legalHold={r.legalHold} compact /> : <span className="text-[var(--color-text-faint)]">-</span>}</td>
@@ -190,7 +190,7 @@ function Tile({ label, value, tone = "slate", active, onClick }: {
     slate: "text-[var(--color-text)]",
     amber: "text-amber-700",
     rose: "text-rose-700",
-    violet: "text-violet-700",
+    violet: "text-[var(--color-text)]",
   };
   return (
     <button onClick={onClick} className={`text-left rounded-xl border p-3 transition-colors ${active ? "border-[var(--color-accent)] bg-[var(--color-surface-2)]" : "border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"}`}>

@@ -217,7 +217,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-xs font-black text-[var(--color-text)]">{title}</span>
           {state === "review" && (
-            <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">
+            <span className="text-[11px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">
               needs review
             </span>
           )}
@@ -229,18 +229,18 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
   );
 
   return (
-    <div className="mb-4 rounded-2xl border border-violet-200 dark:border-violet-900 bg-gradient-to-b from-violet-50/60 to-transparent dark:from-violet-950/20 px-4 py-3"
+    <div className="mb-4 rounded-2xl border border-[var(--color-border)] dark:border-[var(--color-border)] px-4 py-3 bg-[var(--color-surface-2)]"
       style={{ animation: "rise 0.4s var(--ease-fluid) both" }}>
       <div className="flex items-center gap-2.5 mb-1">
-        <span className="w-8 h-8 rounded-xl bg-violet-100 dark:bg-violet-900/50 flex items-center justify-center shrink-0">
-          <BrainCircuit className="w-4 h-4 text-violet-600" />
+        <span className="w-8 h-8 rounded-xl bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] flex items-center justify-center shrink-0">
+          <BrainCircuit className="w-4 h-4 text-[var(--color-text-muted)]" />
         </span>
         <div className="flex-1 min-w-0">
           <div className="text-sm font-black text-[var(--color-text)]">This area&apos;s knowledge</div>
           <div className="text-[11px] text-[var(--color-text-muted)]">
             {status?.boundLibrary ? (
               <>
-                Backed by <Link href={`/knowledge/${status.boundLibrary.id}`} className="font-black text-violet-700 dark:text-violet-300 hover:underline">{status.boundLibrary.name}</Link>
+                Backed by <Link href={`/knowledge/${status.boundLibrary.id}`} className="font-black text-[var(--color-accent)] dark:text-[var(--color-text)] hover:underline">{status.boundLibrary.name}</Link>
                 {" · "}{status.counts.ready} readable{status.counts.pending > 0 ? ` · ${status.counts.pending} indexing` : ""}
                 {" · "}{status.sources.length} watched source{status.sources.length === 1 ? "" : "s"}
               </>
@@ -249,7 +249,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
         </div>
         {status?.boundLibrary && status.canManage && (
           <button type="button" onClick={() => void syncNow()} disabled={syncing}
-            className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[10px] font-black text-[var(--color-text-muted)] hover:text-violet-700 hover:border-violet-400 disabled:opacity-50 shrink-0">
+            className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] disabled:opacity-50 shrink-0">
             <RefreshCw className={`w-3 h-3 ${syncing ? "animate-spin" : ""}`} /> Sync
           </button>
         )}
@@ -278,7 +278,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
               <span className="flex-1 min-w-0 truncate">Watched folder no longer exists: <b>{s.sourceName}</b></span>
               {status?.canManage && (
                 <button type="button" onClick={() => void dropDeadSource(s.id)} disabled={syncing}
-                  className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-md border border-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/50 disabled:opacity-50">
+                  className="inline-flex items-center gap-1 text-[11px] font-black px-2 py-0.5 rounded-md border border-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/50 disabled:opacity-50">
                   <Trash2 className="w-3 h-3" /> Remove link
                 </button>
               )}
@@ -300,7 +300,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
               </span>
               {status?.canManage && (
                 <button type="button" onClick={() => void linkNewMatch(f.id, f.name)} disabled={syncing}
-                  className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-md border border-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/50 disabled:opacity-50">
+                  className="inline-flex items-center gap-1 text-[11px] font-black px-2 py-0.5 rounded-md border border-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/50 disabled:opacity-50">
                   <Plus className="w-3 h-3" /> Link
                 </button>
               )}
@@ -314,13 +314,13 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
         <Step n={1} title="File this area's drawings in Documents"
           state={status === null ? "loading" : drawingsDone ? "done" : "todo"}>
           Type-first folders work best: <b>PFDs / {unit.label}</b>, <b>P&amp;IDs / {unit.label}</b>, <b>Plot Plans / {unit.label}</b>.
-          {" "}<Link href="/documents" className="font-bold text-violet-700 dark:text-violet-300 hover:underline">Open Documents <ExternalLink className="w-2.5 h-2.5 inline" /></Link>
+          {" "}<Link href="/documents" className="font-bold text-[var(--color-accent)] dark:text-[var(--color-text)] hover:underline">Open Documents <ExternalLink className="w-2.5 h-2.5 inline" /></Link>
         </Step>
         <Step n={2} title="Connect the area's knowledge"
           state={status === null ? "loading" : knowledgeDone ? "done" : needsReview ? "review" : "todo"}
           action={status?.canManage ? (
             <button type="button" onClick={() => setWizardOpen(true)}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-[10px] font-black shadow">
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[11px] font-black shadow">
               {status?.boundLibrary ? "Review links" : "Set up"} <ChevronRight className="w-3 h-3" />
             </button>
           ) : undefined}>
@@ -332,7 +332,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
           state={status === null || flowCount === null ? "loading" : (flowCount > 0 ? "done" : "todo")}
           action={
             <button type="button" onClick={scrollToFlows}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[10px] font-black text-[var(--color-text-muted)] hover:text-cyan-700 hover:border-cyan-400">
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)]">
               Read flows <ChevronRight className="w-3 h-3" />
             </button>
           }>
@@ -340,7 +340,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
             <span><b>{flowCount ?? "…"}</b> process flow{flowCount === 1 ? "" : "s"}</span>
             <span>· <b>{docLinkCount ?? "…"}</b> linked document{docLinkCount === 1 ? "" : "s"}</span>
             <span>· <b>{plotMarkCount ?? "…"}</b> plot marker{plotMarkCount === 1 ? "" : "s"}</span>
-            <Link href="/plot-plans" className="font-bold text-violet-700 dark:text-violet-300 hover:underline">Plot plans <ExternalLink className="w-2.5 h-2.5 inline" /></Link>
+            <Link href="/plot-plans" className="font-bold text-[var(--color-accent)] dark:text-[var(--color-text)] hover:underline">Plot plans <ExternalLink className="w-2.5 h-2.5 inline" /></Link>
           </span>
         </Step>
         <Step n={4} title="Link equipment files to assets"
@@ -502,7 +502,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
       <div className="w-full max-w-lg max-h-[86vh] flex flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)] shrink-0">
-          <Sparkles className="w-4 h-4 text-violet-600" />
+          <Sparkles className="w-4 h-4 text-[var(--color-text-muted)]" />
           <div className="flex-1">
             <div className="text-sm font-black text-[var(--color-text)]">
               {bound ? `Review ${unit.label}'s knowledge` : `Set up ${unit.label}'s knowledge`}
@@ -520,23 +520,23 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
         <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
           {/* The area's library */}
           <div>
-            <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1.5">
+            <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1.5">
               This area&apos;s knowledge library
             </div>
             <div className="space-y-1">
               {status.knowledgeLibraries.map((l) => (
-                <label key={l.id} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] hover:border-violet-300 cursor-pointer">
+                <label key={l.id} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-border)] cursor-pointer">
                   <input type="radio" name="area-kl" checked={libChoice === l.id} onChange={() => setLibChoice(l.id)} />
-                  <BookOpen className="w-3.5 h-3.5 text-orange-600" />
+                  <BookOpen className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                   <span className="text-xs font-bold text-[var(--color-text)]">{l.name}</span>
                   {bound?.id === l.id && (
-                    <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-900/50 text-violet-700 dark:text-violet-300">current</span>
+                    <span className="text-[11px] font-black uppercase px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]">current</span>
                   )}
                 </label>
               ))}
-              <label className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] hover:border-violet-300 cursor-pointer">
+              <label className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-border)] cursor-pointer">
                 <input type="radio" name="area-kl" checked={libChoice === "__new"} onChange={() => setLibChoice("__new")} />
-                <Plus className="w-3.5 h-3.5 text-violet-600" />
+                <Plus className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                 <input value={newName} onChange={(e) => { setNewName(e.target.value); setLibChoice("__new"); }}
                   className="flex-1 px-2 py-1 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-xs font-bold"
                   placeholder={`${unit.label} - Knowledge`} />
@@ -547,7 +547,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
           {/* Already watched (review mode) */}
           {status.sources.length > 0 && (
             <div>
-              <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1.5">
+              <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1.5">
                 Already watched
               </div>
               <div className="space-y-1">
@@ -555,7 +555,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
                   <div key={s.id} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[var(--color-surface-2)] text-[11px] text-[var(--color-text-muted)]">
                     <Check className="w-3 h-3 text-emerald-600 shrink-0" />
                     <span className="flex-1 min-w-0 truncate font-bold">{s.name}</span>
-                    <span className="text-[9px] font-black uppercase">{s.type}</span>
+                    <span className="text-[11px] font-black uppercase">{s.type}</span>
                   </div>
                 ))}
               </div>
@@ -564,7 +564,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
 
           {/* Folder picker, grouped by DC library, suggestions pre-checked */}
           <div>
-            <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1.5">
+            <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1.5">
               Watch these document-control folders
             </div>
             {browse === null ? (
@@ -584,7 +584,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
                         checked={libWatched || checked.has(`library:${libId}`)}
                         onChange={() => toggle(`library:${libId}`)} />
                       <FolderOpen className="w-3.5 h-3.5 text-slate-500" /> {g.libraryName}
-                      <span className="text-[9px] font-bold text-[var(--color-text-faint)] normal-case">
+                      <span className="text-[11px] font-bold text-[var(--color-text-faint)] normal-case">
                         {libWatched ? "(whole library - already watched)" : "(whole library)"}
                       </span>
                     </label>
@@ -603,7 +603,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
                               {f.name}
                             </span>
                             {suggestedIds.has(f.id) && !watched && (
-                              <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-900/50 text-violet-700 dark:text-violet-300">
+                              <span className="text-[11px] font-black uppercase px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]">
                                 suggested
                               </span>
                             )}
@@ -611,7 +611,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
                         );
                       })}
                       {g.folders.length === 0 && (
-                        <div className="text-[10px] text-[var(--color-text-faint)]">No folders - link the whole library above.</div>
+                        <div className="text-[11px] text-[var(--color-text-faint)]">No folders - link the whole library above.</div>
                       )}
                     </div>
                   </div>
@@ -629,14 +629,14 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
         </div>
 
         <div className="px-4 py-3 border-t border-[var(--color-border)] shrink-0 flex items-center gap-2">
-          <span className="flex-1 text-[10px] text-[var(--color-text-muted)]">
+          <span className="flex-1 text-[11px] text-[var(--color-text-muted)]">
             <FileText className="w-3 h-3 inline mr-1" />
             New files, revisions, and deletions inside watched folders sync automatically.
           </span>
           <button onClick={onClose} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
           <button onClick={() => void apply()}
             disabled={busy || (libChoice === "__new" && !newName.trim()) || (checked.size === 0 && !bound)}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-black text-white bg-violet-600 hover:bg-violet-500 disabled:opacity-50 shadow">
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 shadow">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
             {bound ? "Apply changes" : "Connect this area"}
           </button>

@@ -236,7 +236,7 @@ function ContractorCard({ x, onOpen }: { x: Crew; onOpen: () => void }) {
         ))}
       </ol>
       {x.sum.forecast != null && <span className="text-[12.5px] text-[var(--color-text)]"><b>{x.sum.counted ? "Forecast" : "Plan"} {money(x.sum.forecast)}</b>{x.line ? ` of the ${x.line.name} line, ${money(x.line.budget)}` : ""}</span>}
-      <span className="mt-auto inline-flex items-center gap-1 text-[12.5px] font-bold text-[var(--color-accent)]">Open <ChevronRight className="w-3.5 h-3.5" /></span>
+      <span className="mt-auto inline-flex items-center gap-1 text-[12.5px] font-bold text-[var(--color-text)]">Open <ChevronRight className="w-3.5 h-3.5" /></span>
     </button>
   );
 }
@@ -276,7 +276,7 @@ function ContractorPage(p: ContractorsProps & {
       <nav className="flex flex-wrap gap-1.5" aria-label="Sections">
         {steps.map((s, i) => (
           <button key={s.name} type="button" onClick={() => go(["money", "plan", "rates", "daily"][i])} className={`shrink-0 inline-flex items-center gap-1.5 h-8 px-3 rounded-full border text-[12.5px] font-bold ${s.done ? "border-emerald-300 text-emerald-800 dark:text-emerald-300 dark:border-emerald-800" : "border-amber-300 text-amber-900 dark:text-amber-200 dark:border-amber-800"}`}>
-            {s.done ? <Check className="w-3.5 h-3.5" /> : <span className="w-3.5 h-3.5 rounded-full bg-amber-500 text-white text-[10px] font-black flex items-center justify-center">!</span>}{s.name}
+            {s.done ? <Check className="w-3.5 h-3.5" /> : <span className="w-3.5 h-3.5 rounded-full bg-amber-500 text-white text-[11px] font-black flex items-center justify-center">!</span>}{s.name}
           </button>
         ))}
       </nav>
@@ -509,7 +509,7 @@ function PlanSection(p: SectionProps) {
       )}
 
       {read && (
-        <div className="rounded-xl border-2 border-[var(--color-accent)] p-3 space-y-3" data-plan-read>
+        <div className="rounded-xl border-2 border-[var(--color-border-strong)] p-3 space-y-3" data-plan-read>
           <div><b className="text-[13.5px] text-[var(--color-text)]">Read: {read.file}</b><p className="text-[12.5px] text-[var(--color-text-muted)]">{plural(read.g.crafts.length, "craft")} with people, {dayLabel(read.g.from)} to {dayLabel(read.g.to)}. The sheet names the event over each run of dates: keep the ones for this project.</p></div>
           <ul className="grid gap-2">
             {read.g.bands.map((b) => (
@@ -606,7 +606,7 @@ function PlanGridView(p: SectionProps & { plan: StaffingPlan; onChange: ((next: 
           <table className="text-[12.5px] border-collapse min-w-full">
             <thead><tr className="bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
               <th className="sticky left-0 z-[1] bg-[var(--color-surface-2)] text-left font-bold px-2.5 py-2 min-w-[8rem] sm:min-w-[180px]">Craft</th>
-              {keys.map((k) => <th key={k} data-key={k} className={`px-1 py-2 font-bold whitespace-nowrap ${k.endsWith("night") ? "text-indigo-700 dark:text-indigo-300" : ""}`}>{shiftLabel(k, true)}</th>)}
+              {keys.map((k) => <th key={k} data-key={k} className={`px-1 py-2 font-bold whitespace-nowrap ${k.endsWith("night") ? "text-[var(--color-text)] dark:text-[var(--color-text)]" : ""}`}>{shiftLabel(k, true)}</th>)}
             </tr></thead>
             <tbody>
               {crafts.map((c) => (

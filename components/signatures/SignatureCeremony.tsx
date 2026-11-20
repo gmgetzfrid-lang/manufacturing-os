@@ -104,7 +104,7 @@ export default function SignatureCeremony({
     <div className="fixed inset-0 z-[500] bg-slate-900/75 backdrop-blur-sm flex items-start sm:items-center justify-center p-4 overflow-y-auto" onClick={() => !busy && onCancel()}>
       <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl my-4" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-5 py-4 border-b border-[var(--color-border)]">
-          <ShieldCheck className="w-4 h-4 text-[var(--color-accent)]" />
+          <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
           <h2 className="text-sm font-black text-[var(--color-text)] flex-1">Electronic signature</h2>
           <button onClick={() => !busy && onCancel()} className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>

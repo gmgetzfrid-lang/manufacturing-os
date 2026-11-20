@@ -100,7 +100,7 @@ export default function ReverseConfirmModal({
           {/* What will happen */}
           <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-3 text-xs">
             <div className="flex items-start gap-2">
-              <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-blue-600" />
+              <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-[var(--color-text-muted)]" />
               <div>
                 <div className="font-bold text-[var(--color-text)] mb-1">What this will do</div>
                 <ul className="list-disc ml-4 space-y-0.5 text-[var(--color-text)]">
@@ -118,7 +118,7 @@ export default function ReverseConfirmModal({
 
           {/* Reason */}
           <label className="block">
-            <span className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Reason for reversal *</span>
+            <span className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Reason for reversal *</span>
             <textarea
               value={reason}
               onChange={(e) => setReason(e.target.value)}

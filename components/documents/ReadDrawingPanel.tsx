@@ -32,7 +32,7 @@ export default function ReadDrawingPanel({ orgId, documentId, onDone }: { orgId:
   return (
     <div className="mt-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-2 text-xs space-y-1.5">
       <div className="flex items-center gap-2">
-        <button onClick={() => void go()} disabled={!!busy} className="rounded-md bg-violet-600 text-white px-2 py-1 font-bold inline-flex items-center gap-1 disabled:opacity-60">
+        <button onClick={() => void go()} disabled={!!busy} className="rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-2 py-1 font-bold inline-flex items-center gap-1 disabled:opacity-60">
           {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} {r ? "Read again with AI" : "Read with AI"}
         </button>
         <span className="text-[11px] text-[var(--color-text-muted)]">{busy ?? "Your model reads the sheet in zoomed tiles and fixes its equipment tags."}</span>
@@ -50,7 +50,7 @@ export default function ReadDrawingPanel({ orgId, documentId, onDone }: { orgId:
             </ul>
           </div>
           <div>
-            <button onClick={() => setShowInst((v) => !v)} className="font-bold inline-flex items-center gap-1 hover:underline"><Gauge className="w-3.5 h-3.5 text-sky-600" /> {r.instruments.length} instruments</button>
+            <button onClick={() => setShowInst((v) => !v)} className="font-bold inline-flex items-center gap-1 hover:underline"><Gauge className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {r.instruments.length} instruments</button>
             {showInst && <div className="mt-0.5 font-mono text-[11px] text-[var(--color-text-muted)]">{r.instruments.join("  ")}</div>}
           </div>
           {r.offSheet.length > 0 && (
@@ -91,7 +91,7 @@ function AddMissing({ orgId, documentId, onDone }: { orgId: string; documentId: 
   const [name, setName] = useState("");
   const [page, setPage] = useState("1");
   const [state, setState] = useState<{ busy: boolean; note: string | null; error: string | null; runId: string | null }>({ busy: false, note: null, error: null, runId: null });
-  if (!open) return <button onClick={() => setOpen(true)} className="text-[11px] text-violet-700 hover:underline">Reader missed a piece of equipment? Add it</button>;
+  if (!open) return <button onClick={() => setOpen(true)} className="text-[11px] text-[var(--color-accent)] hover:underline">Reader missed a piece of equipment? Add it</button>;
   const add = async () => {
     if (!tag.trim()) return;
     const runId = newRunId();
@@ -110,7 +110,7 @@ function AddMissing({ orgId, documentId, onDone }: { orgId: string; documentId: 
       <div className="flex flex-wrap items-center gap-1">
         <input value={tag} onChange={(e) => setTag(e.target.value)} placeholder="Tag, e.g. H-2" className="w-24 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 py-0.5 text-[11px] font-mono" onKeyDown={(e) => { if (e.key === "Enter") void add(); }} />
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name, e.g. Crude heater (optional)" className="flex-1 min-w-[10rem] rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 py-0.5 text-[11px]" onKeyDown={(e) => { if (e.key === "Enter") void add(); }} />
-        <label className="text-[10px] text-[var(--color-text-muted)] inline-flex items-center gap-1">page <input value={page} onChange={(e) => setPage(e.target.value.replace(/[^0-9]/g, ""))} inputMode="numeric" className="w-8 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-[11px]" /></label>
+        <label className="text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1">page <input value={page} onChange={(e) => setPage(e.target.value.replace(/[^0-9]/g, ""))} inputMode="numeric" className="w-8 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-[11px]" /></label>
         <button onClick={() => void add()} disabled={state.busy || !tag.trim()} className="rounded-md bg-emerald-600 text-white px-2 py-0.5 text-[11px] font-bold disabled:opacity-50 inline-flex items-center gap-1">{state.busy && <Loader2 className="w-3 h-3 animate-spin" />} Add</button>
         <button onClick={() => setOpen(false)} className="text-[11px] text-[var(--color-text-muted)] hover:underline">close</button>
       </div>

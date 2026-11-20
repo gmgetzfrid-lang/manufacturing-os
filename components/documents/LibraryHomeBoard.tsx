@@ -159,7 +159,7 @@ export default function LibraryHomeBoard({
   };
 
   return (
-    <div className="mb-5 rounded-2xl border-2 border-[var(--color-accent)]/40 bg-[var(--color-accent-soft)]/40 p-4">
+    <div className="mb-5 rounded-2xl border-2 border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-4">
       <div className="flex items-center justify-between mb-3">
         <div className="text-xs font-black uppercase tracking-widest text-[var(--color-text-muted)]">Customizing home</div>
         <div className="flex items-center gap-2">
@@ -261,7 +261,7 @@ function PartGrid({
           {p.type === "about" ? (
             <div className="p-5">
               <h3 className="text-sm font-black text-[var(--color-text)] flex items-center gap-2 mb-2">
-                {node.icon ? <NodeIcon name={node.icon} className="w-4 h-4 text-[var(--color-accent)]" /> : <Info className="w-4 h-4 text-[var(--color-accent)]" />}
+                {node.icon ? <NodeIcon name={node.icon} className="w-4 h-4 text-[var(--color-text-muted)]" /> : <Info className="w-4 h-4 text-[var(--color-text-muted)]" />}
                 {p.title || `About ${node.name}`}
               </h3>
               <p className="text-sm text-[var(--color-text-muted)] whitespace-pre-line">{node.description || "No description provided."}</p>
@@ -281,7 +281,7 @@ function PartGrid({
             </div>
           ) : p.type === "quickFolders" ? (
             <div className="p-5">
-              <h3 className="text-sm font-black text-[var(--color-text)] flex items-center gap-2 mb-3"><FolderOpen className="w-4 h-4 text-[var(--color-accent)]" /> {p.title || "Folders"}</h3>
+              <h3 className="text-sm font-black text-[var(--color-text)] flex items-center gap-2 mb-3"><FolderOpen className="w-4 h-4 text-[var(--color-text-muted)]" /> {p.title || "Folders"}</h3>
               {rootFolders.length === 0 ? (
                 <p className="text-xs text-[var(--color-text-muted)]">No folders yet.</p>
               ) : (
@@ -302,7 +302,7 @@ function PartGrid({
           ) : (
             // recentDocs
             <div className="p-5">
-              <h3 className="text-sm font-black text-[var(--color-text)] flex items-center gap-2 mb-3"><Clock className="w-4 h-4 text-[var(--color-accent)]" /> {p.title || "Recent documents"}</h3>
+              <h3 className="text-sm font-black text-[var(--color-text)] flex items-center gap-2 mb-3"><Clock className="w-4 h-4 text-[var(--color-text-muted)]" /> {p.title || "Recent documents"}</h3>
               {recent.length === 0 ? (
                 <p className="text-xs text-[var(--color-text-muted)]">No documents yet.</p>
               ) : (

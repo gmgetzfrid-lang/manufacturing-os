@@ -122,18 +122,18 @@ export default function KnowledgePage() {
             <Link key={lib.id} href={`/knowledge/${lib.id}`}
               className="group rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 hover:border-[var(--color-accent)] hover:shadow-lg transition-all">
               <div className="flex items-start justify-between gap-3">
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center shrink-0">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-[var(--color-text)]">
                   <Sparkles className="w-5 h-5 text-white" />
                 </div>
-                <span className="inline-flex items-center gap-1 text-[10px] font-black text-[var(--color-text-muted)]">
+                <span className="inline-flex items-center gap-1 text-[11px] font-black text-[var(--color-text-muted)]">
                   <FileText className="w-3 h-3" /> {lib.documentCount ?? 0} document{(lib.documentCount ?? 0) === 1 ? "" : "s"}
                 </span>
               </div>
-              <h3 className="mt-3 text-sm font-black text-[var(--color-text)] group-hover:text-[var(--color-accent)] transition-colors">{lib.name}</h3>
+              <h3 className="mt-3 text-sm font-black text-[var(--color-text)] group-hover:text-[var(--color-text)] transition-colors">{lib.name}</h3>
               {lib.description && (
                 <p className="mt-1 text-xs text-[var(--color-text-muted)] line-clamp-2">{lib.description}</p>
               )}
-              <div className="mt-3 text-[10px] text-[var(--color-text-muted)]">
+              <div className="mt-3 text-[11px] text-[var(--color-text-muted)]">
                 Created {new Date(lib.createdAt).toLocaleDateString()}{lib.createdByName ? ` · ${lib.createdByName}` : ""}
               </div>
             </Link>
@@ -151,11 +151,11 @@ export default function KnowledgePage() {
             </div>
             <div className="p-5 space-y-3">
               <label className="block">
-                <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Name</span>
+                <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Name</span>
                 <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Engineering Standards & Practices" autoFocus />
               </label>
               <label className="block">
-                <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Description (optional)</span>
+                <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Description (optional)</span>
                 <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2}
                   placeholder="What lives in this library and who should ask it questions" />
               </label>

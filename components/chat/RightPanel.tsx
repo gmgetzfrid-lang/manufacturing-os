@@ -219,7 +219,7 @@ function InstructionsPane({
       {header("Instructions", SlidersHorizontal)}
       <div className="flex-1 overflow-y-auto p-4 space-y-5">
         <section>
-          <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1">This conversation</div>
+          <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1">This conversation</div>
           <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
             Applied to every answer in this conversation only. {thread ? "" : "Saved once the conversation starts."}
           </p>
@@ -236,7 +236,7 @@ function InstructionsPane({
               <button disabled={saving !== null}
                 title="Make this a standing instruction for everyone's library answers (Org Playbook)"
                 onClick={async () => { setSaving("promote"); try { await onPromote(text.trim()); flash("promote"); } finally { setSaving(null); } }}
-                className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-violet-300 dark:border-violet-800 text-violet-700 dark:text-violet-300 text-[11px] font-black hover:bg-violet-500/10 disabled:opacity-40 transition-colors">
+                className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)] text-[11px] font-black hover:bg-[var(--color-surface-2)] disabled:opacity-40 transition-colors">
                 {saving === "promote" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowUpToLine className="w-3.5 h-3.5" />} Promote to playbook
               </button>
             )}
@@ -245,17 +245,17 @@ function InstructionsPane({
         </section>
 
         <section>
-          <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1">Standing instructions</div>
+          <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1">Standing instructions</div>
           <p className="text-[11px] text-[var(--color-text-muted)]">
             {standingCount > 0
               ? <>{standingCount} org playbook instruction{standingCount === 1 ? "" : "s"} appl{standingCount === 1 ? "ies" : "y"} to every library answer. </>
               : <>No org playbook instructions yet. </>}
-            <Link href="/admin/ai-instructions" className="font-bold text-violet-700 dark:text-violet-300 hover:underline">Open playbooks</Link>
+            <Link href="/admin/ai-instructions" className="font-bold text-[var(--color-accent)] dark:text-[var(--color-text)] hover:underline">Open playbooks</Link>
           </p>
         </section>
 
         <section>
-          <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1">About you</div>
+          <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1">About you</div>
           <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
             Your own standing profile, sent with every question you ask. Plain text you can read and change - nothing is inferred.
           </p>

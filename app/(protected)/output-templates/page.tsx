@@ -99,7 +99,7 @@ export default function OutputTemplatesPage() {
           {templates.map((t) => (
             <li key={t.id} className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
               <div className="flex items-start gap-2">
-                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center shrink-0">
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-[var(--color-text)]">
                   {t.kind === "xlsx" ? <Table2 className="w-4 h-4 text-white" /> : <FileText className="w-4 h-4 text-white" />}
                 </div>
                 <div className="min-w-0 flex-1">
@@ -121,7 +121,7 @@ export default function OutputTemplatesPage() {
                   </div>
                 )}
               </div>
-              <div className="mt-2.5 flex flex-wrap gap-1.5 text-[10px] font-black">
+              <div className="mt-2.5 flex flex-wrap gap-1.5 text-[11px] font-black">
                 <span className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]">
                   {MODE_LABEL[t.mode] ?? t.mode}
                 </span>
@@ -129,7 +129,7 @@ export default function OutputTemplatesPage() {
                   {t.placeholders.length} fill point{t.placeholders.length === 1 ? "" : "s"}
                 </span>
                 {t.placeholders.some((p) => p.kind === "ai") && (
-                  <span className="px-1.5 py-0.5 rounded bg-orange-500/10 border border-orange-300 dark:border-orange-800 text-orange-700 dark:text-orange-400 inline-flex items-center gap-1">
+                  <span className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)] inline-flex items-center gap-1">
                     <Sparkles className="w-2.5 h-2.5" /> AI-written sections
                   </span>
                 )}
@@ -144,7 +144,7 @@ export default function OutputTemplatesPage() {
                   <Sparkles className="w-3.5 h-3.5" /> Generate documents
                 </Button>
                 {!t.templateFileKey && (
-                  <span className="ml-2 text-[10px] text-amber-600 font-bold">needs a template file</span>
+                  <span className="ml-2 text-[11px] text-amber-600 font-bold">needs a template file</span>
                 )}
               </div>
             </li>
@@ -168,11 +168,11 @@ export default function OutputTemplatesPage() {
                   {g.createdBy ? ` · ${g.createdBy}` : ""}
                 </span>
                 {g.filedCount > 0 && (
-                  <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-black bg-emerald-500/10 border border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400">
+                  <span className="shrink-0 px-1.5 py-0.5 rounded text-[11px] font-black bg-emerald-500/10 border border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400">
                     {g.filedCount} filed
                   </span>
                 )}
-                <span className="ml-auto shrink-0 text-[10px] text-[var(--color-text-muted)]">
+                <span className="ml-auto shrink-0 text-[11px] text-[var(--color-text-muted)]">
                   {new Date(g.createdAt).toLocaleString()}
                 </span>
               </li>

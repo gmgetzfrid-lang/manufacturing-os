@@ -132,7 +132,7 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] mb-5 overflow-hidden">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
-        <UserSearch className="w-4 h-4 text-[var(--color-accent)]" />
+        <UserSearch className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-base font-bold text-[var(--color-text)]">View as…</span>
         <span className="text-xs text-[var(--color-text-muted)]">simulate any member - computed with the SAME evaluators the app enforces with</span>
         <select value={pick} onChange={(e) => setPick(e.target.value)} className="ml-auto h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs min-w-[180px]">
@@ -152,7 +152,7 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
                 </li>
               ))}
             </ul>
-            <div className="mt-2 text-[10px] text-[var(--color-text-faint)]">Plus identity rights on their own tickets (requester / assigned drafter / assigned engineer).</div>
+            <div className="mt-2 text-[11px] text-[var(--color-text-faint)]">Plus identity rights on their own tickets (requester / assigned drafter / assigned engineer).</div>
           </div>
           <div>
             <div className="text-xs font-bold text-[var(--color-text-muted)] mb-1.5">Content access by library</div>
@@ -168,14 +168,14 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
                     {sees
                       ? <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300"><Eye className="w-3 h-3" /> visible</span>
                       : <span className="inline-flex items-center gap-1 text-rose-700 dark:text-rose-300"><EyeOff className="w-3 h-3" /> hidden</span>}
-                    {publishes && <span className="inline-flex items-center gap-1 text-blue-700 dark:text-blue-300"><UploadCloud className="w-3 h-3" /> can publish</span>}
+                    {publishes && <span className="inline-flex items-center gap-1 text-[var(--color-text)] dark:text-[var(--color-text)]"><UploadCloud className="w-3 h-3" /> can publish</span>}
                     <span className="text-[var(--color-text-faint)]">{l.visibility !== "normal" ? l.visibility : ""}</span>
                   </li>
                 );
               })}
               {libs.length === 0 && <li className="text-[11px] italic text-[var(--color-text-faint)]">No libraries.</li>}
             </ul>
-            <div className="mt-2 text-[10px] text-[var(--color-text-faint)]">Folder/document-level rules refine within each library - open a node&apos;s permissions to inspect. Ownership grants (owner of a doc/folder/library) add publish authority on those items.</div>
+            <div className="mt-2 text-[11px] text-[var(--color-text-faint)]">Folder/document-level rules refine within each library - open a node&apos;s permissions to inspect. Ownership grants (owner of a doc/folder/library) add publish authority on those items.</div>
           </div>
         </div>
       )}
@@ -184,7 +184,7 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
       {who && (
         <div className="px-4 pb-4 border-t border-[var(--color-border)] pt-3">
           <div className="flex items-center gap-2 mb-2">
-            <KeyRound className="w-4 h-4 text-violet-600 dark:text-violet-400" />
+            <KeyRound className="w-4 h-4 text-[var(--color-text-muted)] dark:text-[var(--color-text)]" />
             <span className="text-sm font-bold text-[var(--color-text)]">Personal permissions for {who.name}</span>
           </div>
 
@@ -210,7 +210,7 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
               </ul>
               {canEdit && (
                 <div className="mt-2.5 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface-2)]/40 p-2.5 space-y-1.5">
-                  <div className="text-[10px] font-bold text-[var(--color-text-muted)]">Delegate an action - leave the date empty for a standing grant</div>
+                  <div className="text-[11px] font-bold text-[var(--color-text-muted)]">Delegate an action - leave the date empty for a standing grant</div>
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <select value={grantCap} onChange={(e) => setGrantCap(e.target.value as CapabilityId)} className="h-7 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[11px]">
                       {CAPABILITY_DEFS.map((d) => <option key={d.id} value={d.id}>{d.area}: {d.label}</option>)}
@@ -221,8 +221,8 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
                       {grantBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Grant
                     </button>
                   </div>
-                  {grantErr && <div className="text-[10px] text-rose-600 dark:text-rose-400 font-bold">{grantErr}</div>}
-                  <div className="text-[10px] text-[var(--color-text-faint)]">Additive only - a delegation can widen this person&apos;s authority, never narrow anyone else&apos;s. Audited with before/after; the &ldquo;View as&rdquo; list above updates instantly.</div>
+                  {grantErr && <div className="text-[11px] text-rose-600 dark:text-rose-400 font-bold">{grantErr}</div>}
+                  <div className="text-[11px] text-[var(--color-text-faint)]">Additive only - a delegation can widen this person&apos;s authority, never narrow anyone else&apos;s. Audited with before/after; the &ldquo;View as&rdquo; list above updates instantly.</div>
                 </div>
               )}
             </div>

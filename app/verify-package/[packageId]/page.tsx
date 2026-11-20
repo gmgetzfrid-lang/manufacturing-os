@@ -99,7 +99,7 @@ export default function VerifyPackagePage() {
 
             <div className="bg-white/95 rounded-2xl shadow-2xl p-5 text-left space-y-3">
               <div>
-                <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Work package</div>
+                <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">Work package</div>
                 <div className="text-sm font-bold text-slate-900">{result.name}</div>
               </div>
               <div className="pt-2 border-t border-slate-100 max-h-72 overflow-y-auto space-y-1.5">
@@ -127,7 +127,7 @@ export default function VerifyPackagePage() {
               )}
             </div>
 
-            <div className="mt-5 text-[10px] text-white/60">
+            <div className="mt-5 text-[11px] text-white/60">
               Checked {new Date(result.checkedAt).toLocaleString()} · Refinery OS document control
             </div>
             <button

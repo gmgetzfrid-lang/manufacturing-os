@@ -160,7 +160,7 @@ export default function ShiftSheetEntry({ milestones, progress, tz, times, targe
     <div className="fixed inset-0 z-[300] bg-slate-900/60 flex items-stretch sm:items-center justify-center sm:p-4" role="dialog" aria-modal="true" aria-label="Enter the shift sheet">
       <div className="w-full sm:max-w-6xl h-full sm:h-[94vh] flex flex-col bg-[var(--color-surface)] sm:rounded-2xl shadow-2xl overflow-hidden">
         <div className="flex items-start gap-3 px-4 py-3 border-b border-[var(--color-border)]">
-          <ClipboardPen className="w-5 h-5 mt-0.5 text-[var(--color-accent)] shrink-0" />
+          <ClipboardPen className="w-5 h-5 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
           <div className="min-w-0 flex-1">
             <div className="text-[15px] font-black text-[var(--color-text)]">Enter the shift sheet</div>
             <div className="text-[12.5px] text-[var(--color-text-muted)]">
@@ -186,7 +186,7 @@ export default function ShiftSheetEntry({ milestones, progress, tz, times, targe
                 <div className="flex items-baseline gap-2 px-3 pt-2.5 pb-1 bg-[var(--color-surface-2)]/60">
                   <span className="text-[17px] font-black text-[var(--color-text)]">{t.tag ?? (g.wo ? `WO ${g.wo}` : "No WO")}</span>
                   <span className="min-w-0 truncate text-[12px] text-[var(--color-text-muted)]">{t.tag && g.wo ? `WO ${g.wo} · ` : ""}{t.rest}</span>
-                  {g.key.startsWith("added:") && <span className="text-[12px] font-semibold text-[var(--color-accent)]">added</span>}
+                  {g.key.startsWith("added:") && <span className="text-[12px] font-semibold text-[var(--color-text)]">added</span>}
                 </div>
                 <div className="divide-y divide-[var(--color-border)]">{g.lines.map(lineRow)}</div>
               </div>
@@ -203,7 +203,7 @@ export default function ShiftSheetEntry({ milestones, progress, tz, times, targe
               <div className="max-w-xl rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
                 {found.map(({ m, parent }) => (
                   <button key={m.id} type="button" onClick={() => addLine(m)} className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-[var(--color-surface-2)]">
-                    <Plus className="w-4 h-4 text-[var(--color-accent)] shrink-0" />
+                    <Plus className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
                     <span className="min-w-0">
                       <span className="block text-[13px] font-semibold text-[var(--color-text)] truncate">{m.name}</span>
                       <span className="block text-[11.5px] text-[var(--color-text-muted)] truncate">{[parent?.name, woOf(m) ? `WO ${woOf(m)}` : "", m.responsibleParty].filter(Boolean).join(" · ")}</span>

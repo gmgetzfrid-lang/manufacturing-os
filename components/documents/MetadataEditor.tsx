@@ -41,7 +41,7 @@ function TagInput({
       className={`mt-1 w-full rounded-lg border px-2 py-2 text-sm ${
         disabled
           ? "bg-[var(--color-surface-2)] border-[var(--color-border)]"
-          : "bg-[var(--color-surface)] border-[var(--color-border-strong)] focus-within:ring-2 focus-within:ring-blue-500"
+          : "bg-[var(--color-surface)] border-[var(--color-border-strong)] focus-within:ring-2 focus-within:ring-[var(--color-accent-ring)]"
       }`}
     >
       <div className="flex flex-wrap gap-1.5 min-h-[20px] items-start">
@@ -82,20 +82,20 @@ function TagInput({
               if (e.key === "Tab" && input.trim()) { e.preventDefault(); addPill(); }
             }}
             placeholder={`Add ${label}…`}
-            className="flex-1 min-w-0 text-[12px] px-2 py-1 rounded-md border border-[var(--color-border)] focus:outline-none focus:ring-1 focus:ring-blue-400 bg-[var(--color-surface)]"
+            className="flex-1 min-w-0 text-[12px] px-2 py-1 rounded-md border border-[var(--color-border)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-ring)] bg-[var(--color-surface)]"
           />
           {input.trim() && (
             <button
               type="button"
               onClick={addPill}
-              className="shrink-0 p-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-md transition-colors"
+              className="shrink-0 p-1.5 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] rounded-md transition-colors"
             >
               <Plus className="w-3 h-3" />
             </button>
           )}
         </div>
       )}
-      {!disabled && <p className="text-[10px] text-[var(--color-text-faint)] mt-1">Enter to add - commas stay in the tag</p>}
+      {!disabled && <p className="text-[11px] text-[var(--color-text-faint)] mt-1">Enter to add - commas stay in the tag</p>}
     </div>
   );
 }
@@ -344,7 +344,7 @@ export default function MetadataEditor(props: {
           {canEdit && document.ingestion?.extractedFields && Object.keys(document.ingestion.extractedFields).length > 0 && (
             <button
               onClick={applyIngestion}
-              className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700"
+              className="inline-flex items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-xs font-bold text-[var(--color-text)]"
             >
               <Zap className="h-4 w-4" /> Apply extracted metadata
             </button>

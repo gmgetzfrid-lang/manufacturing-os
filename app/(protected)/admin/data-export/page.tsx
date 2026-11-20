@@ -203,7 +203,7 @@ export default function DataExportPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
             <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5">
               <div className="flex items-start gap-3 mb-3">
-                <div className="p-2.5 bg-blue-100 rounded-xl"><FileJson className="w-5 h-5 text-blue-700" /></div>
+                <div className="p-2.5 bg-[var(--color-surface-2)] rounded-xl"><FileJson className="w-5 h-5 text-[var(--color-text-muted)]" /></div>
                 <div className="flex-1">
                   <div className="text-sm font-black text-[var(--color-text)]">JSON only</div>
                   <div className="text-xs text-[var(--color-text-muted)] mt-0.5">Structured records + a file manifest with 24h presigned URLs.</div>
@@ -248,11 +248,11 @@ export default function DataExportPage() {
                     </span>
                     <button onClick={cancelBackup} className="font-bold text-rose-600 hover:underline shrink-0">Cancel</button>
                   </div>
-                  <div className="text-[10px] text-[var(--color-text-faint)]">
+                  <div className="text-[11px] text-[var(--color-text-faint)]">
                     You can leave this page and keep working - the floating card tracks it anywhere in the app. Just don&apos;t close the tab.
                   </div>
                   {backupProgress.errors.length > 0 && (
-                    <div className="text-[10px] text-amber-700">{backupProgress.errors.length} file(s) failed so far - they&apos;ll be listed in backup-report.json.</div>
+                    <div className="text-[11px] text-amber-700">{backupProgress.errors.length} file(s) failed so far - they&apos;ll be listed in backup-report.json.</div>
                   )}
                 </div>
               )}
@@ -386,9 +386,9 @@ function DestinationCard({
     finally { setTesting(false); }
   };
 
-  const icon = dest.destination_type === "webhook" ? <Webhook className="w-4 h-4 text-purple-700" />
+  const icon = dest.destination_type === "webhook" ? <Webhook className="w-4 h-4 text-[var(--color-text-muted)]" />
     : dest.destination_type === "r2" ? <HardDrive className="w-4 h-4 text-amber-700" />
-    : <ArchiveIcon className="w-4 h-4 text-blue-700" />;
+    : <ArchiveIcon className="w-4 h-4 text-[var(--color-text-muted)]" />;
 
   return (
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-4">
@@ -397,12 +397,12 @@ function DestinationCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm font-black text-[var(--color-text)] truncate">{dest.name}</span>
-            <span className="text-[10px] font-bold uppercase bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{dest.destination_type}</span>
-            {!dest.enabled && <span className="text-[10px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded">DISABLED</span>}
-            <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded border ${
+            <span className="text-[11px] font-bold uppercase bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{dest.destination_type}</span>
+            {!dest.enabled && <span className="text-[11px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded">DISABLED</span>}
+            <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-1.5 py-0.5 rounded border ${
               dest.schedule_kind === "manual"
                 ? "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]"
-                : "bg-blue-50 text-blue-700 border-blue-200"
+                : "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]"
             }`}>
               <Calendar className="w-2.5 h-2.5" /> {dest.schedule_kind}
               {dest.schedule_kind !== "manual" && dest.schedule_hour_utc != null ? ` @ ${String(dest.schedule_hour_utc).padStart(2, "0")}:00 UTC` : ""}
@@ -435,7 +435,7 @@ function DestinationCard({
         </div>
         <div className="flex flex-col items-end gap-1.5">
           <div className="flex items-center gap-1">
-            <button onClick={() => void doTest()} disabled={testing} title="Test connection" className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-blue-700 hover:bg-blue-50 disabled:opacity-40 transition-colors">
+            <button onClick={() => void doTest()} disabled={testing} title="Test connection" className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-accent-hover)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 transition-colors">
               {testing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <TestTube className="w-3.5 h-3.5" />}
             </button>
             <button onClick={onEdit} title="Edit" className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
@@ -467,17 +467,17 @@ function RunRow({ run }: { run: Run }) {
       <div className={`p-1.5 rounded-md shrink-0 ${
         run.status === "succeeded" ? "bg-emerald-100" :
         run.status === "failed" ? "bg-red-100" :
-        run.status === "running" ? "bg-blue-100" : "bg-[var(--color-surface-2)]"
+        run.status === "running" ? "bg-[var(--color-surface-2)]" : "bg-[var(--color-surface-2)]"
       }`}>
         {run.status === "succeeded" ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" /> :
          run.status === "failed" ? <XCircle className="w-3.5 h-3.5 text-red-700" /> :
-         run.status === "running" ? <Loader2 className="w-3.5 h-3.5 text-blue-700 animate-spin" /> :
+         run.status === "running" ? <Loader2 className="w-3.5 h-3.5 text-[var(--color-text-muted)] animate-spin" /> :
          <Clock className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />}
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline gap-2 flex-wrap text-xs">
           <span className="font-bold text-[var(--color-text)]">{run.destination_name || "Direct download"}</span>
-          <span className="text-[10px] uppercase font-bold bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{run.trigger_type}</span>
+          <span className="text-[11px] uppercase font-bold bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{run.trigger_type}</span>
           {run.triggered_by_email && <span className="text-[var(--color-text-muted)]">by {run.triggered_by_email}</span>}
           <span className="text-[var(--color-text-faint)]">{new Date(ago).toLocaleString()}</span>
           {dur && <span className="text-[var(--color-text-faint)]">in {dur}</span>}
@@ -489,7 +489,7 @@ function RunRow({ run }: { run: Run }) {
           {run.destination_path && <span className="font-mono truncate max-w-[40ch]" title={run.destination_path}>→ {run.destination_path}</span>}
         </div>
         {run.error_message && (
-          <div className="mt-1 p-2 bg-red-50 border border-red-200 rounded text-[10px] text-red-700 font-mono">{run.error_message}</div>
+          <div className="mt-1 p-2 bg-red-50 border border-red-200 rounded text-[11px] text-red-700 font-mono">{run.error_message}</div>
         )}
       </div>
     </div>
@@ -640,7 +640,7 @@ function DestinationModal({
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <Field label="Due from (UTC hour)">
                 <Input type="number" min={0} max={23} value={hourUtc} onChange={(e) => setHourUtc(Number(e.target.value))} />
-                <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">Delivery happens at the daily sweep (~05:00 UTC) once due.</p>
+                <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">Delivery happens at the daily sweep (~05:00 UTC) once due.</p>
               </Field>
               {schedule === "weekly" && (
                 <Field label="Day of week">
@@ -690,8 +690,8 @@ function DestinationModal({
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">{label}</label>
-      {hint && <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">{hint}</div>}
+      <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">{label}</label>
+      {hint && <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">{hint}</div>}
       <div className="mt-1">{children}</div>
     </div>
   );

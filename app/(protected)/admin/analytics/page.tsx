@@ -361,7 +361,7 @@ export default function AnalyticsPage() {
             <div className="px-6 py-4 border-b border-[var(--color-border)] flex justify-between items-center bg-[var(--color-surface-2)] rounded-t-2xl">
               <div>
                 <h3 className="text-lg font-bold text-[var(--color-text)] flex items-center">
-                  <AlertTriangle className="w-5 h-5 mr-2 text-orange-600" />
+                  <AlertTriangle className="w-5 h-5 mr-2 text-[var(--color-text-muted)]" />
                   {selectedReason}
                 </h3>
                 <p className="text-xs text-[var(--color-text-muted)] mt-1">Found {selectedTickets.length} occurrences across tickets.</p>
@@ -384,17 +384,17 @@ export default function AnalyticsPage() {
                           <h4 className="text-sm font-bold text-[var(--color-text)]">{item.ticketTitle}</h4>
                         </div>
                         <Link href={`/requests/${item.id}`} target="_blank">
-                          <button className="text-xs font-bold text-blue-600 flex items-center hover:underline bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-100 group-hover:border-blue-200 transition-colors">
+                          <button className="text-xs font-bold text-[var(--color-text)] flex items-center hover:underline bg-[var(--color-surface-2)] px-3 py-1.5 rounded-lg border border-[var(--color-border)] group-hover:border-[var(--color-border)] transition-colors">
                             View Ticket <ExternalLink className="w-3 h-3 ml-1" />
                           </button>
                         </Link>
                       </div>
                       
-                      <div className="ml-1 pl-4 border-l-2 border-orange-200 py-1">
+                      <div className="ml-1 pl-4 border-l-2 border-[var(--color-border)] py-1">
                         <p className="text-xs text-[var(--color-text-muted)] italic">&ldquo;{item.commentText}&rdquo;</p>
                       </div>
                       
-                      <div className="mt-3 flex items-center text-[10px] text-[var(--color-text-faint)] uppercase tracking-wider font-medium">
+                      <div className="mt-3 flex items-center text-[11px] text-[var(--color-text-faint)] uppercase tracking-wider font-medium">
                         <span className="flex items-center mr-4"><UserCircle className="w-3 h-3 mr-1" /> {item.reportedBy.split('@')[0]}</span>
                         <span className="flex items-center"><Clock className="w-3 h-3 mr-1" /> {item.date}</span>
                       </div>
@@ -429,12 +429,12 @@ export default function AnalyticsPage() {
               <div className="flex flex-col items-end">
                  <div className="flex items-center space-x-4">
                     <div className="text-right">
-                      <p className="text-[10px] font-bold text-[var(--color-text-faint)] uppercase tracking-wider">Avg Revisions</p>
-                      <p className={`text-xl font-black ${userProfile.metric.avgRevisions > 1.5 ? 'text-orange-600' : 'text-[var(--color-text)]'}`}>{userProfile.metric.avgRevisions.toFixed(2)}</p>
+                      <p className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase tracking-wider">Avg Revisions</p>
+                      <p className={`text-xl font-black ${userProfile.metric.avgRevisions > 1.5 ? 'text-[var(--color-text)]' : 'text-[var(--color-text)]'}`}>{userProfile.metric.avgRevisions.toFixed(2)}</p>
                     </div>
                     <div className="w-px h-8 bg-slate-300 mx-2" />
                     <div className="text-right">
-                      <p className="text-[10px] font-bold text-[var(--color-text-faint)] uppercase tracking-wider">Revision Rate</p>
+                      <p className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase tracking-wider">Revision Rate</p>
                       <p className={`text-xl font-black ${userProfile.metric.revisionRate > 0.3 ? 'text-red-600' : 'text-green-600'}`}>{formatPercent(userProfile.metric.revisionRate)}</p>
                     </div>
                  </div>
@@ -451,7 +451,7 @@ export default function AnalyticsPage() {
                 <div className="lg:col-span-1">
                   <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-5 shadow-sm h-full">
                     <h3 className="font-bold text-[var(--color-text)] mb-4 flex items-center text-sm uppercase tracking-wide">
-                      <AlertTriangle className="w-4 h-4 mr-2 text-orange-500" />
+                      <AlertTriangle className="w-4 h-4 mr-2 text-[var(--color-text-muted)]" />
                       Primary Issue Drivers
                     </h3>
                     {userProfile.causes.length === 0 ? (
@@ -471,7 +471,7 @@ export default function AnalyticsPage() {
                         ))}
                       </div>
                     )}
-                    <div className="mt-6 p-4 bg-blue-50 rounded-lg border border-blue-100 text-xs text-blue-800 leading-relaxed">
+                    <div className="mt-6 p-4 bg-[var(--color-surface-2)] rounded-lg border border-[var(--color-border)] text-xs text-[var(--color-text)] leading-relaxed">
                       <p className="font-bold mb-1">Analysis Tip:</p>
                       This chart shows the specific reasons why this user&rsquo;s work is being revised (if Drafter) or rejected (if Requester). Use this to identify training gaps or communication issues.
                     </div>
@@ -482,7 +482,7 @@ export default function AnalyticsPage() {
                 <div className="lg:col-span-2">
                   <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-5 shadow-sm h-full flex flex-col">
                     <h3 className="font-bold text-[var(--color-text)] mb-4 flex items-center text-sm uppercase tracking-wide">
-                      <FileText className="w-4 h-4 mr-2 text-blue-500" />
+                      <FileText className="w-4 h-4 mr-2 text-[var(--color-text-muted)]" />
                       Tickets Requiring Attention
                     </h3>
                     <div className="flex-1 overflow-hidden">
@@ -494,18 +494,18 @@ export default function AnalyticsPage() {
                       ) : (
                         <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
                           {userProfile.tickets.map(t => (
-                            <div key={t.id} className="flex items-center justify-between p-3 border border-[var(--color-border)] rounded-lg hover:border-[var(--color-accent-ring)] hover:bg-[var(--color-accent-soft)] transition-all group">
+                            <div key={t.id} className="flex items-center justify-between p-3 border border-[var(--color-border)] rounded-lg hover:border-[var(--color-accent-ring)] hover:bg-[var(--color-surface-2)] transition-all group">
                               <div className="min-w-0">
                                 <div className="flex items-center mb-1">
                                   <span className="text-xs font-mono font-bold text-[var(--color-text-muted)] mr-2">{t.ticketId}</span>
-                                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${t.status === 'CLOSED' ? 'bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]' : 'bg-green-100 text-green-700 border-green-200'}`}>{t.status}</span>
+                                  <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded border ${t.status === 'CLOSED' ? 'bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]' : 'bg-green-100 text-green-700 border-green-200'}`}>{t.status}</span>
                                 </div>
                                 <p className="text-sm font-bold text-[var(--color-text)] truncate pr-4">{t.title}</p>
                               </div>
                               <div className="flex items-center space-x-4 shrink-0">
                                 <div className="text-right">
-                                  <p className="text-[10px] font-bold text-[var(--color-text-faint)] uppercase">Revisions</p>
-                                  <p className="text-lg font-black text-orange-600">{t.revisionCount}</p>
+                                  <p className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase">Revisions</p>
+                                  <p className="text-lg font-black text-[var(--color-text)]">{t.revisionCount}</p>
                                 </div>
                                 <Link href={`/requests/${t.id}`} target="_blank">
                                   <button className="p-2 bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-faint)] hover:text-[var(--color-accent)] hover:border-[var(--color-accent-ring)] rounded-lg shadow-sm transition-all">
@@ -541,7 +541,7 @@ export default function AnalyticsPage() {
         <div className="bg-[var(--color-surface)] p-6 rounded-xl border border-[var(--color-border)] shadow-sm relative overflow-hidden">
           <div className="flex justify-between items-start mb-4">
             <div><p className="text-xs font-bold text-[var(--color-text-faint)] uppercase tracking-wider">Total Requests</p><h3 className="text-3xl font-black text-[var(--color-text)] mt-1">{metrics.totalTickets}</h3></div>
-            <div className="p-2 bg-blue-50 text-blue-600 rounded-lg"><FileText className="w-5 h-5" /></div>
+            <div className="p-2 bg-[var(--color-surface-2)] text-[var(--color-text)] rounded-lg"><FileText className="w-5 h-5" /></div>
           </div>
           <div className="flex items-center text-xs font-medium text-[var(--color-text-muted)]">
             <span className="text-green-600 flex items-center mr-2"><ArrowUpRight className="w-3 h-3 mr-1" /> +{metrics.volumeData[metrics.volumeData.length-1]?.count || 0}</span> recent
@@ -552,7 +552,7 @@ export default function AnalyticsPage() {
         <div className="bg-[var(--color-surface)] p-6 rounded-xl border border-[var(--color-border)] shadow-sm relative overflow-hidden">
           <div className="flex justify-between items-start mb-4">
             <div><p className="text-xs font-bold text-[var(--color-text-faint)] uppercase tracking-wider">Managed Documents</p><h3 className="text-3xl font-black text-[var(--color-text)] mt-1">{metrics.totalDocs}</h3></div>
-            <div className="p-2 bg-purple-50 text-purple-600 rounded-lg"><Server className="w-5 h-5" /></div>
+            <div className="p-2 bg-[var(--color-surface-2)] text-[var(--color-text)] rounded-lg"><Server className="w-5 h-5" /></div>
           </div>
           <div className="flex items-center text-xs font-medium text-[var(--color-text-muted)]"><span className="text-[var(--color-text)] font-bold mr-1">{metrics.issuedDocs}</span> Issued • <span className="text-[var(--color-text)] font-bold mx-1">{metrics.supersededDocs}</span> Superseded</div>
         </div>
@@ -603,13 +603,13 @@ export default function AnalyticsPage() {
                 <div key={i} className="flex flex-col items-center flex-1 group min-w-[20px]">
                   <div className="w-full bg-[var(--color-surface-2)] rounded-t-sm relative flex items-end justify-center transition-all group-hover:bg-slate-200" style={{ height: '100%' }}>
                     <div 
-                      className="w-full mx-0.5 bg-orange-500 rounded-t-sm transition-all duration-500 ease-out group-hover:bg-orange-600 relative min-h-[4px]" 
+                      className="w-full mx-0.5 bg-[var(--color-text-muted)] rounded-t-sm transition-all duration-500 ease-out group-hover:bg-[var(--color-surface-2)] relative min-h-[4px]" 
                       style={{ height: `${height}%` }}
                     >
                        <span className="absolute -top-6 left-1/2 -translate-x-1/2 text-xs font-bold text-[var(--color-text-muted)] opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity bg-[var(--color-surface)] px-2 py-1 rounded shadow-sm z-10 border border-[var(--color-border)]">{d.count}</span>
                     </div>
                   </div>
-                  <span className="text-[9px] font-bold text-[var(--color-text-faint)] mt-2 uppercase tracking-wider truncate w-full text-center">{d.label}</span>
+                  <span className="text-[11px] font-bold text-[var(--color-text-faint)] mt-2 uppercase tracking-wider truncate w-full text-center">{d.label}</span>
                 </div>
               );
             })}
@@ -624,7 +624,7 @@ export default function AnalyticsPage() {
                 <h3 className="font-bold text-[var(--color-text)] flex items-center"><HelpCircle className="w-5 h-5 mr-2 text-[var(--color-text-faint)]" /> Root Cause Analysis</h3>
                 <p className="text-xs text-[var(--color-text-muted)] mt-1">Click on a category to see associated tickets.</p>
               </div>
-              <span className="bg-orange-50 text-orange-600 text-[10px] font-bold px-2 py-1 rounded-lg border border-orange-100 animate-pulse flex items-center">
+              <span className="bg-[var(--color-surface-2)] text-[var(--color-text)] text-[11px] font-bold px-2 py-1 rounded-lg border border-[var(--color-border)] animate-pulse flex items-center">
                 <MousePointerClick className="w-3 h-3 mr-1" /> Interactive
               </span>
             </div>
@@ -644,18 +644,18 @@ export default function AnalyticsPage() {
                       onClick={() => setSelectedReason(item.reason)}
                       className="cursor-pointer hover:bg-[var(--color-surface-2)] p-2 rounded-lg transition-colors group"
                     >
-                      <div className="flex justify-between text-xs font-bold text-[var(--color-text)] mb-1 group-hover:text-orange-700">
+                      <div className="flex justify-between text-xs font-bold text-[var(--color-text)] mb-1 group-hover:text-[var(--color-text)]">
                         <span className="flex items-center">
                           {item.reason}
-                          <ChevronRight className="w-3 h-3 ml-1 opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity text-orange-400" />
+                          <ChevronRight className="w-3 h-3 ml-1 opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity text-[var(--color-text-muted)]" />
                         </span>
                         <span>{item.count} ({formatPercent(item.percentage)})</span>
                       </div>
                       <div className="w-full bg-[var(--color-surface-2)] h-2 rounded-full overflow-hidden">
                         <div 
                           className={`h-full rounded-full transition-colors ${
-                            item.reason.includes('Drafter') || item.reason.includes('Drafting') ? 'bg-orange-500 group-hover:bg-orange-600' :
-                            item.reason.includes('Requester') || item.reason.includes('Info') ? 'bg-blue-500 group-hover:bg-blue-600' :
+                            item.reason.includes('Drafter') || item.reason.includes('Drafting') ? 'bg-[var(--color-text-muted)] group-hover:bg-[var(--color-surface-2)]' :
+                            item.reason.includes('Requester') || item.reason.includes('Info') ? 'bg-[var(--color-text-muted)] group-hover:bg-[var(--color-surface-2)]' :
                             'bg-slate-500 group-hover:bg-slate-600'
                           }`} 
                           style={{ width: `${item.percentage * 100}%` }} 
@@ -667,7 +667,7 @@ export default function AnalyticsPage() {
             )}
           </div>
           <div className="mt-6 pt-4 border-t border-[var(--color-border)]">
-             <div className="flex items-center justify-between text-[10px] text-[var(--color-text-faint)] uppercase tracking-wider font-bold">
+             <div className="flex items-center justify-between text-[11px] text-[var(--color-text-faint)] uppercase tracking-wider font-bold">
                <span>Total Revisions Logged</span>
                <span>{metrics.rootCauseData.reduce((acc, curr) => acc + curr.count, 0)}</span>
              </div>
@@ -710,9 +710,9 @@ export default function AnalyticsPage() {
                   <tr 
                     key={d.uid} 
                     onClick={() => setSelectedUser(d.uid)}
-                    className="hover:bg-[var(--color-accent-soft)] transition-colors cursor-pointer group"
+                    className="hover:bg-[var(--color-surface-2)] transition-colors cursor-pointer group"
                   >
-                    <td className="px-6 py-4 font-bold text-[var(--color-text)] flex items-center group-hover:text-[var(--color-accent)] transition-colors">
+                    <td className="px-6 py-4 font-bold text-[var(--color-text)] flex items-center group-hover:text-[var(--color-text)] transition-colors">
                       <UserAvatar uid={d.uid} name={d.name} size={32} rounded="full" className="mr-3" />
                       {d.name}
                     </td>
@@ -722,7 +722,7 @@ export default function AnalyticsPage() {
                       <div className="flex items-center">
                         <span className={`font-bold mr-2 ${d.avgRevisions > 2 ? 'text-amber-500' : 'text-[var(--color-text)]'}`}>{d.avgRevisions.toFixed(1)}</span>
                         <div className="w-16 h-1.5 bg-[var(--color-surface-2)] rounded-full overflow-hidden">
-                           <div className={`h-full rounded-full ${d.avgRevisions > 2 ? 'bg-amber-400' : 'bg-blue-400'}`} style={{ width: `${Math.min(100, d.avgRevisions * 20)}%` }} />
+                           <div className={`h-full rounded-full ${d.avgRevisions > 2 ? 'bg-amber-400' : 'bg-[var(--color-text-muted)]'}`} style={{ width: `${Math.min(100, d.avgRevisions * 20)}%` }} />
                         </div>
                       </div>
                     </td>
@@ -732,7 +732,7 @@ export default function AnalyticsPage() {
                        </span>
                     </td>
                     <td className="px-6 py-4 text-right">
-                       <span className="font-black text-[var(--color-text)] text-lg group-hover:text-[var(--color-accent)] transition-colors">{score.toFixed(0)}</span>
+                       <span className="font-black text-[var(--color-text)] text-lg group-hover:text-[var(--color-text)] transition-colors">{score.toFixed(0)}</span>
                        <span className="text-xs text-[var(--color-text-faint)] ml-1">/ 100</span>
                     </td>
                   </tr>

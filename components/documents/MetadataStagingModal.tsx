@@ -598,7 +598,7 @@ export default function MetadataStagingModal({
         {/* Header */}
         <div className="px-4 sm:px-6 py-4 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-blue-100 rounded-lg"><Upload className="w-5 h-5 text-blue-700" /></div>
+            <div className="p-2 bg-[var(--color-surface-2)] rounded-lg"><Upload className="w-5 h-5 text-[var(--color-text-muted)]" /></div>
             <div>
               <div className="text-sm font-black text-[var(--color-text)]">{folderUpload ? "Upload folder as-is" : "Review metadata before uploading"}</div>
               <div className="text-xs text-[var(--color-text-muted)]">
@@ -691,7 +691,7 @@ export default function MetadataStagingModal({
                       finally { setFixingUniqueness(false); }
                     }}
                     disabled={fixingUniqueness}
-                    className="inline-flex items-center justify-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider bg-amber-700 hover:bg-amber-600 text-white disabled:opacity-50"
+                    className="inline-flex items-center justify-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-black uppercase tracking-wider bg-amber-700 hover:bg-amber-600 text-white disabled:opacity-50"
                   >
                     {fixingUniqueness ? <Loader2 className="w-3 h-3 animate-spin" /> : <KeyRound className="w-3 h-3" />}
                     {hasSheetColumn ? "Use Sheet for uniqueness" : "Add Sheet + use for uniqueness"}
@@ -699,7 +699,7 @@ export default function MetadataStagingModal({
                 )}
                 <button
                   onClick={autoSuffixDuplicates}
-                  className="inline-flex items-center justify-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider bg-[var(--color-surface)] border border-amber-300 text-amber-800 hover:bg-amber-50"
+                  className="inline-flex items-center justify-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-black uppercase tracking-wider bg-[var(--color-surface)] border border-amber-300 text-amber-800 hover:bg-amber-50"
                   title="Append -2, -3, … to colliding doc numbers so each row is unique. Use when the files are genuinely different and just have similar parsed numbers."
                 >
                   Auto-suffix duplicates
@@ -741,7 +741,7 @@ export default function MetadataStagingModal({
                 {already.length > 0 && (
                   <button
                     onClick={() => setItems((prev) => prev.filter((it) => !(copies.get(hashes.get(it.file) ?? "")?.length)))}
-                    className="shrink-0 inline-flex items-center justify-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider bg-amber-700 hover:bg-amber-600 text-white"
+                    className="shrink-0 inline-flex items-center justify-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-black uppercase tracking-wider bg-amber-700 hover:bg-amber-600 text-white"
                   >
                     <Trash2 className="w-3 h-3" /> Skip {already.length === 1 ? "it" : `these ${already.length}`}
                   </button>
@@ -753,7 +753,7 @@ export default function MetadataStagingModal({
 
         {/* Title-block reader result — quiet until it actually helped. */}
         {tbFilled > 0 && (
-          <div className="px-4 sm:px-6 py-2 bg-indigo-50 border-b border-indigo-200 text-[11px] text-indigo-800 flex items-center gap-2 shrink-0 animate-in fade-in">
+          <div className="px-4 sm:px-6 py-2 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] text-[11px] text-[var(--color-text)] flex items-center gap-2 shrink-0 animate-in fade-in">
             <Wand2 className="w-3.5 h-3.5 shrink-0" />
             <span>
               Read the drawings&apos; title blocks and filled <b>{tbFilled}</b> field{tbFilled === 1 ? "" : "s"} from
@@ -766,7 +766,7 @@ export default function MetadataStagingModal({
         {detailed && (<>
         <div className="px-4 sm:px-6 py-3 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] shrink-0">
           <div className="flex items-center gap-3 flex-wrap">
-            <span className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest flex items-center gap-1">
+            <span className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest flex items-center gap-1">
               <Wand2 className="w-3 h-3" /> Apply to all:
             </span>
             <div className="inline-flex items-center gap-1.5">
@@ -774,30 +774,30 @@ export default function MetadataStagingModal({
                 <option value="">Status...</option>
                 {statusOptions.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
-              <button onClick={applyBulkStatus} disabled={!bulkStatus} className="text-[10px] font-bold px-2 py-1 rounded-md bg-slate-200 hover:bg-slate-300 text-[var(--color-text)] disabled:opacity-40">Apply</button>
+              <button onClick={applyBulkStatus} disabled={!bulkStatus} className="text-[11px] font-bold px-2 py-1 rounded-md bg-slate-200 hover:bg-slate-300 text-[var(--color-text)] disabled:opacity-40">Apply</button>
             </div>
             {typeCol && (
               <div className="inline-flex items-center gap-1.5">
                 <input value={bulkType} onChange={(e) => setBulkType(e.target.value)} placeholder={typeCol.label} className="text-xs border border-[var(--color-border-strong)] rounded-md px-2 py-1 bg-[var(--color-surface)] w-32" />
-                <button onClick={applyBulkType} disabled={!bulkType} className="text-[10px] font-bold px-2 py-1 rounded-md bg-slate-200 hover:bg-slate-300 text-[var(--color-text)] disabled:opacity-40">Apply</button>
+                <button onClick={applyBulkType} disabled={!bulkType} className="text-[11px] font-bold px-2 py-1 rounded-md bg-slate-200 hover:bg-slate-300 text-[var(--color-text)] disabled:opacity-40">Apply</button>
               </div>
             )}
             {unitCol && (
               <div className="inline-flex items-center gap-1.5">
                 <input value={bulkUnit} onChange={(e) => setBulkUnit(e.target.value)} placeholder={unitCol.label} className="text-xs border border-[var(--color-border-strong)] rounded-md px-2 py-1 bg-[var(--color-surface)] w-24" />
-                <button onClick={applyBulkUnit} disabled={!bulkUnit} className="text-[10px] font-bold px-2 py-1 rounded-md bg-slate-200 hover:bg-slate-300 text-[var(--color-text)] disabled:opacity-40">Apply</button>
+                <button onClick={applyBulkUnit} disabled={!bulkUnit} className="text-[11px] font-bold px-2 py-1 rounded-md bg-slate-200 hover:bg-slate-300 text-[var(--color-text)] disabled:opacity-40">Apply</button>
               </div>
             )}
             {onAddColumn && (
               <button
                 onClick={onAddColumn}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wider bg-slate-900 text-white hover:bg-slate-800"
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-black uppercase tracking-wider bg-slate-900 text-white hover:bg-slate-800"
                 title="Add a new column to this library - opens the column wizard without closing the upload."
               >
                 + Add Column
               </button>
             )}
-            <div className="ml-auto flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]">
+            <div className="ml-auto flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
               <Info className="w-3 h-3" />
               <span>Filename hints auto-detected. Edit any cell directly.</span>
             </div>
@@ -809,22 +809,22 @@ export default function MetadataStagingModal({
           <table className="w-full text-xs">
             <thead className="sticky top-0 bg-[var(--color-surface)] border-b border-[var(--color-border)] z-10">
               <tr>
-                <th className="text-left px-3 py-2 text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-wider w-8"></th>
-                <th className="text-left px-3 py-2 text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-wider">File</th>
+                <th className="text-left px-3 py-2 text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-wider w-8"></th>
+                <th className="text-left px-3 py-2 text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-wider">File</th>
                 {!canonical.docNumber && (
-                  <th className="text-left px-3 py-2 text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-wider">Document #</th>
+                  <th className="text-left px-3 py-2 text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-wider">Document #</th>
                 )}
                 {!canonical.title && (
-                  <th className="text-left px-3 py-2 text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-wider">Title</th>
+                  <th className="text-left px-3 py-2 text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-wider">Title</th>
                 )}
                 {!canonical.rev && (
-                  <th className="text-left px-3 py-2 text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-wider w-16">Rev</th>
+                  <th className="text-left px-3 py-2 text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-wider w-16">Rev</th>
                 )}
                 {!canonical.status && (
-                  <th className="text-left px-3 py-2 text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-wider w-32">Status</th>
+                  <th className="text-left px-3 py-2 text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-wider w-32">Status</th>
                 )}
                 {customColumns.map((c) => (
-                  <th key={c.key} className="text-left px-3 py-2 text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-wider">
+                  <th key={c.key} className="text-left px-3 py-2 text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-wider">
                     {c.label}{c.required && " *"}
                   </th>
                 ))}
@@ -843,13 +843,13 @@ export default function MetadataStagingModal({
                     <td className="px-3 py-1.5 max-w-[16ch]">
                       <div className="text-[11px] text-[var(--color-text)] font-mono truncate" title={it.file.name}>{it.file.name}</div>
                       {folderUpload && (folderUpload.pathOf(it.file)?.length ?? 0) > 0 && (
-                        <div className="text-[9px] text-emerald-700 dark:text-emerald-400 font-mono truncate" title={folderUpload.pathOf(it.file)!.join("/")}>
+                        <div className="text-[11px] text-emerald-700 dark:text-emerald-400 font-mono truncate" title={folderUpload.pathOf(it.file)!.join("/")}>
                           {folderUpload.pathOf(it.file)!.join("/")}/
                         </div>
                       )}
-                      <div className="text-[9px] text-[var(--color-text-faint)]">{formatBytes(it.file.size)}</div>
+                      <div className="text-[11px] text-[var(--color-text-faint)]">{formatBytes(it.file.size)}</div>
                       {(copies.get(hashes.get(it.file) ?? "") ?? []).map((c) => (
-                        <a key={c.href} href={c.href} target="_blank" rel="noreferrer" title={`Already here: ${c.where}`} className="block text-[9px] font-bold text-amber-700 hover:underline truncate">
+                        <a key={c.href} href={c.href} target="_blank" rel="noreferrer" title={`Already here: ${c.where}`} className="block text-[11px] font-bold text-amber-700 hover:underline truncate">
                           Already in {c.where}
                         </a>
                       ))}
@@ -965,7 +965,7 @@ export default function MetadataStagingModal({
               {!showAllRows && items.length > 200 && (
                 <tr>
                   <td colSpan={99} className="text-center py-3">
-                    <button onClick={() => setShowAllRows(true)} className="text-xs font-bold text-blue-600 hover:underline">
+                    <button onClick={() => setShowAllRows(true)} className="text-xs font-bold text-[var(--color-accent)] hover:underline">
                       Showing 200 of {items.length.toLocaleString()} - show all (slower)
                     </button>
                   </td>
@@ -1083,7 +1083,7 @@ function Cell({
         className={`${widthClass || "w-full"} text-[11px] border rounded-md px-1.5 py-1 bg-[var(--color-surface)] ${error ? "border-red-400 ring-1 ring-red-200" : "border-[var(--color-border)]"} ${center ? "text-center" : ""}`}
       />
       {error && (
-        <span className="absolute right-1 top-1 text-[8px] font-black text-red-600 uppercase">{error}</span>
+        <span className="absolute right-1 top-1 text-[11px] font-black text-red-600 uppercase">{error}</span>
       )}
     </div>
   );

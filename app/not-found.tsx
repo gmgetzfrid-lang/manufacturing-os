@@ -9,7 +9,7 @@ export default function NotFound() {
       <div className="mx-auto flex min-h-dvh max-w-2xl flex-col items-center justify-center px-6 py-16">
         <div className="w-full rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-8 shadow-sm animate-in fade-in zoom-in-95">
           <div className="flex items-start gap-4">
-            <div className="mt-1 flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
+            <div className="mt-1 flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-[var(--color-surface-2)] text-[var(--color-text)]">
               <SearchX className="h-5 w-5" />
             </div>
             <div className="min-w-0 flex-1">

@@ -3719,10 +3719,10 @@ export default function LibraryExplorerPage() {
                 <button role="menuitem"
                   onClick={() => { setUploadMenuOpen(false); fileInputRef.current?.click(); }}
                   className="w-full px-3 py-2.5 text-left hover:bg-[var(--color-surface-2)] flex items-start gap-2.5">
-                  <UploadCloud className="w-4 h-4 mt-0.5 text-blue-600 shrink-0" />
+                  <UploadCloud className="w-4 h-4 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
                   <span>
                     <span className="block text-xs font-bold">Files…</span>
-                    <span className="block text-[10px] text-[var(--color-text-muted)]">Pick one or many files</span>
+                    <span className="block text-[11px] text-[var(--color-text-muted)]">Pick one or many files</span>
                   </span>
                 </button>
                 <button role="menuitem"
@@ -3731,12 +3731,12 @@ export default function LibraryExplorerPage() {
                   <FolderUp className="w-4 h-4 mt-0.5 text-emerald-600 shrink-0" />
                   <span>
                     <span className="block text-xs font-bold">A whole folder…</span>
-                    <span className="block text-[10px] text-[var(--color-text-muted)]">
+                    <span className="block text-[11px] text-[var(--color-text-muted)]">
                       {isController ? "Every subfolder and file keeps its place" : "Its files are added here (folders need Doc Control)"}
                     </span>
                   </span>
                 </button>
-                <div className="px-3 py-2 text-[10px] text-[var(--color-text-faint)] border-t border-[var(--color-border)] bg-[var(--color-surface-2)]/60">
+                <div className="px-3 py-2 text-[11px] text-[var(--color-text-faint)] border-t border-[var(--color-border)] bg-[var(--color-surface-2)]/60">
                   Or drag files or folders anywhere onto this page.
                 </div>
               </div>
@@ -4066,11 +4066,11 @@ export default function LibraryExplorerPage() {
 
             {/* Subtle hint for admins inside a folder — columns are library-wide */}
             {isController && currentFolderId && (
-              <div className="mb-2 px-3 py-2 bg-blue-50/60 border border-blue-200 rounded-lg text-[11px] text-[var(--color-text)] flex items-center gap-2">
-                <Columns className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+              <div className="mb-2 px-3 py-2 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg text-[11px] text-[var(--color-text)] flex items-center gap-2">
+                <Columns className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
                 <span>
                   Columns shown here apply to <b>every folder</b> in <b>{library?.name}</b>. To rename, reorder, or add columns,
-                  open <button onClick={() => setShowColumnManager(true)} className="font-bold text-blue-700 underline hover:text-blue-800">Library Column Manager</button>.
+                  open <button onClick={() => setShowColumnManager(true)} className="font-bold text-[var(--color-accent)] underline hover:text-[var(--color-accent-hover)]">Library Column Manager</button>.
                 </span>
               </div>
             )}
@@ -4111,7 +4111,7 @@ export default function LibraryExplorerPage() {
             {/* BROWSER CARD */}
             <div
               className={`bg-[var(--color-surface)] border rounded-2xl shadow-sm overflow-hidden flex flex-col min-h-[500px] relative transition-all duration-150 focus:outline-none ${
-                isDragOver ? "border-blue-400 ring-4 ring-blue-100" : "border-[var(--color-border)]"
+                isDragOver ? "border-[var(--color-accent)] ring-4 ring-[var(--color-accent-ring)]" : "border-[var(--color-border)]"
               }`}
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
@@ -4121,12 +4121,12 @@ export default function LibraryExplorerPage() {
             >
               {/* Drag overlay */}
               {isDragOver && (
-                <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-blue-50/95 pointer-events-none">
-                  <div className="w-20 h-20 rounded-2xl bg-blue-100 border-2 border-blue-400 border-dashed flex items-center justify-center mb-4">
-                    <UploadCloud className="w-9 h-9 text-blue-500" />
+                <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[var(--color-surface-2)] pointer-events-none">
+                  <div className="w-20 h-20 rounded-2xl bg-[var(--color-surface-2)] border-2 border-[var(--color-border-strong)] border-dashed flex items-center justify-center mb-4">
+                    <UploadCloud className="w-9 h-9 text-[var(--color-text-muted)]" />
                   </div>
-                  <p className="text-lg font-bold text-blue-700">Drop files or folders to upload</p>
-                  <p className="text-sm text-blue-500 mt-1">
+                  <p className="text-lg font-bold text-[var(--color-text)]">Drop files or folders to upload</p>
+                  <p className="text-sm text-[var(--color-text-muted)] mt-1">
                     Release to add to {currentFolder ? `"${currentFolder.name}"` : "this library"} - a dropped folder keeps its subfolder structure
                   </p>
                 </div>
@@ -4205,7 +4205,7 @@ export default function LibraryExplorerPage() {
                   </div>
                 )}
                 {docStreamProgress !== null && (
-                  <div className="px-4 py-1.5 bg-blue-50 border-b border-blue-200 text-[11px] text-blue-900 flex items-center gap-2">
+                  <div className="px-4 py-1.5 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] text-[11px] text-[var(--color-text)] flex items-center gap-2">
                     <Loader2 className="w-3 h-3 animate-spin" />
                     Loading the rest of this folder… <b>{docStreamProgress.toLocaleString()}</b> so far. Sorting covers everything once done.
                   </div>
@@ -4297,7 +4297,7 @@ export default function LibraryExplorerPage() {
                         title="View defaults for this folder"
                         className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-all ${
                           viewMenuOpen
-                            ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
+                            ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]"
                             : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                         }`}
                       >
@@ -4313,7 +4313,7 @@ export default function LibraryExplorerPage() {
                               <div className="text-[11px] font-black text-[var(--color-text)]">
                                 {currentFolder ? `Folder: ${currentFolder.name}` : `Library: ${library?.name ?? ""}`}
                               </div>
-                              <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5 leading-snug">
+                              <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 leading-snug">
                                 Current: {docLayout === "details" ? "Details" : docLayout === "list" ? "List" : docLayout === "grid" ? "Grid" : "Thumbnails"} · sorted by {sortLabelFor(sortKey)} ({sortDir === "asc" ? "ascending" : "descending"})
                                 {isFolderDefaultSort ? " · saved default sort" : ""}
                               </div>
@@ -4325,7 +4325,7 @@ export default function LibraryExplorerPage() {
                               <Pin className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                               <span className="flex-1">
                                 Set as <b>my</b> default here
-                                <span className="block text-[10px] font-normal text-[var(--color-text-muted)]">Only you - wins over the org default</span>
+                                <span className="block text-[11px] font-normal text-[var(--color-text-muted)]">Only you - wins over the org default</span>
                               </span>
                               {viewDefaults.hasUserRow && <Check className="w-3.5 h-3.5 text-emerald-600" />}
                             </button>
@@ -4334,10 +4334,10 @@ export default function LibraryExplorerPage() {
                                 onClick={() => { setViewMenuOpen(false); void saveViewDefault("org"); }}
                                 className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                               >
-                                <Shield className="w-3.5 h-3.5 text-[var(--color-accent)]" />
+                                <Shield className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                                 <span className="flex-1">
                                   Set as <b>org-wide</b> default here
-                                  <span className="block text-[10px] font-normal text-[var(--color-text-muted)]">Everyone opens this folder like this</span>
+                                  <span className="block text-[11px] font-normal text-[var(--color-text-muted)]">Everyone opens this folder like this</span>
                                 </span>
                                 {viewDefaults.hasOrgRow && <Check className="w-3.5 h-3.5 text-emerald-600" />}
                               </button>
@@ -4350,7 +4350,7 @@ export default function LibraryExplorerPage() {
                                 <X className="w-3.5 h-3.5" />
                                 <span className="flex-1">
                                   Clear my default (use org&apos;s)
-                                  <span className="block text-[10px] font-normal">Removes your saved layout, sort AND column setup here</span>
+                                  <span className="block text-[11px] font-normal">Removes your saved layout, sort AND column setup here</span>
                                 </span>
                               </button>
                             )}
@@ -4362,7 +4362,7 @@ export default function LibraryExplorerPage() {
                       <button
                         onClick={() => setShowEquipmentSweep(true)}
                         title="Equipment sweep - pull AI-extracted equipment tags from indexed drawings into your equipment column and the registry"
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-orange-200 bg-orange-50/60 text-orange-700 hover:bg-orange-100 hover:border-orange-300 transition-all"
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border)] transition-all"
                       >
                         <ScanSearch className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Equipment</span>
                       </button>
@@ -4429,12 +4429,12 @@ export default function LibraryExplorerPage() {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
                             <span className="font-mono text-xs font-bold text-[var(--color-text)] truncate flex-1">{doc.documentNumber || doc.title || doc.name || "-"}</span>
-                            {doc.rev && <span className="text-[10px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded shrink-0">Rev {doc.rev}</span>}
+                            {doc.rev && <span className="text-[11px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded shrink-0">Rev {doc.rev}</span>}
                           </div>
                           {doc.title && doc.documentNumber && <div className="text-xs text-[var(--color-text-muted)] truncate mt-0.5">{doc.title}</div>}
                           <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                            {doc.status && <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border ${stateStyle(documentState(doc.status)).pill}`}>{doc.status}</span>}
-                            {doc.checkedOutBy && <span className="text-[10px] font-bold text-blue-700">Checked out{doc.checkedOutByName ? ` · ${doc.checkedOutByName}` : ""}</span>}
+                            {doc.status && <span className={`text-[11px] font-bold uppercase px-1.5 py-0.5 rounded border ${stateStyle(documentState(doc.status)).pill}`}>{doc.status}</span>}
+                            {doc.checkedOutBy && <span className="text-[11px] font-bold text-[var(--color-text)]">Checked out{doc.checkedOutByName ? ` · ${doc.checkedOutByName}` : ""}</span>}
                           </div>
                         </div>
                       </button>
@@ -4474,7 +4474,7 @@ export default function LibraryExplorerPage() {
                     onMouseDown={handleMarqueeMouseDown}
                   >
                     <table className="w-full text-left text-sm table-fixed min-w-[640px]">
-                      <thead className="bg-slate-50/70 border-b border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)] uppercase font-black tracking-wider">
+                      <thead className="bg-slate-50/70 border-b border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] uppercase font-black tracking-wider">
                         <tr>
                           <th className={`px-3 ${headerPad}`} style={{ width: "36px" }}>
                             <input
@@ -4482,7 +4482,7 @@ export default function LibraryExplorerPage() {
                               checked={allSelected}
                               ref={(el) => { if (el) el.indeterminate = someSelected; }}
                               onChange={toggleSelectAll}
-                              className="w-3.5 h-3.5 rounded accent-blue-600 cursor-pointer"
+                              className="w-3.5 h-3.5 rounded accent-[var(--color-text)] cursor-pointer"
                             />
                           </th>
                           {activeColumns.map((colKey) => {
@@ -4521,8 +4521,8 @@ export default function LibraryExplorerPage() {
                                   <span className="truncate flex-1">{label}</span>
                                   {sortKey === colKey ? (
                                     sortDir === "asc"
-                                      ? <ChevronUp className="w-3 h-3 text-blue-600 shrink-0" />
-                                      : <ChevronDown className="w-3 h-3 text-blue-600 shrink-0" />
+                                      ? <ChevronUp className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
+                                      : <ChevronDown className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
                                   ) : (
                                     <ArrowUpDown className="w-3 h-3 text-slate-300 group-hover:text-[var(--color-text-muted)] shrink-0" />
                                   )}
@@ -4537,10 +4537,10 @@ export default function LibraryExplorerPage() {
                                     onClick={(e) => e.stopPropagation()}
                                     title={isResized ? "Drag to resize · double-click to reset" : "Drag to resize column"}
                                     style={{ touchAction: "none" }}
-                                    className="absolute top-0 right-0 h-full w-2.5 cursor-col-resize flex items-center justify-center group/grip z-10 hover:bg-blue-100/60"
+                                    className="absolute top-0 right-0 h-full w-2.5 cursor-col-resize flex items-center justify-center group/grip z-10 hover:bg-[var(--color-surface-2)]"
                                   >
                                     <div className={`h-2/3 w-[3px] rounded-full transition-colors ${
-                                      isResized ? "bg-blue-600" : "bg-slate-400 group-hover/grip:bg-blue-600"
+                                      isResized ? "bg-[var(--color-text-muted)]" : "bg-slate-400 group-hover/grip:bg-[var(--color-text-muted)]"
                                     }`} />
                                   </div>
                                 )}
@@ -4589,22 +4589,22 @@ export default function LibraryExplorerPage() {
                                 onContextMenu={(e) => handleRowContextMenu(docRecord, e)}
                                 className={`group cursor-pointer transition-colors relative ${
                                   isRowSelected
-                                    ? "bg-blue-50/70"
+                                    ? "bg-[var(--color-surface-2)]"
                                     : isFocused
                                     ? "bg-[var(--color-surface-2)]"
                                     : "hover:bg-slate-50/60"
-                                } ${isKeyFocused ? "outline outline-1 -outline-offset-1 outline-blue-400" : ""} ${cutDocIds.has(docRecord.id!) ? "opacity-50" : ""}`}
+                                } ${isKeyFocused ? "outline outline-1 -outline-offset-1 outline-[var(--color-border-strong)]" : ""} ${cutDocIds.has(docRecord.id!) ? "opacity-50" : ""}`}
                               >
                                 {/* Left edge accent on selected row */}
                                 {(isRowSelected || isFocused) && (
-                                  <td className="absolute left-0 top-0 bottom-0 w-0.5 bg-gradient-to-b from-blue-400 to-blue-600 p-0" />
+                                  <td className="absolute left-0 top-0 bottom-0 w-0.5 p-0 bg-[var(--color-text)]" />
                                 )}
                                 <td className={`px-3 ${rowPad}`} onClick={(e) => toggleSelectDoc(docRecord.id!, e)}>
                                   <input
                                     type="checkbox"
                                     checked={isRowSelected}
                                     onChange={() => {}}
-                                    className="w-3.5 h-3.5 rounded accent-blue-600 cursor-pointer"
+                                    className="w-3.5 h-3.5 rounded accent-[var(--color-text)] cursor-pointer"
                                   />
                                 </td>
                                 {activeColumns.map((colKey) => {
@@ -4664,7 +4664,7 @@ export default function LibraryExplorerPage() {
                                               }}
                                               onBlur={() => { if (!savingTitle) void saveInlineTitle(docRecord.id!, editingTitleValue); }}
                                               disabled={savingTitle}
-                                              className="w-full text-sm px-1.5 py-0.5 rounded border border-blue-400 bg-blue-50 focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-ring)]"
+                                              className="w-full text-sm px-1.5 py-0.5 rounded border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-ring)]"
                                             />
                                             {savingTitle && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-muted)] shrink-0" />}
                                           </div>
@@ -4678,7 +4678,7 @@ export default function LibraryExplorerPage() {
                                             {docRecord.title || docRecord.name || "Untitled"}
                                           </div>
                                           {!hasSeparateDocNum && docRecord.documentNumber && (
-                                            <div className="text-[10px] font-mono text-[var(--color-text-faint)] truncate mt-0.5">
+                                            <div className="text-[11px] font-mono text-[var(--color-text-faint)] truncate mt-0.5">
                                               {docRecord.documentNumber}
                                             </div>
                                           )}
@@ -4695,11 +4695,11 @@ export default function LibraryExplorerPage() {
                                       : s === "Draft" ? "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]"
                                       : s === "Superseded" ? "bg-amber-50 text-amber-700 border-amber-200"
                                       : s === "Void" || s === "Archived" ? "bg-red-50 text-red-700 border-red-200"
-                                      : s === "Locked" ? "bg-blue-50 text-blue-700 border-blue-200"
+                                      : s === "Locked" ? "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]"
                                       : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]";
                                     return (
                                       <td key={colKey} className={`px-3 ${rowPad}`}>
-                                        <span className={`inline-flex items-center text-[10px] font-bold border px-1.5 py-0.5 rounded-md ${tone}`}>
+                                        <span className={`inline-flex items-center text-[11px] font-bold border px-1.5 py-0.5 rounded-md ${tone}`}>
                                           {s}
                                         </span>
                                       </td>
@@ -4727,7 +4727,7 @@ export default function LibraryExplorerPage() {
                                               }}
                                               onBlur={() => { if (!savingDocNum) void saveInlineDocNumber(docRecord.id!, editingDocNumValue); }}
                                               disabled={savingDocNum}
-                                              className={`w-full text-xs font-mono px-1.5 py-0.5 rounded border ${editingDocNumError ? "border-red-400 bg-red-50" : "border-blue-400 bg-blue-50"} focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-ring)]`}
+                                              className={`w-full text-xs font-mono px-1.5 py-0.5 rounded border ${editingDocNumError ? "border-red-400 bg-red-50" : "border-[var(--color-border-strong)] bg-[var(--color-surface-2)]"} focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-ring)]`}
                                             />
                                             {savingDocNum && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-muted)] shrink-0" />}
                                           </div>
@@ -4740,14 +4740,14 @@ export default function LibraryExplorerPage() {
                                               setEditingDocNumValue(docRecord.documentNumber || "");
                                               setEditingDocNumError(null);
                                             }}
-                                            className="w-full text-left text-xs font-mono text-[var(--color-text)] truncate hover:bg-blue-50 hover:text-blue-900 px-1 -mx-1 rounded transition-colors"
+                                            className="w-full text-left text-xs font-mono text-[var(--color-text)] truncate hover:bg-[var(--color-surface-2)] hover:text-[var(--color-accent-hover)] px-1 -mx-1 rounded transition-colors"
                                             title="Click to rename"
                                           >
                                             {docRecord.documentNumber || "-"}
                                           </button>
                                         )}
                                         {isEditing && editingDocNumError && (
-                                          <div className="text-[10px] text-red-600 mt-0.5 max-w-[20ch] leading-tight">{editingDocNumError}</div>
+                                          <div className="text-[11px] text-red-600 mt-0.5 max-w-[20ch] leading-tight">{editingDocNumError}</div>
                                         )}
                                       </td>
                                     );
@@ -4777,8 +4777,8 @@ export default function LibraryExplorerPage() {
                                         onClick={(e) => handleStageDoc(docRecord, e)}
                                         className={`p-1 rounded-md transition-all ${
                                           isStaged
-                                            ? "text-orange-500 bg-orange-50 ring-1 ring-orange-200 opacity-100"
-                                            : "text-slate-300 hover:text-orange-500 hover:bg-orange-50 opacity-60 sm:opacity-0 group-hover:opacity-100"
+                                            ? "text-[var(--color-surface)] bg-[var(--color-text)] ring-1 ring-[var(--color-border-strong)] opacity-100"
+                                            : "text-slate-300 hover:text-[var(--color-accent-hover)] hover:bg-[var(--color-surface-2)] opacity-60 sm:opacity-0 group-hover:opacity-100"
                                         }`}
                                         title={isStaged ? "Remove from Reference Stack" : "Add to Reference Stack"}
                                       >
@@ -4869,7 +4869,7 @@ export default function LibraryExplorerPage() {
       {/* MARQUEE (rubber-band) selection rectangle */}
       {marquee && (
         <div
-          className="fixed z-[85] border border-blue-400 bg-blue-400/10 pointer-events-none rounded-sm"
+          className="fixed z-[85] border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] pointer-events-none rounded-sm"
           style={{ left: marquee.x1, top: marquee.y1, width: marquee.x2 - marquee.x1, height: marquee.y2 - marquee.y1 }}
         />
       )}
@@ -4939,20 +4939,20 @@ export default function LibraryExplorerPage() {
           </button>
           <button
             onClick={() => setShowBulkMoveModal(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold bg-blue-500 hover:bg-blue-600 rounded-lg transition-all active:scale-95"
+            className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] rounded-lg transition-all active:scale-95"
             title="Move all selected documents to a folder"
           >
             <ArrowRight className="w-3 h-3" /> Move to…
           </button>
           <button
             onClick={handleStageSelected}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold bg-orange-500 hover:bg-orange-600 rounded-lg transition-all active:scale-95"
+            className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] rounded-lg transition-all active:scale-95"
           >
             <Layers className="w-3 h-3" /> Stage
           </button>
           <button
             onClick={() => setShowBulkCheckout(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold bg-indigo-500 hover:bg-indigo-600 rounded-lg transition-all active:scale-95"
+            className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] rounded-lg transition-all active:scale-95"
             title="Bulk-check-out selected docs - ad-hoc or to a project"
           >
             <Briefcase className="w-3 h-3" /> Bulk Checkout
@@ -4960,7 +4960,7 @@ export default function LibraryExplorerPage() {
           {isController && (
             <button
               onClick={() => setShowBulkEdit(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold bg-violet-500 hover:bg-violet-600 rounded-lg transition-all active:scale-95"
+              className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] rounded-lg transition-all active:scale-95"
               title="Apply one metadata change across all selected docs"
             >
               <Pencil className="w-3 h-3" /> Bulk Edit
@@ -5187,7 +5187,7 @@ export default function LibraryExplorerPage() {
                 // as a frozen page.
                 <div className="fixed inset-0 z-[250] flex items-center justify-center bg-slate-900/40 backdrop-blur-[2px] p-4">
                   <div className="w-full max-w-sm rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl p-5 text-center">
-                    <Loader2 className="w-8 h-8 text-blue-600 animate-spin mx-auto mb-3" />
+                    <Loader2 className="w-8 h-8 text-[var(--color-text-muted)] animate-spin mx-auto mb-3" />
                     <p className="text-base font-black text-[var(--color-text)]">Reading your folder…</p>
                     <p className="text-sm text-[var(--color-text)] mt-1">
                       <b>{readingDrop.toLocaleString()}</b> file{readingDrop === 1 ? "" : "s"} found
@@ -5452,7 +5452,7 @@ export default function LibraryExplorerPage() {
                   <Trash2 className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="text-xs font-bold text-[var(--color-text)] truncate">{f.name}</div>
-                    <div className="text-[10px] text-[var(--color-text-muted)] truncate">
+                    <div className="text-[11px] text-[var(--color-text-muted)] truncate">
                       {f.pathNames.length > 1 ? `${f.pathNames.slice(0, -1).join(" / ")} · ` : ""}
                       deleted {new Date(f.deletedAt).toLocaleDateString()} · purges {new Date(f.purgeAt).toLocaleDateString()}
                     </div>
@@ -5548,7 +5548,7 @@ function LibraryNumberingModal({ orgId, libraryId, onClose }: {
     <div className="fixed inset-0 z-[95] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm p-4" onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl bg-[var(--color-surface)] shadow-2xl border border-[var(--color-border)]">
         <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2.5">
-          <Hash className="w-4 h-4 text-[var(--color-accent)]" />
+          <Hash className="w-4 h-4 text-[var(--color-text-muted)]" />
           <div className="flex-1">
             <div className="text-sm font-black text-[var(--color-text)]">Auto-numbering</div>
             <div className="text-[11px] text-[var(--color-text-muted)]">Uploads with a BLANK number get the next issued one. Typed numbers always win.</div>
@@ -5567,18 +5567,18 @@ function LibraryNumberingModal({ orgId, libraryId, onClose }: {
             </label>
             <div className="grid grid-cols-3 gap-2">
               <div className="col-span-1">
-                <label className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text)]">Prefix</label>
+                <label className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text)]">Prefix</label>
                 <input value={cfg.prefix} onChange={(e) => setCfg({ ...cfg, prefix: e.target.value })}
                   placeholder="PROC-" className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm font-mono" />
               </div>
               <div>
-                <label className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text)]">Digits</label>
+                <label className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text)]">Digits</label>
                 <input type="number" min={1} max={8} value={cfg.pad}
                   onChange={(e) => setCfg({ ...cfg, pad: Math.max(1, Math.min(8, Number(e.target.value) || 4)) })}
                   className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
               </div>
               <div>
-                <label className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text)]">Next #</label>
+                <label className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text)]">Next #</label>
                 <input type="number" min={1} value={cfg.next_number}
                   onChange={(e) => setCfg({ ...cfg, next_number: Math.max(1, Number(e.target.value) || 1) })}
                   className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />

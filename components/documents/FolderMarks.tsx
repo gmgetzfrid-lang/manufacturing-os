@@ -51,13 +51,13 @@ export function FolderMarkBar({ orgId, folderId, onChanged }: { orgId: string; f
   return (
     <div className="flex flex-wrap items-center gap-1.5 text-[11px] pointer-events-auto rounded-md bg-[var(--color-surface)]/95 border border-[var(--color-border)] px-2 py-1">
       <span className="font-bold">This folder is</span>
-      {own.area && <span className={`${chip} border-purple-300 bg-purple-50 text-purple-800`}><Factory className="w-3 h-3" /> {own.area.label}<button title="Unmark" onClick={() => void send({ kind: "clear", which: "area" })}><X className="w-3 h-3" /></button></span>}
-      {own.type && <span className={`${chip} border-sky-300 bg-sky-50 text-sky-800`}><Layers className="w-3 h-3" /> {own.type}<button title="Unmark" onClick={() => void send({ kind: "clear", which: "type" })}><X className="w-3 h-3" /></button></span>}
+      {own.area && <span className={`${chip} border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]`}><Factory className="w-3 h-3" /> {own.area.label}<button title="Unmark" onClick={() => void send({ kind: "clear", which: "area" })}><X className="w-3 h-3" /></button></span>}
+      {own.type && <span className={`${chip} border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]`}><Layers className="w-3 h-3" /> {own.type}<button title="Unmark" onClick={() => void send({ kind: "clear", which: "type" })}><X className="w-3 h-3" /></button></span>}
       {own.equipment && <span className={`${chip} border-emerald-300 bg-emerald-50 text-emerald-800`}><Cpu className="w-3 h-3" /> {own.equipment.tag}<button title="Unmark" onClick={() => void send({ kind: "clear", which: "equipment" })}><X className="w-3 h-3" /></button></span>}
       {!own.area && !own.type && !own.equipment && <span className="text-[var(--color-text-muted)]">not marked{inside ? ` · inside ${inside}` : ""}</span>}
       {!own.area && !own.type && !own.equipment && data.suggestion && !editing && (
         <button disabled={busy} onClick={() => void send(data.suggestion!.kind === "area" ? { kind: "area", unitCode: data.suggestion!.ref } : { kind: "equipment", tag: data.suggestion!.ref ?? data.suggestion!.value })}
-          className={`${chip} border-violet-300 bg-violet-50 text-violet-800`}><Wand2 className="w-3 h-3" /> {data.suggestion.kind === "area" ? "Operating area" : "Equipment"}: {data.suggestion.value}?</button>
+          className={`${chip} border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]`}><Wand2 className="w-3 h-3" /> {data.suggestion.kind === "area" ? "Operating area" : "Equipment"}: {data.suggestion.value}?</button>
       )}
       {!editing && (
         <select value="" onChange={(e) => { const k = e.target.value as MarkKind; setEditing(k); setUnit(data.units[0]?.code ?? ""); }} className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-[11px]">
@@ -70,13 +70,13 @@ export function FolderMarkBar({ orgId, folderId, onChanged }: { orgId: string; f
       {editing === "area" && (
         data.units.length
           ? <><select value={unit} onChange={(e) => setUnit(e.target.value)} className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-[11px]">{data.units.map((u) => <option key={u.code} value={u.code}>{u.label} ({u.code})</option>)}</select>
-            <button disabled={busy || !unit} onClick={() => void send({ kind: "area", unitCode: unit })} className="rounded bg-purple-600 text-white px-2 py-0.5 font-bold disabled:opacity-50">Mark</button></>
+            <button disabled={busy || !unit} onClick={() => void send({ kind: "area", unitCode: unit })} className="rounded bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-2 py-0.5 font-bold disabled:opacity-50">Mark</button></>
           : <span className="text-amber-700">No operating areas in the Site Codebook yet (Intelligence › Setup).</span>
       )}
       {editing === "type" && (
         <><input list="eqtypes" value={text} onChange={(e) => setText(e.target.value)} placeholder="e.g. Heaters" className="w-28 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-[11px]" />
           <datalist id="eqtypes">{data.types.map((t) => <option key={t} value={t} />)}</datalist>
-          <button disabled={busy || !text.trim()} onClick={() => void send({ kind: "type", label: text })} className="rounded bg-sky-600 text-white px-2 py-0.5 font-bold disabled:opacity-50">Mark</button></>
+          <button disabled={busy || !text.trim()} onClick={() => void send({ kind: "type", label: text })} className="rounded bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-2 py-0.5 font-bold disabled:opacity-50">Mark</button></>
       )}
       {editing === "equipment" && (
         <><input value={text} onChange={(e) => setText(e.target.value)} placeholder="Tag, e.g. H-2" className="w-20 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-[11px] font-mono" />
@@ -157,7 +157,7 @@ export function LibrarySetup({ orgId, libraryId, libraryName, onDone, onClose }:
                     <td className="px-3 py-1 truncate max-w-[260px]" title={r.path}>{r.path}</td>
                     <td className="px-2 py-1 whitespace-nowrap text-[var(--color-text-muted)]">{MEANING[r.kind]}</td>
                     <td className="px-2 py-1">{r.value ?? <span className="text-amber-700">{r.note}</span>}</td>
-                    <td className="px-2 py-1 whitespace-nowrap">{r.status === "match" ? <span className="text-emerald-700">matches</span> : r.status === "new" ? <span className="text-sky-700">new</span> : <span className="text-amber-700">skipped</span>}</td>
+                    <td className="px-2 py-1 whitespace-nowrap">{r.status === "match" ? <span className="text-emerald-700">matches</span> : r.status === "new" ? <span className="text-[var(--color-text)]">new</span> : <span className="text-amber-700">skipped</span>}</td>
                   </tr>
                 ))}
                 {!rows.length && <tr><td className="px-3 py-3 text-[var(--color-text-muted)]">No folders at those levels.</td></tr>}

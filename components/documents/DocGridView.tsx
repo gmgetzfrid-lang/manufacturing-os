@@ -37,7 +37,7 @@ interface DocGridViewProps {
 function StatusPill({ status }: { status?: string }) {
   if (!status) return null;
   return (
-    <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded border ${stateStyle(documentState(status)).pill}`}>
+    <span className={`text-[11px] font-bold uppercase px-1.5 py-0.5 rounded border ${stateStyle(documentState(status)).pill}`}>
       {status}
     </span>
   );
@@ -60,7 +60,7 @@ export default function DocGridView({
 
   const itemShell = (doc: DocumentRecord, selected: boolean, focused: boolean) =>
     `${selected
-      ? "bg-blue-50/80 border-blue-300 ring-1 ring-blue-200"
+      ? "bg-[var(--color-surface-2)] border-[var(--color-border)] ring-1 ring-[var(--color-border-strong)]"
       : focused
         ? "bg-[var(--color-surface-2)] border-[var(--color-border-strong)]"
         : "bg-[var(--color-surface)] border-[var(--color-border)] hover:border-[var(--color-border-strong)] hover:bg-slate-50/60"
@@ -100,13 +100,13 @@ export default function DocGridView({
                 {doc.title || doc.name || "Untitled"}
               </span>
               {doc.rev && (
-                <span className="text-[10px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded shrink-0">
+                <span className="text-[11px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded shrink-0">
                   Rev {doc.rev}
                 </span>
               )}
               <StatusPill status={doc.status} />
               {doc.checkedOutBy && (
-                <Lock className="w-3 h-3 text-blue-500 shrink-0" aria-label="Checked out" />
+                <Lock className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" aria-label="Checked out" />
               )}
             </div>
           );
@@ -134,8 +134,8 @@ export default function DocGridView({
             title={doc.title || doc.name || undefined}
           >
             {doc.checkedOutBy && (
-              <span className="absolute top-1.5 right-1.5 p-1 rounded-md bg-blue-50 border border-blue-200" title={`Checked out${doc.checkedOutByName ? ` · ${doc.checkedOutByName}` : ""}`}>
-                <Lock className="w-3 h-3 text-blue-600" />
+              <span className="absolute top-1.5 right-1.5 p-1 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)]" title={`Checked out${doc.checkedOutByName ? ` · ${doc.checkedOutByName}` : ""}`}>
+                <Lock className="w-3 h-3 text-[var(--color-text-muted)]" />
               </span>
             )}
             <DocThumb documentId={doc.id} width={thumbWidth} className="pointer-events-none" />
@@ -144,13 +144,13 @@ export default function DocGridView({
                 {doc.documentNumber || doc.title || doc.name || "-"}
               </div>
               {doc.documentNumber && (doc.title || doc.name) && (
-                <div className="text-[10px] text-[var(--color-text-muted)] truncate mt-0.5">
+                <div className="text-[11px] text-[var(--color-text-muted)] truncate mt-0.5">
                   {doc.title || doc.name}
                 </div>
               )}
               <div className="flex items-center justify-center gap-1.5 mt-1.5">
                 {doc.rev && (
-                  <span className="text-[9px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1 py-0.5 rounded">
+                  <span className="text-[11px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1 py-0.5 rounded">
                     Rev {doc.rev}
                   </span>
                 )}

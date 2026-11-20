@@ -199,7 +199,7 @@ export function ConnectProgress({ status, running, error, reading, onCancel, onC
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]/95 px-3 py-2 text-xs shadow-md space-y-1.5 max-w-md">
       <div className="flex items-center justify-between gap-2">
-        <div className="font-black inline-flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5 text-[var(--color-accent)]" /> {running ? "Connecting the estate" : error ? "Stopped" : status?.more ? "Paused - press again to continue" : "Connected"}</div>
+        <div className="font-black inline-flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {running ? "Connecting the estate" : error ? "Stopped" : status?.more ? "Paused - press again to continue" : "Connected"}</div>
         {running ? <button onClick={onCancel} className="text-[11px] opacity-70 hover:opacity-100">stop</button> : <button onClick={onClose} className="opacity-60 hover:opacity-100"><X className="w-3.5 h-3.5" /></button>}
       </div>
       {error && <div className="text-red-700">{error}</div>}
@@ -208,7 +208,7 @@ export function ConnectProgress({ status, running, error, reading, onCancel, onC
         <ol className="space-y-1">
           {status.steps.map((s) => {
             const I = s.state === "done" ? CheckCircle2 : s.state === "working" ? Loader2 : s.state === "waiting" ? Clock : AlertCircle;
-            const tone = s.state === "done" ? "text-emerald-600" : s.state === "working" ? "text-sky-600 animate-spin" : s.state === "waiting" ? "text-[var(--color-text-faint)]" : "text-rose-600";
+            const tone = s.state === "done" ? "text-emerald-600" : s.state === "working" ? "text-[var(--color-text)] animate-spin" : s.state === "waiting" ? "text-[var(--color-text-faint)]" : "text-rose-600";
             const detail = s.key === "index" && reading && running ? `${s.detail} · reading in this browser: ${reading.done} of ${reading.total}${reading.visionPages ? ` · ${reading.visionPages} page${reading.visionPages === 1 ? "" : "s"} read with AI vision` : ""}${reading.reusedPages ? ` · ${reading.reusedPages} reused from earlier reads (not billed)` : ""}` : s.detail;
             return (
               <li key={s.key} className="flex items-start gap-1.5">
@@ -221,7 +221,7 @@ export function ConnectProgress({ status, running, error, reading, onCancel, onC
       )}
       {reading?.visionSkip && running && <div className="text-[11px] text-amber-700">{reading.visionSkip}</div>}
       {bulk && (
-        <div className="rounded-md border border-violet-200 bg-violet-50/60 dark:bg-violet-950/20 px-2 py-1.5 text-[11px] space-y-0.5">
+        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] px-2 py-1.5 text-[11px] space-y-0.5">
           <div className="font-bold inline-flex items-center gap-1">{!bulk.finished ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3 text-emerald-600" />} Drawings read with your AI model: {bulk.done} of {bulk.total}</div>
           {bulk.current && <div className="text-[var(--color-text-muted)] truncate">Now: {bulk.current}</div>}
           <div className="text-[var(--color-text-muted)]">{bulk.equipment} equipment callouts found · {bulk.added} tags put on drawings · {bulk.removed} wrong tags taken off · {bulk.created} new in the registry{bulk.failed ? ` · ${bulk.failed} failed` : ""}</div>
@@ -243,7 +243,7 @@ export function ConnectProgress({ status, running, error, reading, onCancel, onC
                 <input type="checkbox" checked={status.ai.visionAllPages} disabled={!status.ai.hasKey} onChange={(e) => onRun({ visionAllPages: e.target.checked })} className="w-3.5 h-3.5 accent-[var(--color-accent)]" />
                 Read every page with AI vision
               </label>
-              {onReadAll && <button onClick={onReadAll} disabled={!status.ai.hasKey} className="rounded-full border border-violet-300 bg-violet-50 text-violet-800 px-2 py-0.5 font-semibold hover:bg-violet-100 disabled:opacity-50">Read all drawings with AI</button>}
+              {onReadAll && <button onClick={onReadAll} disabled={!status.ai.hasKey} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-0.5 font-semibold hover:bg-[var(--color-surface-2)] disabled:opacity-50">Read all drawings with AI</button>}
             </div>
           )}
           {!running && onAutoRead && <AutoReadSwitch auto={status.ai.autoRead} hasKey={status.ai.hasKey} onChange={onAutoRead} />}

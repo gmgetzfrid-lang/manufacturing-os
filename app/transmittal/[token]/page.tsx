@@ -94,10 +94,10 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
   return (
     <Shell>
       {/* Official header band */}
-      <div className="px-6 py-5 border-b-4 border-orange-600 bg-gradient-to-br from-orange-50 to-white dark:from-slate-900 dark:to-slate-900">
+      <div className="px-6 py-5 border-b-4 border-[var(--color-border-strong)] bg-[var(--color-surface-2)]">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="min-w-0">
-            <div className="text-[11px] font-black tracking-[0.2em] text-orange-700 dark:text-orange-400 uppercase">Transmittal {data.number}</div>
+            <div className="text-[11px] font-black tracking-[0.2em] text-[var(--color-text)] dark:text-[var(--color-text)] uppercase">Transmittal {data.number}</div>
             <h1 className="text-xl font-black text-slate-900 dark:text-white mt-0.5">{data.subject || "Document Transmittal"}</h1>
             <div className="text-xs text-slate-500 mt-1">
               From <b className="text-slate-700 dark:text-slate-300">{data.orgName ?? "the issuer"}</b>
@@ -106,7 +106,7 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
           </div>
           <div className="shrink-0 text-right">
             {data.purpose && (
-              <span className="inline-block text-[10px] font-black uppercase tracking-wider text-orange-700 bg-orange-100 border border-orange-300 rounded-full px-3 py-1">{data.purpose}</span>
+              <span className="inline-block text-[11px] font-black uppercase tracking-wider text-[var(--color-text)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-full px-3 py-1">{data.purpose}</span>
             )}
             <div className="mt-2">
               {acknowledged
@@ -129,15 +129,15 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
 
         {/* Document list with downloads */}
         <div>
-          <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Documents transmitted ({data.items.length})</div>
+          <div className="text-[11px] font-black uppercase tracking-widest text-slate-400 mb-2">Documents transmitted ({data.items.length})</div>
           <ul className="rounded-xl border border-slate-200 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800 overflow-hidden">
             {data.items.map((i) => (
               <li key={i.documentId} className="px-3.5 py-2.5 flex items-center gap-3">
-                <FileText className="w-4 h-4 text-orange-600 shrink-0" />
+                <FileText className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-bold text-slate-900 dark:text-white truncate">
                     <span className="font-mono">{i.number}</span>
-                    {i.rev && <span className="ml-2 text-[10px] font-black text-slate-500 bg-slate-100 dark:bg-slate-800 rounded px-1.5 py-0.5">REV {i.rev}</span>}
+                    {i.rev && <span className="ml-2 text-[11px] font-black text-slate-500 bg-slate-100 dark:bg-slate-800 rounded px-1.5 py-0.5">REV {i.rev}</span>}
                   </div>
                   {i.title && <div className="text-[11px] text-slate-500 truncate">{i.title}</div>}
                 </div>
@@ -151,12 +151,12 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
               </li>
             ))}
           </ul>
-          <div className="mt-1.5 text-[10px] text-slate-400">Files download exactly as issued on this transmittal - if a newer revision exists, it is NOT what this record covers.</div>
+          <div className="mt-1.5 text-[11px] text-slate-400">Files download exactly as issued on this transmittal - if a newer revision exists, it is NOT what this record covers.</div>
         </div>
 
         {data.notes && (
           <div>
-            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Notes from the issuer</div>
+            <div className="text-[11px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Notes from the issuer</div>
             <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 px-3.5 py-2.5 text-xs text-slate-700 dark:text-slate-300 whitespace-pre-wrap">{data.notes}</div>
           </div>
         )}
@@ -173,21 +173,21 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
             </div>
           </div>
         ) : (
-          <div className="rounded-xl border-2 border-orange-300 bg-orange-50/60 dark:bg-orange-950/30 dark:border-orange-800 p-4">
+          <div className="rounded-xl border-2 border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] dark:border-[var(--color-border)] p-4">
             <div className="flex items-center gap-2 text-sm font-black text-slate-900 dark:text-white mb-1">
-              <PenLine className="w-4 h-4 text-orange-600" /> Acknowledge receipt
+              <PenLine className="w-4 h-4 text-[var(--color-text-muted)]" /> Acknowledge receipt
             </div>
             <p className="text-[11px] text-slate-600 dark:text-slate-400 mb-3">
               Confirming tells {data.orgName ?? "the issuer"} you received these documents at the revisions listed above. Your name and the time are recorded on the transmittal.
             </p>
             <div className="flex items-end gap-2 flex-wrap">
               <label className="block flex-1 min-w-48">
-                <span className="text-[9px] font-black uppercase tracking-wider text-slate-500">Your name (required)</span>
+                <span className="text-[11px] font-black uppercase tracking-wider text-slate-500">Your name (required)</span>
                 <input value={ackName} onChange={(e) => setAckName(e.target.value)} placeholder="e.g. Dave Miller - Acme Fabricators"
                   className="mt-0.5 w-full h-9 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 text-sm text-slate-900 dark:text-white" />
               </label>
               <label className="block flex-1 min-w-48">
-                <span className="text-[9px] font-black uppercase tracking-wider text-slate-500">Note (optional)</span>
+                <span className="text-[11px] font-black uppercase tracking-wider text-slate-500">Note (optional)</span>
                 <input value={ackNote} onChange={(e) => setAckNote(e.target.value)} placeholder="e.g. received, distributing to shop"
                   className="mt-0.5 w-full h-9 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 text-sm text-slate-900 dark:text-white" />
               </label>
@@ -199,7 +199,7 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
           </div>
         )}
 
-        <div className="text-[10px] text-slate-400 border-t border-slate-100 dark:border-slate-800 pt-3">
+        <div className="text-[11px] text-slate-400 border-t border-slate-100 dark:border-slate-800 pt-3">
           Transmittal {data.number} · This page is the live record - every download and the acknowledgment are logged. Only the holder of this link can see it.
         </div>
       </div>

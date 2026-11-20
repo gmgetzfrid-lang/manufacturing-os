@@ -58,7 +58,7 @@ export default function AliasPanel({
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-2.5">
       <div className="flex items-center gap-2">
-        <Tags className="w-4 h-4 text-violet-600" />
+        <Tags className="w-4 h-4 text-[var(--color-text-muted)]" />
         <h2 className="text-xs font-black uppercase tracking-widest text-[var(--color-text)]">Also known as</h2>
       </div>
       <p className="text-[11px] text-[var(--color-text-muted)]">
@@ -99,7 +99,7 @@ export default function AliasPanel({
             className="flex-1 min-w-0 px-2.5 py-1.5 border border-[var(--color-border-strong)] rounded-lg text-xs bg-[var(--color-surface)]"
           />
           <button onClick={() => void add()} disabled={busy || !draft.trim()}
-            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-black text-white bg-violet-600 hover:bg-violet-500 disabled:opacity-50">
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Teach
           </button>
         </div>

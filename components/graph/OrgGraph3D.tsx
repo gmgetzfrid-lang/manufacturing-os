@@ -1070,7 +1070,7 @@ export default function OrgGraph3D({
       {pinned && ready && !failed && (
         <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 rounded-full bg-black/40 backdrop-blur px-2 py-1 max-w-[calc(100%-24px)]">
           <button onClick={() => { refitRef.current++; setGapIds(new Set()); onSelect(null); }} className="shrink-0 rounded-full bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold px-2.5 py-0.5">Whole site</button>
-          <span className="text-[10px] text-slate-300 truncate">Drag to turn · scroll toward what you want · click to open · point at a line to see why it exists</span>
+          <span className="text-[11px] text-slate-300 truncate">Drag to turn · scroll toward what you want · click to open · point at a line to see why it exists</span>
         </div>
       )}
       {pinned && ready && !failed && info && (
@@ -1083,14 +1083,14 @@ export default function OrgGraph3D({
           style={{ left: Math.min(hover.x + 14, (mountRef.current?.clientWidth ?? 9999) - 290), top: hover.y + 14 }}>
           <div className="font-black text-white flex items-center gap-1.5">{hover.color && <span className="w-2 h-2 rounded-full shrink-0" style={{ background: hover.color }} />}<span className="break-words">{hover.title}</span></div>
           {hover.lines.map((l, i) => <div key={i} className="text-slate-300 leading-snug">{l}</div>)}
-          {hover.hint && <div className="mt-0.5 text-[10px] text-slate-400">{hover.hint}</div>}
+          {hover.hint && <div className="mt-0.5 text-[11px] text-slate-400">{hover.hint}</div>}
         </div>
       )}
       {linkCard && (
         <div className="absolute z-20 w-72 rounded-lg border border-white/15 bg-slate-950/95 p-2.5 text-[11px] text-slate-200 shadow-2xl"
           style={{ left: Math.min(linkCard.x + 10, (mountRef.current?.clientWidth ?? 9999) - 300), top: Math.min(linkCard.y + 10, (mountRef.current?.clientHeight ?? 9999) - 140) }}>
           <div className="flex items-start justify-between gap-2">
-            <div className="text-[10px] font-black uppercase tracking-wider text-amber-300">Why these are linked</div>
+            <div className="text-[11px] font-black uppercase tracking-wider text-amber-300">Why these are linked</div>
             <button onClick={() => setLinkCard(null)} className="text-slate-400 hover:text-white">✕</button>
           </div>
           <div className="mt-1 leading-snug text-slate-100">{linkCard.why}</div>
@@ -1138,7 +1138,7 @@ function GlobeLegend({ info, nodes, gapIds, onGaps, onPick }: {
         ))}
       </div>
       <div className="border-t border-white/10 pt-1.5 space-y-1">
-        <div className="text-[10px] font-black uppercase tracking-wider text-slate-400">Gaps</div>
+        <div className="text-[11px] font-black uppercase tracking-wider text-slate-400">Gaps</div>
         <button disabled={!bare.length} onClick={() => onGaps(gapIds.size ? new Set() : new Set(bare))}
           className={`w-full text-left rounded-md px-1.5 py-1 ${gapIds.size ? "bg-amber-400/20 text-amber-200" : "hover:bg-white/10"} disabled:opacity-40`}>
           {gapIds.size ? "Showing" : "Show"} equipment with no documents ({bare.length})

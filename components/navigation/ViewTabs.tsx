@@ -73,7 +73,7 @@ export default function ViewTabs({
               {Icon && <Icon className="w-3.5 h-3.5" />}
               {t.label}
               {typeof t.badge === "number" && t.badge > 0 && (
-                <span className={`ml-0.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full text-[10px] font-black ${active ? "bg-[var(--color-text)] text-[var(--color-surface)]" : (dark ? "bg-slate-700 text-slate-200" : "bg-[var(--color-border)] text-[var(--color-text-muted)]")}`}>
+                <span className={`ml-0.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full text-[11px] font-black ${active ? "bg-[var(--color-text)] text-[var(--color-surface)]" : (dark ? "bg-slate-700 text-slate-200" : "bg-[var(--color-border)] text-[var(--color-text-muted)]")}`}>
                   {t.badge > 99 ? "99+" : t.badge}
                 </span>
               )}

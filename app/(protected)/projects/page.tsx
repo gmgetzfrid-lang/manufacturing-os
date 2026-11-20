@@ -189,7 +189,7 @@ export default function ProjectsPage() {
             >
               {t.label}
               {typeof tabCounts[t.value] === "number" && tabCounts[t.value] > 0 && (
-                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono ${
+                <span className={`text-[11px] px-1.5 py-0.5 rounded-full font-mono ${
                   statusFilter === t.value ? "bg-white/20 text-white" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"
                 }`}>{tabCounts[t.value]}</span>
               )}
@@ -219,7 +219,7 @@ export default function ProjectsPage() {
               <button key={g.key} onClick={() => setTypeFilter(typeFilter === g.key ? null : g.key)} aria-pressed={typeFilter === g.key}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${typeFilter === g.key ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
                 {g.label}
-                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono ${typeFilter === g.key ? "bg-white/20" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>{g.items.length}</span>
+                <span className={`text-[11px] px-1.5 py-0.5 rounded-full font-mono ${typeFilter === g.key ? "bg-white/20" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>{g.items.length}</span>
               </button>
             ))}
           </div>
@@ -308,7 +308,7 @@ function ProjectCard({ project }: { project: Project }) {
   const statusColors: Record<ProjectStatus, string> = {
     active:    "bg-emerald-100 text-emerald-700 border-emerald-200",
     paused:    "bg-amber-100 text-amber-700 border-amber-200",
-    completed: "bg-blue-100 text-blue-700 border-blue-200",
+    completed: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]",
     cancelled: "bg-red-100 text-red-700 border-red-200",
     archived:  "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
   };
@@ -330,14 +330,14 @@ function ProjectCard({ project }: { project: Project }) {
               </span>
             )}
           </div>
-          <h3 className="text-base font-black text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)] transition-colors">
+          <h3 className="text-base font-black text-[var(--color-text)] truncate group-hover:text-[var(--color-text)] transition-colors">
             {project.name}
           </h3>
           {project.description && (
             <p className="text-xs text-[var(--color-text-muted)] mt-1 line-clamp-2">{project.description}</p>
           )}
         </div>
-        <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-[var(--color-accent)] transition-colors shrink-0 mt-1" />
+        <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-[var(--color-text-muted)] transition-colors shrink-0 mt-1" />
       </div>
 
       <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[var(--color-text-muted)]">
@@ -356,7 +356,7 @@ function ProjectCard({ project }: { project: Project }) {
         )}
       </div>
 
-      <div className="mt-2 text-[10px] text-[var(--color-text-faint)]">
+      <div className="mt-2 text-[11px] text-[var(--color-text-faint)]">
         Last activity {formatRelative(project.lastActivityAt)}
       </div>
     </Link>

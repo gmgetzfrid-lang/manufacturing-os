@@ -51,11 +51,11 @@ const OUTCOME_LABEL: Record<string, { label: string; cls: string }> = {
   all_clear: { label: "No change needed", cls: "text-[var(--color-text-muted)]" },
   field_verified: { label: "Field verified ✓", cls: "text-emerald-700" },
   discrepancy: { label: "Field discrepancy reported", cls: "text-amber-700" },
-  correction_requested: { label: "Minor correction requested", cls: "text-blue-700" },
-  revision_requested: { label: "Revision requested", cls: "text-blue-700" },
-  published: { label: "Published a revision", cls: "text-orange-700" },
-  submitted_for_review: { label: "Submitted for review", cls: "text-violet-700" },
-  sent_to_owner: { label: "Sent to owner", cls: "text-blue-700" },
+  correction_requested: { label: "Minor correction requested", cls: "text-[var(--color-text)]" },
+  revision_requested: { label: "Revision requested", cls: "text-[var(--color-text)]" },
+  published: { label: "Published a revision", cls: "text-[var(--color-text)]" },
+  submitted_for_review: { label: "Submitted for review", cls: "text-[var(--color-text)]" },
+  sent_to_owner: { label: "Sent to owner", cls: "text-[var(--color-text)]" },
   handoff: { label: "Handed off", cls: "text-[var(--color-text-muted)]" },
   auto_released: { label: "Auto-released", cls: "text-amber-600" },
 };
@@ -222,7 +222,7 @@ export default function CheckoutHistoryPanel({ orgId, documentId, activeEpisodeI
                           {ep.openedByName || "Unknown"} · {fmtRange(ep.openedAt, ep.closedAt)}
                         </span>
                       </span>
-                      <span className={`shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${reason.cls}`}>
+                      <span className={`shrink-0 text-[11px] font-bold px-1.5 py-0.5 rounded-full border ${reason.cls}`}>
                         {reason.label}
                       </span>
                       {expandedId === ep.id
@@ -276,14 +276,14 @@ function EpisodeDetailView({ detail, loading }: { detail: EpisodeDetail | null; 
       {/* Participants */}
       {detail.sessions.length > 0 && (
         <div>
-          <div className="text-[9px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-1.5">Participants</div>
+          <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-1.5">Participants</div>
           <div className="space-y-1">
             {detail.sessions.map((s) => (
               <div key={s.id} className="flex items-start gap-2 text-[11px]">
                 <User className="w-3 h-3 text-[var(--color-text-faint)] mt-0.5 shrink-0" />
                 <div className="min-w-0">
                   <span className="font-bold text-[var(--color-text)]">{s.userName || "Unknown"}</span>
-                  {s.purpose && <span className="text-violet-700"> · {s.purpose}</span>}
+                  {s.purpose && <span className="text-[var(--color-text)]"> · {s.purpose}</span>}
                   {s.note && <span className="text-[var(--color-text-muted)] italic"> - &ldquo;{s.note}&rdquo;</span>}
                   <span className="text-[var(--color-text-faint)]"> · {fmtRange(s.startedAt, s.endedAt)}</span>
                   {(() => {
@@ -312,7 +312,7 @@ function EpisodeDetailView({ detail, loading }: { detail: EpisodeDetail | null; 
       {/* Revisions published in the window */}
       {detail.versions.length > 0 && (
         <div>
-          <div className="text-[9px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-1.5">Revisions published</div>
+          <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-1.5">Revisions published</div>
           <div className="space-y-1">
             {detail.versions.map((v) => (
               <div key={v.id} className="flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
@@ -328,7 +328,7 @@ function EpisodeDetailView({ detail, loading }: { detail: EpisodeDetail | null; 
 
       {/* Conversation */}
       <div>
-        <div className="text-[9px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-1.5 flex items-center gap-1">
+        <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-1.5 flex items-center gap-1">
           <MessageSquare className="w-3 h-3" /> Conversation ({detail.messages.length})
         </div>
         {detail.messages.length === 0 ? (
@@ -346,7 +346,7 @@ function EpisodeDetailView({ detail, loading }: { detail: EpisodeDetail | null; 
                   <div className="text-[var(--color-text)]">
                     <span className="font-bold">{m.userName || "Unknown"}</span>
                     {m.kind !== "chat" && (
-                      <span className="ml-1 text-[9px] font-bold uppercase text-[var(--color-text-faint)]">[{m.kind}]</span>
+                      <span className="ml-1 text-[11px] font-bold uppercase text-[var(--color-text-faint)]">[{m.kind}]</span>
                     )}
                     <span>: {m.text}</span>
                     <span className="text-slate-300"> · {fmtShort(m.createdAt)}</span>

@@ -133,7 +133,7 @@ export default function HoldsPage() {
       {/* By reason */}
       {totalByReason.length > 0 && (
         <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-4">
-          <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-3">By reason</div>
+          <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest mb-3">By reason</div>
           <div className="space-y-1.5">
             {totalByReason.map((r) => (
               <div key={r.reason} className="flex items-center gap-3 text-xs">
@@ -178,7 +178,7 @@ export default function HoldsPage() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       {meta ? (
-                        <Link href={`/documents/${meta.libraryId}`} className="text-sm font-bold text-[var(--color-text)] hover:text-blue-700 inline-flex items-center gap-1">
+                        <Link href={`/documents/${meta.libraryId}`} className="text-sm font-bold text-[var(--color-text)] hover:text-[var(--color-accent-hover)] inline-flex items-center gap-1">
                           {meta.documentNumber && <span className="font-mono">{meta.documentNumber}</span>}
                           {meta.title && <span className="text-[var(--color-text)]">- {meta.title}</span>}
                           <ChevronRight className="w-3 h-3" />
@@ -186,7 +186,7 @@ export default function HoldsPage() {
                       ) : (
                         <span className="text-sm font-mono text-[var(--color-text-muted)]">(document)</span>
                       )}
-                      <span className="text-[10px] font-bold text-amber-800 bg-amber-100 border border-amber-200 px-1.5 py-0.5 rounded">{h.reason}</span>
+                      <span className="text-[11px] font-bold text-amber-800 bg-amber-100 border border-amber-200 px-1.5 py-0.5 rounded">{h.reason}</span>
                     </div>
                     <div className="mt-1 text-[11px] text-[var(--color-text-muted)] flex items-center gap-2 flex-wrap">
                       <span className="inline-flex items-center gap-0.5">
@@ -205,7 +205,7 @@ export default function HoldsPage() {
                           className="flex-1 text-[11px] border border-[var(--color-border-strong)] rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                           autoFocus
                         />
-                        <button onClick={() => onRelease(h.id!)} disabled={busy} className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40 transition-colors">
+                        <button onClick={() => onRelease(h.id!)} disabled={busy} className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40 transition-colors">
                           <Check className="w-3 h-3" /> Release
                         </button>
                         <button onClick={() => { setReleasingId(null); setReleaseDraft(""); }} disabled={busy} className="p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors">
@@ -217,7 +217,7 @@ export default function HoldsPage() {
                   {canRelease && releasingId !== h.id && (
                     <button
                       onClick={() => { setReleasingId(h.id!); setReleaseDraft(""); }}
-                      className="shrink-0 text-[10px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-1 rounded inline-flex items-center gap-1 transition-colors"
+                      className="shrink-0 text-[11px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-1 rounded inline-flex items-center gap-1 transition-colors"
                     >
                       <Check className="w-3 h-3" /> Release
                     </button>
@@ -240,7 +240,7 @@ function Kpi({ label, value, tone, icon }: { label: string; value: string | numb
     : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]";
   return (
     <div className={`border ${toneClass} rounded-xl px-3 py-2`}>
-      <div className="text-[10px] font-bold uppercase tracking-widest opacity-70 flex items-center gap-1">{icon}{label}</div>
+      <div className="text-[11px] font-bold uppercase tracking-widest opacity-70 flex items-center gap-1">{icon}{label}</div>
       <div className="text-xl font-black mt-0.5">{value}</div>
     </div>
   );

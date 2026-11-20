@@ -147,7 +147,7 @@ export default function WorkspaceSettingsPage() {
 
         {/* Identity */}
         <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
-          <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3">Workspace</div>
+          <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3">Workspace</div>
           <Row icon={Briefcase} label="Name" value={org?.name ?? "-"} />
           <Row icon={Users} label="Members" value={memberCount?.toString() ?? "-"} />
           <Row icon={Briefcase} label="Libraries" value={libraryCount?.toString() ?? "-"} />
@@ -157,7 +157,7 @@ export default function WorkspaceSettingsPage() {
 
         {/* Request numbering */}
         <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
-          <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3 flex items-center gap-1.5">
+          <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3 flex items-center gap-1.5">
             <Hash className="w-3.5 h-3.5" /> Request Numbering
           </div>
           <p className="text-xs text-[var(--color-text-muted)] mb-4">
@@ -165,32 +165,32 @@ export default function WorkspaceSettingsPage() {
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <label className="block">
-              <span className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Workspace code</span>
+              <span className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Workspace code</span>
               <input
                 value={numbering.prefix}
                 onChange={(e) => { setNumbering((n) => ({ ...n, prefix: e.target.value.toUpperCase() })); setNumSaved(false); }}
                 placeholder="e.g. KE"
                 maxLength={8}
-                className="mt-1 w-full px-3 py-2 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg text-sm font-bold focus:ring-2 focus:ring-orange-500 outline-none"
+                className="mt-1 w-full px-3 py-2 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg text-sm font-bold focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
               />
             </label>
             <label className="block">
-              <span className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Record code</span>
+              <span className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Record code</span>
               <input
                 value={numbering.recordCode}
                 onChange={(e) => { setNumbering((n) => ({ ...n, recordCode: e.target.value.toUpperCase() })); setNumSaved(false); }}
                 placeholder="DDRT"
                 maxLength={10}
-                className="mt-1 w-full px-3 py-2 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg text-sm font-bold focus:ring-2 focus:ring-orange-500 outline-none"
+                className="mt-1 w-full px-3 py-2 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg text-sm font-bold focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
               />
             </label>
             <label className="block">
-              <span className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Number digits</span>
+              <span className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Number digits</span>
               <input
                 type="number" min={1} max={9}
                 value={numbering.pad}
                 onChange={(e) => { setNumbering((n) => ({ ...n, pad: Math.min(9, Math.max(1, parseInt(e.target.value || "4", 10))) })); setNumSaved(false); }}
-                className="mt-1 w-full px-3 py-2 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg text-sm font-bold focus:ring-2 focus:ring-orange-500 outline-none"
+                className="mt-1 w-full px-3 py-2 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg text-sm font-bold focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
               />
             </label>
           </div>
@@ -212,7 +212,7 @@ export default function WorkspaceSettingsPage() {
 
         {/* AI status */}
         <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
-          <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3">AI Assistance</div>
+          <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3">AI Assistance</div>
           <div className="flex items-start gap-3">
             <div className="p-2.5 rounded-lg border bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text-muted)]">
               <Zap className="w-4 h-4" />
@@ -231,7 +231,7 @@ export default function WorkspaceSettingsPage() {
 
         {/* Email delivery */}
         <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
-          <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3">Email Delivery</div>
+          <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3">Email Delivery</div>
           <div className="flex items-start gap-3">
             <div className={`p-2.5 rounded-lg border ${
               emailQueueStatus === "ok" ? "bg-emerald-50 border-emerald-200 text-emerald-700"
@@ -243,13 +243,13 @@ export default function WorkspaceSettingsPage() {
             <div className="flex-1">
               <div className="text-sm font-bold text-[var(--color-text)] inline-flex items-center gap-2">
                 Outbound email
-                {emailQueueStatus === "ok" && <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700"><CheckCircle2 className="w-3 h-3" /> Configured</span>}
-                {emailQueueStatus === "no-key" && <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700"><XCircle className="w-3 h-3" /> No RESEND_API_KEY</span>}
+                {emailQueueStatus === "ok" && <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700"><CheckCircle2 className="w-3 h-3" /> Configured</span>}
+                {emailQueueStatus === "no-key" && <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700"><XCircle className="w-3 h-3" /> No RESEND_API_KEY</span>}
               </div>
               <p className="text-xs text-[var(--color-text-muted)] mt-1">
-                Resend powers outbound delivery. Without RESEND_API_KEY set, rows stay <code className="text-[10px] bg-[var(--color-surface-2)] px-1 rounded">queued</code> and the whole backlog sends as soon as the key is configured. Per-user opt-outs live at the user&apos;s notification settings page.
+                Resend powers outbound delivery. Without RESEND_API_KEY set, rows stay <code className="text-[11px] bg-[var(--color-surface-2)] px-1 rounded">queued</code> and the whole backlog sends as soon as the key is configured. Per-user opt-outs live at the user&apos;s notification settings page.
               </p>
-              <Link href="/settings/notifications" className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-700 hover:text-blue-900 mt-2">
+              <Link href="/settings/notifications" className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] mt-2">
                 Open my notification preferences <ExternalLink className="w-2.5 h-2.5" />
               </Link>
             </div>
@@ -333,11 +333,11 @@ function SchemaHealthCard({ orgId }: { orgId: string | null }) {
   return (
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
       <div className="flex items-center justify-between mb-3">
-        <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Database health</div>
+        <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Database health</div>
         <button
           onClick={() => void check()}
           disabled={state.phase === "loading"}
-          className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-700 hover:text-blue-900 disabled:opacity-50"
+          className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] disabled:opacity-50"
         >
           <RefreshCw className={`w-3 h-3 ${state.phase === "loading" ? "animate-spin" : ""}`} /> Re-check
         </button>
@@ -386,7 +386,7 @@ function Row({ icon: Icon, label, value }: { icon: React.ComponentType<{ classNa
   return (
     <div className="flex items-center gap-3 py-1.5">
       <Icon className="w-4 h-4 text-[var(--color-text-faint)]" />
-      <span className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest w-24">{label}</span>
+      <span className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest w-24">{label}</span>
       <span className="text-sm text-[var(--color-text)]">{value}</span>
     </div>
   );

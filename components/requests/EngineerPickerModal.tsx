@@ -159,7 +159,7 @@ export default function EngineerPickerModal({
     <div className="fixed inset-0 z-[210] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
       <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 animate-in fade-in zoom-in-95 duration-200">
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
-          <div className="p-2 bg-[var(--color-accent-soft)] rounded-lg"><Briefcase className="w-5 h-5 text-[var(--color-accent)]" /></div>
+          <div className="p-2 bg-[var(--color-surface-2)] rounded-lg"><Briefcase className="w-5 h-5 text-[var(--color-text-muted)]" /></div>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-black text-[var(--color-text)] truncate">{title}</div>
             <div className="text-xs text-[var(--color-text-muted)]">{description}</div>
@@ -171,7 +171,7 @@ export default function EngineerPickerModal({
 
         <div className="px-6 py-5 space-y-4 max-h-[70vh] overflow-y-auto">
           <div>
-            <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Engineer *</label>
+            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Engineer *</label>
             <div className="mt-1.5 max-h-64 overflow-y-auto rounded-lg border border-[var(--color-border)]">
               {loading ? (
                 <div className="flex items-center gap-2 p-4 text-sm text-[var(--color-text-muted)]">
@@ -188,7 +188,7 @@ export default function EngineerPickerModal({
                   {filtered.map((eng) => (
                     <label
                       key={eng.uid}
-                      className={`flex items-center gap-3 p-3 cursor-pointer transition-colors hover:bg-[var(--color-surface-2)] ${selectedId === eng.uid ? "bg-[var(--color-accent-soft)]" : ""}`}
+                      className={`flex items-center gap-3 p-3 cursor-pointer transition-colors hover:bg-[var(--color-surface-2)] ${selectedId === eng.uid ? "bg-[var(--color-surface-2)]" : ""}`}
                     >
                       <input
                         type="radio"
@@ -204,10 +204,10 @@ export default function EngineerPickerModal({
                         <div className="text-[11px] text-[var(--color-text-muted)] truncate">{eng.email}</div>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
-                        <span className="text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded">{eng.role}</span>
+                        <span className="text-[11px] font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded">{eng.role}</span>
                         <span
                           title={`${eng.workload} open ticket${eng.workload === 1 ? "" : "s"}`}
-                          className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded border ${
+                          className={`inline-flex items-center gap-1 text-[11px] font-bold px-1.5 py-0.5 rounded border ${
                             eng.workload === 0 ? "bg-emerald-50 text-emerald-700 border-emerald-200"
                             : eng.workload < 3 ? "bg-amber-50 text-amber-700 border-amber-200"
                             : "bg-red-50 text-red-700 border-red-200"
@@ -221,12 +221,12 @@ export default function EngineerPickerModal({
                 </div>
               )}
             </div>
-            <div className="text-[10px] text-[var(--color-text-muted)] mt-1.5">Sorted by lightest workload first.</div>
+            <div className="text-[11px] text-[var(--color-text-muted)] mt-1.5">Sorted by lightest workload first.</div>
           </div>
 
           {requireComment && (
             <div>
-              <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">{commentLabel}</label>
+              <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">{commentLabel}</label>
               <Textarea
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}

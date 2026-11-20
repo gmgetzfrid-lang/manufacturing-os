@@ -281,7 +281,7 @@ function AssetsPageInner() {
         <div className="mb-6 flex items-start justify-between gap-4 flex-wrap">
           <div>
             <h1 className="text-2xl font-black text-[var(--color-text)] flex items-center gap-3">
-              <Tag className="w-7 h-7 text-purple-600" />
+              <Tag className="w-7 h-7 text-[var(--color-text-muted)]" />
               Operating Areas
             </h1>
             <p className="text-sm text-[var(--color-text-muted)] mt-1 max-w-2xl">
@@ -375,7 +375,7 @@ function AssetsPageInner() {
             </button>
             <div className="flex items-baseline gap-2.5 flex-wrap">
               {unitFilter !== "__unassigned" && (
-                <span className="font-mono text-3xl font-black text-purple-700">{unitFilter}</span>
+                <span className="font-mono text-3xl font-black text-[var(--color-text)]">{unitFilter}</span>
               )}
               <span className="text-2xl font-black text-[var(--color-text)]">
                 {unitFilter === "__unassigned" ? "No unit assigned" : (currentUnit?.label ?? unitFilter)}
@@ -385,7 +385,7 @@ function AssetsPageInner() {
               </span>
               {canEditLinks && unitFilter !== "__unassigned" && (
                 <Link href="/admin/codebook"
-                  className="inline-flex items-center gap-1 text-[11px] font-bold text-violet-700 hover:underline">
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:underline">
                   <Edit3 className="w-3 h-3" /> {currentUnit ? "Edit unit" : "Add this unit to the codebook"}
                 </Link>
               )}
@@ -436,7 +436,7 @@ function AssetsPageInner() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search all equipment - tag (E-22), site code (2030.22), description, location…"
-              className="w-full pl-10 pr-3 py-2.5 text-base sm:text-sm border border-[var(--color-border)] rounded-lg bg-[var(--color-surface)] focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none"
+              className="w-full pl-10 pr-3 py-2.5 text-base sm:text-sm border border-[var(--color-border)] rounded-lg bg-[var(--color-surface)] focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:border-transparent outline-none"
             />
           </div>
           <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="px-3 py-2.5 text-sm border border-[var(--color-border)] rounded-lg bg-[var(--color-surface)] font-medium">
@@ -486,7 +486,7 @@ function AssetsPageInner() {
                       system you taught is visibly at work. */}
                   <div className={`flex items-center gap-2.5 mb-2.5 rounded-xl border px-3 py-2 ${isUncat
                     ? "border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/30"
-                    : "border-purple-200 dark:border-purple-900 bg-gradient-to-r from-purple-50/80 to-transparent dark:from-purple-950/30"}`}>
+                    : "border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)]"}`}>
                     <button type="button"
                       onClick={() => setClosedTypes((prev) => {
                         const next = new Set(prev);
@@ -494,37 +494,37 @@ function AssetsPageInner() {
                         return next;
                       })}
                       className="flex items-center gap-2.5 text-left flex-1 min-w-0">
-                      <ChevronDown className={`w-4 h-4 shrink-0 ${isUncat ? "text-amber-500" : "text-purple-400"} transition-transform ${open ? "" : "-rotate-90"}`} />
+                      <ChevronDown className={`w-4 h-4 shrink-0 ${isUncat ? "text-amber-500" : "text-[var(--color-text-muted)]"} transition-transform ${open ? "" : "-rotate-90"}`} />
                       <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${isUncat
                         ? "bg-amber-100 dark:bg-amber-900/50"
-                        : "bg-purple-100 dark:bg-purple-900/50"}`}>
+                        : "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]"}`}>
                         {isUncat
                           ? <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-                          : <Tag className="w-3.5 h-3.5 text-purple-600" />}
+                          : <Tag className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />}
                       </span>
                       <span className="min-w-0">
                         <span className="flex items-center gap-2 flex-wrap">
                           <span className="text-sm font-black text-[var(--color-text)]">{g.name}</span>
-                          <span className={`text-[10px] font-black rounded-full px-2 py-0.5 ${isUncat
+                          <span className={`text-[11px] font-black rounded-full px-2 py-0.5 ${isUncat
                             ? "bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300"
-                            : "bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300"}`}>
+                            : "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]"}`}>
                             {g.list.length}
                           </span>
                           {cb && (
-                            <span className="font-mono text-[10px] font-black text-purple-700 dark:text-purple-300 bg-[var(--color-surface)] border border-purple-200 dark:border-purple-800 rounded px-1.5 py-0.5"
+                            <span className="font-mono text-[11px] font-black text-[var(--color-text)] dark:text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] dark:border-[var(--color-border)] rounded px-1.5 py-0.5"
                               title={`Site Codebook equipment-type code ${cb.code}`}>
                               code {cb.code}
                             </span>
                           )}
                           {cb && cb.prefixes.length > 0 && (
-                            <span className="font-mono text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface)] border border-[var(--color-border)] rounded px-1.5 py-0.5"
+                            <span className="font-mono text-[11px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface)] border border-[var(--color-border)] rounded px-1.5 py-0.5"
                               title="Tag prefixes that auto-categorize into this section">
                               {cb.prefixes.join(" · ")}
                             </span>
                           )}
                         </span>
                         {isUncat && (
-                          <span className="block text-[10px] text-amber-700 dark:text-amber-400 font-bold mt-0.5">
+                          <span className="block text-[11px] text-amber-700 dark:text-amber-400 font-bold mt-0.5">
                             File these: hit Categorize on a card, or run Auto-categorize above.
                           </span>
                         )}
@@ -536,7 +536,7 @@ function AssetsPageInner() {
                           typeId: g.typeId === "__none" ? undefined : g.typeId,
                           unitCode: unitFilter === "__unassigned" ? undefined : (unitFilter ?? undefined),
                         })}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[10px] font-black text-[var(--color-text-muted)] hover:text-purple-700 hover:border-purple-400 shrink-0">
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[11px] font-black text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] shrink-0">
                         <Plus className="w-3 h-3" /> Asset
                       </button>
                     )}
@@ -547,7 +547,7 @@ function AssetsPageInner() {
                         typeId: g.typeId === "__none" ? undefined : g.typeId,
                         unitCode: unitFilter === "__unassigned" ? undefined : (unitFilter ?? undefined),
                       })}
-                      className="w-full rounded-xl border-2 border-dashed border-[var(--color-border)] py-5 text-xs font-bold text-[var(--color-text-faint)] hover:border-purple-400 hover:text-purple-700">
+                      className="w-full rounded-xl border-2 border-dashed border-[var(--color-border)] py-5 text-xs font-bold text-[var(--color-text-faint)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-accent-hover)]">
                       No {g.name.toLowerCase()} in this area yet{canEditEquipment ? " - add the first" : ""}
                     </button>
                   ) : (
@@ -583,9 +583,9 @@ function AssetsPageInner() {
             ))}
             {unknownUnits.map(([code, n]) => (
               <button key={code} onClick={() => setUnitFilter(code)}
-                className="text-left rounded-2xl border-2 border-dashed border-purple-200 bg-[var(--color-surface)] hover:border-purple-300 p-5 transition-colors">
+                className="text-left rounded-2xl border-2 border-dashed border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-border)] p-5 transition-colors">
                 <div className="flex items-baseline gap-2 mb-1">
-                  <span className="font-mono text-lg font-black text-purple-700">{code}</span>
+                  <span className="font-mono text-lg font-black text-[var(--color-text)]">{code}</span>
                   <span className="text-sm font-black text-[var(--color-text)]">Unknown unit</span>
                 </div>
                 <div className="text-xs text-[var(--color-text-muted)]">
@@ -728,14 +728,14 @@ function UnitCard({ summary, onOpen, onEdit }: {
   return (
     <div onClick={onOpen} role="button" tabIndex={0}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); } }}
-      className="text-left rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm hover:shadow-lg hover:border-purple-300 transition-all p-5 flex flex-col gap-3 group cursor-pointer">
+      className="text-left rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm hover:shadow-lg hover:border-[var(--color-border)] transition-all p-5 flex flex-col gap-3 group cursor-pointer">
       <div className="flex items-start gap-3">
-        <div className="w-11 h-11 rounded-xl bg-purple-100 border border-purple-200 flex items-center justify-center shrink-0 group-hover:bg-purple-200 transition-colors">
-          <Factory className="w-5 h-5 text-purple-700" />
+        <div className="w-11 h-11 rounded-xl bg-[var(--color-surface-2)] border border-[var(--color-border)] flex items-center justify-center shrink-0 group-hover:bg-[var(--color-border)] transition-colors">
+          <Factory className="w-5 h-5 text-[var(--color-text-muted)]" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
-            <span className="font-mono text-lg font-black text-purple-700">{unit.code}</span>
+            <span className="font-mono text-lg font-black text-[var(--color-text)]">{unit.code}</span>
             <span className="text-sm font-black text-[var(--color-text)] truncate">{unit.label}</span>
           </div>
           <div className="text-[11px] text-[var(--color-text-muted)]">
@@ -747,24 +747,24 @@ function UnitCard({ summary, onOpen, onEdit }: {
           <button
             onClick={(e) => { e.stopPropagation(); onEdit(); }}
             title="Rename or manage this unit (Site Codebook)"
-            className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-violet-700 hover:bg-violet-50 shrink-0"
+            className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-accent-hover)] hover:bg-[var(--color-surface-2)] shrink-0"
           >
             <Edit3 className="w-3.5 h-3.5" />
           </button>
         )}
-        <ArrowRight className="w-4 h-4 text-[var(--color-text-faint)] group-hover:text-purple-600 group-hover:translate-x-0.5 transition-all shrink-0 mt-1" />
+        <ArrowRight className="w-4 h-4 text-[var(--color-text-faint)] group-hover:text-[var(--color-text)] group-hover:translate-x-0.5 transition-all shrink-0 mt-1" />
       </div>
       {topTypes.length > 0 && (
         <div className="flex gap-1.5 flex-wrap">
           {topTypes.map(([name, n]) => (
-            <span key={name} className="text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-full px-2 py-0.5">
+            <span key={name} className="text-[11px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-full px-2 py-0.5">
               {name} <span className="text-[var(--color-text-faint)]">{n}</span>
             </span>
           ))}
         </div>
       )}
       {needPhotos > 0 && (
-        <div className="text-[10px] font-bold text-amber-700 flex items-center gap-1">
+        <div className="text-[11px] font-bold text-amber-700 flex items-center gap-1">
           <Camera className="w-3 h-3" /> {needPhotos} without photos
         </div>
       )}
@@ -798,12 +798,12 @@ function UnitResources({ orgId, unitCode, links, canEdit, onChanged }: {
           <div key={l.id} className="group relative">
             <Link
               href={`/documents/${l.libraryId}${l.folderId ? `?folderId=${l.folderId}` : ""}`}
-              className="flex items-center gap-2.5 pl-3 pr-8 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-purple-300 hover:shadow-md transition-all h-full"
+              className="flex items-center gap-2.5 pl-3 pr-8 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-border)] hover:shadow-md transition-all h-full"
             >
-              <FolderOpen className="w-4 h-4 text-purple-600 shrink-0" />
+              <FolderOpen className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
               <div className="min-w-0">
                 <div className="text-xs font-black text-[var(--color-text)] truncate">{l.label}</div>
-                <div className="text-[10px] text-[var(--color-text-muted)] truncate">
+                <div className="text-[11px] text-[var(--color-text-muted)] truncate">
                   {l.libraryName}{l.folderName ? ` › ${l.folderName}` : ""}
                 </div>
               </div>
@@ -820,8 +820,8 @@ function UnitResources({ orgId, unitCode, links, canEdit, onChanged }: {
           <button onClick={() => setAdding(true)}
             className={`inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl border-2 border-dashed text-xs font-bold transition-colors ${
               links.length === 0
-                ? "border-purple-300 text-purple-700 bg-purple-50/50 hover:bg-purple-50"
-                : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:border-purple-300 hover:text-purple-700"
+                ? "border-[var(--color-text)] text-[var(--color-surface)] bg-[var(--color-text)]"
+                : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:border-[var(--color-border)] hover:text-[var(--color-accent-hover)]"
             }`}>
             <Link2 className="w-3.5 h-3.5" />
             {links.length === 0 ? "Pin this unit's libraries - P&IDs, manuals, unit data…" : "Pin another"}
@@ -897,7 +897,7 @@ function LinkResourceModal({ orgId, onClose, onSave }: {
     <div className="fixed inset-0 z-[500] bg-slate-900/60 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4" onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl max-h-[90vh] flex flex-col">
         <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2.5">
-          <Link2 className="w-4 h-4 text-purple-600" />
+          <Link2 className="w-4 h-4 text-[var(--color-text-muted)]" />
           <div className="flex-1">
             <div className="text-sm font-black text-[var(--color-text)]">Pin a library to this unit</div>
             <div className="text-[11px] text-[var(--color-text-muted)]">A whole library, or one folder of it - labeled for what it means here.</div>
@@ -906,7 +906,7 @@ function LinkResourceModal({ orgId, onClose, onSave }: {
         </div>
         <div className="p-5 space-y-3 overflow-y-auto">
           <div>
-            <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Library</label>
+            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Library</label>
             <select value={libraryId}
               onChange={(e) => { setLibraryId(e.target.value); setFolders([]); setFolderId(""); }}
               className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]">
@@ -916,7 +916,7 @@ function LinkResourceModal({ orgId, onClose, onSave }: {
           </div>
           {folders.length > 0 && (
             <div>
-              <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Folder (optional)</label>
+              <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Folder (optional)</label>
               <select value={folderId} onChange={(e) => setFolderId(e.target.value)}
                 className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]">
                 <option value="">Whole library</option>
@@ -927,7 +927,7 @@ function LinkResourceModal({ orgId, onClose, onSave }: {
             </div>
           )}
           <div>
-            <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Label on the unit page</label>
+            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Label on the unit page</label>
             <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={effectiveLabel || "e.g. P&IDs, Operating manuals, Unit data"}
               className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
           </div>
@@ -1019,7 +1019,7 @@ function UnassignedAssignPanel({ assets, book, userId, onAssigned }: {
   const shown = assets.slice(0, 50);
 
   return (
-    <div className="mt-3 rounded-2xl border border-violet-200 bg-violet-50/60 p-4">
+    <div className="mt-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">
       <div className="text-sm font-black text-[var(--color-text)] mb-0.5">File this equipment under its operating area</div>
       <p className="text-xs text-[var(--color-text-muted)] mb-2.5">
         Pick a unit for each asset and hit Assign - the site code fills in automatically.
@@ -1043,9 +1043,9 @@ function UnassignedAssignPanel({ assets, book, userId, onAssigned }: {
                   <option key={u.code} value={u.code}>{u.code} - {u.label}</option>
                 ))}
               </select>
-              <span className="text-[10px] text-[var(--color-text-faint)] flex-1 min-w-[120px]">
+              <span className="text-[11px] text-[var(--color-text-faint)] flex-1 min-w-[120px]">
                 {hint
-                  ? <>drawings say <b className="text-purple-700 font-mono">{hint.unitCode}</b> ({hint.drawings} linked drawing{hint.drawings === 1 ? "" : "s"})</>
+                  ? <>drawings say <b className="text-[var(--color-text)] font-mono">{hint.unitCode}</b> ({hint.drawings} linked drawing{hint.drawings === 1 ? "" : "s"})</>
                   : a.description || ""}
               </span>
               <button
@@ -1059,7 +1059,7 @@ function UnassignedAssignPanel({ assets, book, userId, onAssigned }: {
           );
         })}
         {assets.length > shown.length && (
-          <div className="text-[10px] text-[var(--color-text-faint)]">Showing the first {shown.length} of {assets.length}.</div>
+          <div className="text-[11px] text-[var(--color-text-faint)]">Showing the first {shown.length} of {assets.length}.</div>
         )}
       </div>
       {chosen.length > 1 && (
@@ -1128,7 +1128,7 @@ function UnitDocuments({ assetIds, assets }: { assetIds: string[]; assets: Asset
       <div className="flex items-center gap-2 mb-2">
         <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
         <span className="text-xs font-black text-[var(--color-text)]">Documents referencing this unit&apos;s equipment</span>
-        <span className="text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-full px-1.5">{rows.length}</span>
+        <span className="text-[11px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-full px-1.5">{rows.length}</span>
       </div>
       <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] bg-[var(--color-surface)]">
         {shown.map((d) => (
@@ -1142,9 +1142,9 @@ function UnitDocuments({ assetIds, assets }: { assetIds: string[]; assets: Asset
               </div>
               <div className="flex gap-1 flex-wrap justify-end max-w-[45%]">
                 {d.tags.slice(0, 6).map((t) => (
-                  <span key={t} className="text-[9px] font-mono font-bold text-purple-700 bg-purple-50 border border-purple-200 rounded px-1 py-0.5">{t}</span>
+                  <span key={t} className="text-[11px] font-mono font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded px-1 py-0.5">{t}</span>
                 ))}
-                {d.tags.length > 6 && <span className="text-[9px] font-bold text-[var(--color-text-faint)]">+{d.tags.length - 6}</span>}
+                {d.tags.length > 6 && <span className="text-[11px] font-bold text-[var(--color-text-faint)]">+{d.tags.length - 6}</span>}
               </div>
             </Link>
           </li>
@@ -1172,12 +1172,12 @@ function AssetCard({
   return (
     <div className="group bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm hover:shadow-lg hover:border-[var(--color-border-strong)] transition-all overflow-hidden flex flex-col">
       {/* Cover area */}
-      <button onClick={onClick} className="block aspect-[4/3] w-full relative bg-gradient-to-br from-slate-100 to-slate-200 overflow-hidden">
+      <button onClick={onClick} className="block aspect-[4/3] w-full relative overflow-hidden bg-[var(--color-surface-2)]">
         {coverUrl ? (
           <>
             <SignedImg path={coverUrl} alt={asset.tag} className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
             {photoCount > 1 && (
-              <div className="absolute top-2 right-2 inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-black/60 backdrop-blur-sm text-white text-[10px] font-bold">
+              <div className="absolute top-2 right-2 inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-black/60 backdrop-blur-sm text-white text-[11px] font-bold">
                 <Camera className="w-3 h-3" /> {photoCount}
               </div>
             )}
@@ -1193,11 +1193,11 @@ function AssetCard({
       {/* Info */}
       <div className="p-3 flex-1 flex flex-col">
         <div className="flex items-center gap-2 mb-1">
-          <button onClick={onClick} className="text-sm font-black text-[var(--color-text)] hover:text-purple-700 truncate flex-1 text-left">
+          <button onClick={onClick} className="text-sm font-black text-[var(--color-text)] hover:text-[var(--color-accent-hover)] truncate flex-1 text-left">
             {asset.tag}
           </button>
           {type && (
-            <span className="text-[9px] font-black uppercase tracking-widest bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded shrink-0">
+            <span className="text-[11px] font-black uppercase tracking-widest bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded shrink-0">
               {type.name}
             </span>
           )}
@@ -1206,16 +1206,16 @@ function AssetCard({
           <div className="text-[11px] text-[var(--color-text-muted)] line-clamp-2 mb-1">{asset.description}</div>
         )}
         {asset.location && (
-          <div className="text-[10px] text-[var(--color-text-faint)] flex items-center gap-1 truncate">
+          <div className="text-[11px] text-[var(--color-text-faint)] flex items-center gap-1 truncate">
             <MapPin className="w-3 h-3" /> {asset.location}
           </div>
         )}
         <div className="mt-2 pt-2 border-t border-[var(--color-border)] flex items-center justify-between">
-          <div className="text-[10px] font-bold text-[var(--color-text-muted)]">
+          <div className="text-[11px] font-bold text-[var(--color-text-muted)]">
             {photoCount === 0 ? (
               <span className="text-amber-700 inline-flex items-center gap-1"><AlertTriangle className="w-2.5 h-2.5" /> No photos</span>
             ) : (
-              <span className="inline-flex items-center gap-1 text-blue-700"><Camera className="w-2.5 h-2.5" /> {photoCount} photo{photoCount === 1 ? "" : "s"}</span>
+              <span className="inline-flex items-center gap-1 text-[var(--color-text)]"><Camera className="w-2.5 h-2.5" /> {photoCount} photo{photoCount === 1 ? "" : "s"}</span>
             )}
           </div>
           {/* Always visible — a hover-only edit button doesn't exist on
@@ -1225,7 +1225,7 @@ function AssetCard({
           <div className="flex items-center gap-1 opacity-70 group-hover:opacity-100 transition-opacity">
             {!type && onEdit && (
               <button onClick={onEdit}
-                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-300 text-[9px] font-black uppercase tracking-wider hover:bg-amber-200 dark:hover:bg-amber-900">
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-300 text-[11px] font-black uppercase tracking-wider hover:bg-amber-200 dark:hover:bg-amber-900">
                 <Tag className="w-2.5 h-2.5" /> Categorize
               </button>
             )}
@@ -1235,7 +1235,7 @@ function AssetCard({
               </button>
             )}
             {onEdit && (
-              <button onClick={onEdit} title="Edit asset" className="p-1 text-[var(--color-text-faint)] hover:text-purple-700 hover:bg-purple-50 rounded">
+              <button onClick={onEdit} title="Edit asset" className="p-1 text-[var(--color-text-faint)] hover:text-[var(--color-accent-hover)] hover:bg-[var(--color-surface-2)] rounded">
                 <Edit3 className="w-3.5 h-3.5" />
               </button>
             )}
@@ -1251,8 +1251,8 @@ function AssetCard({
 function EmptyState({ onCreate, hasAny }: { onCreate?: () => void; hasAny: boolean }) {
   return (
     <div className="bg-[var(--color-surface)] border border-dashed border-[var(--color-border-strong)] rounded-2xl p-12 text-center">
-      <div className="p-5 rounded-2xl bg-purple-50 w-fit mx-auto mb-4 border border-purple-100">
-        <Tag className="w-10 h-10 text-purple-500" />
+      <div className="p-5 rounded-2xl bg-[var(--color-surface-2)] w-fit mx-auto mb-4 border border-[var(--color-border)]">
+        <Tag className="w-10 h-10 text-[var(--color-text-muted)]" />
       </div>
       <h3 className="text-base font-black text-[var(--color-text)] mb-1">
         {hasAny ? "No matches" : "No assets yet"}
@@ -1423,7 +1423,7 @@ function AssetEditDrawer({
       <div onClick={(e) => e.stopPropagation()} className="relative ml-auto w-full max-w-xl bg-[var(--color-surface)] shadow-2xl border-l border-[var(--color-border)] flex flex-col h-dvh">
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5">
-            <div className="p-1.5 bg-purple-100 rounded-lg"><Tag className="w-4 h-4 text-purple-700" /></div>
+            <div className="p-1.5 bg-[var(--color-surface-2)] rounded-lg"><Tag className="w-4 h-4 text-[var(--color-text-muted)]" /></div>
             <div>
               <div className="text-sm font-black text-[var(--color-text)]">
                 {isCreate ? "Create asset" : `Edit ${asset?.tag}`}
@@ -1451,7 +1451,7 @@ function AssetEditDrawer({
           {/* Form */}
           <div className="space-y-3">
             <div>
-              <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Tag *</label>
+              <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Tag *</label>
               <DuplicateAwareInput
                 value={tag}
                 onChange={setTag}
@@ -1469,28 +1469,28 @@ function AssetEditDrawer({
                 className="font-mono mt-1"
               />
               {tag && (
-                <div className="text-[10px] text-[var(--color-text-muted)] mt-1">Normalized: <span className="font-mono">{normalizeTag(tag)}</span></div>
+                <div className="text-[11px] text-[var(--color-text-muted)] mt-1">Normalized: <span className="font-mono">{normalizeTag(tag)}</span></div>
               )}
             </div>
             <div>
-              <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Type</label>
+              <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Type</label>
               <select value={typeId} onChange={(e) => setTypeId(e.target.value)} disabled={!canEdit || busy} className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm">
                 <option value="">- Untyped -</option>
                 {types.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
             </div>
             <div>
-              <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Description</label>
+              <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Description</label>
               <textarea value={description} onChange={(e) => setDescription(e.target.value)} disabled={!canEdit || busy} rows={2} placeholder="What this thing is" className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y" />
             </div>
             <div>
-              <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Location</label>
+              <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Location</label>
               <input value={location} onChange={(e) => setLocation(e.target.value)} disabled={!canEdit || busy} placeholder="e.g. Unit 200 cold side" className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
             </div>
             {book.units.length > 0 && (
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Operating unit</label>
+                  <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Operating unit</label>
                   <select value={unitCode} onChange={(e) => setUnitCode(e.target.value)} disabled={!canEdit || busy}
                     className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]">
                     <option value="">-</option>
@@ -1498,7 +1498,7 @@ function AssetEditDrawer({
                   </select>
                 </div>
                 <div>
-                  <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Site code</label>
+                  <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Site code</label>
                   <input value={siteCode} onChange={(e) => setSiteCode(e.target.value)} disabled={!canEdit || busy}
                     placeholder="auto - e.g. 2030.22" className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm font-mono" />
                 </div>
@@ -1512,12 +1512,12 @@ function AssetEditDrawer({
           {!isCreate && asset && (
             <div>
               <div className="flex items-center justify-between mb-2">
-                <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">
+                <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">
                   Photos ({photos.length})
                 </div>
                 <div className="flex items-center gap-1.5">
                   {photos.length > 0 && (
-                    <button onClick={() => onOpenCarousel(asset)} className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-700 hover:text-blue-800">
+                    <button onClick={() => onOpenCarousel(asset)} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">
                       <ImageIcon className="w-3 h-3" /> Open carousel
                     </button>
                   )}
@@ -1539,8 +1539,8 @@ function AssetEditDrawer({
                     return (
                       <div key={p.id} className="relative group rounded-lg overflow-hidden border border-[var(--color-border)] aspect-square bg-[var(--color-surface-2)]">
                         <SignedImg path={p.file_url} alt={p.caption || ""} className="w-full h-full object-cover" />
-                        <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent p-1.5">
-                          <div className="text-[9px] text-white font-mono flex items-center gap-1">
+                        <div className="absolute bottom-0 inset-x-0 p-1.5 bg-[var(--color-surface-2)]">
+                          <div className="text-[11px] text-white font-mono flex items-center gap-1">
                             <span className={`w-1.5 h-1.5 rounded-full ${
                               age.category === "fresh" ? "bg-emerald-400" :
                               age.category === "aging" ? "bg-amber-400" :
@@ -1550,7 +1550,7 @@ function AssetEditDrawer({
                           </div>
                         </div>
                         {p.status !== "current" && (
-                          <div className={`absolute top-1 left-1 text-[8px] font-black uppercase px-1 py-0.5 rounded ${
+                          <div className={`absolute top-1 left-1 text-[11px] font-black uppercase px-1 py-0.5 rounded ${
                             p.status === "needs_verification" ? "bg-amber-500 text-white" : "bg-red-500 text-white"
                           }`}>
                             {p.status === "needs_verification" ? "Verify" : "Old"}
@@ -1587,17 +1587,17 @@ function AssetEditDrawer({
           {/* Linked documents (edit mode only) */}
           {!isCreate && asset && (
             <div>
-              <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-2 flex items-center gap-1.5">
+              <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest mb-2 flex items-center gap-1.5">
                 <FileText className="w-3 h-3" /> Linked documents
                 {linkedDocs && <span className="text-[var(--color-text-faint)] font-bold">({linkedDocs.length})</span>}
                 <span className="flex-1" />
                 <Link href={`/graph?focus=${encodeURIComponent(`asset:${asset.id}`)}`}
-                  className="inline-flex items-center gap-1 normal-case tracking-normal text-[10px] font-black text-violet-700 hover:text-violet-600">
+                  className="inline-flex items-center gap-1 normal-case tracking-normal text-[11px] font-black text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">
                   <Waypoints className="w-3 h-3" /> See on graph
                 </Link>
                 {canEdit && (
                   <button type="button" onClick={() => setDocPickerOpen(true)}
-                    className="inline-flex items-center gap-1 normal-case tracking-normal px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[10px] font-black text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:border-[var(--color-accent)]">
+                    className="inline-flex items-center gap-1 normal-case tracking-normal px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:border-[var(--color-accent)]">
                     <Plus className="w-3 h-3" /> Link document
                   </button>
                 )}
@@ -1630,7 +1630,7 @@ function AssetEditDrawer({
                             {d.documentNumber || "(no number)"} {d.title && <span className="font-normal text-[var(--color-text-muted)]">· {d.title}</span>}
                           </div>
                           {d.tagText && (
-                            <div className="text-[10px] font-mono text-[var(--color-text-faint)] truncate">tag: {d.tagText}</div>
+                            <div className="text-[11px] font-mono text-[var(--color-text-faint)] truncate">tag: {d.tagText}</div>
                           )}
                         </div>
                       </Link>
@@ -1644,7 +1644,7 @@ function AssetEditDrawer({
           {/* Quick notes (edit mode only) */}
           {!isCreate && asset && userId && (
             <div>
-              <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-2">Quick notes</div>
+              <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest mb-2">Quick notes</div>
               <QuickNoteComposer
                 orgId={orgId}
                 userId={userId}
@@ -1721,7 +1721,7 @@ function AddUnitModal({ orgId, userId, existingCodes, onClose, onCreated }: {
       <div className="w-full max-w-sm rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl p-4 space-y-3"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2">
-          <Factory className="w-4 h-4 text-purple-600" />
+          <Factory className="w-4 h-4 text-[var(--color-text-muted)]" />
           <div className="flex-1">
             <div className="text-sm font-black text-[var(--color-text)]">New operating area</div>
             <div className="text-[11px] text-[var(--color-text-muted)]">
@@ -1738,7 +1738,7 @@ function AddUnitModal({ orgId, userId, existingCodes, onClose, onCreated }: {
         </div>
         {error && <div className="text-[11px] text-rose-600">{error}</div>}
         <div className="flex items-center justify-between gap-2">
-          <Link href="/admin/codebook" className="text-[10px] font-bold text-violet-700 hover:underline inline-flex items-center gap-1">
+          <Link href="/admin/codebook" className="text-[11px] font-bold text-[var(--color-accent)] hover:underline inline-flex items-center gap-1">
             <BookMarkedIcon className="w-3 h-3" /> Full codebook (AI import, decoder)
           </Link>
           <button onClick={() => void save()} disabled={busy}
@@ -1814,7 +1814,7 @@ function AddCategoryModal({ orgId, userId, existingTypeCodes, onClose, onCreated
       <div className="w-full max-w-sm rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl p-4 space-y-3"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2">
-          <Tag className="w-4 h-4 text-purple-600" />
+          <Tag className="w-4 h-4 text-[var(--color-text-muted)]" />
           <div className="flex-1">
             <div className="text-sm font-black text-[var(--color-text)]">New equipment category</div>
             <div className="text-[11px] text-[var(--color-text-muted)]">
@@ -1832,7 +1832,7 @@ function AddCategoryModal({ orgId, userId, existingTypeCodes, onClose, onCreated
           <input value={typeCode} onChange={(e) => setTypeCode(e.target.value)} placeholder="Code (02)"
             className="w-24 px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm font-mono" />
         </div>
-        <p className="text-[10px] text-[var(--color-text-faint)]">
+        <p className="text-[11px] text-[var(--color-text-faint)]">
           No numbering system? Leave prefixes blank and organize manually - you can teach the
           codebook later and auto-categorize will catch up.
         </p>

@@ -80,7 +80,7 @@ export default function ThemeMenu() {
             style={{ top: pos.top, right: pos.right }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mb-2">Appearance</div>
+            <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mb-2">Appearance</div>
 
             {/* Light / Dark segmented toggle */}
             <div className="grid grid-cols-2 gap-1 p-0.5 rounded-xl bg-[var(--color-surface-2)] border border-[var(--color-border)]">
@@ -101,7 +101,7 @@ export default function ThemeMenu() {
             {/* Palette presets — coordinated primary + secondary */}
             <div className="mt-3 flex items-center gap-1.5">
               <PaletteIcon className="w-3 h-3 text-[var(--color-text-faint)]" />
-              <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Palette</span>
+              <span className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Palette</span>
             </div>
             <div className="mt-2 grid grid-cols-2 gap-1.5">
               {PALETTE_PRESETS.map((p) => {
@@ -126,14 +126,14 @@ export default function ThemeMenu() {
             <div className="mt-3 pt-2.5 border-t border-[var(--color-border)]">
               <div className="flex items-center gap-1.5 mb-2">
                 <Zap className="w-3 h-3 text-[var(--color-text-faint)]" />
-                <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Brand from your logo</span>
+                <span className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Brand from your logo</span>
               </div>
               {brandColors.length > 0 ? (
                 <>
                   {/* live palette preview from the logo */}
                   <div className="flex items-center gap-2 mb-2">
                     <span className="w-9 h-6 rounded-lg ring-1 ring-black/10" style={{ background: `linear-gradient(135deg, ${palette.primary}, ${palette.secondary})` }} />
-                    <span className="text-[10px] text-[var(--color-text-faint)]">Tap to set <b className="text-[var(--color-text-muted)]">primary</b>, long-press order picks secondary.</span>
+                    <span className="text-[11px] text-[var(--color-text-faint)]">Tap to set <b className="text-[var(--color-text-muted)]">primary</b>, long-press order picks secondary.</span>
                   </div>
                   <div className="grid grid-cols-8 gap-1.5">
                     {brandColors.map((c) => {
@@ -168,7 +168,7 @@ export default function ThemeMenu() {
                 className="hidden"
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) void onLogo(f); e.currentTarget.value = ""; }}
               />
-              <div className="mt-1.5 text-[10px] text-[var(--color-text-faint)]">We read the colors right here in your browser - the logo isn&apos;t uploaded anywhere.</div>
+              <div className="mt-1.5 text-[11px] text-[var(--color-text-faint)]">We read the colors right here in your browser - the logo isn&apos;t uploaded anywhere.</div>
             </div>
           </div>
         </>,

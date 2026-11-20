@@ -75,7 +75,7 @@ export function useSortRows(onReorder?: (ids: string[]) => void) {
       commit(moving, before + (e.key === "ArrowUp" ? -1 : 1));
     },
   } : null);
-  const indicator = drag ? <div aria-hidden className="pointer-events-none absolute left-0 right-0 z-10 h-0.5 rounded bg-[var(--color-accent)]" style={{ top: drag.line - 1 }} /> : null;
+  const indicator = drag ? <div aria-hidden className="pointer-events-none absolute left-0 right-0 z-10 h-0.5 rounded bg-[var(--color-surface-2)]" style={{ top: drag.line - 1 }} /> : null;
   return { box: setBox, grip, indicator, moving: (id: string) => !!drag?.moving.includes(id) };
 }
 

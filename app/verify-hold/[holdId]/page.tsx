@@ -90,31 +90,31 @@ export default function VerifyHoldPage() {
             <div className="bg-white/95 rounded-2xl shadow-2xl p-5 text-left space-y-3">
               {result.docLabel && (
                 <div>
-                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Document</div>
+                  <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">Document</div>
                   <div className="text-sm font-bold text-slate-900">
                     {result.docLabel}{result.docRev ? ` · Rev ${result.docRev}` : ""}
                   </div>
                 </div>
               )}
               <div className="pt-2 border-t border-slate-100">
-                <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Reason</div>
+                <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">Reason</div>
                 <div className={`text-sm font-bold ${result.active ? "text-red-600" : "text-slate-700"}`}>{result.reason ?? "-"}</div>
               </div>
               <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-100 text-xs">
                 <div>
-                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Placed</div>
+                  <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">Placed</div>
                   <div className="text-slate-700">{fmt(result.openedAt)}</div>
                 </div>
                 {!result.active && (
                   <div>
-                    <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Released</div>
+                    <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">Released</div>
                     <div className="text-emerald-700 font-bold">{fmt(result.releasedAt)}</div>
                   </div>
                 )}
               </div>
             </div>
 
-            <div className="mt-5 text-[10px] text-white/60">
+            <div className="mt-5 text-[11px] text-white/60">
               Checked {new Date(result.checkedAt).toLocaleString()} · Refinery OS document control
             </div>
             <button onClick={() => void check()} className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/15 hover:bg-white/25 text-white text-xs font-bold">

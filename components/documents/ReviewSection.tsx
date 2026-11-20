@@ -169,7 +169,7 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
     } finally { setBusy(false); }
   };
 
-  const inp = "text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 outline-none focus:border-[var(--color-accent)]";
+  const inp = "text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 outline-none focus:border-[var(--color-border-strong)]";
 
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 space-y-2.5">
@@ -191,7 +191,7 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
               {effOwner?.source && effOwner.source !== "document" && <span className="text-[var(--color-text-muted)]"> · from {effOwner.source === "collection" ? "folder" : "library"}</span>}
             </span>
             {canManage && !ownerPicking && (
-              <button onClick={() => setOwnerPicking(true)} className="ml-auto shrink-0 text-[10px] font-bold text-[var(--color-accent)] hover:underline">{effOwner?.userId ? "Reassign" : "Assign"}</button>
+              <button onClick={() => setOwnerPicking(true)} className="ml-auto shrink-0 text-[11px] font-bold text-[var(--color-accent)] hover:underline">{effOwner?.userId ? "Reassign" : "Assign"}</button>
             )}
           </div>
           {canManage && ownerPicking && (
@@ -205,8 +205,8 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
                 </div>
               )}
               <div className="flex items-center gap-2">
-                {effOwner?.source === "document" && <button onClick={() => void assignOwner(null)} className="text-[10px] text-red-600 hover:underline">Clear (inherit)</button>}
-                <button onClick={() => { setOwnerPicking(false); setOwnerQuery(""); }} className="text-[10px] text-[var(--color-text-muted)] hover:underline ml-auto">Cancel</button>
+                {effOwner?.source === "document" && <button onClick={() => void assignOwner(null)} className="text-[11px] text-red-600 hover:underline">Clear (inherit)</button>}
+                <button onClick={() => { setOwnerPicking(false); setOwnerQuery(""); }} className="text-[11px] text-[var(--color-text-muted)] hover:underline ml-auto">Cancel</button>
               </div>
             </div>
           )}
@@ -217,7 +217,7 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
               : <span className="text-[var(--color-text-muted)]">No review cycle set.</span>}
           </div>
           {lastReviewed && (
-            <div className="text-[10px] text-[var(--color-text-muted)] flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-emerald-600" /> Last reviewed {lastReviewed.slice(0, 10)}</div>
+            <div className="text-[11px] text-[var(--color-text-muted)] flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-emerald-600" /> Last reviewed {lastReviewed.slice(0, 10)}</div>
           )}
 
           {canManage && mode === "view" && (
@@ -232,7 +232,7 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
           {/* Mark reviewed form */}
           {canManage && mode === "review" && (
             <div className="space-y-2 pt-1 border-t border-[var(--color-border)]">
-              <div className="text-[10px] font-bold text-[var(--color-text-muted)]">Certify this document is current &amp; accurate (resets the clock, no new revision).</div>
+              <div className="text-[11px] font-bold text-[var(--color-text-muted)]">Certify this document is current &amp; accurate (resets the clock, no new revision).</div>
               <select value={outcome} onChange={(e) => setOutcome(e.target.value as typeof outcome)} className={`${inp} w-full`}>
                 <option value="no_change">No change - still valid</option>
                 <option value="minor">Minor edit made</option>
@@ -252,7 +252,7 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
               <div className="flex gap-1">
                 {(["document", "collection", "library"] as Level[]).map((lv) => (
                   <button key={lv} onClick={() => setScope(lv)} disabled={lv === "collection" && !doc.collectionId}
-                    className={`flex-1 px-2 py-1 rounded-lg text-[10px] font-bold disabled:opacity-30 ${scope === lv ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
+                    className={`flex-1 px-2 py-1 rounded-lg text-[11px] font-bold disabled:opacity-30 ${scope === lv ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
                     {lv === "document" ? "This doc" : lv === "collection" ? "This folder" : "Library"}
                   </button>
                 ))}
@@ -275,10 +275,10 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
                     <span className="text-[11px] text-[var(--color-text-muted)]">days before due</span>
                   </div>
                   <div className="space-y-1">
-                    <div className="text-[10px] font-bold text-[var(--color-text-muted)]">Notify (besides Admin/DocCtrl)</div>
+                    <div className="text-[11px] font-bold text-[var(--color-text-muted)]">Notify (besides Admin/DocCtrl)</div>
                     <div className="flex flex-wrap gap-1">
                       {reviewers.map((r) => (
-                        <span key={r.uid} className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[var(--color-text)]">{r.name || r.email}<button onClick={() => setReviewers((p) => p.filter((x) => x.uid !== r.uid))}><X className="w-3 h-3" /></button></span>
+                        <span key={r.uid} className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-[11px] text-[var(--color-text)]">{r.name || r.email}<button onClick={() => setReviewers((p) => p.filter((x) => x.uid !== r.uid))}><X className="w-3 h-3" /></button></span>
                       ))}
                     </div>
                     <input value={userQuery} onChange={(e) => setUserQuery(e.target.value)} placeholder="Search people…" className={`${inp} w-full`} />
@@ -305,7 +305,7 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
           {events.length > 0 && mode === "view" && (
             <div className="pt-1 border-t border-[var(--color-border)] space-y-1">
               {events.map((e) => (
-                <div key={e.id} className="text-[10px] text-[var(--color-text-muted)] flex items-center gap-1.5">
+                <div key={e.id} className="text-[11px] text-[var(--color-text-muted)] flex items-center gap-1.5">
                   <span className="font-bold text-[var(--color-text)] capitalize">{e.action}</span>
                   <span>{e.performed_at.slice(0, 10)}</span>
                   {e.performed_by_name && <span>· {e.performed_by_name}</span>}

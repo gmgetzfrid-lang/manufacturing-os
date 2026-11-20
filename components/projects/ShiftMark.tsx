@@ -15,7 +15,7 @@ export default function ShiftMark({ work, label }: { work: WorkShift; label?: bo
   }
   const night = work === "night";
   return (
-    <span title={title} className={`shrink-0 inline-flex items-center gap-0.5 rounded px-1 text-[9px] font-bold leading-[14px] ${night ? "bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-200" : "bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-200"}`}>
+    <span title={title} className={`shrink-0 inline-flex items-center gap-0.5 rounded px-1 text-[11px] font-bold leading-[14px] ${night ? "bg-[var(--color-surface-2)] text-[var(--color-text)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)]" : "bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-200"}`}>
       {night ? <Moon className="w-2.5 h-2.5" /> : <Sun className="w-2.5 h-2.5" />}{label ? (night ? "Night" : "Day") : null}
     </span>
   );

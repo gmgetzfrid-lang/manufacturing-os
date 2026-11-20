@@ -252,22 +252,22 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
                   <Eye className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
                   <span className="text-xs font-bold text-[var(--color-text)] truncate flex-1">{preview.name}</span>
                   {verify?.status === "checking" && (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[var(--color-text-faint)]"><Loader2 className="w-3 h-3 animate-spin" /> verifying…</span>
+                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-faint)]"><Loader2 className="w-3 h-3 animate-spin" /> verifying…</span>
                   )}
                   {verify?.status === "verified" && (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded"
+                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded"
                       title={verify.source === "record" ? "SHA-256 matches the hash recorded on this revision at upload - these are the authentic bytes." : "SHA-256 matches the archive's own manifest."}>
                       <ShieldCheck className="w-3 h-3" /> {verify.source === "record" ? "Matches recorded hash" : "Matches manifest"}
                     </span>
                   )}
                   {verify?.status === "mismatch" && (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-black text-red-700 bg-red-50 border border-red-300 px-1.5 py-0.5 rounded"
+                    <span className="inline-flex items-center gap-1 text-[11px] font-black text-red-700 bg-red-50 border border-red-300 px-1.5 py-0.5 rounded"
                       title="The bytes in this zip do NOT match the recorded SHA-256 - the file was altered or this is the wrong archive. Do not rely on this copy.">
                       <ShieldAlert className="w-3 h-3" /> HASH MISMATCH
                     </span>
                   )}
                   {verify?.status === "none" && (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[var(--color-text-faint)]" title="No recorded hash to verify against (older archive or non-document file).">
+                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-faint)]" title="No recorded hash to verify against (older archive or non-document file).">
                       <ShieldQuestion className="w-3 h-3" /> unverified
                     </span>
                   )}

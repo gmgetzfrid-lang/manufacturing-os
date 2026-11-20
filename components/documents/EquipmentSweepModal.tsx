@@ -32,7 +32,7 @@ type Kind = "linked" | "listed" | "new" | "needs" | "check" | "update";
 const KIND: Record<Kind, { word: string; cls: string }> = {
   linked: { word: "Linked", cls: "text-emerald-700 dark:text-emerald-400" },
   listed: { word: "Already listed", cls: "text-emerald-700 dark:text-emerald-400" },
-  new: { word: "New", cls: "text-violet-700 dark:text-violet-300" },
+  new: { word: "New", cls: "text-[var(--color-text-muted)] dark:text-[var(--color-text)]" },
   needs: { word: "Needs an ID", cls: "text-amber-700 dark:text-amber-400" },
   check: { word: "Check this", cls: "text-rose-700 dark:text-rose-400" },
   update: { word: "Replace the ID", cls: "text-amber-700 dark:text-amber-400" },
@@ -305,7 +305,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
     <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-2 sm:p-4">
       <div className="w-full max-w-4xl bg-[var(--color-surface)] rounded-2xl shadow-2xl flex flex-col max-h-[94vh]">
         <div className="px-4 sm:px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-2.5">
-          <ScanSearch className="w-4 h-4 text-orange-600 shrink-0" />
+          <ScanSearch className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
           <div className="flex-1 min-w-0">
             <div className="text-sm font-black text-[var(--color-text)]">Equipment from drawings - {folderName ?? libraryName}</div>
             <div className="text-[11.5px] text-[var(--color-text-muted)]">Read off each sheet: the tag, the ID printed beside it, what it is. Matched by the ID; you check it, then it&apos;s added.</div>
@@ -351,7 +351,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
                 <span><b className="text-[var(--color-text)]">Add on its own after each drawing is read</b>
                   <span className="block text-[11.5px] text-[var(--color-text-muted)]">Only equipment whose ID is printed on the sheet and reads as a unit and type in the site codebook. Everything else waits here for you.</span></span>
               </label>
-              <Link href="/admin/ai-instructions?scope=equipment" className="inline-flex items-center gap-1 text-[11.5px] font-bold text-violet-700 dark:text-violet-300 hover:underline">
+              <Link href="/admin/ai-instructions?scope=equipment" className="inline-flex items-center gap-1 text-[11.5px] font-bold text-[var(--color-accent)] dark:text-[var(--color-text)] hover:underline">
                 <GraduationCap className="w-3.5 h-3.5" /> Teach the AI how your drawings print tags and IDs
               </Link>
             </div>
@@ -370,18 +370,18 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
             );
           })()}
           {(unread.length > 0 || reading) && (
-            <div role="status" className="rounded-xl border border-violet-300 dark:border-violet-700 bg-violet-50 dark:bg-violet-950/30 px-3 py-2.5 text-[12.5px] text-violet-900 dark:text-violet-200 space-y-2">
+            <div role="status" className="rounded-xl border border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] px-3 py-2.5 text-[12.5px] text-[var(--color-text)] dark:text-[var(--color-text)] space-y-2">
               {reading ? (
                 <div className="flex flex-wrap items-center gap-2">
                   <Loader2 className="w-4 h-4 animate-spin shrink-0" />
                   <span><b>Reading sheet {Math.min(reading.done + 1, reading.total)} of {reading.total}</b>{reading.current ? `: ${reading.current}` : ""}. Keep this open.</span>
-                  <button type="button" onClick={() => { stopRead.current = true; }} className="ml-auto rounded-lg border border-violet-400 px-2.5 py-1 font-bold hover:bg-violet-100 dark:hover:bg-violet-900/40 cursor-pointer">Stop</button>
+                  <button type="button" onClick={() => { stopRead.current = true; }} className="ml-auto rounded-lg border border-[var(--color-border-strong)] px-2.5 py-1 font-bold hover:bg-[var(--color-surface-2)] dark:hover:bg-[var(--color-surface-2)] cursor-pointer">Stop</button>
                 </div>
               ) : (
                 <>
                   <p><b>{unread.length} of {sheetCount || unread.length} sheets here haven&apos;t been read with AI yet.</b> Only their text was read, and on drawings from AutoCAD the tags are drawn as lines, so the text holds little more than the title block. Their equipment shows up here once they&apos;re read.</p>
                   <button type="button" onClick={() => void readUnread()} disabled={sweeping || applying}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-violet-700 hover:bg-violet-800 text-white px-3 py-1.5 font-bold disabled:opacity-50 cursor-pointer">
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 font-bold disabled:opacity-50 cursor-pointer">
                     <ScanSearch className="w-4 h-4" /> Read {unread.length} sheet{unread.length === 1 ? "" : "s"} with AI
                   </button>
                 </>

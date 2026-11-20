@@ -50,16 +50,16 @@ function DocLine({ d, folderName }: { d: DocRow; folderName?: string | null }) {
       <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5 min-w-0">
-          <span className="font-mono text-[11px] font-bold text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)]">{d.document_number || d.name || "Document"}</span>
-          {d.rev && <span className="shrink-0 text-[9px] font-black text-[var(--color-text-muted)]">R{d.rev}</span>}
+          <span className="font-mono text-[11px] font-bold text-[var(--color-text)] truncate group-hover:text-[var(--color-text)]">{d.document_number || d.name || "Document"}</span>
+          {d.rev && <span className="shrink-0 text-[11px] font-black text-[var(--color-text-muted)]">R{d.rev}</span>}
         </span>
         <span className="block text-[11px] text-[var(--color-text-muted)] truncate">
           {d.title && d.title !== d.document_number ? d.title : (d.name ?? "")}
           {folderName ? <span className="text-[var(--color-text-faint)]"> · {folderName}</span> : null}
         </span>
       </span>
-      {d.status && <span className={`shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded border ${STATUS_CLS[d.status] ?? "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]"}`}>{d.status}</span>}
-      <span className="shrink-0 w-6 text-right text-[10px] text-[var(--color-text-faint)] tabular-nums">{timeAgo(d.updated_at)}</span>
+      {d.status && <span className={`shrink-0 text-[11px] font-black px-1.5 py-0.5 rounded border ${STATUS_CLS[d.status] ?? "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]"}`}>{d.status}</span>}
+      <span className="shrink-0 w-6 text-right text-[11px] text-[var(--color-text-faint)] tabular-nums">{timeAgo(d.updated_at)}</span>
     </Link>
   );
 }
@@ -219,9 +219,9 @@ export default function DocBrowserBody() {
             className="group w-full text-left flex items-center gap-3 px-3 py-2 hover:bg-[var(--color-surface-2)] transition-colors">
             <NodeCover appearance={{ color: l.color, icon: l.icon, coverImageUrl: l.cover_image_url, coverTint: l.cover_tint }}
               className="w-7 h-7 shrink-0" rounded="rounded-md" iconSize="w-3.5 h-3.5" />
-            <span className="min-w-0 flex-1 text-[13px] font-bold text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)]">{l.name}</span>
+            <span className="min-w-0 flex-1 text-[13px] font-bold text-[var(--color-text)] truncate group-hover:text-[var(--color-text)]">{l.name}</span>
             <span className="shrink-0 text-[12px] tabular-nums text-[var(--color-text-muted)]">{l.count != null ? `${l.count.toLocaleString()} doc${l.count === 1 ? "" : "s"}` : ""}</span>
-            <ChevronRight className="w-4 h-4 shrink-0 text-[var(--color-text-faint)] group-hover:text-[var(--color-accent)]" />
+            <ChevronRight className="w-4 h-4 shrink-0 text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)]" />
           </button>
         ))}
       </div>
@@ -256,7 +256,7 @@ export default function DocBrowserBody() {
         {refreshing && <Loader2 className="w-3 h-3 ml-1 shrink-0 animate-spin text-[var(--color-text-faint)]" />}
       </nav>
       <Link href={openHere} title="Open this folder in Documents"
-        className="shrink-0 inline-flex items-center gap-1 h-7 px-2 rounded-lg text-[11px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]">
+        className="shrink-0 inline-flex items-center gap-1 h-7 px-2 rounded-lg text-[11px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]">
         Open here <ArrowUpRight className="w-3.5 h-3.5" />
       </Link>
     </div>
@@ -275,7 +275,7 @@ export default function DocBrowserBody() {
                 <button key={f.id} type="button" onClick={() => { setPath((p) => [...p, f]); setQ(""); }} data-widget-folder={f.id}
                   className="group w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-[var(--color-surface-2)] transition-colors">
                   <Folder className="w-4 h-4 shrink-0 text-amber-500" fill="currentColor" fillOpacity={0.25} />
-                  <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[var(--color-text)] group-hover:text-[var(--color-accent)]">{f.name}</span>
+                  <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[var(--color-text)] group-hover:text-[var(--color-text)]">{f.name}</span>
                   <ChevronRight className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-faint)]" />
                 </button>
               ))}
@@ -283,7 +283,7 @@ export default function DocBrowserBody() {
           )}
           {here.docs.length > 0 && (
             <div>
-              <div className="px-1 pb-1 text-[10px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">
+              <div className="px-1 pb-1 text-[11px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">
                 {here.docCount.toLocaleString()} document{here.docCount === 1 ? "" : "s"} here{here.docCount > here.docs.length ? ` · newest ${here.docs.length}` : ""}
               </div>
               <div className="space-y-0.5">

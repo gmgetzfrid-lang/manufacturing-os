@@ -149,7 +149,7 @@ export default function ProjectFilePlace({ orgId, projectId, uid, canManage, hom
             <div className="flex flex-wrap gap-1.5">
               {home.libraries.map((l) => (
                 <button key={l.id} type="button" aria-pressed={lib === l.id} onClick={() => pickLib(l.id)}
-                  className={`h-9 inline-flex items-center gap-1.5 px-3 rounded-lg border text-[12.5px] font-bold transition-colors ${lib === l.id ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+                  className={`h-9 inline-flex items-center gap-1.5 px-3 rounded-lg border text-[12.5px] font-bold transition-colors ${lib === l.id ? "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
                   <LibraryIcon className="w-3.5 h-3.5" /> {l.name}
                 </button>
               ))}
@@ -164,18 +164,18 @@ export default function ProjectFilePlace({ orgId, projectId, uid, canManage, hom
                 <ul ref={listRef} className="max-h-56 overflow-y-auto rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]" role="listbox" aria-label="Folder">
                   <li>
                     <button type="button" role="option" aria-selected={folder === null} onClick={() => setFolder(null)}
-                      className={`w-full flex items-center gap-2 px-2.5 py-2 text-left text-[12.5px] ${folder === null ? "bg-[var(--color-accent-soft)] font-bold" : "hover:bg-[var(--color-surface-2)]"}`}>
+                      className={`w-full flex items-center gap-2 px-2.5 py-2 text-left text-[12.5px] ${folder === null ? "bg-[var(--color-surface-2)] font-bold" : "hover:bg-[var(--color-surface-2)]"}`}>
                       <LibraryIcon className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" /> <span className="flex-1">Top level of {libName}</span>
-                      {folder === null && <Check className="w-3.5 h-3.5 text-[var(--color-accent)]" />}
+                      {folder === null && <Check className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />}
                     </button>
                   </li>
                   {folders.map((f) => (
                     <li key={f.id}>
                       <button type="button" role="option" aria-selected={folder === f.id} onClick={() => setFolder(f.id)}
                         style={{ paddingLeft: `${10 + Math.max(0, f.pathNames.length - 1) * 16}px` }}
-                        className={`w-full flex items-center gap-2 pr-2.5 py-2 text-left text-[12.5px] ${folder === f.id ? "bg-[var(--color-accent-soft)] font-bold" : "hover:bg-[var(--color-surface-2)]"}`}>
+                        className={`w-full flex items-center gap-2 pr-2.5 py-2 text-left text-[12.5px] ${folder === f.id ? "bg-[var(--color-surface-2)] font-bold" : "hover:bg-[var(--color-surface-2)]"}`}>
                         <Folder className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" /> <span className="flex-1 break-words">{f.name}</span>
-                        {folder === f.id && <Check className="w-3.5 h-3.5 text-[var(--color-accent)]" />}
+                        {folder === f.id && <Check className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />}
                       </button>
                     </li>
                   ))}

@@ -45,31 +45,31 @@ interface LibraryLite { id: string; name: string }
 // Maps an action string to a (icon, tone) for the chip on each row.
 const ACTION_STYLE: Record<string, { icon: React.ComponentType<{ className?: string }>; tone: string }> = {
   VIEW:                  { icon: Eye,           tone: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" },
-  DOWNLOAD:              { icon: Download,      tone: "bg-sky-50 text-sky-700 border-sky-200" },
+  DOWNLOAD:              { icon: Download,      tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
   UPLOAD:                { icon: Upload,        tone: "bg-emerald-50 text-emerald-700 border-emerald-200" },
-  CHECK_OUT:             { icon: Lock,          tone: "bg-indigo-50 text-indigo-700 border-indigo-200" },
+  CHECK_OUT:             { icon: Lock,          tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
   CHECK_IN:              { icon: Unlock,        tone: "bg-emerald-50 text-emerald-700 border-emerald-200" },
   ABANDON:               { icon: Unlock,        tone: "bg-amber-50 text-amber-700 border-amber-200" },
   FORCE_RELEASE:         { icon: AlertOctagon,  tone: "bg-rose-50 text-rose-700 border-rose-200" },
   JOIN:                  { icon: ArrowUpRight,  tone: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" },
-  REV_UP:                { icon: GitBranch,     tone: "bg-blue-50 text-blue-700 border-blue-200" },
-  REV_BACKFILL:          { icon: GitBranch,     tone: "bg-blue-50 text-blue-700 border-blue-200" },
-  SUPERSEDE_DOC:         { icon: ArrowUpRight,  tone: "bg-violet-50 text-violet-700 border-violet-200" },
+  REV_UP:                { icon: GitBranch,     tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
+  REV_BACKFILL:          { icon: GitBranch,     tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
+  SUPERSEDE_DOC:         { icon: ArrowUpRight,  tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
   REVERT:                { icon: ArrowUpRight,  tone: "bg-amber-50 text-amber-700 border-amber-200" },
   ARCHIVE_DOC:           { icon: ShieldOff,     tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border-strong)]" },
-  DOC_SPLIT:             { icon: GitBranch,     tone: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200" },
-  CREATED_FROM_SPLIT:    { icon: Zap,      tone: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200" },
-  DOC_MERGED:            { icon: GitBranch,     tone: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200" },
-  CREATED_FROM_MERGE:    { icon: Zap,      tone: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200" },
+  DOC_SPLIT:             { icon: GitBranch,     tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
+  CREATED_FROM_SPLIT:    { icon: Zap,      tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
+  DOC_MERGED:            { icon: GitBranch,     tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
+  CREATED_FROM_MERGE:    { icon: Zap,      tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
   DOC_RENUMBERED:        { icon: Pencil,        tone: "bg-amber-50 text-amber-700 border-amber-200" },
-  SET_REV_UP:            { icon: GitBranch,     tone: "bg-blue-50 text-blue-700 border-blue-200" },
-  DOC_SPLIT_REVERSED:    { icon: AlertTriangle, tone: "bg-orange-50 text-orange-700 border-orange-200" },
-  DOC_MERGE_REVERSED:    { icon: AlertTriangle, tone: "bg-orange-50 text-orange-700 border-orange-200" },
-  DOC_RENUMBER_REVERSED: { icon: AlertTriangle, tone: "bg-orange-50 text-orange-700 border-orange-200" },
+  SET_REV_UP:            { icon: GitBranch,     tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
+  DOC_SPLIT_REVERSED:    { icon: AlertTriangle, tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
+  DOC_MERGE_REVERSED:    { icon: AlertTriangle, tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
+  DOC_RENUMBER_REVERSED: { icon: AlertTriangle, tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
   HOLD_OPENED:           { icon: AlertOctagon,  tone: "bg-rose-50 text-rose-700 border-rose-200" },
   HOLD_RELEASED:         { icon: Unlock,        tone: "bg-emerald-50 text-emerald-700 border-emerald-200" },
   MILESTONE_CREATED:     { icon: Zap,      tone: "bg-emerald-50 text-emerald-700 border-emerald-200" },
-  MILESTONE_UPDATED:     { icon: Pencil,        tone: "bg-blue-50 text-blue-700 border-blue-200" },
+  MILESTONE_UPDATED:     { icon: Pencil,        tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
   MILESTONE_COMPLETED:   { icon: Zap,      tone: "bg-emerald-50 text-emerald-700 border-emerald-200" },
   MILESTONE_MISSED:      { icon: AlertOctagon,  tone: "bg-amber-50 text-amber-700 border-amber-200" },
   MILESTONE_BLOCKED:     { icon: AlertOctagon,  tone: "bg-rose-50 text-rose-700 border-rose-200" },
@@ -77,9 +77,9 @@ const ACTION_STYLE: Record<string, { icon: React.ComponentType<{ className?: str
   EQUIPMENT_STATE_CHANGED: { icon: Layers,      tone: "bg-amber-50 text-amber-700 border-amber-200" },
   NOTE_CREATED:          { icon: Pencil,        tone: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" },
   NOTE_DELETED:          { icon: Trash2,        tone: "bg-rose-50 text-rose-700 border-rose-200" },
-  PROJECT_CREATED:       { icon: Briefcase,     tone: "bg-indigo-50 text-indigo-700 border-indigo-200" },
-  MARKUP_REQUESTED:      { icon: FileSignature, tone: "bg-violet-50 text-violet-700 border-violet-200" },
-  DATA_EXPORT:           { icon: Download,      tone: "bg-sky-50 text-sky-700 border-sky-200" },
+  PROJECT_CREATED:       { icon: Briefcase,     tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
+  MARKUP_REQUESTED:      { icon: FileSignature, tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
+  DATA_EXPORT:           { icon: Download,      tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
 };
 
 const RESOURCE_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -259,7 +259,7 @@ export default function AuditLogPage() {
 
         {/* Filters */}
         <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-sm p-3 mb-5 flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1.5 text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">
+          <div className="flex items-center gap-1.5 text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">
             <Filter className="w-3 h-3" /> Filter:
           </div>
           <Select value={range} onChange={(v) => setRange(v as typeof range)} options={[
@@ -291,10 +291,10 @@ export default function AuditLogPage() {
             />
           </div>
           <div className="ml-auto flex items-center gap-1.5">
-            <span className="text-[10px] text-[var(--color-text-faint)]">Showing {filtered.length} of {rows.length}</span>
+            <span className="text-[11px] text-[var(--color-text-faint)]">Showing {filtered.length} of {rows.length}</span>
             <button
               onClick={() => setLimit((n) => n + 200)}
-              className="text-[10px] font-bold text-[var(--color-text)] px-2 py-1 rounded-md bg-[var(--color-surface-2)] hover:bg-slate-200 transition-colors"
+              className="text-[11px] font-bold text-[var(--color-text)] px-2 py-1 rounded-md bg-[var(--color-surface-2)] hover:bg-slate-200 transition-colors"
             >Load 200 more</button>
           </div>
         </div>
@@ -330,12 +330,12 @@ function Kpi({ label, value, sub, tone }: KpiProps) {
   const ring = {
     slate:   "ring-[var(--color-border)] bg-[var(--color-surface)]",
     rose:    "ring-rose-200 bg-rose-50/40",
-    indigo:  "ring-indigo-200 bg-indigo-50/40",
+    indigo:  "ring-[var(--color-border-strong)] bg-[var(--color-surface-2)]",
     emerald: "ring-emerald-200 bg-emerald-50/40",
   }[tone];
   return (
     <div className={`rounded-2xl ring-1 shadow-sm p-4 ${ring}`}>
-      <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">{label}</div>
+      <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">{label}</div>
       <div className="mt-1 text-xl font-black text-[var(--color-text)] truncate">{value}</div>
       {sub && <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">{sub}</div>}
     </div>
@@ -379,7 +379,7 @@ function AuditRowItem({ row, docMeta }: AuditRowItemProps) {
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className={`text-[10px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-md border ${style.tone}`}>
+          <span className={`text-[11px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-md border ${style.tone}`}>
             {prettyAction(row.action)}
           </span>
           <span className="text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1">
@@ -394,7 +394,7 @@ function AuditRowItem({ row, docMeta }: AuditRowItemProps) {
             <span className="text-xs font-mono text-[var(--color-text-muted)] truncate max-w-[40ch]">{row.resourceId}</span>
           )}
           {resourceHref && (
-            <Link href={resourceHref} className="text-[10px] font-bold text-blue-600 hover:underline inline-flex items-center gap-0.5">
+            <Link href={resourceHref} className="text-[11px] font-bold text-[var(--color-accent)] hover:underline inline-flex items-center gap-0.5">
               Open <ArrowUpRight className="w-3 h-3" />
             </Link>
           )}
@@ -406,8 +406,8 @@ function AuditRowItem({ row, docMeta }: AuditRowItemProps) {
         </div>
         {(row.details && Object.keys(row.details).length > 0) && (
           <details className="mt-1.5">
-            <summary className="text-[10px] font-bold text-[var(--color-text-muted)] cursor-pointer hover:text-[var(--color-text)] transition-colors">Details</summary>
-            <pre className="mt-1 text-[10px] text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded p-2 overflow-x-auto">
+            <summary className="text-[11px] font-bold text-[var(--color-text-muted)] cursor-pointer hover:text-[var(--color-text)] transition-colors">Details</summary>
+            <pre className="mt-1 text-[11px] text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded p-2 overflow-x-auto">
               {JSON.stringify(row.details, null, 2)}
             </pre>
           </details>

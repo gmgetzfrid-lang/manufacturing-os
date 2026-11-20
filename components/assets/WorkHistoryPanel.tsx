@@ -12,7 +12,7 @@ import { fmtInTz } from "@/lib/scheduleTz";
 
 const STATUS: Record<string, { word: string; cls: string }> = {
   completed: { word: "Done", cls: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300" },
-  in_progress: { word: "Under way", cls: "bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300" },
+  in_progress: { word: "Under way", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)]" },
   on_hold: { word: "On hold", cls: "bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300" },
   blocked: { word: "Blocked", cls: "bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300" },
 };
@@ -43,7 +43,7 @@ export default function WorkHistoryPanel({ orgId, assetId, code, tag, unitCode }
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-hidden mb-5">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between gap-2">
         <span className="text-sm font-black text-[var(--color-text)] inline-flex items-center gap-2">
-          <History className="w-4 h-4 text-[var(--color-accent)]" /> Work history
+          <History className="w-4 h-4 text-[var(--color-text-muted)]" /> Work history
         </span>
         {ready && data && <span className="text-[11px] font-mono text-[var(--color-text-muted)]">{jobs.length} work order{jobs.length === 1 ? "" : "s"} · {byProject.size} project{byProject.size === 1 ? "" : "s"}</span>}
       </div>
@@ -70,7 +70,7 @@ export default function WorkHistoryPanel({ orgId, assetId, code, tag, unitCode }
                       <div className="flex flex-wrap items-baseline gap-x-2">
                         {j.wo && <span className="font-mono font-bold text-[var(--color-text)]">WO {j.wo}</span>}
                         <span className="font-semibold text-[var(--color-text)] break-words">{j.name}</span>
-                        <span className={`rounded px-1.5 py-px text-[10.5px] font-black uppercase tracking-wider ${st.cls}`}>{st.word}</span>
+                        <span className={`rounded px-1.5 py-px text-[11px] font-black uppercase tracking-wider ${st.cls}`}>{st.word}</span>
                       </div>
                       <div className="text-[var(--color-text-muted)]">
                         {[j.steps ? `${j.stepsDone} of ${j.steps} steps done` : `${j.pct}%`, did ? `worked ${did}` : null, plan ? `planned ${plan}` : null].filter(Boolean).join(" · ")}

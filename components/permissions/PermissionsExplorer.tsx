@@ -106,7 +106,7 @@ export default function PermissionsExplorer() {
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] mb-5 overflow-hidden">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
-        <ShieldCheck className="w-4 h-4 text-[var(--color-accent)]" />
+        <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-base font-bold text-[var(--color-text)]">App-wide permissions</span>
         <span className="text-xs text-[var(--color-text-muted)]">✓ can do · ◐ conditional (hover for why) · - cannot · ⚠ known gap</span>
         <div className="ml-auto flex items-center gap-2 flex-wrap">
@@ -130,7 +130,7 @@ export default function PermissionsExplorer() {
             <tr className="bg-[var(--color-surface-2)]">
               <th className="sticky left-0 bg-[var(--color-surface-2)] text-left font-black px-3 py-2 min-w-[240px]">Capability</th>
               {ROLES.map((r, i) => (
-                <th key={r} className={`px-2 py-2 font-black whitespace-nowrap ${role === i ? "text-[var(--color-accent)]" : "text-[var(--color-text-muted)]"}`}>{r}</th>
+                <th key={r} className={`px-2 py-2 font-black whitespace-nowrap ${role === i ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{r}</th>
               ))}
             </tr>
           </thead>
@@ -139,14 +139,14 @@ export default function PermissionsExplorer() {
               return (
                 <React.Fragment key={`${r.area}:${r.cap}`}>
                   {r.first && (
-                    <tr><td colSpan={ROLES.length + 1} className="sticky left-0 bg-[var(--color-surface)] px-3 pt-3 pb-1 text-[11px] font-black uppercase tracking-wider text-[var(--color-accent)]">{r.area}</td></tr>
+                    <tr><td colSpan={ROLES.length + 1} className="sticky left-0 bg-[var(--color-surface)] px-3 pt-3 pb-1 text-[11px] font-black uppercase tracking-wider text-[var(--color-text)]">{r.area}</td></tr>
                   )}
                   <tr className="border-t border-[var(--color-border)] hover:bg-[var(--color-surface-2)]/50">
                     <td className="sticky left-0 bg-[var(--color-surface)] px-3 py-1.5 font-medium text-[var(--color-text)]">
                       {r.cap}
                       {r.warn && <span className="ml-1.5 cursor-help text-amber-600 dark:text-amber-400" title={r.warn}>⚠</span>}
                     </td>
-                    {ROLES.map((_, i) => <td key={i} className={`px-2 py-1.5 text-center ${role === i ? "bg-[var(--color-accent-soft)]/40" : ""}`}>{cell(r, i)}</td>)}
+                    {ROLES.map((_, i) => <td key={i} className={`px-2 py-1.5 text-center ${role === i ? "bg-[var(--color-surface-2)]" : ""}`}>{cell(r, i)}</td>)}
                   </tr>
                 </React.Fragment>
               );
@@ -155,7 +155,7 @@ export default function PermissionsExplorer() {
           </tbody>
         </table>
       </div>
-      <div className="px-4 py-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-text-faint)]">{STAFF_NOTE} · Beyond roles, ownership (document → folder → library → owning team&apos;s supervisor) and per-library grants add ◐ authority - see hover notes.</div>
+      <div className="px-4 py-2 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-faint)]">{STAFF_NOTE} · Beyond roles, ownership (document → folder → library → owning team&apos;s supervisor) and per-library grants add ◐ authority - see hover notes.</div>
     </div>
   );
 }

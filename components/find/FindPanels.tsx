@@ -30,10 +30,10 @@ export function EntityStrip({ entities }: { entities: FindEntity[] }) {
         const I = Icon(e.kind);
         const body = (
           <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5">
-            <I className={`w-3.5 h-3.5 ${e.kind === "asset" ? "text-emerald-600" : e.kind === "unit" ? "text-purple-600" : e.kind === "tag" ? "text-slate-500" : "text-amber-600"}`} />
+            <I className={`w-3.5 h-3.5 ${e.kind === "asset" ? "text-emerald-600" : e.kind === "unit" ? "text-[var(--color-text-muted)]" : e.kind === "tag" ? "text-slate-500" : "text-amber-600"}`} />
             <span className="font-bold">{e.label}</span>
             {e.sub && <span className="text-[var(--color-text-muted)]">· {e.sub}</span>}
-            {e.via !== "typed" && <span className="text-[10px] text-[var(--color-text-faint)]">({e.via})</span>}
+            {e.via !== "typed" && <span className="text-[11px] text-[var(--color-text-faint)]">({e.via})</span>}
           </span>
         );
         return e.href ? <Link key={e.node} href={e.href} className="hover:underline">{body}</Link> : <span key={e.node}>{body}</span>;
@@ -78,7 +78,7 @@ export function EquipmentCards({ entities, results, onReveal, onUnit }: {
           <div key={e.node} className="rounded-xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50/50 dark:bg-emerald-950/20 p-2.5 text-xs">
             <div className="flex items-center gap-1 flex-wrap text-[11px] text-[var(--color-text-muted)]">
               {e.unitCode ? (
-                <button onClick={() => onUnit?.(e.unitCode!)} className="inline-flex items-center gap-1 font-bold text-purple-700 hover:underline" title="Narrow to this unit"><Factory className="w-3 h-3" /> {e.unitLabel ?? e.unitCode}</button>
+                <button onClick={() => onUnit?.(e.unitCode!)} className="inline-flex items-center gap-1 font-bold text-[var(--color-accent)] hover:underline" title="Narrow to this unit"><Factory className="w-3 h-3" /> {e.unitLabel ?? e.unitCode}</button>
               ) : <span className="inline-flex items-center gap-1"><Factory className="w-3 h-3" /> no unit on record</span>}
               <ChevronRight className="w-3 h-3" />
               <span className="inline-flex items-center gap-1 font-bold text-emerald-700">{e.kind === "asset" ? <Cpu className="w-3 h-3" /> : <Tag className="w-3 h-3" />} {e.typeName ?? (e.kind === "asset" ? "Equipment" : "Tag")}</span>
@@ -100,7 +100,7 @@ export function EquipmentCards({ entities, results, onReveal, onUnit }: {
                       <SignedImg path={p} alt="" className="w-full h-full object-cover" placeholder={<ImageIcon className="w-4 h-4 m-auto text-[var(--color-text-faint)]" />} />
                     </div>
                   )) : <div className="w-11 h-11 rounded-lg border border-dashed border-[var(--color-border)] flex items-center justify-center" title="No photos on file"><ImageIcon className="w-4 h-4 text-[var(--color-text-faint)]" /></div>}
-                  {(e.photos ?? 0) > 3 && <span className="text-[10px] text-[var(--color-text-muted)]">+{(e.photos ?? 0) - 3}</span>}
+                  {(e.photos ?? 0) > 3 && <span className="text-[11px] text-[var(--color-text-muted)]">+{(e.photos ?? 0) - 3}</span>}
                 </div>
               )}
             </div>
@@ -125,12 +125,12 @@ export function RelationChips({ relations, onPage }: { relations: FindRelation[]
         const clickable = !!onPage && r.page != null;
         return (
           <button key={i} type="button" disabled={!clickable} onClick={() => clickable && onPage!(r)} title={r.snippet ?? r.detail}
-            className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[10px] font-semibold ${r.rel === "drawn_on" ? "bg-sky-50 border-sky-200 text-sky-800" : r.rel === "mentioned_in" ? "bg-indigo-50 border-indigo-200 text-indigo-800" : "bg-slate-50 border-slate-200 text-slate-700"} ${clickable ? "hover:ring-1 hover:ring-sky-300 cursor-pointer" : "cursor-default"}`}>
+            className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[11px] font-semibold ${r.rel === "drawn_on" ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)]" : r.rel === "mentioned_in" ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)]" : "bg-slate-50 border-slate-200 text-slate-700"} ${clickable ? "hover:ring-1 hover:ring-[var(--color-border-strong)] cursor-pointer" : "cursor-default"}`}>
             <I className="w-3 h-3" /> {REL_LABEL[r.rel]} {r.label}{r.detail ? ` · ${r.detail}` : ""}
           </button>
         );
       })}
-      {relations.length > 6 && <span className="text-[10px] text-[var(--color-text-muted)]">+{relations.length - 6} more</span>}
+      {relations.length > 6 && <span className="text-[11px] text-[var(--color-text-muted)]">+{relations.length - 6} more</span>}
     </div>
   );
 }
@@ -141,7 +141,7 @@ export function PageHits({ pages, onPage }: { pages: FindResult["pages"]; onPage
     <ul className="mt-1 space-y-0.5">
       {pages.slice(0, 3).map((p, i) => (
         <li key={i} className="text-[11px] text-[var(--color-text-muted)]">
-          <button type="button" onClick={() => onPage?.(p.page, p.knowledgeDocId)} className="font-bold text-sky-700 hover:underline">p.{p.page}</button> “{p.snippet}”
+          <button type="button" onClick={() => onPage?.(p.page, p.knowledgeDocId)} className="font-bold text-[var(--color-accent)] hover:underline">p.{p.page}</button> “{p.snippet}”
         </li>
       ))}
     </ul>
@@ -168,8 +168,8 @@ export function ActivityPanel({ activity, compact = false }: { activity: FindAct
     <ul className="space-y-0.5">
       {activity.projects.slice(0, lim).map((p) => <Row key={`p${p.id}`} icon={Briefcase} tone="text-amber-600" href={p.href} title={p.name} sub={`Project${p.status ? ` · ${p.status}` : ""} · ${p.why}`} />)}
       {activity.tickets.slice(0, lim).map((t) => <Row key={`t${t.id}`} icon={Ticket} tone="text-rose-600" href={t.href} title={`${t.ticketId} · ${t.title}`} sub={`Drafting request · ${t.status}${t.unit ? ` · ${t.unit}` : ""}${t.drafter ? ` · ${t.drafter}` : t.requester ? ` · ${t.requester}` : ""} · ${t.why}`} />)}
-      {activity.checkouts.slice(0, lim).map((c) => <Row key={`c${c.id}`} icon={Lock} tone="text-blue-600" href={c.href} title={c.documentName} sub={`Checked out by ${c.user ?? "someone"} since ${when(c.since)}${c.projectName ? ` under ${c.projectName}` : ""}${c.mode ? ` · ${c.mode}` : ""}`} />)}
-      {activity.markups.slice(0, lim).map((m) => <Row key={`m${m.id}`} icon={PenLine} tone="text-violet-600" href={m.href} title={m.documentName} sub={`Markup ${m.status} · ${m.requestedBy ?? "?"} → ${m.requestedFrom ?? "?"} · ${when(m.createdAt)}`} />)}
+      {activity.checkouts.slice(0, lim).map((c) => <Row key={`c${c.id}`} icon={Lock} tone="text-[var(--color-text-muted)]" href={c.href} title={c.documentName} sub={`Checked out by ${c.user ?? "someone"} since ${when(c.since)}${c.projectName ? ` under ${c.projectName}` : ""}${c.mode ? ` · ${c.mode}` : ""}`} />)}
+      {activity.markups.slice(0, lim).map((m) => <Row key={`m${m.id}`} icon={PenLine} tone="text-[var(--color-text-muted)]" href={m.href} title={m.documentName} sub={`Markup ${m.status} · ${m.requestedBy ?? "?"} → ${m.requestedFrom ?? "?"} · ${when(m.createdAt)}`} />)}
       {activity.holds.slice(0, lim).map((h) => <Row key={`h${h.id}`} icon={AlertOctagon} tone="text-red-600" href={h.href} title={h.documentName} sub={`On hold${h.reason ? `: ${h.reason}` : ""} · ${h.openedBy ?? ""} ${when(h.openedAt)}`} />)}
       {activity.milestones.slice(0, lim).map((m) => <Row key={`ms${m.id}`} icon={Flag} tone="text-emerald-600" href={m.href} title={m.name} sub={`Milestone${m.plannedAt ? ` · ${when(m.plannedAt)}` : ""}${m.projectName ? ` · ${m.projectName}` : ""}${m.status ? ` · ${m.status}` : ""}`} />)}
     </ul>
@@ -190,7 +190,7 @@ export function CoverageLine({ coverage, onReadFolder }: { coverage: FindCoverag
           {coverage.unreadFolders.slice(0, 3).map((f, i) => (
             <li key={i} className="flex items-center gap-2">
               <span className="truncate">{f.path || "Library root"} · {f.count} unread</span>
-              {onReadFolder && <button type="button" onClick={() => onReadFolder(f)} className="shrink-0 rounded border border-[var(--color-border)] px-1.5 py-px text-[10px] font-bold hover:bg-[var(--color-canvas)]">Read these…</button>}
+              {onReadFolder && <button type="button" onClick={() => onReadFolder(f)} className="shrink-0 rounded border border-[var(--color-border)] px-1.5 py-px text-[11px] font-bold hover:bg-[var(--color-canvas)]">Read these…</button>}
             </li>
           ))}
         </ul>

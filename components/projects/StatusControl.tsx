@@ -28,7 +28,7 @@ export const STATUS_ORDER: MilestoneStatus[] = ["planned", "in_progress", "compl
 interface Meta { label: string; dot: string; pill: string; Icon: React.ComponentType<{ className?: string }>; needsReason?: boolean }
 export const STATUS_META: Record<MilestoneStatus, Meta> = {
   planned:     { label: "Planned",     dot: "bg-slate-300 border-slate-400",   pill: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",     Icon: Circle },
-  in_progress: { label: "In progress", dot: "bg-blue-500 border-blue-600",     pill: "bg-blue-100 text-blue-800 border-blue-200",        Icon: Loader2 },
+  in_progress: { label: "In progress", dot: "bg-[var(--color-text-muted)] border-[var(--color-border-strong)]",     pill: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",        Icon: Loader2 },
   completed:   { label: "Done",        dot: "bg-emerald-500 border-emerald-600",pill: "bg-emerald-100 text-emerald-800 border-emerald-200",Icon: CircleCheck },
   on_hold:     { label: "On hold",     dot: "bg-amber-500 border-amber-600",   pill: "bg-amber-100 text-amber-900 border-amber-200",     Icon: PauseCircle, needsReason: true },
   blocked:     { label: "Blocked",     dot: "bg-rose-500 border-rose-600",     pill: "bg-rose-100 text-rose-800 border-rose-200",        Icon: AlertTriangle, needsReason: true },

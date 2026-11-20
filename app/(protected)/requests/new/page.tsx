@@ -448,14 +448,14 @@ export default function NewTicketPage() {
 
           {/* Source-document chip when arriving via "Send to Drafting" */}
           {sourceFileUrl && (
-            <div className="bg-teal-50 border border-teal-200 rounded-xl p-3 flex items-start gap-3">
-              <FileText className="w-5 h-5 text-teal-700 mt-0.5 shrink-0" />
+            <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl p-3 flex items-start gap-3">
+              <FileText className="w-5 h-5 text-[var(--color-text-muted)] mt-0.5 shrink-0" />
               <div className="flex-1 min-w-0">
-                <div className="text-[10px] font-black text-teal-800 uppercase tracking-widest">Source document</div>
+                <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Source document</div>
                 <div className="text-sm font-bold text-[var(--color-text)] truncate mt-0.5">
                   {sourceDocNum || sourceDocTitle || sourceFileName || 'Document'} {sourceDocRev ? `· Rev ${sourceDocRev}` : ''}
                 </div>
-                <div className="text-[11px] text-teal-700 mt-0.5">
+                <div className="text-[11px] text-[var(--color-text)] mt-0.5">
                   Attached automatically as a Source reference. It&apos;ll appear on the ticket once you submit.
                 </div>
               </div>
@@ -465,7 +465,7 @@ export default function NewTicketPage() {
           {/* Section 1: Details */}
           <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-6 shadow-sm">
             <h2 className="text-sm font-bold text-[var(--color-text)] uppercase tracking-wide mb-4 flex items-center">
-              <FileText className="w-4 h-4 mr-2 text-orange-500" />
+              <FileText className="w-4 h-4 mr-2 text-[var(--color-text-muted)]" />
               Job Details
             </h2>
             
@@ -521,7 +521,7 @@ export default function NewTicketPage() {
                   {config.priorities.label} <span className="text-red-500">*</span>
                 </label>
                 <select
-                  className="w-full p-3 bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] rounded-lg focus:ring-2 focus:ring-orange-500 outline-none transition-all font-medium text-sm"
+                  className="w-full p-3 bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] rounded-lg focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none transition-all font-medium text-sm"
                   value={priority}
                   onChange={(e) => setPriority(Number(e.target.value))}
                 >
@@ -536,11 +536,11 @@ export default function NewTicketPage() {
                 </label>
                 <input
                   type="date"
-                  className="w-full p-3 bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] rounded-lg focus:ring-2 focus:ring-orange-500 outline-none transition-all font-medium text-sm"
+                  className="w-full p-3 bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] rounded-lg focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none transition-all font-medium text-sm"
                   value={targetDate}
                   onChange={(e) => setTargetDate(e.target.value)}
                 />
-                <p className="text-[10px] text-[var(--color-text-muted)] mt-1">
+                <p className="text-[11px] text-[var(--color-text-muted)] mt-1">
                   Leave blank to use the org default for this request type. Past-due tickets get flagged on the list.
                 </p>
               </div>
@@ -553,7 +553,7 @@ export default function NewTicketPage() {
               <input 
                 type="text"
                 placeholder="Brief summary of the work..."
-                className="w-full p-3 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-lg focus:ring-2 focus:ring-orange-500 outline-none transition-all text-sm font-bold text-[var(--color-text)]"
+                className="w-full p-3 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-lg focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none transition-all text-sm font-bold text-[var(--color-text)]"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 required
@@ -565,7 +565,7 @@ export default function NewTicketPage() {
                 Detailed Scope <span className="text-red-500">*</span>
               </label>
               <textarea 
-                className="w-full p-3 h-32 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-lg focus:ring-2 focus:ring-orange-500 outline-none resize-none transition-all text-sm"
+                className="w-full p-3 h-32 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-lg focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none resize-none transition-all text-sm"
                 placeholder="Describe the work required in detail..."
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
@@ -587,7 +587,7 @@ export default function NewTicketPage() {
           {/* Section 2: Files */}
           <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-6 shadow-sm">
             <h2 className="text-sm font-bold text-[var(--color-text)] uppercase tracking-wide mb-4 flex items-center">
-              <UploadCloud className="w-4 h-4 mr-2 text-orange-500" />
+              <UploadCloud className="w-4 h-4 mr-2 text-[var(--color-text-muted)]" />
               Attachments
             </h2>
             
@@ -602,8 +602,8 @@ export default function NewTicketPage() {
               onDrop={onDropFiles}
               className={`border-2 border-dashed rounded-xl p-8 text-center transition-all cursor-pointer group ${
                 dragOver
-                  ? 'border-orange-500 bg-orange-50 ring-2 ring-orange-300 scale-[1.01]'
-                  : 'border-[var(--color-border-strong)] bg-[var(--color-surface-2)] hover:border-orange-400 hover:bg-orange-50/40'
+                  ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] ring-2 ring-[var(--color-accent-ring)] scale-[1.01]'
+                  : 'border-[var(--color-border-strong)] bg-[var(--color-surface-2)] hover:border-[var(--color-accent)] hover:bg-[var(--color-surface-2)]'
               }`}
             >
               <input
@@ -615,7 +615,7 @@ export default function NewTicketPage() {
               />
               <div className="flex flex-col items-center pointer-events-none">
                 <div className={`p-3 bg-[var(--color-surface)] rounded-full shadow-sm mb-3 transition-transform ${dragOver ? 'scale-110' : 'group-hover:scale-105'}`}>
-                  <UploadCloud className={`w-6 h-6 ${dragOver ? 'text-orange-600' : 'text-orange-500'}`} />
+                  <UploadCloud className={`w-6 h-6 ${dragOver ? 'text-[var(--color-text)]' : 'text-[var(--color-text-muted)]'}`} />
                 </div>
                 <p className="text-sm font-bold text-[var(--color-text)]">{dragOver ? 'Drop to attach' : 'Drop files here, or click to browse'}</p>
                 <p className="text-xs text-[var(--color-text-faint)] mt-1">PDF, JPG, PNG, DWG · multiple files OK</p>
@@ -694,7 +694,7 @@ function CustomCategoryCard({
   return (
     <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-6 shadow-sm">
       <h2 className="text-sm font-bold text-[var(--color-text)] uppercase tracking-wide mb-1 flex items-center">
-        <Info className="w-4 h-4 mr-2 text-violet-500" />
+        <Info className="w-4 h-4 mr-2 text-[var(--color-text-muted)]" />
         {category.label}
       </h2>
       {category.description && <p className="text-xs text-[var(--color-text-muted)] mb-4">{category.description}</p>}
@@ -719,7 +719,7 @@ function CustomFieldRenderer({
       {field.label}{field.required && <span className="text-red-500 ml-1">*</span>}
     </label>
   );
-  const helpText = field.description && <div className="text-[10px] text-[var(--color-text-muted)] mt-1">{field.description}</div>;
+  const helpText = field.description && <div className="text-[11px] text-[var(--color-text-muted)] mt-1">{field.description}</div>;
 
   switch (field.type) {
     case "text":
@@ -784,7 +784,7 @@ function CustomFieldRenderer({
               type="checkbox"
               checked={!!value}
               onChange={(e) => onChange(e.target.checked)}
-              className="accent-violet-600"
+              className="accent-[var(--color-text)]"
             />
             <span className="font-bold">{field.label}{field.required && <span className="text-red-500 ml-1">*</span>}</span>
           </label>
@@ -822,7 +822,7 @@ function CustomFieldRenderer({
                   type="button"
                   key={i}
                   onClick={() => onChange(on ? selected.filter((x) => x !== v) : [...selected, v])}
-                  className={`px-2.5 py-1 rounded-full text-[11px] font-bold border ${on ? "bg-violet-100 border-violet-400 text-violet-900" : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}
+                  className={`px-2.5 py-1 rounded-full text-[11px] font-bold border ${on ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}
                 >
                   {on ? "✓ " : ""}{o.label}
                 </button>

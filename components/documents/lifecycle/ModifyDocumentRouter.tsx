@@ -240,7 +240,7 @@ export default function ModifyDocumentRouter(props: ModifyDocumentRouterProps) {
 
           {hasSet && (
             <>
-              <div className="mt-2 mb-1 px-3 text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">
+              <div className="mt-2 mb-1 px-3 text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">
                 For all sheets in this set
               </div>
               <RouterChoice

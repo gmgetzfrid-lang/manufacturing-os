@@ -95,9 +95,9 @@ export default function RebaseScheduleModal({
   return (
     <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <div className="w-full max-w-xl bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
-        <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between bg-gradient-to-r from-[var(--color-accent-soft)] via-white to-slate-50">
+        <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface-2)]">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-[var(--color-accent)] flex items-center justify-center shadow-md">
+            <div className="w-10 h-10 rounded-xl bg-[var(--color-surface-2)] flex items-center justify-center shadow-md">
               <CalendarClock className="w-5 h-5 text-[var(--color-accent-fg)]" />
             </div>
             <div className="min-w-0">
@@ -149,11 +149,11 @@ export default function RebaseScheduleModal({
 
           {/* Preview */}
           {currentAnchorIso ? (
-            <div className="rounded-xl border border-[var(--color-accent-ring)]/40 bg-[var(--color-accent-soft)]/60 p-3 text-xs">
-              <div className="font-black text-[var(--color-accent)] mb-1 uppercase tracking-widest text-[10px]">Preview</div>
+            <div className="rounded-xl border border-[var(--color-accent-ring)]/40 bg-[var(--color-surface-2)] p-3 text-xs">
+              <div className="font-black text-[var(--color-text)] mb-1 uppercase tracking-widest text-[11px]">Preview</div>
               <div className="flex items-center gap-2 text-[var(--color-text)]">
                 <span className="font-mono">{fmtInTz(currentAnchorIso, tz, { dateStyle: "medium", timeStyle: "short" })}</span>
-                <ArrowRight className="w-3 h-3 text-[var(--color-accent)]" />
+                <ArrowRight className="w-3 h-3 text-[var(--color-text-muted)]" />
                 <span className="font-mono font-bold">{previewDelta ? fmtInTz(previewDelta.newA, tz, { dateStyle: "medium", timeStyle: "short" }) : "-"}</span>
               </div>
               {previewDelta && (

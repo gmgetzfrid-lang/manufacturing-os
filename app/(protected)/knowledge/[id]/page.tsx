@@ -421,7 +421,7 @@ export default function KnowledgeLibraryPage() {
       />
 
       {links.length > 0 && (
-        <div className="mb-4 -mt-1 flex items-center gap-1.5 flex-wrap text-[10px] text-[var(--color-text-muted)]">
+        <div className="mb-4 -mt-1 flex items-center gap-1.5 flex-wrap text-[11px] text-[var(--color-text-muted)]">
           <span className="font-black uppercase tracking-wider">Also searches:</span>
           {links.map((l) => (
             <span key={l.id} className="font-black px-2 py-0.5 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)]">
@@ -474,7 +474,7 @@ export default function KnowledgeLibraryPage() {
           onDragOver={(e) => { if (isController && e.dataTransfer.types.includes("Files")) { e.preventDefault(); setDragOver(true); } }}
           onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragOver(false); }}
           onDrop={onDrop}
-          className={dragOver ? "rounded-2xl outline-2 outline-dashed outline-orange-400 outline-offset-4 bg-orange-50/40 dark:bg-orange-950/10" : undefined}
+          className={dragOver ? "rounded-2xl outline-2 outline-dashed outline-orange-400 outline-offset-4 bg-[var(--color-accent-soft)] dark:bg-[var(--color-accent-soft)]" : undefined}
         >
           {activeOrgId && (
             <SourcesPanel orgId={activeOrgId} libraryId={libraryId}
@@ -510,7 +510,7 @@ export default function KnowledgeLibraryPage() {
                     showToast({ type: "error", title: (e as Error).message });
                   }
                 }}
-                className="text-[10px] font-black px-2 py-1 rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)] transition-colors mr-auto ml-3"
+                className="text-[11px] font-black px-2 py-1 rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)] transition-colors mr-auto ml-3"
               >
                 Re-index all
               </button>
@@ -550,7 +550,7 @@ export default function KnowledgeLibraryPage() {
             </div>
           )}
           {autoIndexing && (
-            <div className="mb-2 rounded-xl border border-orange-300 dark:border-orange-800 bg-orange-50/60 dark:bg-orange-950/20 px-3 py-2.5 text-xs">
+            <div className="mb-2 rounded-xl border border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] px-3 py-2.5 text-xs">
               <div className="flex items-center gap-2">
                 <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" />
                 <span className="font-bold truncate">Indexing {autoIndexing.name}</span>
@@ -559,19 +559,19 @@ export default function KnowledgeLibraryPage() {
                 </span>
               </div>
               {(autoIndexing.visionPages ?? 0) > 0 && (
-                <div className="mt-1 flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]">
-                  <Eye className="w-3 h-3 text-sky-600 shrink-0" />
+                <div className="mt-1 flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
+                  <Eye className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
                   <b className="text-[var(--color-text)]">{autoIndexing.visionPages}</b> page(s) had no text
                   layer - read by AI vision (billed to your key, slower per page).
                 </div>
               )}
               {autoIndexing.visionSkipReason && (
-                <div className="mt-1 flex items-start gap-1.5 text-[10px] text-amber-700 dark:text-amber-400 font-bold">
+                <div className="mt-1 flex items-start gap-1.5 text-[11px] text-amber-700 dark:text-amber-400 font-bold">
                   <AlertTriangle className="w-3 h-3 shrink-0 mt-px" /> {autoIndexing.visionSkipReason}
                 </div>
               )}
               {autoIndexing.waiting && (
-                <div role="status" className="mt-1 flex items-start gap-1.5 text-[10px] text-amber-700 dark:text-amber-400 font-bold">
+                <div role="status" className="mt-1 flex items-start gap-1.5 text-[11px] text-amber-700 dark:text-amber-400 font-bold">
                   <AlertTriangle className="w-3 h-3 shrink-0 mt-px" /> {autoIndexing.waiting}
                 </div>
               )}
@@ -588,7 +588,7 @@ export default function KnowledgeLibraryPage() {
             {isController && removable.length > 0 && (
               <div className="mb-1.5 flex items-center gap-2 text-[11px]">
                 <label className="inline-flex items-center gap-1.5 font-bold text-[var(--color-text-muted)] cursor-pointer select-none">
-                  <input type="checkbox" className="accent-orange-600"
+                  <input type="checkbox" className="accent-[var(--color-text)]"
                     checked={selected.size > 0 && selected.size === removable.length}
                     ref={(el) => { if (el) el.indeterminate = selected.size > 0 && selected.size < removable.length; }}
                     onChange={() => setSelected(selected.size === removable.length ? new Set() : new Set(removable.map((d) => d.id)))} />
@@ -610,22 +610,22 @@ export default function KnowledgeLibraryPage() {
                 <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
                 <input id="kdoc-search" value={docQuery} onChange={(e) => { setDocQuery(e.target.value); setDocLimit(200); }}
                   placeholder={`Search ${docs.length.toLocaleString()} documents - "EP 5-2-3", "piping specs"…`}
-                  className="w-full h-8 pl-8 pr-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-orange-400" />
+                  className="w-full h-8 pl-8 pr-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-accent)]" />
               </div>
               <div className="flex items-center gap-1 flex-wrap">
                 {([
                   ["all", "All"], ["ready", "Fully indexed"], ["partial", "Partly read"], ["working", "In progress"], ["failed", "Failed"], ["uploaded", "Uploaded here"],
                 ] as const).filter(([k]) => k === "all" || docGroups[k] > 0).map(([k, label]) => (
                   <button key={k} onClick={() => { setDocFilter(k); setDocLimit(200); }}
-                    className={`h-7 px-2 rounded-lg text-[10px] font-black border transition-colors ${docFilter === k
-                      ? "bg-orange-600 text-white border-orange-600"
+                    className={`h-7 px-2 rounded-lg text-[11px] font-black border transition-colors ${docFilter === k
+                      ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]"
                       : `border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] ${k === "failed" ? "text-rose-700 dark:text-rose-400" : k === "partial" ? "text-amber-700 dark:text-amber-400" : ""}`}`}>
                     {label} {docGroups[k].toLocaleString()}
                   </button>
                 ))}
               </div>
               <select aria-label="Sort documents" value={docSort} onChange={(e) => setDocSort(e.target.value as typeof docSort)}
-                className="h-7 px-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[10px] font-black text-[var(--color-text-muted)]">
+                className="h-7 px-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[11px] font-black text-[var(--color-text-muted)]">
                 <option value="name">Sort: number</option>
                 <option value="pages">Sort: most pages</option>
                 <option value="problems">Sort: problems first</option>
@@ -638,25 +638,25 @@ export default function KnowledgeLibraryPage() {
             )}
             <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
               {shownDocs.slice(0, docLimit).map((doc) => (
-                <li key={doc.id} className={`px-3.5 py-2.5 flex items-center gap-3 ${selected.has(doc.id) ? "bg-orange-50/70 dark:bg-orange-950/20" : "bg-[var(--color-surface)]"}`}>
+                <li key={doc.id} className={`px-3.5 py-2.5 flex items-center gap-3 ${selected.has(doc.id) ? "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]" : "bg-[var(--color-surface)]"}`}>
                   {isController && (
-                    <input type="checkbox" className="accent-orange-600 shrink-0" aria-label={`Select ${doc.name}`}
+                    <input type="checkbox" className="accent-[var(--color-text)] shrink-0" aria-label={`Select ${doc.name}`}
                       disabled={!!doc.sourceDocumentId} checked={selected.has(doc.id)}
                       title={doc.sourceDocumentId ? "Mirrored from Document Control - remove it by unlinking the source" : undefined}
                       onChange={() => toggleSelect(doc.id)} />
                   )}
-                  <FileText className="w-4 h-4 text-orange-600 shrink-0" />
+                  <FileText className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
                   <div className="min-w-0 flex-1">
                     <div className="text-xs font-bold text-[var(--color-text)] truncate flex items-center gap-1.5">
                       <span className="truncate">{doc.name}</span>
                       {doc.sourceDocumentId && (
-                        <span className="shrink-0 text-[8px] font-black px-1 py-0.5 rounded bg-sky-500/10 border border-sky-300 dark:border-sky-800 text-sky-700 dark:text-sky-400"
+                        <span className="shrink-0 text-[11px] font-black px-1 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)]"
                           title="Mirrors a controlled document - kept current by the source sync">
                           DOC CONTROL{doc.sourceRev ? ` · REV ${doc.sourceRev}` : ""}
                         </span>
                       )}
                     </div>
-                    <div className="text-[10px] text-[var(--color-text-muted)]">
+                    <div className="text-[11px] text-[var(--color-text-muted)]">
                       {/* Pages actually READ, against the file's page count — "28 pages
                           indexed" used to show the file's total even when reading
                           had stopped part-way. */}
@@ -675,7 +675,7 @@ export default function KnowledgeLibraryPage() {
                     </div>
                     {doc.status === "indexing" && doc.pageCount ? (
                       <div className="mt-1 h-1 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-                        <div className="h-full bg-orange-500 transition-all" style={{ width: `${Math.round((doc.pagesIndexed / doc.pageCount) * 100)}%` }} />
+                        <div className="h-full bg-[var(--color-text-muted)] transition-all" style={{ width: `${Math.round((doc.pagesIndexed / doc.pageCount) * 100)}%` }} />
                       </div>
                     ) : null}
                   </div>
@@ -782,30 +782,30 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
     router.push(`/assistant?${params.toString()}`);
   };
   return (
-    <div className="rounded-2xl border-2 border-orange-300 dark:border-orange-800 bg-gradient-to-br from-orange-50/70 to-[var(--color-surface)] dark:from-orange-950/20 dark:to-[var(--color-surface)] p-5 mb-6">
+    <div className="rounded-2xl border-2 border-[var(--color-border)] dark:border-[var(--color-border)] p-5 mb-6 bg-[var(--color-surface-2)]">
       <div className="flex items-center gap-3 flex-wrap">
-        <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center shrink-0">
+        <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 bg-[var(--color-text)]">
           <Sparkles className="w-4 h-4 text-white" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="text-sm font-black text-[var(--color-text)]">Ask this library</div>
-          <div className="text-[10px] text-[var(--color-text-muted)]">
+          <div className="text-[11px] text-[var(--color-text-muted)]">
             Answers come only from the indexed documents, cited to the page.
             {instructionCount > 0 && (
-              <Link href="/admin/ai-instructions" className="ml-1.5 font-bold text-violet-700 dark:text-violet-300 hover:underline">
+              <Link href="/admin/ai-instructions" className="ml-1.5 font-bold text-[var(--color-accent)] dark:text-[var(--color-text)] hover:underline">
                 {instructionCount} standing instruction{instructionCount === 1 ? "" : "s"} apply
               </Link>
             )}
           </div>
         </div>
         <Link href={askHref}
-          className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-orange-600 text-white text-xs font-black hover:bg-orange-700 transition-colors">
+          className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] transition-colors">
           <MessageSquare className="w-4 h-4" /> All conversations <ArrowRight className="w-3.5 h-3.5" />
         </Link>
       </div>
       {/* Ask right here — the question opens in the chat already running,
           instead of a door you have to walk through first. */}
-      <form onSubmit={ask} className="mt-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] focus-within:border-orange-400">
+      <form onSubmit={ask} className="mt-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] focus-within:border-[var(--color-border-strong)]">
         <textarea id="library-ask" value={q} onChange={(e) => setQ(e.target.value)} disabled={readyDocs === 0} rows={2}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } }}
           placeholder={readyDocs === 0 ? "Asking unlocks when the first document is indexed" : "Ask this library - e.g. \"What piping spec should I use for 150 class sour gas?\""}
@@ -816,7 +816,7 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
           <AnswerMenu answerMode={mode} onAnswerMode={setMode} skills={skills} picked={picked} onPick={setPicked} question={q} />
           <span className="flex-1" />
           <button type="submit" disabled={readyDocs === 0 || !q.trim()}
-            className="inline-flex items-center gap-1.5 h-8 px-3.5 rounded-lg bg-orange-600 text-white text-xs font-black hover:bg-orange-700 disabled:opacity-40 transition-colors">
+            className="inline-flex items-center gap-1.5 h-8 px-3.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-40 transition-colors">
             Ask <ArrowRight className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -830,7 +830,7 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
       )}
       {recent && recent.length > 0 && (
         <div className="mt-4">
-          <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1.5 flex items-center gap-1.5">
+          <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1.5 flex items-center gap-1.5">
             <History className="w-3 h-3" /> Recent conversations
           </div>
           <ul className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
@@ -838,16 +838,16 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
               <li key={t.id}>
                 <Link href={`/assistant?thread=${t.id}&library=${libraryId}`}
                   className="flex items-center gap-2.5 px-3.5 py-2 hover:bg-[var(--color-surface-2)] transition-colors group">
-                  {t.scope === "internet" ? <Globe className="w-3.5 h-3.5 text-sky-600 shrink-0" />
-                    : t.scope === "tools" ? <Bot className="w-3.5 h-3.5 text-violet-600 shrink-0" />
+                  {t.scope === "internet" ? <Globe className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
+                    : t.scope === "tools" ? <Bot className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
                     : <MessageSquare className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />}
                   <span className="min-w-0 flex-1">
                     <span className="block text-xs font-bold text-[var(--color-text)] truncate">{t.title || "Untitled"}</span>
-                    <span className="block text-[10px] text-[var(--color-text-muted)]">
+                    <span className="block text-[11px] text-[var(--color-text-muted)]">
                       {(t.createdByName ?? "Someone").split("@")[0]} · {new Date(t.lastMessageAt).toLocaleString()}{t.settledAt ? " · settled" : ""}
                     </span>
                   </span>
-                  <span className="text-[10px] font-black text-[var(--color-text-faint)] opacity-0 group-hover:opacity-100 transition-opacity shrink-0">Reopen →</span>
+                  <span className="text-[11px] font-black text-[var(--color-text-faint)] opacity-0 group-hover:opacity-100 transition-opacity shrink-0">Reopen →</span>
                 </Link>
               </li>
             ))}

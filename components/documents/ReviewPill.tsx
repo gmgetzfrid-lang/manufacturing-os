@@ -30,7 +30,7 @@ export default function ReviewPill({ nextReviewDate, leadDays = 30, compact = fa
   return (
     <span
       title={`Next review: ${date}`}
-      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold whitespace-nowrap ${cfg.cls} ${className}`}
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold whitespace-nowrap ${cfg.cls} ${className}`}
     >
       <Icon className="w-3 h-3 shrink-0" /> {compact ? cfg.short : cfg.full}
     </span>

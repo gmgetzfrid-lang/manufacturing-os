@@ -182,11 +182,11 @@ export default function IsoGuidance({ topic, placement, size }: Props) {
       <div>
         <div className="flex items-center gap-1.5 mb-1.5">
           <ShieldCheck className="w-3 h-3 text-emerald-400" />
-          <span className="text-[10px] font-black text-emerald-300 uppercase tracking-widest">ISO Guidance</span>
+          <span className="text-[11px] font-black text-emerald-300 uppercase tracking-widest">ISO Guidance</span>
         </div>
         <div className="text-[11px] font-bold mb-1">{entry.title}</div>
         <div className="text-[11px] text-slate-200 leading-relaxed">{entry.body}</div>
-        <div className="mt-2 pt-2 border-t border-slate-700/60 text-[10px] text-[var(--color-text-faint)]">
+        <div className="mt-2 pt-2 border-t border-slate-700/60 text-[11px] text-[var(--color-text-faint)]">
           {entry.refs.join(" · ")}
         </div>
       </div>

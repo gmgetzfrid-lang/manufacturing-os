@@ -204,9 +204,9 @@ export default function PlotPlanBoard() {
               <div className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-2">Place an asset</div>
               <div className="relative">
                 <Search className="w-3.5 h-3.5 text-[var(--color-text-faint)] absolute left-2.5 top-1/2 -translate-y-1/2" />
-                <input value={pickerSearch} onChange={(e) => setPickerSearch(e.target.value)} placeholder="Search equipment…" className="w-full h-8 pl-8 pr-2 rounded-lg border border-[var(--color-border)] text-xs outline-none focus:ring-2 focus:ring-orange-500/30" />
+                <input value={pickerSearch} onChange={(e) => setPickerSearch(e.target.value)} placeholder="Search equipment…" className="w-full h-8 pl-8 pr-2 rounded-lg border border-[var(--color-border)] text-xs outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]" />
               </div>
-              {placingAssetId && <div className="mt-2 text-[11px] font-bold text-orange-700 bg-orange-50 rounded px-2 py-1">Now click the drawing to place {assetById.get(placingAssetId)?.tag}.</div>}
+              {placingAssetId && <div className="mt-2 text-[11px] font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] rounded px-2 py-1">Now click the drawing to place {assetById.get(placingAssetId)?.tag}.</div>}
             </div>
             <div className="flex-1 overflow-y-auto p-2 space-y-1">
               {pickerAssets.length === 0 ? (
@@ -215,7 +215,7 @@ export default function PlotPlanBoard() {
                 <button
                   key={a.id}
                   onClick={() => setPlacingAssetId(a.id)}
-                  className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-2 transition ${placingAssetId === a.id ? "bg-orange-100 text-orange-900" : "hover:bg-[var(--color-surface-2)] text-[var(--color-text)]"}`}
+                  className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-2 transition ${placingAssetId === a.id ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "hover:bg-[var(--color-surface-2)] text-[var(--color-text)]"}`}
                 >
                   <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: STATE_CONFIG[(a.whiteboard_state ?? "pending") as WhiteboardState].hex }} />
                   <span className="font-mono font-bold truncate">{a.tag}</span>

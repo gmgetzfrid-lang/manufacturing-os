@@ -53,7 +53,7 @@ export default function RevisionChainStrip({ documentId, refreshKey }: RevisionC
 
   return (
     <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl p-3">
-      <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-2">
+      <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest mb-2">
         Revision Chain
       </div>
       <div className="flex items-center gap-1 overflow-x-auto pb-1">
@@ -77,7 +77,7 @@ function ChainNode({ node }: { node: RevisionChainNode }) {
   const wrapper = node.isCurrent
     ? "bg-emerald-600 text-white border-emerald-700"
     : isRevert
-      ? "bg-purple-50 text-purple-700 border-purple-200"
+      ? "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]"
       : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border-strong)]";
 
   return (

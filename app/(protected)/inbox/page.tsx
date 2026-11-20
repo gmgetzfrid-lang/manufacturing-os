@@ -287,11 +287,11 @@ export default function InboxPage() {
                         <DocThumb documentId={s.documentId} width={28} />
                       </DocHoverPreview>
                       <span className="font-mono text-[var(--color-text-muted)]">{s.mode}</span>
-                      <Link href={`/documents/${s.libraryId ?? ""}?doc=${s.documentId}`} className="text-blue-700 hover:underline font-bold">
+                      <Link href={`/documents/${s.libraryId ?? ""}?doc=${s.documentId}`} className="text-[var(--color-accent)] hover:underline font-bold">
                         {s.documentId.slice(0, 8)}
                       </Link>
                       {s.purpose && <span className="text-[var(--color-text-faint)] truncate">- {s.purpose}</span>}
-                      <span className="ml-auto text-[10px] text-[var(--color-text-muted)]">{formatAgo(typeof s.startedAt === "string" ? s.startedAt : undefined)}</span>
+                      <span className="ml-auto text-[11px] text-[var(--color-text-muted)]">{formatAgo(typeof s.startedAt === "string" ? s.startedAt : undefined)}</span>
                     </li>
                   ))}
                 </ul>
@@ -305,7 +305,7 @@ export default function InboxPage() {
                     <li key={h.id} className="text-xs">
                       <span className="font-bold text-rose-700">{h.reason}</span>
                       {h.notes && <div className="text-[var(--color-text-faint)] truncate mt-0.5 italic">&quot;{h.notes}&quot;</div>}
-                      <div className="text-[10px] text-[var(--color-text-muted)]">opened {formatAgo(typeof h.openedAt === "string" ? h.openedAt : undefined)}</div>
+                      <div className="text-[11px] text-[var(--color-text-muted)]">opened {formatAgo(typeof h.openedAt === "string" ? h.openedAt : undefined)}</div>
                     </li>
                   ))}
                 </ul>
@@ -323,7 +323,7 @@ export default function InboxPage() {
                     <li key={t.id} className="text-xs flex items-center gap-2">
                       <Link href="/transmittals" className="font-mono font-bold text-[var(--color-text)] hover:underline shrink-0">{t.number}</Link>
                       <span className="text-[var(--color-text-faint)] truncate flex-1">{t.subject || [t.recipientName, t.recipientCompany].filter(Boolean).join(" · ") || `${t.documentCount} doc${t.documentCount === 1 ? "" : "s"}`}</span>
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
+                      <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
                         (t.__ageDays ?? 0) >= 14 ? "bg-rose-100 text-rose-800"
                         : (t.__ageDays ?? 0) >= 7 ? "bg-amber-100 text-amber-800"
                         : "bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"
@@ -345,7 +345,7 @@ export default function InboxPage() {
                     <li key={r.signoffId} className="text-xs flex items-center gap-2">
                       <Link href={`/documents/${r.libraryId}?doc=${r.documentId}`} className="font-mono font-bold text-[var(--color-text)] hover:underline shrink-0">{r.label}</Link>
                       <span className="text-[var(--color-text-faint)] truncate flex-1">{r.revisionLabel ? `Draft ${r.revisionLabel}` : ""}</span>
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
+                      <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
                         (r.__ageDays ?? 0) >= 14 ? "bg-rose-100 text-rose-800"
                         : (r.__ageDays ?? 0) >= 7 ? "bg-amber-100 text-amber-800"
                         : "bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"
@@ -363,7 +363,7 @@ export default function InboxPage() {
                   {data.reviewCyclesDueOnMe.slice(0, 6).map((r) => (
                     <li key={r.documentId} className="text-xs flex items-center gap-2">
                       <Link href={`/documents/${r.libraryId}?doc=${r.documentId}`} className="font-mono font-bold text-[var(--color-text)] hover:underline shrink-0">{r.label}</Link>
-                      <span className={`ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${r.overdue ? "bg-rose-100 text-rose-800" : "bg-amber-100 text-amber-800"}`}>
+                      <span className={`ml-auto text-[11px] font-bold px-1.5 py-0.5 rounded shrink-0 ${r.overdue ? "bg-rose-100 text-rose-800" : "bg-amber-100 text-amber-800"}`}>
                         {r.overdue ? "overdue" : "due"}{r.nextReviewDate ? ` ${r.nextReviewDate.slice(0, 10)}` : ""}
                       </span>
                     </li>
@@ -393,7 +393,7 @@ export default function InboxPage() {
                   {data.accessRecertsDue.slice(0, 6).map((r) => (
                     <li key={r.libraryId} className="text-xs flex items-center gap-2">
                       <Link href={`/documents/${r.libraryId}`} className="font-bold text-[var(--color-text)] hover:underline shrink-0 truncate">{r.name}</Link>
-                      <span className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 bg-rose-100 text-rose-800">due{r.nextDate ? ` ${r.nextDate.slice(0, 10)}` : ""}</span>
+                      <span className="ml-auto text-[11px] font-bold px-1.5 py-0.5 rounded shrink-0 bg-rose-100 text-rose-800">due{r.nextDate ? ` ${r.nextDate.slice(0, 10)}` : ""}</span>
                     </li>
                   ))}
                 </ul>
@@ -408,7 +408,7 @@ export default function InboxPage() {
                     <li key={a.rosterId} className="text-xs flex items-center gap-2">
                       <Link href={`/documents/${a.libraryId}?doc=${a.documentId}`} className="font-mono font-bold text-[var(--color-text)] hover:underline shrink-0">{a.label}</Link>
                       <span className="text-[var(--color-text-faint)] truncate flex-1">{a.revisionLabel ? `Rev ${a.revisionLabel}` : ""}</span>
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
+                      <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
                         (a.__ageDays ?? 0) >= 14 ? "bg-rose-100 text-rose-800"
                         : (a.__ageDays ?? 0) >= 7 ? "bg-amber-100 text-amber-800"
                         : "bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"
@@ -426,7 +426,7 @@ export default function InboxPage() {
                     <li key={m.id} className="text-xs flex items-center gap-2">
                       <Calendar className="w-3 h-3 text-emerald-600 dark:text-emerald-500 shrink-0" />
                       <span className="font-bold text-[var(--color-text)] truncate flex-1">{m.name}</span>
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                      <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded ${
                         (m.__dueInDays ?? 0) === 0 ? "bg-rose-100 text-rose-800"
                         : (m.__dueInDays ?? 0) <= 2 ? "bg-amber-100 text-amber-800"
                         : "bg-emerald-100 text-emerald-800"
@@ -483,8 +483,8 @@ function TicketList({ tickets }: { tickets: TicketListItem[] }) {
           <Link href={`/requests/${t.id ?? ""}`} className="text-[var(--color-text)] hover:underline font-bold truncate flex-1">
             {t.title ?? "(untitled)"}
           </Link>
-          <span className="text-[10px] font-bold uppercase text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{t.status ?? "-"}</span>
-          <span className="text-[10px] text-[var(--color-text-muted)]"><Clock className="inline w-2.5 h-2.5 mr-0.5" />{formatAgo(typeof t.lastModified === "string" ? t.lastModified : undefined)}</span>
+          <span className="text-[11px] font-bold uppercase text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{t.status ?? "-"}</span>
+          <span className="text-[11px] text-[var(--color-text-muted)]"><Clock className="inline w-2.5 h-2.5 mr-0.5" />{formatAgo(typeof t.lastModified === "string" ? t.lastModified : undefined)}</span>
         </li>
       ))}
     </ul>

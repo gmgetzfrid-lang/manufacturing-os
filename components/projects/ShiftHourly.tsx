@@ -236,7 +236,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
                       <>
                       <button type="button" onClick={() => h.onAddWork?.(hr.start)} aria-label={`Add discovery or added scope at ${clocks[i]}`}
                         title="Add discovery or added scope at this hour - it goes into the schedule"
-                        className="shrink-0 inline-flex items-center gap-0.5 h-6 px-1.5 rounded-md border border-dashed border-[var(--color-accent)] text-[11px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]">
+                        className="shrink-0 inline-flex items-center gap-0.5 h-6 px-1.5 rounded-md border border-dashed border-[var(--color-accent)] text-[11px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]">
                         <Plus className="w-3 h-3" /> Add work
                       </button>
                     <button type="button" onClick={() => newFinding({ at: hr.start })} aria-label={`Add a finding at ${clocks[i]}`}
@@ -302,7 +302,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
                 <>
                 <button type="button" onClick={() => h.onAddWork?.(r.slot.start)} aria-label={`Add discovery or added scope at ${clocks[i]}`}
                   title="Add discovery or added scope at this hour - it goes into the schedule"
-                  className="shrink-0 inline-flex items-center gap-0.5 h-6 px-1.5 rounded-md border border-dashed border-[var(--color-accent)] text-[11px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]">
+                  className="shrink-0 inline-flex items-center gap-0.5 h-6 px-1.5 rounded-md border border-dashed border-[var(--color-accent)] text-[11px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]">
                   <Plus className="w-3 h-3" /> Add work
                 </button>
                     <button type="button" onClick={() => newFinding({ at: r.slot.start })} aria-label={`Add a finding at ${clocks[i]}`}
@@ -337,7 +337,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
           ? <HoldOverForm ot={h.overtime} adding={otForm === "new"} onDone={() => setOtForm(null)} onError={setMsg} />
           : !h.overtime.list.length && (
             <button type="button" onClick={() => setOtForm("new")}
-              className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md border border-dashed border-[var(--color-accent)] text-[11.5px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]">
+              className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md border border-dashed border-[var(--color-accent)] text-[11.5px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]">
               <Plus className="w-3.5 h-3.5" /> Hold a crew over (overtime)
             </button>
           ))}
@@ -565,7 +565,7 @@ export function MeetingBox({ m, edit }: { m: MeetingCtx; edit: boolean }) {
         {(edit || (total != null && list.length > 1)) && (
           <div className={`${grid} items-center px-2 py-1 border-t border-[var(--color-border)]`}>
             <span className="min-w-0 sm:col-span-2">{edit && <AddCompany onAdd={(name) => void setCrew(cleanName(name), (c) => c ?? {}).catch(() => undefined)} />}</span>
-            <span className="text-right text-[12px] tabular-nums whitespace-nowrap">{total != null && <><span className="text-[10px] font-bold uppercase text-[var(--color-text-muted)]">Total on the job </span><b>{total}</b></>}</span>
+            <span className="text-right text-[12px] tabular-nums whitespace-nowrap">{total != null && <><span className="text-[11px] font-bold uppercase text-[var(--color-text-muted)]">Total on the job </span><b>{total}</b></>}</span>
           </div>
         )}
       </div>
@@ -626,7 +626,7 @@ function CrewRow({ grid, crew, value, known, edit, plan, onNames, onCount, onTot
         )}
         {edit && !adding && (
           <button type="button" onClick={() => setAdding(true)} aria-label={`Add an attendee from ${crew}`} title="Add an attendee"
-            className="shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full border border-dashed border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]">
+            className="shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full border border-dashed border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]">
             <Plus className="w-3.5 h-3.5" />
           </button>
         )}
@@ -700,7 +700,7 @@ function PlanBeside({ plan, count, edit, onSame }: { plan: { company: string; he
       </button>
       {diff != null && diff !== 0 && <b className={diff < 0 ? "text-amber-700 dark:text-amber-400" : "text-rose-700 dark:text-rose-400"}>{diff < 0 ? `${-diff} short` : `${diff} over`}</b>}
       {edit && plan.across === 1 && count !== plan.heads && (
-        <button type="button" onClick={onSame} className="h-5 px-1.5 rounded border border-[var(--color-border-strong)] text-[10.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Same as plan</button>
+        <button type="button" onClick={onSame} className="h-5 px-1.5 rounded border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Same as plan</button>
       )}
     </span>
   );
@@ -768,7 +768,7 @@ function HeadCount({ crew, value, plant, edit, onSave, onTotal, onPlant }: {
       {split ? (
         <span className="flex items-center gap-1">{box("d", was.d, "direct hands")}{box("i", was.i, "indirect hands")}</span>
       ) : box("t", was.t, "on site", true)}
-      <span className="text-[10px] text-[var(--color-text-muted)] whitespace-nowrap">
+      <span className="text-[11px] text-[var(--color-text-muted)] whitespace-nowrap">
         {split
           ? <>{n.total != null && <>= <b className="text-[var(--color-text)]">{n.total}</b> on site · </>}<button type="button" onClick={() => { setSplitOpen(false); if (n.split) onTotal(n.total); }} title="One number for everyone on site" className={link}>One total</button></>
           : <button type="button" onClick={() => setSplitOpen(true)} title="Direct (on the tools) and indirect (supervision, safety, watch, QC, tool room)" className={link}>Split</button>}
@@ -789,7 +789,7 @@ function SafetyTopic({ value, topics, edit, onSave }: { value?: string; topics?:
   const picks = (topics ?? []).filter((x) => x !== t);
   return (
     <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 px-2 py-1 rounded-md border border-dashed border-[var(--color-border)] text-[12px]">
-      <span className="shrink-0 text-[12px] font-semibold text-orange-800 dark:text-orange-300">Safety topic</span>
+      <span className="shrink-0 text-[12px] font-semibold text-[var(--color-text)] dark:text-[var(--color-text)]">Safety topic</span>
       {editing ? (
         <span className="flex-1 min-w-[12rem] flex items-center gap-1.5">
           <input autoFocus value={v} onChange={(e) => setV(e.target.value)} aria-label="Safety topic" placeholder="What the meeting talked through"
@@ -809,7 +809,7 @@ function SafetyTopic({ value, topics, edit, onSave }: { value?: string; topics?:
           )}
         </>
       ) : edit ? (
-        <button type="button" onClick={open} aria-label="Add the safety topic" className="inline-flex items-center gap-0.5 h-6 px-1.5 rounded-md border border-dashed border-[var(--color-accent)] text-[11px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]">
+        <button type="button" onClick={open} aria-label="Add the safety topic" className="inline-flex items-center gap-0.5 h-6 px-1.5 rounded-md border border-dashed border-[var(--color-accent)] text-[11px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]">
           <Plus className="w-3 h-3" /> Add
         </button>
       ) : <span className="text-[var(--color-text-faint)]">-</span>}
@@ -818,7 +818,7 @@ function SafetyTopic({ value, topics, edit, onSave }: { value?: string; topics?:
           <span className="text-[11px] text-[var(--color-text-muted)]">From the report:</span>
           {picks.map((x) => (
             <button key={x} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => commit(x)}
-              className="max-w-full truncate h-6 px-2 rounded-full border border-orange-300 dark:border-orange-800 bg-orange-50 dark:bg-orange-950/40 text-[11px] font-semibold text-orange-800 dark:text-orange-300 hover:border-orange-500">
+              className="max-w-full truncate h-6 px-2 rounded-full border border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[11px] font-semibold text-[var(--color-text)] dark:text-[var(--color-text)] hover:border-[var(--color-accent)]">
               {x}
             </button>
           ))}

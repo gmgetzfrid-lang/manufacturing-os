@@ -167,18 +167,18 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
     <div id="area-flow-panel" className="mt-6 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3.5"
       style={{ animation: "rise 0.4s var(--ease-fluid) both" }}>
       <div className="flex items-center gap-2 flex-wrap mb-2">
-        <Waypoints className="w-4 h-4 text-cyan-600 shrink-0" />
+        <Waypoints className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
         <span className="text-xs font-black text-[var(--color-text)]">Process flows</span>
-        <span className="text-[10px] font-bold text-[var(--color-text-faint)]">
+        <span className="text-[11px] font-bold text-[var(--color-text-faint)]">
           {flows === null ? "" : `${confirmed.length} confirmed${proposed.length > 0 ? ` · ${proposed.length} proposed` : ""}`}
         </span>
         <span className="flex-1" />
-        <Link href="/graph" className="text-[10px] font-black text-cyan-700 hover:text-cyan-600">
+        <Link href="/graph" className="text-[11px] font-black text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">
           Process lens →
         </Link>
         {isAdmin && flows !== null && (
           <button onClick={() => setReaderOpen(true)}
-            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-black text-white bg-cyan-700 hover:bg-cyan-600">
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]">
             <ScanSearch className="w-3.5 h-3.5" /> Read flows from a document
           </button>
         )}
@@ -193,15 +193,15 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
           {note && <div className="text-[11px] text-[var(--color-text-muted)] mb-2">{note}</div>}
           {proposed.length > 0 && (
             <div className="space-y-1 mb-2">
-              <div className="text-[9px] font-black uppercase tracking-widest text-amber-700">Proposed - the AI read these; you decide</div>
+              <div className="text-[11px] font-black uppercase tracking-widest text-amber-700">Proposed - the AI read these; you decide</div>
               {proposed.map((f) => (
                 <div key={f.id} className="flex items-center gap-2 rounded-lg border border-dashed border-amber-300 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20 px-2.5 py-1.5">
                   <span className="text-[11px] font-black text-[var(--color-text)]">{endpointLabel(f.from_kind, f.from_ref)}</span>
                   <ArrowRight className="w-3 h-3 text-amber-600 shrink-0" />
                   <span className="text-[11px] font-black text-[var(--color-text)]">{endpointLabel(f.to_kind, f.to_ref)}</span>
-                  {f.label && <span className="text-[10px] text-[var(--color-text-muted)] italic truncate">“{f.label}”</span>}
+                  {f.label && <span className="text-[11px] text-[var(--color-text-muted)] italic truncate">“{f.label}”</span>}
                   {f.evidence?.docName && (
-                    <span className="text-[9px] text-[var(--color-text-faint)] truncate hidden sm:inline">
+                    <span className="text-[11px] text-[var(--color-text-faint)] truncate hidden sm:inline">
                       from {f.evidence.docName}{f.source_page ? ` p.${f.source_page}` : ""}
                     </span>
                   )}
@@ -229,11 +229,11 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
           ) : (
             <div className="flex flex-wrap gap-1.5">
               {confirmed.map((f) => (
-                <span key={f.id} className="group inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-cyan-50 dark:bg-cyan-950/30 border border-cyan-200 dark:border-cyan-900 text-[11px] font-bold text-[var(--color-text)]">
+                <span key={f.id} className="group inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] border border-[var(--color-border)] dark:border-[var(--color-border)] text-[11px] font-bold text-[var(--color-text)]">
                   {endpointLabel(f.from_kind, f.from_ref)}
-                  <ArrowRight className="w-3 h-3 text-cyan-600" />
+                  <ArrowRight className="w-3 h-3 text-[var(--color-text-muted)]" />
                   {endpointLabel(f.to_kind, f.to_ref)}
-                  {f.label && <span className="text-[10px] text-[var(--color-text-muted)] italic">“{f.label}”</span>}
+                  {f.label && <span className="text-[11px] text-[var(--color-text-muted)] italic">“{f.label}”</span>}
                   {isAdmin && (
                     <button onClick={() => void remove(f)} disabled={busyId === f.id}
                       className="opacity-0 group-hover:opacity-100 text-[var(--color-text-faint)] hover:text-rose-600 transition-opacity" title="Remove this flow">
@@ -438,17 +438,17 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
       const kid = d.kdocId;
       return (
         <button key={d.dcDocId} onClick={() => void run(kid)} disabled={runningId !== null}
-          className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border border-[var(--color-border)] hover:border-cyan-400 text-left disabled:opacity-50">
+          className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-border-strong)] text-left disabled:opacity-50">
           <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
           <span className="flex-1 min-w-0">
             <span className="block text-xs font-bold text-[var(--color-text)] truncate">{d.name}</span>
-            <span className="block text-[10px] text-[var(--color-text-faint)]">
+            <span className="block text-[11px] text-[var(--color-text-faint)]">
               {d.pageCount ? `${d.pageCount} page${d.pageCount === 1 ? "" : "s"}` : "page count pending"}
             </span>
           </span>
           {runningId === kid
-            ? <span className="inline-flex items-center gap-1 text-[10px] font-black text-cyan-700 shrink-0"><Loader2 className="w-3 h-3 animate-spin" /> Reading…</span>
-            : <span className="text-[10px] font-black text-cyan-700 shrink-0">Read{pages.length > 0 ? ` p.${pages[0]}${pages.length > 1 ? "…" : ""}` : ""}</span>}
+            ? <span className="inline-flex items-center gap-1 text-[11px] font-black text-[var(--color-text)] shrink-0"><Loader2 className="w-3 h-3 animate-spin" /> Reading…</span>
+            : <span className="text-[11px] font-black text-[var(--color-text)] shrink-0">Read{pages.length > 0 ? ` p.${pages[0]}${pages.length > 1 ? "…" : ""}` : ""}</span>}
         </button>
       );
     }
@@ -461,27 +461,27 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
         <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
         <span className="flex-1 min-w-0">
           <span className="block text-xs font-bold text-[var(--color-text-muted)] truncate">{d.name}</span>
-          <span className="block text-[10px] text-[var(--color-text-faint)] truncate">{meta.hint}</span>
+          <span className="block text-[11px] text-[var(--color-text-faint)] truncate">{meta.hint}</span>
         </span>
         {d.state === "indexing" ? (
-          <span className="inline-flex items-center gap-1 text-[10px] font-black text-cyan-700 shrink-0">
+          <span className="inline-flex items-center gap-1 text-[11px] font-black text-[var(--color-text)] shrink-0">
             <Loader2 className="w-3 h-3 animate-spin" /> Indexing…
           </span>
         ) : d.state === "pending_sync" && model?.canSync ? (
           <button type="button" onClick={() => void syncAll()} disabled={syncing}
-            className="text-[10px] font-black px-2 py-1 rounded-md border border-cyan-300 text-cyan-700 hover:bg-cyan-50 dark:hover:bg-cyan-950/40 disabled:opacity-50 shrink-0">
+            className="text-[11px] font-black px-2 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] dark:hover:bg-[var(--color-surface-2)] disabled:opacity-50 shrink-0">
             {syncing ? "Syncing…" : "Sync now"}
           </button>
         ) : d.state === "unwatched" && model?.canSync && container ? (
           <button type="button" onClick={() => requestLink(container)} disabled={linkingKey !== null}
             title={`Connect “${container.name}” to an AI knowledge library`}
-            className="text-[10px] font-black px-2 py-1 rounded-md border border-amber-300 text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/40 disabled:opacity-50 shrink-0">
+            className="text-[11px] font-black px-2 py-1 rounded-md border border-amber-300 text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/40 disabled:opacity-50 shrink-0">
             {linkingKey === container.id ? "Linking…" : "Link to AI"}
           </button>
         ) : (
-          <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded shrink-0 ${
+          <span className={`text-[11px] font-black uppercase px-1.5 py-0.5 rounded shrink-0 ${
             d.state === "pending_sync"
-              ? "bg-cyan-100 dark:bg-cyan-900/50 text-cyan-700 dark:text-cyan-300"
+              ? "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]"
               : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"
           }`}>
             {meta.label}
@@ -494,17 +494,17 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
   const renderFolder = (f: DcFolderNode, depth: number) => (
     <div key={f.id} className={depth > 0 ? "ml-3 pl-2 border-l border-[var(--color-border)]/60" : ""}>
       <div className="flex items-center gap-1.5 px-1 py-1 text-[11px] font-black text-[var(--color-text)]">
-        <FolderOpen className={`w-3.5 h-3.5 shrink-0 ${f.watched ? "text-cyan-600" : "text-amber-500"}`} />
+        <FolderOpen className={`w-3.5 h-3.5 shrink-0 ${f.watched ? "text-[var(--color-text-muted)]" : "text-amber-500"}`} />
         {f.name}
-        <span className="text-[10px] font-bold text-[var(--color-text-muted)]">· {f.totalDocs}</span>
+        <span className="text-[11px] font-bold text-[var(--color-text-muted)]">· {f.totalDocs}</span>
         {!f.watched && (model?.canSync ? (
           <button type="button" disabled={linkingKey !== null}
             onClick={() => requestLink({ type: "folder", id: f.id, name: f.name })}
-            className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900 disabled:opacity-50">
+            className="text-[11px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900 disabled:opacity-50">
             {linkingKey === f.id ? "linking…" : "not linked to AI - link now"}
           </button>
         ) : (
-          <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">
+          <span className="text-[11px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">
             not linked to AI
           </span>
         ))}
@@ -523,7 +523,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
       <div className="w-full max-w-lg max-h-[86vh] flex flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)] shrink-0">
-          <ScanSearch className="w-4 h-4 text-cyan-600" />
+          <ScanSearch className="w-4 h-4 text-[var(--color-text-muted)]" />
           <div className="flex-1">
             <div className="text-sm font-black text-[var(--color-text)]">Read flows from a document</div>
             <div className="text-[11px] text-[var(--color-text-muted)]">
@@ -534,7 +534,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
           {model?.canSync && model.knowledgeLibraries.length > 0 && (
             <button type="button" onClick={() => void syncAll()} disabled={syncing}
               title="Reconcile all knowledge libraries with document control now"
-              className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[10px] font-black text-[var(--color-text-muted)] hover:text-cyan-700 hover:border-cyan-400 disabled:opacity-50 shrink-0">
+              className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] disabled:opacity-50 shrink-0">
               <RefreshCw className={`w-3 h-3 ${syncing ? "animate-spin" : ""}`} /> Sync
             </button>
           )}
@@ -567,7 +567,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
               placeholder="Pages (optional): 1-4 or 2,5,9 - up to 6 per read"
               className="flex-1 px-2.5 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-xs font-mono" />
             {pages.length > 0 && (
-              <span className="text-[10px] font-black text-cyan-700 shrink-0">reads p. {pages.join(", ")}</span>
+              <span className="text-[11px] font-black text-[var(--color-text)] shrink-0">reads p. {pages.join(", ")}</span>
             )}
           </div>
           {/* Multiple AI libraries → the link needs a destination. One click
@@ -584,7 +584,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
                   </button>
                 ))}
                 <button type="button" onClick={() => setLinking(null)} disabled={linkingKey !== null}
-                  className="px-2 py-1 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+                  className="px-2 py-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
                   Cancel
                 </button>
               </div>
@@ -618,20 +618,20 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
               {viewTree.map((l) => (
                 <div key={l.id}>
                   <div className="flex items-center gap-2 mb-1.5">
-                    <BookOpen className={`w-3.5 h-3.5 shrink-0 ${l.watched ? "text-cyan-600" : "text-amber-500"}`} />
+                    <BookOpen className={`w-3.5 h-3.5 shrink-0 ${l.watched ? "text-[var(--color-text-muted)]" : "text-amber-500"}`} />
                     <span className="text-xs font-black text-[var(--color-text)]">{l.name}</span>
-                    <span className="text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-full px-1.5">
+                    <span className="text-[11px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-full px-1.5">
                       {l.totalDocs} doc{l.totalDocs === 1 ? "" : "s"}
                     </span>
                     {!l.watched && (model?.canSync ? (
                       <button type="button" disabled={linkingKey !== null}
                         onClick={() => requestLink({ type: "library", id: l.id, name: l.name })}
                         title="Watch this whole library - every folder, now and in the future"
-                        className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900 disabled:opacity-50">
+                        className="text-[11px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900 disabled:opacity-50">
                         {linkingKey === l.id ? "linking…" : "not linked to AI - link whole library"}
                       </button>
                     ) : (
-                      <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">
+                      <span className="text-[11px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">
                         not linked to AI
                       </span>
                     ))}
@@ -647,7 +647,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
               {viewUploads.map((g) => (
                 <div key={g.knowledgeLibraryId}>
                   <div className="flex items-center gap-2 mb-1.5">
-                    <BookOpen className="w-3.5 h-3.5 text-orange-600 shrink-0" />
+                    <BookOpen className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
                     <span className="text-xs font-black text-[var(--color-text)]">Uploaded directly · {g.knowledgeLibraryName}</span>
                   </div>
                   <div className="space-y-1">
@@ -664,7 +664,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
 
         {/* The PFD isn't anywhere yet? The door is one click away, not a maze. */}
         <div className="px-3 py-2.5 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] shrink-0">
-          Don&apos;t see your PFD book at all? <Link href="/knowledge" className="font-black text-cyan-700 hover:text-cyan-600 underline">Upload it to a knowledge library</Link> or file it in Documents inside a linked folder.
+          Don&apos;t see your PFD book at all? <Link href="/knowledge" className="font-black text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] underline">Upload it to a knowledge library</Link> or file it in Documents inside a linked folder.
         </div>
       </div>
     </div>

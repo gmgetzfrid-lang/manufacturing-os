@@ -115,12 +115,12 @@ function PhotoTagChip({
   };
 
   if (size === "compact") {
-    const baseClasses = "inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border mr-1 mb-1 whitespace-nowrap shadow-sm transition-all";
+    const baseClasses = "inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold border mr-1 mb-1 whitespace-nowrap shadow-sm transition-all";
     let stateClasses: string;
     if (hasPhotos) {
-      stateClasses = "bg-gradient-to-br from-blue-50 to-blue-100/70 text-blue-800 border-blue-200 hover:border-blue-300 hover:from-blue-100 hover:to-blue-200 cursor-pointer";
+      stateClasses = "text-[var(--color-text)] border-[var(--color-border)] hover:border-[var(--color-border)] cursor-pointer bg-[var(--color-surface-2)]";
     } else if (interactive) {
-      stateClasses = "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)] hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 cursor-pointer";
+      stateClasses = "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border)] hover:text-[var(--color-text)] cursor-pointer";
     } else {
       stateClasses = "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]";
     }
@@ -146,14 +146,14 @@ function PhotoTagChip({
           }
           className={`${baseClasses} ${stateClasses}`}
         >
-          <span className={hasPhotos ? "text-blue-500 mr-1" : "text-[var(--color-text-faint)] mr-1"}>
+          <span className={hasPhotos ? "text-[var(--color-text-muted)] mr-1" : "text-[var(--color-text-faint)] mr-1"}>
             {getIconByType(type)}
           </span>
           <span>{tag}</span>
           {creating ? (
-            <Loader2 className="w-2.5 h-2.5 ml-1.5 animate-spin text-blue-500" />
+            <Loader2 className="w-2.5 h-2.5 ml-1.5 animate-spin text-[var(--color-text-muted)]" />
           ) : hasPhotos ? (
-            <span className="ml-1.5 inline-flex items-center gap-0.5 px-1 py-px rounded bg-white/80 text-blue-700 text-[9px] font-black">
+            <span className="ml-1.5 inline-flex items-center gap-0.5 px-1 py-px rounded bg-white/80 text-[var(--color-text)] text-[11px] font-black">
               <Camera className="w-2.5 h-2.5" />
               {photoCount}
             </span>
@@ -201,17 +201,17 @@ function PhotoTagChip({
     <button
       onClick={onClick}
       disabled={!interactive}
-      className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] shadow-sm hover:shadow-md hover:border-blue-300 transition-all"
+      className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] shadow-sm hover:shadow-md hover:border-[var(--color-border)] transition-all"
     >
-      <div className="p-1.5 bg-blue-50 rounded-md">
-        <Tag className="w-3.5 h-3.5 text-blue-600" />
+      <div className="p-1.5 bg-[var(--color-surface-2)] rounded-md">
+        <Tag className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
       </div>
       <div className="text-left">
         <div className="text-xs font-black text-[var(--color-text)]">{tag}</div>
-        <div className="text-[10px] text-[var(--color-text-muted)]">{type}</div>
+        <div className="text-[11px] text-[var(--color-text-muted)]">{type}</div>
       </div>
       {hasPhotos && (
-        <div className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 text-[10px] font-black">
+        <div className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text)] text-[11px] font-black">
           <Camera className="w-3 h-3" /> {photoCount}
         </div>
       )}

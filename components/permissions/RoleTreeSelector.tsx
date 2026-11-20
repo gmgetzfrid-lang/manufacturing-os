@@ -94,8 +94,8 @@ export function RoleTreeSelector({ selected, onChange, disabled }: RoleTreeSelec
                 onClick={() => handleGroupClick(group.roles)}
               >
                  <div className={`mr-2 ${disabled ? 'opacity-50' : ''}`}>
-                    {isAll ? <CheckSquare className="w-4 h-4 text-blue-600" /> : 
-                     isSome ? <MinusSquare className="w-4 h-4 text-blue-600" /> : 
+                    {isAll ? <CheckSquare className="w-4 h-4 text-[var(--color-text-muted)]" /> : 
+                     isSome ? <MinusSquare className="w-4 h-4 text-[var(--color-text-muted)]" /> : 
                      <Square className="w-4 h-4 text-slate-300" />}
                  </div>
                  <span className="text-sm font-bold text-[var(--color-text)]">{group.name}</span>
@@ -112,12 +112,12 @@ export function RoleTreeSelector({ selected, onChange, disabled }: RoleTreeSelec
                     <div 
                       key={role} 
                       onClick={() => handleRoleClick(role)}
-                      className={`flex items-center pl-10 pr-4 py-1.5 cursor-pointer hover:bg-blue-50 transition-colors ${disabled ? 'opacity-50 pointer-events-none' : ''}`}
+                      className={`flex items-center pl-10 pr-4 py-1.5 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors ${disabled ? 'opacity-50 pointer-events-none' : ''}`}
                     >
                       <div className="mr-3">
-                        {isSelected ? <CheckSquare className="w-4 h-4 text-blue-500" /> : <Square className="w-4 h-4 text-slate-200" />}
+                        {isSelected ? <CheckSquare className="w-4 h-4 text-[var(--color-text-muted)]" /> : <Square className="w-4 h-4 text-slate-200" />}
                       </div>
-                      <span className={`text-sm ${isSelected ? 'font-semibold text-blue-900' : 'text-[var(--color-text-muted)]'}`}>{role}</span>
+                      <span className={`text-sm ${isSelected ? 'font-semibold text-[var(--color-text)]' : 'text-[var(--color-text-muted)]'}`}>{role}</span>
                     </div>
                   );
                 })}

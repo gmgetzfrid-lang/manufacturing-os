@@ -912,7 +912,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
         <div className="px-3 py-2.5 border-b border-slate-800 flex items-center gap-2 shrink-0">
           <BookOpen className="w-4 h-4 text-orange-400 shrink-0" />
           <span className="text-sm font-bold text-white truncate">Reference Book</span>
-          <span className="text-[10px] font-black bg-orange-500 text-white px-1.5 py-0.5 rounded-full">{docs.length}</span>
+          <span className="text-[11px] font-black bg-orange-500 text-white px-1.5 py-0.5 rounded-full">{docs.length}</span>
           <button onClick={() => setSidebarOpen(false)} className="ml-auto p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800" title="Hide thumbnails (B)"><PanelLeftClose className="w-4 h-4" /></button>
         </div>
         {/* Focus controls — review just the sheets you pin. */}
@@ -943,10 +943,10 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                   <PageThumb url={entry.resolvedUrl} />
                   <div className="px-2 py-1.5 bg-slate-950/90 flex items-baseline gap-2">
                     <span className="flex-1 min-w-0 text-[11px] font-mono font-bold text-slate-100 truncate">{lines[0] || `Sheet ${idx + 1}`}</span>
-                    {lines[1] && <span className="shrink-0 text-[10px] font-bold text-slate-300">{lines[1]}</span>}
+                    {lines[1] && <span className="shrink-0 text-[11px] font-bold text-slate-300">{lines[1]}</span>}
                   </div>
                 </button>
-                <div className="absolute top-1 left-1 w-4 h-4 rounded-full bg-orange-500 flex items-center justify-center text-[8px] font-black text-white shadow pointer-events-none">{idx + 1}</div>
+                <div className="absolute top-1 left-1 w-4 h-4 rounded-full bg-orange-500 flex items-center justify-center text-[11px] font-black text-white shadow pointer-events-none">{idx + 1}</div>
                 <button onClick={() => togglePick(idx)} title={isPicked ? "Remove from focus set" : "Pin to focus set"} className={`absolute top-1 right-1 p-1 rounded-md transition-opacity ${isPicked ? "text-orange-400 bg-slate-950/70" : "text-slate-200 bg-slate-950/50 opacity-60 sm:opacity-0 group-hover:opacity-100"}`}>
                   <Pin className={`w-3 h-3 ${isPicked ? "fill-orange-400" : ""}`} />
                 </button>
@@ -968,19 +968,19 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                 without eating the page. Rides just below the toolbar when it's
                 shown, slides to the very top when the toolbar hides. */}
             <div className="sticky z-10 bg-slate-900/80 backdrop-blur-sm border-y border-slate-800/80 px-4 py-1.5 flex items-center gap-3 transition-[top] duration-200" style={{ top: showChrome ? 52 : 0 }}>
-              <div className="w-5 h-5 rounded-full bg-orange-500 flex items-center justify-center text-[9px] font-black text-white shrink-0">{idx + 1}</div>
+              <div className="w-5 h-5 rounded-full bg-orange-500 flex items-center justify-center text-[11px] font-black text-white shrink-0">{idx + 1}</div>
               <span className="text-[11px] font-mono font-bold text-orange-400 shrink-0">{entry.doc.documentNumber || "-"}</span>
               <span className="text-[11px] text-slate-300 font-medium truncate">{entry.doc.title || entry.doc.name}</span>
               <div className="ml-auto flex items-center gap-2 shrink-0">
-                <span className="text-[10px] text-slate-500 hidden sm:inline">Rev {entry.doc.rev || "-"}</span>
-                <span className="text-[10px] text-slate-600 bg-slate-800 px-1.5 py-0.5 rounded hidden md:inline">{entry.doc.status || "-"}</span>
+                <span className="text-[11px] text-slate-500 hidden sm:inline">Rev {entry.doc.rev || "-"}</span>
+                <span className="text-[11px] text-slate-600 bg-slate-800 px-1.5 py-0.5 rounded hidden md:inline">{entry.doc.status || "-"}</span>
                 {isMarkedUp(entry.doc.id) && (
-                  <span className="text-[10px] font-bold text-emerald-300 inline-flex items-center gap-1"><Pen className="w-3 h-3" /> Marked up</span>
+                  <span className="text-[11px] font-bold text-emerald-300 inline-flex items-center gap-1"><Pen className="w-3 h-3" /> Marked up</span>
                 )}
                 <button
                   onClick={() => togglePick(idx)}
                   title={picked.has(entry.doc.id ?? "") ? "Remove from focus set" : "Add to focus set - review just the sheets you need"}
-                  className={`text-[10px] font-bold inline-flex items-center gap-1 px-2 py-0.5 rounded-md border transition-colors ${picked.has(entry.doc.id ?? "") ? "bg-orange-500/20 border-orange-500/50 text-orange-300" : "bg-slate-800 border-slate-700 text-slate-300 hover:text-white"}`}
+                  className={`text-[11px] font-bold inline-flex items-center gap-1 px-2 py-0.5 rounded-md border transition-colors ${picked.has(entry.doc.id ?? "") ? "bg-orange-500/20 border-orange-500/50 text-orange-300" : "bg-slate-800 border-slate-700 text-slate-300 hover:text-white"}`}
                 >
                   <Pin className={`w-3 h-3 ${picked.has(entry.doc.id ?? "") ? "fill-orange-400" : ""}`} /> {picked.has(entry.doc.id ?? "") ? "Focused" : "Focus"}
                 </button>
@@ -1075,7 +1075,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
           <div className="hidden sm:flex items-center gap-1.5 min-w-0">
             <BookOpen className="w-4 h-4 text-orange-400 shrink-0" />
             <span className="text-xs font-bold text-white truncate max-w-[140px]">Reference Book</span>
-            <span className="shrink-0 text-[10px] font-black bg-orange-500 text-white px-1.5 py-0.5 rounded-full">{docs.length}</span>
+            <span className="shrink-0 text-[11px] font-black bg-orange-500 text-white px-1.5 py-0.5 rounded-full">{docs.length}</span>
           </div>
 
           <div className="w-px h-5 bg-slate-700 hidden sm:block" />
@@ -1112,11 +1112,11 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                 className="bg-transparent text-xs font-medium text-white placeholder:text-slate-400 outline-none w-full min-w-0"
                 title="Search anything - equipment tag, sheet #, document name or any metadata. Typo-tolerant (P-34 = p34). Enter jumps; + pins a sheet to your focus set."
               />
-              {searchMsg && <span className={`text-[10px] font-bold shrink-0 ${searchMsg === "No match" ? "text-rose-400" : "text-emerald-400"}`}>{searchMsg}</span>}
+              {searchMsg && <span className={`text-[11px] font-bold shrink-0 ${searchMsg === "No match" ? "text-rose-400" : "text-emerald-400"}`}>{searchMsg}</span>}
               {search ? (
                 <button onMouseDown={(e) => { e.preventDefault(); setSearch(""); setSearchMsg(null); setShowSuggest(false); searchInputRef.current?.focus(); }} title="Clear" className="shrink-0 p-0.5 text-slate-400 hover:text-white"><X className="w-3.5 h-3.5" /></button>
               ) : (
-                <kbd className="hidden lg:inline shrink-0 text-[9px] font-bold text-slate-400 border border-slate-600 rounded px-1 py-px">↵</kbd>
+                <kbd className="hidden lg:inline shrink-0 text-[11px] font-bold text-slate-400 border border-slate-600 rounded px-1 py-px">↵</kbd>
               )}
             </div>
 
@@ -1134,9 +1134,9 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                       >
                         <div className="flex items-center gap-2 text-xs">
                           <span className="font-mono font-bold text-white truncate">{e?.doc.documentNumber || `Sheet ${r.idx + 1}`}</span>
-                          <span className="text-[10px] text-slate-400 truncate">{e?.doc.title || e?.doc.name}</span>
+                          <span className="text-[11px] text-slate-400 truncate">{e?.doc.title || e?.doc.name}</span>
                         </div>
-                        <div className="text-[10px] text-orange-300/80 truncate">matched “{r.matched}”</div>
+                        <div className="text-[11px] text-orange-300/80 truncate">matched “{r.matched}”</div>
                       </button>
                       <button
                         onMouseDown={(ev) => { ev.preventDefault(); togglePick(r.idx); }}
@@ -1178,10 +1178,10 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                   <div className="absolute top-full right-0 mt-1 z-50 w-64 max-h-[70vh] overflow-y-auto bg-slate-900 border border-slate-700 rounded-xl shadow-2xl shadow-black/60 py-1 custom-scrollbar">
                     {collectionTags.map((g) => (
                       <div key={g.label}>
-                        <div className="px-3 pt-2 pb-1 text-[9px] font-black uppercase tracking-widest text-slate-500">{g.label}</div>
+                        <div className="px-3 pt-2 pb-1 text-[11px] font-black uppercase tracking-widest text-slate-500">{g.label}</div>
                         <div className="flex flex-wrap gap-1 px-2 pb-2">
                           {g.tags.map(([t, idx]) => (
-                            <button key={t} onClick={() => { setTagMenuOpen(false); goToSheet(idx, { flash: true }); }} title={`Sheet ${idx + 1}`} className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-800 hover:bg-orange-600 hover:text-white text-[10px] font-bold text-slate-200 border border-slate-700 transition-colors">
+                            <button key={t} onClick={() => { setTagMenuOpen(false); goToSheet(idx, { flash: true }); }} title={`Sheet ${idx + 1}`} className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-800 hover:bg-orange-600 hover:text-white text-[11px] font-bold text-slate-200 border border-slate-700 transition-colors">
                               {t}
                             </button>
                           ))}
@@ -1207,7 +1207,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
           )}
 
           {viewBadge && (
-            <span className={`hidden xl:inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold shrink-0 border ${BADGE_TONE[viewBadge.tone]}`} title="Status of the live version you're viewing. A copy you download or print is stamped separately.">
+            <span className={`hidden xl:inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-bold shrink-0 border ${BADGE_TONE[viewBadge.tone]}`} title="Status of the live version you're viewing. A copy you download or print is stamped separately.">
               {viewBadge.tone === "controlled" ? <ShieldCheck className="w-3 h-3" /> : <ShieldAlert className="w-3 h-3" />}
               {viewBadge.label}
             </span>
@@ -1229,10 +1229,10 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setExportMenu(null)} />
                 <div className="absolute top-full right-0 mt-1 z-50 w-60 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl shadow-black/60 py-1.5">
-                  <div className="px-3 pt-1 pb-1 text-[9px] font-black uppercase tracking-widest text-slate-500">Download as PDF</div>
+                  <div className="px-3 pt-1 pb-1 text-[11px] font-black uppercase tracking-widest text-slate-500">Download as PDF</div>
                   <button onClick={() => { setExportMenu(null); requestDocDownload(); }} disabled={!activeEntry?.resolvedUrl || !currentUserId || docBusy} title="The sheet you're viewing. Stamped UNCONTROLLED unless you hold its checkout." className={MENU_ITEM}><FileText className="w-3.5 h-3.5 text-slate-400" /> This sheet</button>
-                  <button onClick={() => { setExportMenu(null); requestBookDownload("pinned"); }} disabled={bookBusy || !currentUserId || pinnedReadyEntries.length === 0} title="Merge your pinned sheets into one stamped, uncontrolled PDF" className={MENU_ITEM}><Pin className="w-3.5 h-3.5 text-orange-400" /> Pinned sheets ({pinnedReadyEntries.length}) <span className="ml-auto text-[9px] text-slate-500 font-bold">UNCONTROLLED</span></button>
-                  <button onClick={() => { setExportMenu(null); requestBookDownload("all"); }} disabled={bookBusy || !currentUserId || bookReadyEntries.length === 0} title="Merge the whole collection into one stamped, uncontrolled PDF" className={MENU_ITEM}><Library className="w-3.5 h-3.5 text-orange-400" /> Whole book ({bookReadyEntries.length}) <span className="ml-auto text-[9px] text-slate-500 font-bold">UNCONTROLLED</span></button>
+                  <button onClick={() => { setExportMenu(null); requestBookDownload("pinned"); }} disabled={bookBusy || !currentUserId || pinnedReadyEntries.length === 0} title="Merge your pinned sheets into one stamped, uncontrolled PDF" className={MENU_ITEM}><Pin className="w-3.5 h-3.5 text-orange-400" /> Pinned sheets ({pinnedReadyEntries.length}) <span className="ml-auto text-[11px] text-slate-500 font-bold">UNCONTROLLED</span></button>
+                  <button onClick={() => { setExportMenu(null); requestBookDownload("all"); }} disabled={bookBusy || !currentUserId || bookReadyEntries.length === 0} title="Merge the whole collection into one stamped, uncontrolled PDF" className={MENU_ITEM}><Library className="w-3.5 h-3.5 text-orange-400" /> Whole book ({bookReadyEntries.length}) <span className="ml-auto text-[11px] text-slate-500 font-bold">UNCONTROLLED</span></button>
                 </div>
               </>
             )}
@@ -1247,10 +1247,10 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setExportMenu(null)} />
                 <div className="absolute top-full right-0 mt-1 z-50 w-60 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl shadow-black/60 py-1.5">
-                  <div className="px-3 pt-1 pb-1 text-[9px] font-black uppercase tracking-widest text-slate-500">Send to printer</div>
+                  <div className="px-3 pt-1 pb-1 text-[11px] font-black uppercase tracking-widest text-slate-500">Send to printer</div>
                   <button onClick={() => { setExportMenu(null); requestDocPrint(); }} disabled={!activeEntry?.resolvedUrl || !currentUserId || docBusy} title="The sheet you're viewing. Stamped UNCONTROLLED unless you hold its checkout." className={MENU_ITEM}><FileText className="w-3.5 h-3.5 text-slate-400" /> This sheet</button>
-                  <button onClick={() => { setExportMenu(null); requestBookPrint("pinned"); }} disabled={bookBusy || !currentUserId || pinnedReadyEntries.length === 0} title="Merge your pinned sheets into one stamped, uncontrolled PDF and print" className={MENU_ITEM}><Pin className="w-3.5 h-3.5 text-orange-400" /> Pinned sheets ({pinnedReadyEntries.length}) <span className="ml-auto text-[9px] text-slate-500 font-bold">UNCONTROLLED</span></button>
-                  <button onClick={() => { setExportMenu(null); requestBookPrint("all"); }} disabled={bookBusy || !currentUserId || bookReadyEntries.length === 0} title="Merge the whole collection into one stamped, uncontrolled PDF and print" className={MENU_ITEM}><Library className="w-3.5 h-3.5 text-orange-400" /> Whole book ({bookReadyEntries.length}) <span className="ml-auto text-[9px] text-slate-500 font-bold">UNCONTROLLED</span></button>
+                  <button onClick={() => { setExportMenu(null); requestBookPrint("pinned"); }} disabled={bookBusy || !currentUserId || pinnedReadyEntries.length === 0} title="Merge your pinned sheets into one stamped, uncontrolled PDF and print" className={MENU_ITEM}><Pin className="w-3.5 h-3.5 text-orange-400" /> Pinned sheets ({pinnedReadyEntries.length}) <span className="ml-auto text-[11px] text-slate-500 font-bold">UNCONTROLLED</span></button>
+                  <button onClick={() => { setExportMenu(null); requestBookPrint("all"); }} disabled={bookBusy || !currentUserId || bookReadyEntries.length === 0} title="Merge the whole collection into one stamped, uncontrolled PDF and print" className={MENU_ITEM}><Library className="w-3.5 h-3.5 text-orange-400" /> Whole book ({bookReadyEntries.length}) <span className="ml-auto text-[11px] text-slate-500 font-bold">UNCONTROLLED</span></button>
                 </div>
               </>
             )}

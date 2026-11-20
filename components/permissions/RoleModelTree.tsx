@@ -179,14 +179,14 @@ export default function RoleModelTree({ orgId }: { orgId: string }) {
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5">
       <div className="flex items-center gap-2 mb-1">
-        <GitBranch className="w-4 h-4 text-[var(--color-accent)]" />
+        <GitBranch className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-base font-bold text-[var(--color-text)]">Role model - who can do what</span>
       </div>
       <p className="text-xs text-[var(--color-text-muted)] mb-3">
         Generated from a code audit of every enforcement point. Two kinds of authority exist: <b>base roles</b> (set in Users) and <b>situational authority</b> (ownership, per-library grants, review rosters) that applies regardless of role.
       </p>
 
-      <Fold label={<span className="inline-flex items-center gap-1.5"><Users className="w-4 h-4 text-blue-600 dark:text-blue-400" /> Base roles</span>} count={members.length}>
+      <Fold label={<span className="inline-flex items-center gap-1.5"><Users className="w-4 h-4 text-[var(--color-text-muted)] dark:text-[var(--color-text)]" /> Base roles</span>} count={members.length}>
         {TIERS.map((tier) => (
           <Fold key={tier.tier} label={tier.tier}>
             <p className="text-[11px] text-[var(--color-text-muted)] px-1">{tier.blurb}</p>
@@ -218,7 +218,7 @@ export default function RoleModelTree({ orgId }: { orgId: string }) {
         ))}
       </Fold>
 
-      <Fold label={<span className="inline-flex items-center gap-1.5"><KeyRound className="w-4 h-4 text-violet-600 dark:text-violet-400" /> Situational authority (beyond the role field)</span>}>
+      <Fold label={<span className="inline-flex items-center gap-1.5"><KeyRound className="w-4 h-4 text-[var(--color-text-muted)] dark:text-[var(--color-text)]" /> Situational authority (beyond the role field)</span>}>
         {SITUATIONAL.map((s) => (
           <Fold key={s.title} label={<span className="text-sm">{s.title}</span>}>
             {s.body.map((b, i) => <p key={i} className="text-[11px] text-[var(--color-text)] px-1">{b}</p>)}

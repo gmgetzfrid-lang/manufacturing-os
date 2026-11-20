@@ -33,7 +33,7 @@ export default function TrialBanner() {
     label = "Your free trial has ended. Subscribe to keep using Manufacturing OS.";
   } else if (days !== null) {
     if (days <= 6) {
-      tone = "bg-orange-600 text-white";
+      tone = "bg-[var(--color-surface-2)] text-[var(--color-text)]";
       icon = <AlertTriangle className="w-4 h-4" />;
     } else if (days <= 29) {
       tone = "bg-amber-500 text-[var(--color-text)]";

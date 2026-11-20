@@ -110,7 +110,7 @@ function AiInstructionsInner() {
         subtitle="Teach the AI your site's conventions once - every extraction, import, and answer follows them from then on. Plain language; the AI reads these before every call."
         actions={canWrite ? (
           <button onClick={() => setEditing({ scope: "global", title: "", body: "", enabled: true })}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-sm font-black shadow">
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-black shadow">
             <Plus className="w-4 h-4" /> New instruction
           </button>
         ) : undefined}
@@ -133,8 +133,8 @@ function AiInstructionsInner() {
           <Loader2 className="w-5 h-5 animate-spin inline" /> Loading…
         </div>
       ) : rows.length === 0 ? (
-        <div className="rounded-2xl border-2 border-dashed border-violet-200 bg-violet-50/40 p-8 text-center">
-          <Sparkles className="w-8 h-8 text-violet-500 mx-auto mb-2" />
+        <div className="rounded-2xl border-2 border-dashed border-[var(--color-border)] bg-[var(--color-surface-2)] p-8 text-center">
+          <Sparkles className="w-8 h-8 text-[var(--color-text-muted)] mx-auto mb-2" />
           <div className="text-sm font-black text-[var(--color-text)]">Nothing taught yet</div>
           <p className="text-xs text-[var(--color-text-muted)] mt-1 max-w-md mx-auto">
             Every site has conventions a generic AI can&apos;t guess. Write them here in plain
@@ -149,7 +149,7 @@ function AiInstructionsInner() {
             if (inScope.length === 0) return null;
             return (
               <div key={scope}>
-                <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1.5">
+                <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1.5">
                   {SCOPE_LABELS[scope]}
                 </div>
                 <div className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] bg-[var(--color-surface)]">
@@ -159,7 +159,7 @@ function AiInstructionsInner() {
                         <div className="text-sm font-black text-[var(--color-text)]">{r.title}</div>
                         <div className="text-xs text-[var(--color-text-muted)] whitespace-pre-wrap">{r.body}</div>
                         {r.created_by_name && (
-                          <div className="text-[10px] text-[var(--color-text-faint)] mt-0.5">taught by {r.created_by_name}</div>
+                          <div className="text-[11px] text-[var(--color-text-faint)] mt-0.5">taught by {r.created_by_name}</div>
                         )}
                       </div>
                       {canWrite && (
@@ -169,7 +169,7 @@ function AiInstructionsInner() {
                             <Power className="w-3.5 h-3.5" />
                           </button>
                           <button onClick={() => setEditing(r)} title="Edit"
-                            className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-violet-700 hover:bg-violet-50">
+                            className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-accent-hover)] hover:bg-[var(--color-surface-2)]">
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
                           <button onClick={() => void remove(r)} title="Delete"
@@ -191,7 +191,7 @@ function AiInstructionsInner() {
         <div className="fixed inset-0 z-[400] bg-slate-900/60 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4" onClick={() => setEditing(null)}>
           <div onClick={(e) => e.stopPropagation()} className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl max-h-[90vh] flex flex-col">
             <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2.5">
-              <GraduationCap className="w-4 h-4 text-violet-600" />
+              <GraduationCap className="w-4 h-4 text-[var(--color-text-muted)]" />
               <div className="text-sm font-black text-[var(--color-text)] flex-1">
                 {editing.id ? "Edit instruction" : "Teach the AI"}
               </div>
@@ -201,7 +201,7 @@ function AiInstructionsInner() {
             </div>
             <div className="p-5 space-y-3 overflow-y-auto">
               <div>
-                <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Applies to</label>
+                <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Applies to</label>
                 <select value={editing.scope ?? "global"}
                   onChange={(e) => setEditing({ ...editing, scope: e.target.value as AiInstructionScope })}
                   className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]">
@@ -209,13 +209,13 @@ function AiInstructionsInner() {
                 </select>
               </div>
               <div>
-                <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Short title</label>
+                <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Short title</label>
                 <input value={editing.title ?? ""} onChange={(e) => setEditing({ ...editing, title: e.target.value })}
                   placeholder='e.g. "Transmittal numbering"' maxLength={80}
                   className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
               </div>
               <div>
-                <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">The rule, in plain language</label>
+                <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">The rule, in plain language</label>
                 <textarea value={editing.body ?? ""} onChange={(e) => setEditing({ ...editing, body: e.target.value })}
                   rows={5} maxLength={1500}
                   placeholder={'e.g. "Our equipment descriptions always use the P&ID service name, never the vendor model name."'}
@@ -226,7 +226,7 @@ function AiInstructionsInner() {
               <button onClick={() => setEditing(null)} disabled={busy}
                 className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
               <button onClick={() => void save()} disabled={busy}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-white bg-violet-600 hover:bg-violet-500 disabled:opacity-50 shadow">
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 shadow">
                 {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
                 {editing.id ? "Save" : "Teach it"}
               </button>

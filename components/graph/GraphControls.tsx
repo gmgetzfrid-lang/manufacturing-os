@@ -52,7 +52,7 @@ function Slider({ label, value, min, max, step, onChange, hint }: {
 }) {
   return (
     <label className="block">
-      <span className="flex items-center justify-between text-[10px] font-bold text-[var(--color-text-muted)]">
+      <span className="flex items-center justify-between text-[11px] font-bold text-[var(--color-text-muted)]">
         {label}
         <span className="font-mono text-[var(--color-text-faint)]">{value.toFixed(step < 1 ? 2 : 0)}</span>
       </span>
@@ -61,7 +61,7 @@ function Slider({ label, value, min, max, step, onChange, hint }: {
         onChange={(e) => onChange(Number(e.target.value))}
         className="w-full accent-violet-600 h-1.5"
       />
-      {hint && <span className="block text-[9px] text-[var(--color-text-faint)] -mt-0.5">{hint}</span>}
+      {hint && <span className="block text-[11px] text-[var(--color-text-faint)] -mt-0.5">{hint}</span>}
     </label>
   );
 }
@@ -75,7 +75,7 @@ function Toggle({ label, checked, onChange, hint }: {
         className="mt-0.5 accent-violet-600" />
       <span className="min-w-0">
         <span className="block text-[11px] font-bold text-[var(--color-text)]">{label}</span>
-        {hint && <span className="block text-[9px] text-[var(--color-text-faint)]">{hint}</span>}
+        {hint && <span className="block text-[11px] text-[var(--color-text-faint)]">{hint}</span>}
       </span>
     </label>
   );
@@ -120,19 +120,19 @@ export default function GraphControls({
         {/* 2D / 3D — the switch people will reach for first. */}
         <div className="inline-flex rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)]/90 backdrop-blur p-0.5 shadow-sm">
           <button onClick={() => onChange({ mode: "map" })} title="The estate as a tree: units, equipment, documents - same map as Documents › Graph"
-            className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-black transition-colors ${
+            className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] font-black transition-colors ${
               settings.mode === "map" ? "bg-violet-600 text-white" : "text-[var(--color-text-muted)]"
             }`}>
             <MapIcon className="w-3 h-3" /> Map
           </button>
           <button onClick={() => onChange({ mode: "2d" })}
-            className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-black transition-colors ${
+            className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] font-black transition-colors ${
               settings.mode === "2d" ? "bg-violet-600 text-white" : "text-[var(--color-text-muted)]"
             }`}>
             <Square className="w-3 h-3" /> 2D
           </button>
           <button onClick={() => onChange({ mode: "3d" })}
-            className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-black transition-colors ${
+            className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] font-black transition-colors ${
               settings.mode === "3d" ? "bg-violet-600 text-white" : "text-[var(--color-text-muted)]"
             }`}>
             <Boxes className="w-3 h-3" /> 3D
@@ -142,7 +142,7 @@ export default function GraphControls({
           <div className="inline-flex rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)]/90 backdrop-blur p-0.5 shadow-sm" title="Estate: the Map's tree as a globe, each operating area its own cluster, nothing moves. Web: every link pulling freely.">
             {(["estate", "web"] as const).map((k) => (
               <button key={k} onClick={() => onChange({ layout3d: k })}
-                className={`px-2 py-1 rounded-full text-[10px] font-black ${settings.layout3d === k ? "bg-violet-600 text-white" : "text-[var(--color-text-muted)]"}`}>
+                className={`px-2 py-1 rounded-full text-[11px] font-black ${settings.layout3d === k ? "bg-violet-600 text-white" : "text-[var(--color-text-muted)]"}`}>
                 {k === "estate" ? "Estate" : "Web"}
               </button>
             ))}
@@ -168,7 +168,7 @@ export default function GraphControls({
                       onChange={() => toggleType(t)} className="accent-violet-600" />
                     <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: NODE_COLORS[t] }} />
                     <span className="flex-1 text-[11px] font-bold text-[var(--color-text)]">{TYPE_LABELS[t]}</span>
-                    <span className="text-[10px] font-mono text-[var(--color-text-faint)]">{counts[t]}</span>
+                    <span className="text-[11px] font-mono text-[var(--color-text-faint)]">{counts[t]}</span>
                   </label>
                 )
               ))}
@@ -190,7 +190,7 @@ export default function GraphControls({
           </Section>
 
           <Section icon={Palette} title="Groups">
-            <p className="text-[9px] text-[var(--color-text-faint)]">
+            <p className="text-[11px] text-[var(--color-text-faint)]">
               Paint your own meaning onto the map. Matches a node&apos;s name, or use
               <code className="mx-1 px-1 rounded bg-[var(--color-surface-2)]">type:asset</code>
               to colour a whole kind. First match wins.
@@ -214,7 +214,7 @@ export default function GraphControls({
               </div>
             ))}
             <button onClick={addGroup}
-              className="inline-flex items-center gap-1 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-violet-700 border border-dashed border-[var(--color-border-strong)] rounded-lg px-2 py-1">
+              className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-violet-700 border border-dashed border-[var(--color-border-strong)] rounded-lg px-2 py-1">
               <Plus className="w-3 h-3" /> Add colour group
             </button>
           </Section>
@@ -259,11 +259,11 @@ export default function GraphControls({
 
           <div className="p-2">
             <button onClick={onReset}
-              className="w-full inline-flex items-center justify-center gap-1.5 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-[var(--color-border-strong)] rounded-lg py-1.5">
+              className="w-full inline-flex items-center justify-center gap-1.5 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-[var(--color-border-strong)] rounded-lg py-1.5">
               <RotateCcw className="w-3 h-3" /> Reset to defaults
             </button>
             {JSON.stringify(settings) === JSON.stringify(DEFAULT_GRAPH_SETTINGS) && (
-              <div className="text-[9px] text-center text-[var(--color-text-faint)] pt-1">Settings are saved per workspace.</div>
+              <div className="text-[11px] text-center text-[var(--color-text-faint)] pt-1">Settings are saved per workspace.</div>
             )}
           </div>
         </div>

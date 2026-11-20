@@ -135,7 +135,7 @@ export default function AssetPhotoCarousel({
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-base font-black text-white truncate">{asset.tag}</span>
               {assetType && (
-                <span className="text-[10px] font-black uppercase tracking-widest bg-white/15 text-white/90 px-1.5 py-0.5 rounded">
+                <span className="text-[11px] font-black uppercase tracking-widest bg-white/15 text-white/90 px-1.5 py-0.5 rounded">
                   {assetType.name}
                 </span>
               )}
@@ -289,7 +289,7 @@ export default function AssetPhotoCarousel({
                   }`}
                 >
                   <SignedImg path={p.file_url} alt="" className="w-full h-full object-cover" />
-                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1 py-0.5 flex items-center justify-between">
+                  <div className="absolute bottom-0 left-0 right-0 px-1 py-0.5 flex items-center justify-between bg-[var(--color-surface-2)]">
                     <span className={`w-1.5 h-1.5 rounded-full ${
                       pAge.category === "fresh" ? "bg-emerald-400" :
                       pAge.category === "aging" ? "bg-amber-400" :
@@ -297,7 +297,7 @@ export default function AssetPhotoCarousel({
                       "bg-slate-400"
                     }`} />
                     {p.status !== "current" && (
-                      <span className="text-[8px] font-black uppercase text-white">
+                      <span className="text-[11px] font-black uppercase text-white">
                         {p.status === "needs_verification" ? "Verify" : "Old"}
                       </span>
                     )}

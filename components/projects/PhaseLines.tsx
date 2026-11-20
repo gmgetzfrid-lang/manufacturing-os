@@ -72,7 +72,7 @@ export default function PhaseLines({ rows, print }: { rows: PhaseStanding[]; pri
               {pick ? (
                 <button type="button" onClick={pick} title={`Open ${s.name}`} className="group flex w-full items-center gap-2 px-3 py-2.5 text-left hover:bg-[var(--color-surface-2)] transition-colors">
                   <span className="min-w-0 flex-1">{body}</span>
-                  <ChevronRight className="w-4 h-4 shrink-0 text-[var(--color-text-faint)] group-hover:text-[var(--color-accent)]" />
+                  <ChevronRight className="w-4 h-4 shrink-0 text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)]" />
                 </button>
               ) : <div className="px-3 py-2.5">{body}</div>}
             </li>

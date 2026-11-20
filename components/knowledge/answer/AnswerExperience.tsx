@@ -84,7 +84,7 @@ function ProofQuote({ c, context, className }: { c: KnowledgeCitation; context?:
           <span className="text-[var(--color-text-muted)]">{win.after}{win.clippedEnd ? " …" : ""}</span>
         </>
       ) : segs.map((sg, i) => sg.hit
-        ? <mark key={i} className="rounded px-0.5 bg-orange-200 dark:bg-orange-800/70 text-inherit font-bold">{sg.text}</mark>
+        ? <mark key={i} className="rounded px-0.5 bg-[var(--color-border)] dark:bg-[var(--color-surface-2)] text-inherit font-bold">{sg.text}</mark>
         : <React.Fragment key={i}>{sg.text}</React.Fragment>)}
     </blockquote>
   );
@@ -138,15 +138,15 @@ function ProofCard({ proof, onClose, onOpenPage }: {
       <div className="fixed inset-0 z-40" onClick={onClose} />
       <div
         role="dialog" aria-label="Source proof"
-        className="fixed z-50 animate-pop rounded-2xl border-2 border-orange-300 dark:border-orange-800 bg-[var(--color-surface)] shadow-2xl overflow-hidden"
+        className="fixed z-50 animate-pop rounded-2xl border-2 border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl overflow-hidden"
         style={{ left: proof.x, width: Math.min(PROOF_W, typeof window !== "undefined" ? window.innerWidth - 24 : PROOF_W), ...(proof.up ? { bottom: proof.y } : { top: proof.y }) }}
       >
-        <div className="h-1 bg-gradient-to-r from-orange-500 via-amber-500 to-orange-500" />
+        <div className="h-1 bg-[var(--color-text)]" />
         <div className="px-4 py-3">
           <div className="flex items-center gap-2 mb-2">
-            <FileText className="w-3.5 h-3.5 text-orange-600 shrink-0" />
+            <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
             <span className="text-xs font-black text-[var(--color-text)] truncate">{c.documentName ?? "Document"}</span>
-            <span className="text-[10px] font-bold text-[var(--color-text-muted)] shrink-0">
+            <span className="text-[11px] font-bold text-[var(--color-text-muted)] shrink-0">
               {pastJob ? "Past job" : <>p.{c.page}{c.section ? ` · ${c.section.slice(0, 30)}` : ""}</>}
             </span>
             <button onClick={onClose} aria-label="Close proof"
@@ -158,7 +158,7 @@ function ProofCard({ proof, onClose, onOpenPage }: {
             <div className="mb-1.5 text-[12px] font-black text-[var(--color-text)]">{c.claim}</div>
           )}
           <ProofQuote c={c} context={context}
-            className="border-l-2 border-orange-400 pl-3 py-1 text-[12px] leading-relaxed text-[var(--color-text)] whitespace-pre-wrap max-h-52 overflow-y-auto" />
+            className="border-l-2 border-[var(--color-border-strong)] pl-3 py-1 text-[12px] leading-relaxed text-[var(--color-text)] whitespace-pre-wrap max-h-52 overflow-y-auto" />
           <div className="mt-2.5 flex items-center gap-2 flex-wrap">
             {pastJob ? (
               <a href={c.url} className="inline-flex items-center gap-1.5 text-[11px] font-black px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm hover:bg-[var(--color-accent-hover)] transition-colors">
@@ -171,11 +171,11 @@ function ProofCard({ proof, onClose, onOpenPage }: {
             </button>
             )}
             {c.highlight ? (
-              <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1">
+              <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1">
                 <CheckCircle2 className="w-3 h-3" /> Exact wording from the page
               </span>
             ) : hits > 0 && (
-              <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1">
+              <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1">
                 <CheckCircle2 className="w-3 h-3" /> {hits} claim term{hits === 1 ? "" : "s"} found in this passage
               </span>
             )}
@@ -216,7 +216,7 @@ export function InlineAnswer({ text, citations, onCite }: {
   const linkFor = (s: string) => links.find((d) => d.mention === s);
   const docChip = (d: DocLink, label: string, key: number) => (
     <button key={key} onClick={() => open?.(d)} title={`Open ${d.name} · p.${d.page}`}
-      className="inline-flex items-center gap-1 align-baseline mx-0.5 px-1.5 py-0.5 rounded-md border border-orange-300 dark:border-orange-800 bg-orange-50 dark:bg-orange-950/40 text-orange-800 dark:text-orange-200 font-bold text-[0.85em] leading-none hover:bg-orange-100 dark:hover:bg-orange-900/50 hover:border-orange-500 transition-colors cursor-pointer">
+      className="inline-flex items-center gap-1 align-baseline mx-0.5 px-1.5 py-0.5 rounded-md border border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)] font-bold text-[0.85em] leading-none hover:bg-[var(--color-surface-2)] dark:hover:bg-[var(--color-surface-2)] hover:border-[var(--color-accent)] transition-colors cursor-pointer">
       <FileText className="w-3 h-3 shrink-0" />{label}
     </button>
   );
@@ -242,7 +242,7 @@ export function InlineAnswer({ text, citations, onCite }: {
                 // Minimal superscript anchor, not a filled badge: a solid
                 // chip on every line cluttered the reading flow (design
                 // review). p-1.5/-m-1 keeps a real tap target.
-                className="align-super text-[10px] font-black text-orange-600 dark:text-orange-400 underline decoration-dotted decoration-orange-400/70 underline-offset-2 hover:text-orange-800 dark:hover:text-orange-300 p-1.5 -m-1 cursor-pointer">
+                className="align-super text-[11px] font-black text-[var(--color-accent)] dark:text-[var(--color-text)] underline decoration-dotted decoration-[var(--color-border-strong)] underline-offset-2 hover:text-[var(--color-accent-hover)] dark:hover:text-[var(--color-text)] p-1.5 -m-1 cursor-pointer">
                 {cite[1]}
               </button>
             );
@@ -253,17 +253,17 @@ export function InlineAnswer({ text, citations, onCite }: {
             return (
               <button key={i} onClick={(e) => { if (showProof) showProof(c, text, e.currentTarget.getBoundingClientRect()); }}
                 title={c.url.startsWith("/") ? `From a past job: ${c.title ?? ""}` : `From the web: ${c.title ?? c.url}`}
-                className="align-super text-[10px] font-black text-sky-700 dark:text-sky-400 underline decoration-dotted decoration-sky-400/70 underline-offset-2 hover:text-sky-900 p-1.5 -m-1 cursor-pointer">
+                className="align-super text-[11px] font-black text-[var(--color-accent)] dark:text-[var(--color-text)] underline decoration-dotted decoration-[var(--color-border-strong)] underline-offset-2 hover:text-[var(--color-accent-hover)] p-1.5 -m-1 cursor-pointer">
                 {cite[1]}
               </button>
             );
           }
-          return <span key={i} className="align-super text-[10px] font-black text-orange-700/80">{cite[1]}</span>;
+          return <span key={i} className="align-super text-[11px] font-black text-[var(--color-text)]">{cite[1]}</span>;
         }
         if (/^\(not from your library/i.test(part)) {
           return (
             <span key={i} title="General engineering knowledge or a code that isn't in this library - verify before relying on it"
-              className="inline-block align-baseline mx-0.5 px-1.5 rounded font-mono text-[10.5px] font-bold bg-sky-100 dark:bg-sky-950/50 text-sky-800 dark:text-sky-300 whitespace-nowrap">
+              className="inline-block align-baseline mx-0.5 px-1.5 rounded font-mono text-[11px] font-bold bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)] whitespace-nowrap">
               not from your library
             </span>
           );
@@ -286,7 +286,7 @@ export function InlineAnswer({ text, citations, onCite }: {
         return <React.Fragment key={i}>{part}</React.Fragment>;
         })();
         return sep
-          ? <React.Fragment key={i}><span className="align-super text-[10px] text-orange-600/60">,</span>{node}</React.Fragment>
+          ? <React.Fragment key={i}><span className="align-super text-[11px] text-[var(--color-text)]">,</span>{node}</React.Fragment>
           : node;
       })}
     </>
@@ -301,7 +301,7 @@ function ImportantCallout({ text, citations, onCite }: {
   onCite: (c: KnowledgeCitation) => void;
 }) {
   return (
-    <div className="flex items-start gap-2.5 rounded-xl border-2 border-amber-400 dark:border-amber-600 bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/40 dark:to-orange-950/30 px-4 py-3 shadow-sm">
+    <div className="flex items-start gap-2.5 rounded-xl border-2 border-amber-400 dark:border-amber-600 px-4 py-3 shadow-sm bg-[var(--color-surface-2)]">
       <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
       <span className="text-[15px] font-bold text-amber-900 dark:text-amber-200 leading-snug">
         <InlineAnswer text={text} citations={citations} onCite={onCite} />
@@ -314,9 +314,9 @@ function ImportantCallout({ text, citations, onCite }: {
  *  how the eye tells "Joint type" from "Alignment" from "Hold points" at a
  *  glance. Full class strings (Tailwind can't build them dynamically). */
 const SECTION_ACCENTS = [
-  { band: "bg-orange-100/80 dark:bg-orange-950/50 border border-orange-200 dark:border-orange-900", text: "text-orange-950 dark:text-orange-200", bar: "bg-orange-600", pill: "bg-orange-600 text-white", num: "bg-orange-600 text-white border-transparent", hover: "hover:border-orange-300 dark:hover:border-orange-800" },
-  { band: "bg-violet-100/80 dark:bg-violet-950/50 border border-violet-200 dark:border-violet-900", text: "text-violet-950 dark:text-violet-200", bar: "bg-violet-600", pill: "bg-violet-600 text-white", num: "bg-violet-600 text-white border-transparent", hover: "hover:border-violet-300 dark:hover:border-violet-800" },
-  { band: "bg-sky-100/80 dark:bg-sky-950/50 border border-sky-200 dark:border-sky-900", text: "text-sky-950 dark:text-sky-200", bar: "bg-sky-600", pill: "bg-sky-600 text-white", num: "bg-sky-600 text-white border-transparent", hover: "hover:border-sky-300 dark:hover:border-sky-800" },
+  { band: "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] border border-[var(--color-border)] dark:border-[var(--color-border)]", text: "text-[var(--color-text-muted)] dark:text-[var(--color-text)]", bar: "bg-[var(--color-text-muted)]", pill: "bg-[var(--color-surface-2)] text-[var(--color-text)]", num: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-transparent", hover: "hover:border-[var(--color-border)] dark:hover:border-[var(--color-border)]" },
+  { band: "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] border border-[var(--color-border)] dark:border-[var(--color-border)]", text: "text-[var(--color-text-muted)] dark:text-[var(--color-text)]", bar: "bg-[var(--color-text-muted)]", pill: "bg-[var(--color-surface-2)] text-[var(--color-text)]", num: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-transparent", hover: "hover:border-[var(--color-border)] dark:hover:border-[var(--color-border)]" },
+  { band: "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] border border-[var(--color-border)] dark:border-[var(--color-border)]", text: "text-[var(--color-text-muted)] dark:text-[var(--color-text)]", bar: "bg-[var(--color-text-muted)]", pill: "bg-[var(--color-surface-2)] text-[var(--color-text)]", num: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-transparent", hover: "hover:border-[var(--color-border)] dark:hover:border-[var(--color-border)]" },
   { band: "bg-emerald-100/80 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-900", text: "text-emerald-950 dark:text-emerald-200", bar: "bg-emerald-600", pill: "bg-emerald-600 text-white", num: "bg-emerald-600 text-white border-transparent", hover: "hover:border-emerald-300 dark:hover:border-emerald-800" },
   { band: "bg-rose-100/80 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900", text: "text-rose-950 dark:text-rose-200", bar: "bg-rose-600", pill: "bg-rose-600 text-white", num: "bg-rose-600 text-white border-transparent", hover: "hover:border-rose-300 dark:hover:border-rose-800" },
   { band: "bg-amber-100/80 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900", text: "text-amber-950 dark:text-amber-200", bar: "bg-amber-600", pill: "bg-amber-600 text-white", num: "bg-amber-600 text-white border-transparent", hover: "hover:border-amber-300 dark:hover:border-amber-800" },
@@ -339,7 +339,7 @@ function CopyChip({ value }: { value: string }) {
       title="Tap to copy"
       className={`mx-0.5 px-1.5 py-0.5 rounded-md border font-mono font-bold text-[0.92em] transition-colors cursor-pointer ${copied
         ? "bg-emerald-100 dark:bg-emerald-950/50 border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300"
-        : "bg-orange-100 dark:bg-orange-950/50 border-orange-200 dark:border-orange-900 text-orange-900 dark:text-orange-200 hover:border-orange-400"}`}
+        : "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)] hover:border-[var(--color-accent)]"}`}
     >
       {copied ? "copied ✓" : value}
     </button>
@@ -375,7 +375,7 @@ function FactCard({ n, alt, text, citations, onCite }: {
   }
   return (
     <div className={`flex items-start gap-2.5 rounded-lg px-3 py-2.5 ${alt ? "bg-[var(--color-surface-2)]/50" : ""}`}>
-      <span className="mt-1 shrink-0 w-5 text-right font-mono text-[10px] font-bold text-[var(--color-text-faint)] tabular-nums">
+      <span className="mt-1 shrink-0 w-5 text-right font-mono text-[11px] font-bold text-[var(--color-text-faint)] tabular-nums">
         {String(n).padStart(2, "0")}
       </span>
       <div className="flex-1 min-w-0">
@@ -391,8 +391,8 @@ function FactCard({ n, alt, text, citations, onCite }: {
               <button key={c.n}
                 onClick={() => onCite(c)}
                 title={`Open ${c.documentName ?? "the document"} at page ${c.page} - passage highlighted`}
-                className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1.5 sm:py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] shadow-sm hover:border-orange-400 hover:text-orange-700 dark:hover:text-orange-300 hover:bg-orange-50 dark:hover:bg-orange-950/30 active:scale-[0.98] transition-all">
-                <Eye className="w-3 h-3 shrink-0 text-orange-600" />
+                className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1.5 sm:py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] shadow-sm hover:border-[var(--color-accent)] hover:text-[var(--color-text)] dark:hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] dark:hover:bg-[var(--color-surface-2)] active:scale-[0.98] transition-all">
+                <Eye className="w-3 h-3 shrink-0 text-[var(--color-text-muted)]" />
                 {(c.documentName ?? "Source").replace(/\.pdf$/i, "").slice(0, 26)} · p.{c.page}
               </button>
             ))}
@@ -505,7 +505,7 @@ function SectionedBlocks({ blocks, citations, onCite }: {
               <span className={`shrink-0 w-6 h-6 rounded-full ${a.bar} text-white text-[11px] font-black flex items-center justify-center shadow-sm ring-2 ring-[var(--color-surface)] transition-transform duration-200 group-hover/step:scale-110`}>
                 {step}
               </span>
-              <span className="text-[16px] sm:text-[17px] font-black tracking-tight leading-tight text-[var(--color-text)] group-hover/step:text-[var(--color-accent)] transition-colors">{sec.label}</span>
+              <span className="text-[16px] sm:text-[17px] font-black tracking-tight leading-tight text-[var(--color-text)] group-hover/step:text-[var(--color-text)] transition-colors">{sec.label}</span>
               {facts > 0 && <span className="shrink-0 text-[11px] font-bold text-[var(--color-text-faint)]">· {facts} {facts === 1 ? "fact" : "facts"}</span>}
               <span className="flex-1 h-px bg-[var(--color-border)]/70" />
               <ChevronDown className={`w-4 h-4 text-[var(--color-text-faint)] shrink-0 transition-transform duration-200 ${open ? "" : "-rotate-90"}`} />
@@ -542,8 +542,8 @@ export function AnswerView({ answer, citations, onCite }: {
   return (
     <div className="space-y-2.5">
       {hero && heroV && (
-        <div className="rounded-xl border-l-4 border-orange-500 bg-orange-50 dark:bg-orange-950/30 px-4 py-3">
-          <div className="text-[9px] font-black uppercase tracking-[0.18em] text-orange-600 mb-1">Answer</div>
+        <div className="rounded-xl border-l-4 border-[var(--color-border-strong)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] px-4 py-3">
+          <div className="text-[11px] font-black uppercase tracking-[0.18em] text-[var(--color-text)] mb-1">Answer</div>
           {heroV.verdict && <div><VerdictBadge verdict={heroV.verdict} /></div>}
           <div className="text-base font-bold text-[var(--color-text)] leading-snug">
             <InlineAnswer text={heroV.text} citations={citations} onCite={onCite} />
@@ -583,7 +583,7 @@ export function AskProgress() {
               {state === "done"
                 ? <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                 : state === "active"
-                  ? <Loader2 className="w-4 h-4 text-orange-600 animate-spin shrink-0" />
+                  ? <Loader2 className="w-4 h-4 text-[var(--color-text-muted)] animate-spin shrink-0" />
                   : <Icon className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />}
               <span className={state === "active" ? "font-black text-[var(--color-text)]" : "font-bold text-[var(--color-text-muted)]"}>
                 {s.label}{state === "active" ? "…" : ""}
@@ -613,9 +613,9 @@ export function ClarifyCard({ prompt, options, onAnswer }: {
     });
   };
   return (
-    <div className="mt-4 rounded-2xl border-2 border-sky-300 dark:border-sky-800 bg-sky-50/60 dark:bg-sky-950/20 p-4 animate-rise">
+    <div className="mt-4 rounded-2xl border-2 border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] p-4 animate-rise">
       <div className="flex items-start gap-2.5">
-        <div className="w-7 h-7 rounded-lg bg-sky-600 flex items-center justify-center shrink-0">
+        <div className="w-7 h-7 rounded-lg bg-[var(--color-text-muted)] flex items-center justify-center shrink-0">
           <Sparkles className="w-3.5 h-3.5 text-white" />
         </div>
         <div className="min-w-0 flex-1">
@@ -626,8 +626,8 @@ export function ClarifyCard({ prompt, options, onAnswer }: {
               <button key={o} type="button" onClick={() => toggle(o)}
                 className={`text-[11px] font-black px-2.5 py-1.5 rounded-lg border transition-colors ${
                   selected.has(o)
-                    ? "border-sky-600 bg-sky-600 text-white"
-                    : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-sky-400"}`}>
+                    ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]"
+                    : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-[var(--color-border-strong)]"}`}>
                 {o}
               </button>
             ))}
@@ -655,9 +655,9 @@ export function NeedCard({ prompt, onProvide }: {
 }) {
   const [value, setValue] = useState("");
   return (
-    <div className="mt-4 rounded-2xl border-2 border-indigo-300 dark:border-indigo-800 bg-indigo-50/60 dark:bg-indigo-950/20 p-4 animate-rise">
+    <div className="mt-4 rounded-2xl border-2 border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] p-4 animate-rise">
       <div className="flex items-start gap-2.5">
-        <div className="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center shrink-0">
+        <div className="w-7 h-7 rounded-lg bg-[var(--color-text-muted)] flex items-center justify-center shrink-0">
           <Sparkles className="w-3.5 h-3.5 text-white" />
         </div>
         <div className="min-w-0 flex-1">
@@ -691,7 +691,7 @@ export function CopyButton({ text, label, onDark }: { text: string; label: strin
         });
       }}
       title={label}
-      className={`inline-flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-lg border transition-colors ${onDark
+      className={`inline-flex items-center gap-1 text-[11px] font-black px-2 py-1 rounded-lg border transition-colors ${onDark
         ? "border-white/25 text-slate-300 hover:text-white hover:bg-white/10"
         : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
       {copied === true ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />} {copied === true ? "Copied" : copied === "failed" ? "Copy blocked" : label}
@@ -712,16 +712,16 @@ export function SourceCard({ citation, onOpen, delay }: {
   const [expanded, setExpanded] = useState(false);
   const c = citation;
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden hover:border-orange-300 dark:hover:border-orange-800 transition-all animate-rise"
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden hover:border-[var(--color-border)] dark:hover:border-[var(--color-border)] transition-all animate-rise"
       style={{ animationDelay: `${delay}ms` }}>
       <button onClick={() => setExpanded((e) => !e)}
         className="w-full px-3 py-2 flex items-center gap-2.5 text-left hover:bg-[var(--color-surface-2)]/50 transition-colors">
-        <span className="shrink-0 w-5.5 h-5.5 min-w-[1.375rem] min-h-[1.375rem] rounded-md bg-orange-600 text-white text-[10px] font-black flex items-center justify-center">{c.n}</span>
+        <span className="shrink-0 w-5.5 h-5.5 min-w-[1.375rem] min-h-[1.375rem] rounded-md bg-[var(--color-surface-2)] text-[var(--color-text)] text-[11px] font-black flex items-center justify-center">{c.n}</span>
         <span className="text-xs font-black text-[var(--color-text)] truncate shrink-0 max-w-[38%]">
           {(c.documentName ?? "Document").replace(/\.pdf$/i, "")}
         </span>
         {c.tier && (
-          <span className={`shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded border truncate max-w-36 ${
+          <span className={`shrink-0 text-[11px] font-black px-1.5 py-0.5 rounded border truncate max-w-36 ${
             c.tier === "governing"
               ? "bg-emerald-100 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800"
               : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]"}`}
@@ -730,11 +730,11 @@ export function SourceCard({ citation, onOpen, delay }: {
           </span>
         )}
         {c.section && (
-          <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-orange-100 dark:bg-orange-950/50 text-orange-800 dark:text-orange-300 border border-orange-200 dark:border-orange-900 truncate">
+          <span className="text-[11px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)] border border-[var(--color-border)] dark:border-[var(--color-border)] truncate">
             {c.section}
           </span>
         )}
-        <span className="shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border border-[var(--color-border)]">
+        <span className="shrink-0 text-[11px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border border-[var(--color-border)]">
           p.{c.page}
         </span>
         <ChevronDown className={`ml-auto shrink-0 w-3.5 h-3.5 text-[var(--color-text-muted)] transition-transform ${expanded ? "rotate-180" : ""}`} />
@@ -742,15 +742,15 @@ export function SourceCard({ citation, onOpen, delay }: {
       {expanded && (
         <div className="px-3 pb-3 pt-1 border-t border-[var(--color-border)] animate-rise">
           <ProofQuote c={c}
-            className="border-l-2 border-orange-400 pl-3 py-1 text-[11px] leading-relaxed text-[var(--color-text)] whitespace-pre-wrap max-h-64 overflow-y-auto" />
+            className="border-l-2 border-[var(--color-border-strong)] pl-3 py-1 text-[11px] leading-relaxed text-[var(--color-text)] whitespace-pre-wrap max-h-64 overflow-y-auto" />
           <div className="mt-2 flex items-center gap-2">
             <button onClick={() => onOpen(c)}
-              className="inline-flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] transition-colors">
+              className="inline-flex items-center gap-1.5 text-[11px] font-black px-2.5 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] transition-colors">
               <ExternalLink className="w-3 h-3" /> View highlighted page
             </button>
             {c.quote && <CopyButton text={referencedQuote(c)} label="Copy quote" />}
             {c.tier && c.libraryName && (
-              <span className="ml-auto text-[9px] text-[var(--color-text-muted)] font-bold">{c.libraryName}</span>
+              <span className="ml-auto text-[11px] text-[var(--color-text-muted)] font-bold">{c.libraryName}</span>
             )}
           </div>
         </div>
@@ -774,14 +774,14 @@ function ProofItem({ c, onOpen, open, onToggle, flash, domId }: {
   return (
     <div id={domId}
       className={`rounded-xl border bg-[var(--color-surface)] overflow-hidden scroll-mt-24 transition-shadow duration-300 ${flash
-        ? "border-orange-500 shadow-[0_0_0_3px_rgba(249,115,22,0.25)]"
+        ? "border-[var(--color-border-strong)] shadow-[0_0_0_3px_rgba(249,115,22,0.25)]"
         : "border-[var(--color-border)]"}`}>
       <button onClick={onToggle} aria-expanded={open}
         className="w-full px-3 py-2.5 grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2.5 text-left hover:bg-[var(--color-surface-2)]/50 transition-colors">
-        <span className="mt-0.5 min-w-[1.375rem] h-[1.375rem] px-1 rounded-md bg-orange-100 dark:bg-orange-950/60 text-orange-700 dark:text-orange-300 font-mono text-[11px] font-bold flex items-center justify-center">{c.n}</span>
+        <span className="mt-0.5 min-w-[1.375rem] h-[1.375rem] px-1 rounded-md bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)] font-mono text-[11px] font-bold flex items-center justify-center">{c.n}</span>
         <span className="min-w-0">
           <span className="block text-[13px] font-bold text-[var(--color-text)] leading-snug">{c.claim || doc}</span>
-          <span className="block mt-0.5 font-mono text-[10px] text-[var(--color-text-muted)] truncate">
+          <span className="block mt-0.5 font-mono text-[11px] text-[var(--color-text-muted)] truncate">
             {c.claim ? `${doc} · ` : ""}{c.section ? `${c.section.slice(0, 36)} · ` : ""}p.{c.page}
           </span>
         </span>
@@ -793,8 +793,8 @@ function ProofItem({ c, onOpen, open, onToggle, flash, domId }: {
             className="border-l-[3px] border-[var(--color-border)] bg-[var(--color-surface-2)]/50 rounded-r-md pl-3 pr-2 py-1.5 text-[12.5px] leading-relaxed text-[var(--color-text)] whitespace-pre-wrap max-h-56 overflow-y-auto" />
           <div className="flex items-center gap-2 flex-wrap text-[11px]">
             <button onClick={() => onOpen(c)}
-              className="inline-flex items-center gap-1.5 font-bold px-2.5 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-orange-400 transition-colors">
-              <Eye className="w-3 h-3 text-orange-600" /> Open p.{c.page}{c.highlight ? " at these words" : ""}
+              className="inline-flex items-center gap-1.5 font-bold px-2.5 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-[var(--color-accent)] transition-colors">
+              <Eye className="w-3 h-3 text-[var(--color-text-muted)]" /> Open p.{c.page}{c.highlight ? " at these words" : ""}
             </button>
             {(c.highlight || c.quote) && <CopyButton text={referencedQuote(c)} label="Copy quote" />}
             {!c.highlight && c.quote && (
@@ -830,7 +830,7 @@ function ProofTrail({ citations, onOpen, openSet, onToggle, onShowRelated, showR
       flash={flashN === c.n} domId={`${idPrefix}-${c.n}`} />
   );
   const tierHead = (label: string, dot: string, count: number) => (
-    <div className="flex items-center gap-2 font-mono text-[10.5px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+    <div className="flex items-center gap-2 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
       <span className={`w-2 h-2 rounded-full ${dot}`} />{label}
       <span className="text-[var(--color-text-faint)]">{count}</span>
     </div>
@@ -841,7 +841,7 @@ function ProofTrail({ citations, onOpen, openSet, onToggle, onShowRelated, showR
   return (
     <div className="space-y-4">
       {!hasRoles && (
-        <div className="space-y-2">{tierHead("Sources", "bg-orange-500", citations.length)}{citations.map(item)}</div>
+        <div className="space-y-2">{tierHead("Sources", "bg-[var(--color-text-muted)]", citations.length)}{citations.map(item)}</div>
       )}
       {decides.length > 0 && (
         <div className="space-y-2">{tierHead("Decides the answer", "bg-emerald-500", decides.length)}{decides.map(item)}</div>
@@ -852,7 +852,7 @@ function ProofTrail({ citations, onOpen, openSet, onToggle, onShowRelated, showR
       {related.length > 0 && (
         <div className="space-y-2">
           <button onClick={() => onShowRelated(!showRelated)} aria-expanded={showRelated}
-            className="w-full flex items-center gap-2 font-mono text-[10.5px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+            className="w-full flex items-center gap-2 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
             <span className="w-2 h-2 rounded-full bg-slate-400" />
             {decides.length + limits.length > 0 ? "Related, not needed for the answer" : "Sources"}
             <span className="text-[var(--color-text-faint)]">{related.length}</span>
@@ -873,7 +873,7 @@ const VERDICT_BOX: Record<Verdict | "none", string> = {
   complies: "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800",
   fails: "bg-rose-50 dark:bg-rose-950/30 border-rose-300 dark:border-rose-800",
   undetermined: "bg-slate-50 dark:bg-slate-900/40 border-slate-300 dark:border-slate-700",
-  none: "bg-orange-50/70 dark:bg-orange-950/20 border-orange-200 dark:border-orange-900",
+  none: "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] border-[var(--color-border)] dark:border-[var(--color-border)]",
 };
 
 /** "Answering for" — the AI's reading of the question, as chips. A dashed
@@ -896,17 +896,17 @@ function AnsweringFor({ chips, onCorrect }: { chips: string[]; onCorrect?: (valu
           onSubmit={(e) => { e.preventDefault(); if (value.trim()) { onCorrect?.(value.trim()); setEditing(null); } }}>
           <input id={`af-${i}`} autoFocus value={value} onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Escape") setEditing(null); }}
-            className="text-[12px] px-2 py-0.5 rounded-full border border-orange-400 bg-[var(--color-surface)] text-[var(--color-text)] w-48 focus:outline-none" />
-          <button type="submit" className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-orange-600 text-white">Re-ask</button>
+            className="text-[12px] px-2 py-0.5 rounded-full border border-[var(--color-accent)] bg-[var(--color-surface)] text-[var(--color-text)] w-48 focus:outline-none" />
+          <button type="submit" className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-[var(--color-accent)] text-[var(--color-accent-fg)]">Re-ask</button>
         </form>
       ) : (
         <button key={i} type="button" onClick={() => start(i)} disabled={!onCorrect}
           title={onCorrect ? (isMissingFact(chip) ? "Add this and re-ask" : "Correct this and re-ask") : undefined}
           className={`inline-flex items-center gap-1 text-[12px] px-2.5 py-0.5 rounded-full border transition-colors ${isMissingFact(chip)
             ? "border-dashed border-amber-500 text-amber-700 dark:text-amber-300"
-            : "border-[var(--color-border)] bg-[var(--color-surface-2)]/60 text-[var(--color-text)]"} ${onCorrect ? "hover:border-orange-400 cursor-pointer" : "cursor-default"}`}>
+            : "border-[var(--color-border)] bg-[var(--color-surface-2)]/60 text-[var(--color-text)]"} ${onCorrect ? "hover:border-[var(--color-accent)] cursor-pointer" : "cursor-default"}`}>
           {chip}
-          {onCorrect && <span className="text-[10px] text-[var(--color-text-faint)]">{isMissingFact(chip) ? "+" : "✎"}</span>}
+          {onCorrect && <span className="text-[11px] text-[var(--color-text-faint)]">{isMissingFact(chip) ? "+" : "✎"}</span>}
         </button>
       ))}
     </div>
@@ -928,14 +928,14 @@ function OneQuestion({ followup, onAnswer }: {
           onSubmit={(e) => { e.preventDefault(); if (value.trim()) onAnswer(`${followup.question} → ${value.trim()}`); }}>
           {followup.options.map((o) => (
             <button key={o} type="button" onClick={() => onAnswer(`${followup.question} → ${o}`)}
-              className="text-[12.5px] px-2.5 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-orange-400">
+              className="text-[12.5px] px-2.5 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-[var(--color-accent)]">
               {o}
             </button>
           ))}
           <input id="one-question" value={value} onChange={(e) => setValue(e.target.value)} placeholder="Type the answer"
-            className="text-[12.5px] px-2.5 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] w-44 focus:outline-none focus:border-orange-400" />
+            className="text-[12.5px] px-2.5 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] w-44 focus:outline-none focus:border-[var(--color-accent)]" />
           <button type="submit" disabled={!value.trim()}
-            className="text-[12.5px] font-bold px-2.5 py-1 rounded-md bg-orange-600 text-white disabled:opacity-40">
+            className="text-[12.5px] font-bold px-2.5 py-1 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] disabled:opacity-40">
             Finish the answer
           </button>
         </form>
@@ -947,7 +947,7 @@ function OneQuestion({ followup, onAnswer }: {
 /** Section heading inside the answer column. */
 function PartHead({ children }: { children: React.ReactNode }) {
   return (
-    <div className="font-mono text-[10.5px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)] mb-2">
+    <div className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)] mb-2">
       {children}
     </div>
   );
@@ -999,9 +999,9 @@ function ExportButtons({ question, answer, large = false }: { question: string; 
   };
   const primary = large
     ? "inline-flex items-center gap-1.5 text-[13px] font-bold px-3.5 py-2 bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm hover:bg-[var(--color-accent-hover)] transition-colors"
-    : "inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-orange-400 transition-colors";
+    : "inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] transition-colors";
   const secondary = large
-    ? "inline-flex items-center gap-1.5 text-[13px] font-bold px-3.5 py-2 rounded-lg border border-[var(--color-border-strong,var(--color-border))] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-orange-400 transition-colors"
+    ? "inline-flex items-center gap-1.5 text-[13px] font-bold px-3.5 py-2 rounded-lg border border-[var(--color-border-strong,var(--color-border))] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-[var(--color-border-strong)] transition-colors"
     : `${primary} rounded-md`;
   const icon = large ? "w-4 h-4" : "w-3 h-3";
   return (
@@ -1013,7 +1013,7 @@ function ExportButtons({ question, answer, large = false }: { question: string; 
           {state.s === "copied" ? `Copied - ${state.label}` : state.s === "failed" ? "Copy blocked" : "Copy"}
         </button>
         <button type="button" onClick={() => setMenu((v) => !v)} aria-haspopup="menu" aria-expanded={menu} title="Other ways to copy"
-          className={`${primary} ${large ? "rounded-r-lg border-l border-orange-500/60 px-2" : "rounded-r-md border-l-0 px-1"}`}>
+          className={`${primary} ${large ? "rounded-r-lg border-l border-[var(--color-accent)] px-2" : "rounded-r-md border-l-0 px-1"}`}>
           <ChevronDown className={icon} />
         </button>
         {menu && (
@@ -1084,13 +1084,13 @@ function SettleBox({ items, inline, onAttach, onRethink }: {
           onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick.current?.click(); } }}
           role="button" tabIndex={0}
           className={`rounded-lg border-2 border-dashed px-3 py-3 text-center cursor-pointer transition-colors ${over
-            ? "border-orange-500 bg-orange-50 dark:bg-orange-950/30"
-            : "border-[var(--color-border)] hover:border-orange-400"}`}>
+            ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] dark:bg-[var(--color-accent-soft)]"
+            : "border-[var(--color-border)] hover:border-[var(--color-accent)]"}`}>
           <input ref={pick} id="settle-drop" type="file" multiple hidden
             accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
             onChange={(e) => { take(e.target.files); e.target.value = ""; }} />
           <div className="text-[13px] font-bold text-[var(--color-text)] inline-flex items-center gap-1.5">
-            <Upload className="w-3.5 h-3.5 text-orange-600" /> Drop the document here - or a photo of the page
+            <Upload className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Drop the document here - or a photo of the page
           </div>
           <div className="text-[11.5px] text-[var(--color-text-muted)]">
             {added.length > 0 ? `Added: ${added.join(", ")} - it goes with the rethink` : "PDF or image · it's read for this question, not added to the library"}
@@ -1144,15 +1144,15 @@ function HelperBand({ answer, mode, onRethink, onOpenDoc, onFill }: {
     : null;
   if (!goal && docs.length === 0) return null;
   return (
-    <div className="rounded-xl border border-violet-200 dark:border-violet-900 bg-violet-50/60 dark:bg-violet-950/20 px-4 py-3 space-y-2.5">
+    <div className="rounded-xl border border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] px-4 py-3 space-y-2.5">
       {goal && (
         <div className="text-[13.5px] leading-snug text-[var(--color-text)]">
-          <span className="font-mono text-[10.5px] font-bold uppercase tracking-[0.12em] text-violet-700 dark:text-violet-300 mr-1.5">Helper</span>
+          <span className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text)] dark:text-[var(--color-text)] mr-1.5">Helper</span>
           Looks like you&apos;re working toward <b>{GOAL_LABEL[goal.kind] ?? goal.kind}</b>{goal.why ? <> - {goal.why}</> : null}.
         </div>
       )}
       {!goal && (
-        <div className="font-mono text-[10.5px] font-bold uppercase tracking-[0.12em] text-violet-700 dark:text-violet-300">From your library</div>
+        <div className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text)] dark:text-[var(--color-text)]">From your library</div>
       )}
       {(step && onRethink) || docs.length > 0 ? (
         <div className="flex flex-col gap-1.5">
@@ -1164,10 +1164,10 @@ function HelperBand({ answer, mode, onRethink, onOpenDoc, onFill }: {
           )}
           {docs.map((d) => (
             <div key={d.documentId} className="flex flex-wrap items-center gap-2 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] px-3 py-2">
-              <FileText className="w-4 h-4 text-violet-600 shrink-0" />
+              <FileText className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
               <span className="min-w-0 flex-1">
                 <span className="block text-[13px] font-bold text-[var(--color-text)] truncate">
-                  <span className="font-mono text-[10px] uppercase tracking-wider text-[var(--color-text-muted)] mr-1.5">{DOC_TYPE_WORD[d.type] ?? "Document"}</span>
+                  <span className="font-mono text-[11px] uppercase tracking-wider text-[var(--color-text-muted)] mr-1.5">{DOC_TYPE_WORD[d.type] ?? "Document"}</span>
                   {d.name.replace(/\.pdf$/i, "")}
                 </span>
                 {d.why && <span className="block text-[12px] text-[var(--color-text-muted)] truncate">{d.why}</span>}
@@ -1180,7 +1180,7 @@ function HelperBand({ answer, mode, onRethink, onOpenDoc, onFill }: {
               )}
               {d.fileKey && onOpenDoc && (
                 <button type="button" onClick={() => onOpenDoc({ id: d.documentId, name: d.name, fileKey: d.fileKey!, page: 1, mention: d.name })}
-                  className="inline-flex items-center gap-1.5 text-[12.5px] font-bold px-3 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-violet-400">
+                  className="inline-flex items-center gap-1.5 text-[12.5px] font-bold px-3 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-[var(--color-border-strong)]">
                   <Eye className="w-3.5 h-3.5" /> Open
                 </button>
               )}
@@ -1200,8 +1200,8 @@ function RethinkBar({ mode, onRethink }: { mode: string; onRethink: (m: "answer"
       {MODES.map((m) => (
         <button key={m.id} type="button" onClick={() => onRethink(m.id)} title={m.hint}
           className={`text-[12px] font-bold px-2.5 py-1 rounded-md border transition-colors ${mode === m.id
-            ? "border-orange-400 bg-orange-50 dark:bg-orange-950/30 text-orange-800 dark:text-orange-200"
-            : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-orange-400"}`}>
+            ? "border-[var(--color-text)] bg-[var(--color-text)] dark:bg-[var(--color-surface-2)] text-[var(--color-surface)] dark:text-[var(--color-text)]"
+            : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-[var(--color-accent)]"}`}>
           {mode === m.id ? "✓ " : ""}{m.label}
         </button>
       ))}
@@ -1322,7 +1322,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
       {inline(text)}
       {!hasSource(text) && (
         <span title="No citation - this line isn't tied to a page in your documents. Don't rely on it without checking."
-          className="ml-1.5 inline-block align-baseline px-1.5 rounded font-mono text-[10px] font-bold bg-rose-100 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 whitespace-nowrap">
+          className="ml-1.5 inline-block align-baseline px-1.5 rounded font-mono text-[11px] font-bold bg-rose-100 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 whitespace-nowrap">
           no source
         </span>
       )}
@@ -1406,7 +1406,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
 
       {/* A REPLAYED answer must never masquerade as a fresh run. */}
       {answer.provider === "memory" && (
-        <div className="rounded-xl border-2 border-violet-300 dark:border-violet-800 bg-violet-50 dark:bg-violet-950/30 px-3.5 py-2.5 text-[11px] font-bold text-violet-800 dark:text-violet-300 flex items-center gap-2">
+        <div className="rounded-xl border-2 border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] px-3.5 py-2.5 text-[11px] font-bold text-[var(--color-text)] dark:text-[var(--color-text)] flex items-center gap-2">
           <History className="w-4 h-4 shrink-0" />
           <span>
             <b className="font-black">Replayed from your team&apos;s record</b> - this is a PAST answer, shown
@@ -1430,13 +1430,13 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
                 {/* What this answer was allowed to draw on — visible, not assumed. */}
                 {answer.knowledgeSource === "documents" && (
                   <span title="Every statement is cited to a page in this library, or is something you said - no AI training knowledge, no web"
-                    className="inline-flex items-center gap-1 text-[10.5px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300">
+                    className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300">
                     <ShieldCheck className="w-3 h-3" /> Documents only
                   </span>
                 )}
                 {answer.knowledgeSource === "documents_and_web" && (
                   <span title="Web was on for this question: documents first and they govern; every web statement links to the page it came from"
-                    className="inline-flex items-center gap-1 text-[10.5px] font-bold px-2 py-0.5 rounded-full bg-sky-100 dark:bg-sky-950/40 text-sky-800 dark:text-sky-300">
+                    className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]">
                     <Globe className="w-3 h-3" /> Documents + web{webCitations.length > 0 ? ` · ${webCitations.length} web source${webCitations.length === 1 ? "" : "s"}` : " · web not needed"}
                   </span>
                 )}
@@ -1444,7 +1444,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
                     seen, and the Skill Library is one tap away. */}
                 {(answer.skillsApplied ?? []).map((sk) => (
                   <a key={sk.id || sk.name} href="/intelligence/skills" title="A Reasoning Skill shaped this answer - open the Skill Library to see or change it"
-                    className="inline-flex items-center gap-1 text-[10.5px] font-bold px-2 py-0.5 rounded-full bg-violet-100 dark:bg-violet-950/40 text-violet-800 dark:text-violet-300 hover:underline">
+                    className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)] hover:underline">
                     <Sparkles className="w-3 h-3" /> {sk.name}
                   </a>
                 ))}
@@ -1460,7 +1460,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
               <div className="flex items-start justify-between gap-2">
                 {heroV?.verdict
                   ? <VerdictBadge verdict={heroV.verdict} />
-                  : <span className="font-mono text-[10.5px] font-bold uppercase tracking-[0.12em] text-orange-700 dark:text-orange-400">Answer</span>}
+                  : <span className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text)] dark:text-[var(--color-text)]">Answer</span>}
               </div>
               <div className="mt-1 text-[16.5px] font-semibold leading-snug text-[var(--color-text)]">
                 {heroV ? inline(heroV.text) : <AnswerView answer={answer.answer} citations={answer.citations} onCite={onCite} />}
@@ -1486,7 +1486,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
                 <summary className="cursor-pointer list-none flex items-center gap-1.5 text-[12.5px] font-bold text-[var(--color-text)]">
                   <ChevronRight className="w-3.5 h-3.5 transition-transform group-open:rotate-90" />
                   Engineering trail - the full chain, step by step
-                  <span className="font-mono text-[10.5px] font-normal text-[var(--color-text-faint)]">{parts.trail.filter((b) => b.type !== "label").length} steps</span>
+                  <span className="font-mono text-[11px] font-normal text-[var(--color-text-faint)]">{parts.trail.filter((b) => b.type !== "label").length} steps</span>
                 </summary>
                 <div className="mt-2.5 space-y-2.5">{renderWhy(parts.trail)}</div>
               </details>
@@ -1501,7 +1501,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
 
             {heroV && parts.dontMiss.length > 0 && (
               <div className="rounded-lg border border-rose-200 dark:border-rose-900 bg-rose-50/60 dark:bg-rose-950/20 px-3 py-2.5">
-                <div className="flex items-center gap-1.5 font-mono text-[10.5px] font-bold uppercase tracking-[0.12em] text-rose-700 dark:text-rose-300 mb-1.5">
+                <div className="flex items-center gap-1.5 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-rose-700 dark:text-rose-300 mb-1.5">
                   <AlertTriangle className="w-3.5 h-3.5" /> Don&apos;t miss
                 </div>
                 <div className="space-y-1.5">
@@ -1530,11 +1530,11 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
 
             {onRethink && answer.mode !== "internet" && <RethinkBar mode={mode} onRethink={onRethink} />}
 
-            <div className="pt-3 border-t border-[var(--color-border)] flex items-center gap-2 flex-wrap text-[10px] text-[var(--color-text-muted)]">
+            <div className="pt-3 border-t border-[var(--color-border)] flex items-center gap-2 flex-wrap text-[11px] text-[var(--color-text-muted)]">
               {canShape && shapeOrgId && shapeUid && (
                 <button onClick={() => setShaping(true)}
                   title="AI proposes how this answer attributes to the org graph - you curate, it writes"
-                  className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-md border border-[var(--color-border)] hover:border-violet-400 hover:text-violet-700 dark:hover:text-violet-300 transition-colors">
+                  className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-md border border-[var(--color-border)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-text)] dark:hover:text-[var(--color-text)] transition-colors">
                   <Waypoints className="w-3 h-3" /> Shape the graph
                 </button>
               )}
@@ -1543,7 +1543,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
               <span>{libraryCitations.length} source{libraryCitations.length === 1 ? "" : "s"}</span>
               <span>·</span>
               {/* Version beacon: which renderer produced this card. */}
-              <span className="font-black text-orange-600/70" title="Answer renderer version">fmt14</span>
+              <span className="font-black text-[var(--color-text)]" title="Answer renderer version">fmt14</span>
             </div>
           </div>
 
@@ -1551,13 +1551,13 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
           <aside className="min-w-0 p-4 sm:p-5 border-t @min-[760px]:border-t-0 @min-[760px]:border-l border-[var(--color-border)] bg-[var(--color-surface-2)]/40">
             <div className="flex items-baseline justify-between gap-2 mb-3">
               <h3 className="text-[15px] font-black text-[var(--color-text)]">Proof</h3>
-              <span className="font-mono text-[10px] text-[var(--color-text-faint)]">tap a number in the answer to jump here</span>
+              <span className="font-mono text-[11px] text-[var(--color-text-faint)]">tap a number in the answer to jump here</span>
             </div>
             <ProofTrail citations={libraryCitations} onOpen={onCite} openSet={openSet} onToggle={toggle}
               showRelated={showRelated} onShowRelated={setShowRelated} flashN={flashN} idPrefix={idPrefix} />
             {webCitations.length > 0 && (
               <div className="mt-5 space-y-2">
-                <div className="flex items-center gap-2 font-mono text-[10.5px] font-bold uppercase tracking-[0.12em] text-sky-700 dark:text-sky-300">
+                <div className="flex items-center gap-2 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text)] dark:text-[var(--color-text)]">
                   <Globe className="w-3.5 h-3.5" /> From the web <span className="text-[var(--color-text-faint)]">{webCitations.length}</span>
                 </div>
                 <p className="text-[11px] text-[var(--color-text-muted)]">
@@ -1569,23 +1569,23 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
                   return (
                     <div key={c.n} id={`${idPrefix}-w-${c.n}`}
                       className={`rounded-xl border bg-[var(--color-surface)] px-3 py-2.5 space-y-1.5 scroll-mt-24 transition-shadow duration-300 ${flashN === c.n
-                        ? "border-sky-500 shadow-[0_0_0_3px_rgba(14,165,233,0.25)]" : "border-[var(--color-border)]"}`}>
+                        ? "border-[var(--color-border-strong)] shadow-[0_0_0_3px_rgba(14,165,233,0.25)]" : "border-[var(--color-border)]"}`}>
                       <div className="flex items-start gap-2">
-                        <span className="mt-0.5 min-w-[1.375rem] h-[1.375rem] px-1 rounded-md bg-sky-100 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 font-mono text-[11px] font-bold flex items-center justify-center">{c.n}</span>
+                        <span className="mt-0.5 min-w-[1.375rem] h-[1.375rem] px-1 rounded-md bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)] font-mono text-[11px] font-bold flex items-center justify-center">{c.n}</span>
                         <span className="min-w-0">
                           <span className="block text-[13px] font-bold text-[var(--color-text)] leading-snug">{c.title ?? host}</span>
-                          <span className="block font-mono text-[10px] text-[var(--color-text-muted)] truncate">{host}</span>
+                          <span className="block font-mono text-[11px] text-[var(--color-text-muted)] truncate">{host}</span>
                         </span>
                       </div>
                       {c.quote && (
-                        <blockquote className="border-l-[3px] border-sky-300 dark:border-sky-800 bg-[var(--color-surface-2)]/50 rounded-r-md pl-3 pr-2 py-1.5 text-[12.5px] leading-relaxed text-[var(--color-text)] italic">
+                        <blockquote className="border-l-[3px] border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)]/50 rounded-r-md pl-3 pr-2 py-1.5 text-[12.5px] leading-relaxed text-[var(--color-text)] italic">
                           &ldquo;{c.quote}&rdquo;
                         </blockquote>
                       )}
                       <div className="flex items-center gap-2 flex-wrap">
                         <a href={c.url} target="_blank" rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text)] hover:border-sky-400">
-                          <ExternalLink className="w-3 h-3 text-sky-600" /> Open the page
+                          className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-border-strong)]">
+                          <ExternalLink className="w-3 h-3 text-[var(--color-text-muted)]" /> Open the page
                         </a>
                         {c.quote && <CopyButton text={referencedQuote(c)} label="Copy quote" />}
                       </div>
@@ -1596,17 +1596,17 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
             )}
             {jobCitations.length > 0 && (
               <div className="mt-5 space-y-2">
-                <div className="flex items-center gap-2 font-mono text-[10.5px] font-bold uppercase tracking-[0.12em] text-orange-700 dark:text-orange-300">
+                <div className="flex items-center gap-2 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text)] dark:text-[var(--color-text)]">
                   From past jobs <span className="text-[var(--color-text-faint)]">{jobCitations.length}</span>
                 </div>
                 <p className="text-[11px] text-[var(--color-text-muted)]">Kept at the close-out reviews of earlier projects.</p>
                 {jobCitations.map((c) => (
-                  <div key={c.n} className={`rounded-xl border bg-[var(--color-surface)] px-3 py-2.5 space-y-1.5 ${flashN === c.n ? "border-orange-500" : "border-[var(--color-border)]"}`}>
+                  <div key={c.n} className={`rounded-xl border bg-[var(--color-surface)] px-3 py-2.5 space-y-1.5 ${flashN === c.n ? "border-[var(--color-border-strong)]" : "border-[var(--color-border)]"}`}>
                     <div className="flex items-start gap-2">
-                      <span className="mt-0.5 min-w-[1.375rem] h-[1.375rem] px-1 rounded-md bg-orange-100 dark:bg-orange-950/60 text-orange-700 dark:text-orange-300 font-mono text-[11px] font-bold flex items-center justify-center">{c.n}</span>
+                      <span className="mt-0.5 min-w-[1.375rem] h-[1.375rem] px-1 rounded-md bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)] font-mono text-[11px] font-bold flex items-center justify-center">{c.n}</span>
                       <span className="min-w-0 text-[12.5px] leading-relaxed text-[var(--color-text)]">{c.quote ?? c.title}</span>
                     </div>
-                    <a href={c.url} className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text)] hover:border-orange-400">Open the project</a>
+                    <a href={c.url} className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-accent)]">Open the project</a>
                   </div>
                 ))}
               </div>
@@ -1710,11 +1710,11 @@ export function AnswerFeedback({ questionId, onRated, question, citations }: {
     <div className="mt-2">
       <div className="flex items-center justify-end gap-2 text-[11px] text-[var(--color-text-muted)] flex-wrap">
         {canTest && !testSaved && (
-          <button onClick={() => setTesting(true)} className="mr-auto inline-flex items-center gap-1 font-bold text-indigo-600 hover:underline" title="Mark what a right answer must do - every future version is checked against it">
+          <button onClick={() => setTesting(true)} className="mr-auto inline-flex items-center gap-1 font-bold text-[var(--color-accent)] hover:underline" title="Mark what a right answer must do - every future version is checked against it">
             <FlaskConical className="w-3.5 h-3.5" /> Make this a test case
           </button>
         )}
-        {testSaved && <span className="mr-auto font-bold text-indigo-600">Saved as a test case - see Answer tests on the library page.</span>}
+        {testSaved && <span className="mr-auto font-bold text-[var(--color-text)]">Saved as a test case - see Answer tests on the library page.</span>}
         {state === 1 && <span className="font-bold text-emerald-600 dark:text-emerald-400">Saved - similar questions will start from these pages.</span>}
         {state === -1 && <span className="font-bold">{reasonsSent ? "Thanks - that tells us where to look." : "What went wrong?"}</span>}
         {state === 0 && <span className="font-bold">Did this answer it?</span>}
@@ -1731,7 +1731,7 @@ export function AnswerFeedback({ questionId, onRated, question, citations }: {
             const on = reasons.includes(r.code);
             return (
               <button key={r.code} onClick={() => void sendReasons(on ? reasons.filter((x) => x !== r.code) : [...reasons, r.code])}
-                className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${on ? "border-rose-400 bg-rose-50 text-rose-800 dark:bg-rose-950/40 dark:text-rose-200" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                className={`rounded-full border px-2 py-0.5 text-[11px] font-bold ${on ? "border-rose-400 bg-rose-50 text-rose-800 dark:bg-rose-950/40 dark:text-rose-200" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
                 {r.label}
               </button>
             );
@@ -1768,38 +1768,38 @@ export function CitationChips({ citations, onOpen }: {
       {citations.map((c) => c.url?.startsWith("/") ? (
         // A past job → its project.
         <a key={c.n} href={c.url} title={c.quote ?? c.title}
-          className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-lg border border-orange-300 bg-orange-50 dark:bg-orange-950/30 dark:border-orange-800 text-orange-800 dark:text-orange-300 hover:bg-orange-100 transition-colors mr-1.5">
+          className="inline-flex items-center gap-1 text-[11px] font-black px-2 py-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors mr-1.5">
           [{c.n}] {(c.title ?? "Past job").slice(0, 40)}
         </a>
       ) : c.url ? (
         // Internet citation → the web source itself.
         <a key={c.n} href={c.url} target="_blank" rel="noopener noreferrer"
           title={c.url}
-          className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-lg border border-sky-300 bg-sky-50 dark:bg-sky-950/30 dark:border-sky-800 text-sky-800 dark:text-sky-300 hover:bg-sky-100 transition-colors mr-1.5">
+          className="inline-flex items-center gap-1 text-[11px] font-black px-2 py-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors mr-1.5">
           <Globe className="w-2.5 h-2.5" /> {(c.title ?? c.url).slice(0, 40)}
           <ExternalLink className="w-2.5 h-2.5" />
         </a>
       ) : (
         // Library citation → expandable verbatim passage + open-in-viewer.
-        <details key={c.n} className="group rounded-xl border border-orange-200 dark:border-orange-900 bg-orange-50/50 dark:bg-orange-950/20 overflow-hidden">
+        <details key={c.n} className="group rounded-xl border border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] overflow-hidden">
           <summary className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
-            <ChevronRight className="w-3.5 h-3.5 text-orange-600 transition-transform group-open:rotate-90 shrink-0" />
-            <span className="text-[11px] font-black text-orange-800 dark:text-orange-300 truncate">
+            <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-muted)] transition-transform group-open:rotate-90 shrink-0" />
+            <span className="text-[11px] font-black text-[var(--color-text)] dark:text-[var(--color-text)] truncate">
               [{c.n}] {(c.documentName ?? "Document").replace(/\.pdf$/i, "").slice(0, 40)}
-              {c.section ? <span className="text-orange-600/80"> · {c.section.slice(0, 36)}</span> : ""} · p.{c.page}
+              {c.section ? <span className="text-[var(--color-text)]"> · {c.section.slice(0, 36)}</span> : ""} · p.{c.page}
             </span>
-            <span className="ml-auto shrink-0 text-[9px] font-bold uppercase tracking-wider text-orange-600/70 group-open:hidden">view source</span>
+            <span className="ml-auto shrink-0 text-[11px] font-bold uppercase tracking-wider text-[var(--color-text)] group-open:hidden">view source</span>
           </summary>
           <div className="px-3 pb-3">
             {c.quote ? (
-              <blockquote className="border-l-2 border-orange-400 pl-3 py-1 text-[11px] leading-relaxed text-[var(--color-text)] bg-[var(--color-surface)] rounded-r-lg whitespace-pre-wrap max-h-40 overflow-y-auto">
+              <blockquote className="border-l-2 border-[var(--color-border-strong)] pl-3 py-1 text-[11px] leading-relaxed text-[var(--color-text)] bg-[var(--color-surface)] rounded-r-lg whitespace-pre-wrap max-h-40 overflow-y-auto">
                 {c.quote}
               </blockquote>
             ) : (
               <p className="text-[11px] text-[var(--color-text-muted)] italic">Passage text wasn&apos;t stored for this older answer - open the page to read it.</p>
             )}
             <button onClick={() => onOpen(c)}
-              className="mt-2 inline-flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] transition-colors">
+              className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-black px-2.5 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] transition-colors">
               <ExternalLink className="w-3 h-3" /> Open page {c.page} - passage highlighted
             </button>
           </div>
@@ -1847,8 +1847,8 @@ function StageTracker({ stage, status, compact }: { stage: number; status: strin
     return (
       <div className="flex items-center gap-2 text-[11.5px] text-[var(--color-text-muted)]" role="status" aria-live="polite">
         <span className="relative flex w-2 h-2">
-          <span className="motion-safe:animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-60" />
-          <span className="relative inline-flex rounded-full w-2 h-2 bg-orange-500" />
+          <span className="motion-safe:animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-text-muted)] opacity-60" />
+          <span className="relative inline-flex rounded-full w-2 h-2 bg-[var(--color-text-muted)]" />
         </span>
         {STAGES[stage].label}<span className="text-[var(--color-text-faint)]">· {elapsed}s</span>
       </div>
@@ -1859,7 +1859,7 @@ function StageTracker({ stage, status, compact }: { stage: number; status: strin
       <div className="flex items-center gap-1.5">
         {STAGES.map((s, i) => (
           <div key={s.label} className="flex-1 h-1 rounded-full overflow-hidden bg-[var(--color-surface-2)]">
-            <div className={`h-full rounded-full transition-all duration-700 ease-out ${i < stage ? "w-full bg-orange-500"
+            <div className={`h-full rounded-full transition-all duration-700 ease-out ${i < stage ? "w-full bg-[var(--color-text-muted)]"
               : i === stage ? "w-full bg-[linear-gradient(90deg,#f97316_0%,#fdba74_50%,#f97316_100%)] bg-[length:200%_100%] motion-safe:animate-[shimmer_1.6s_linear_infinite]"
               : "w-0"}`} />
           </div>
@@ -1908,7 +1908,7 @@ export function StreamingAnswer({ status, draft }: { status: string; draft: stri
               <div style={reveal} className={`rounded-xl border px-4 py-3.5 ${VERDICT_BOX[heroV.verdict ?? "none"]}`}>
                 {heroV.verdict
                   ? <VerdictBadge verdict={heroV.verdict} />
-                  : <span className="font-mono text-[10.5px] font-bold uppercase tracking-[0.12em] text-orange-700 dark:text-orange-400">Answer</span>}
+                  : <span className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text)] dark:text-[var(--color-text)]">Answer</span>}
                 <div className="mt-1 text-[16.5px] font-semibold leading-snug text-[var(--color-text)]">{inline(heroV.text)}</div>
               </div>
             ) : (
@@ -1968,7 +1968,7 @@ export function StreamingAnswer({ status, draft }: { status: string; draft: stri
           <aside className="min-w-0 p-4 sm:p-5 border-t @min-[760px]:border-t-0 @min-[760px]:border-l border-[var(--color-border)] bg-[var(--color-surface-2)]/40">
             <div className="flex items-baseline justify-between gap-2 mb-3">
               <h3 className="text-[15px] font-black text-[var(--color-text)]">Proof</h3>
-              <span className="font-mono text-[10px] text-[var(--color-text-faint)]">
+              <span className="font-mono text-[11px] text-[var(--color-text-faint)]">
                 {inEvidence ? "marking the exact words on each page" : "arrives with the answer"}
               </span>
             </div>

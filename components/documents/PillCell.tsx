@@ -94,7 +94,7 @@ export default function PillCell({
         {canEdit && (
           <button
             onClick={(e) => { e.stopPropagation(); setEditing(true); }}
-            className="shrink-0 flex items-center gap-0.5 text-[10px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] bg-[var(--color-accent-soft)] border border-[var(--color-accent)]/25 hover:border-[var(--color-accent)]/50 px-1.5 py-0.5 rounded-full transition-colors mt-0.5"
+            className="shrink-0 flex items-center gap-0.5 text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] bg-[var(--color-surface-2)] border border-[var(--color-accent)]/25 hover:border-[var(--color-accent)]/50 px-1.5 py-0.5 rounded-full transition-colors mt-0.5"
             title={`Edit ${label}`}
           >
             <Plus className="w-2.5 h-2.5" />
@@ -117,12 +117,12 @@ export default function PillCell({
           {pills.map((pill) => (
             <span
               key={pill}
-              className="inline-flex items-center gap-1 text-[11px] font-bold bg-blue-50 text-blue-800 border border-blue-200 px-2 py-0.5 rounded-full"
+              className="inline-flex items-center gap-1 text-[11px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)] px-2 py-0.5 rounded-full"
             >
               {pill}
               <button
                 onClick={() => removePill(pill)}
-                className="text-blue-300 hover:text-red-500 transition-colors ml-0.5"
+                className="text-[var(--color-accent)] hover:text-red-500 transition-colors ml-0.5"
               >
                 <X className="w-2.5 h-2.5" />
               </button>
@@ -172,7 +172,7 @@ export default function PillCell({
           <Check className="w-3 h-3" />
         </button>
       </div>
-      <p className="text-[10px] text-[var(--color-text-faint)]">Enter to add · Esc to save · commas are kept in the tag (not separators)</p>
+      <p className="text-[11px] text-[var(--color-text-faint)]">Enter to add · Esc to save · commas are kept in the tag (not separators)</p>
     </div>
   );
 }

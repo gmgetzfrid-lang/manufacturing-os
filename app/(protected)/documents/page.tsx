@@ -294,7 +294,7 @@ export default function DocumentsHomePage() {
   // One line per library: what it is, how many documents, who can read it.
   const libraryRows = (list: UiLibrary[]) => (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm">
-      <div className="grid grid-cols-[minmax(0,1fr)_auto_2rem] sm:grid-cols-[minmax(0,1fr)_auto_7.5rem_2rem] items-center gap-3 px-4 py-2 border-b border-[var(--color-border)] text-[10.5px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">
+      <div className="grid grid-cols-[minmax(0,1fr)_auto_2rem] sm:grid-cols-[minmax(0,1fr)_auto_7.5rem_2rem] items-center gap-3 px-4 py-2 border-b border-[var(--color-border)] text-[11px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">
         <span>Library</span><span className="text-right">Documents</span><span className="hidden sm:block">Access</span><span />
       </div>
       {list.map((lib) => {
@@ -310,7 +310,7 @@ export default function DocumentsHomePage() {
               <NodeCover appearance={{ color: lib.color, icon: lib.icon, coverImageUrl: lib.coverImageUrl, coverTint: lib.coverTint }}
                 className="w-8 h-8 shrink-0" rounded="rounded-md" iconSize="w-4 h-4" />
               <span className="min-w-0">
-                <span className="flex items-center gap-1.5 text-sm font-bold text-[var(--color-text)] group-hover:text-[var(--color-accent)]">
+                <span className="flex items-center gap-1.5 text-sm font-bold text-[var(--color-text)] group-hover:text-[var(--color-text)]">
                   <span className="truncate">{lib.name}</span>
                   {isPending && <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin text-[var(--color-text-faint)]" />}
                 </span>
@@ -344,7 +344,7 @@ export default function DocumentsHomePage() {
                     }
                   }}
                 />
-              ) : <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)] group-hover:text-[var(--color-accent)]" />}
+              ) : <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)]" />}
             </span>
           </div>
         );
@@ -418,7 +418,7 @@ export default function DocumentsHomePage() {
               <>
                 {filtered.length > 0 && (
                   <div>
-                    <div className="mb-1.5 text-[10.5px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">Libraries</div>
+                    <div className="mb-1.5 text-[11px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">Libraries</div>
                     {libraryRows(filtered)}
                   </div>
                 )}
@@ -503,7 +503,7 @@ function LibraryAdminMenu({
           <div className="fixed inset-0 z-[5]" onClick={(e) => { e.stopPropagation(); onClose(); }} />
           <div className="absolute right-0 top-full mt-1 w-52 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg overflow-hidden z-[10] animate-in fade-in zoom-in-95 duration-150 origin-top-right">
             <div className="px-3 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
-              <div className="text-[9px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Admin</div>
+              <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Admin</div>
               <div className="text-xs font-bold text-[var(--color-text)] truncate">{libName}</div>
             </div>
             <button
