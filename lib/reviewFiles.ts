@@ -12,6 +12,11 @@ import { fmtInTz } from "@/lib/scheduleTz";
 import { CAUSE_WORD, areaOf, jobWord, orderWord, pointOf, shiftsWord, whenWord, type Finding, type Review } from "@/lib/postEventReview";
 import { MIN_WAIT_H, overloaded, type CrewFlow } from "@/lib/crewFlow";
 import { AREA_STATE_WORD, GUIDES, SCORE_CATEGORY, VERDICT_WORD, bookOf, categoryName, guidesOf, type AreaState, type Book, type Guide, type ScoreInputs, type Verdict } from "@/lib/reviewBook";
+import { lookFromPalette, type DeckLook } from "@/lib/deckLook";
+import type { LayoutRole, TemplateInfo } from "@/lib/slideTemplate";
+
+/** The colors files are set in when none are given: the app's standard blue and tangerine. */
+export const DEFAULT_LOOK: DeckLook = lookFromPalette({ primary: "#1f5bd6", secondary: "#f97316" });
 
 export interface ReviewFileOpts {
   project: string;
@@ -109,7 +114,7 @@ export function reportBlocks(r: Review, o: ReviewFileOpts): Block[] {
   const b: Block[] = [];
   const m = r.metrics, pt = point(r, o);
   const dates = eventDates(r, o.tz);
-  b.push({ k: "muted", text: "POST-EVENT REVIEW" }, { k: "title", text: dates ? `${eventName(o)}: ${dates}` : eventName(o) });
+  b.push({ k: "muted", text: "Post-event review" }, { k: "title", text: dates ? `${eventName(o)}: ${dates}` : eventName(o) });
   if (projectLine(o)) b.push({ k: "muted", text: projectLine(o) });
   b.push({ k: "muted", text: [o.preparedBy ? `Prepared by: ${o.preparedBy}` : null, `Written ${o.date}`].filter(Boolean).join("  ·  ") });
 
@@ -232,9 +237,10 @@ const run = (t: string, o: { b?: boolean; sz?: number; color?: string } = {}) =>
   `<w:r><w:rPr><w:rFonts w:ascii="${FONT}" w:hAnsi="${FONT}" w:cs="${FONT}"/>${o.b ? "<w:b/>" : ""}${o.color ? `<w:color w:val="${o.color}"/>` : ""}<w:sz w:val="${(o.sz ?? 10.5) * 2}"/></w:rPr><w:t xml:space="preserve">${xe(t)}</w:t></w:r>`;
 const para = (inner: string, o: { before?: number; after?: number; ind?: number; hang?: number; keep?: boolean } = {}) =>
   `<w:p><w:pPr>${o.keep ? "<w:keepNext/>" : ""}<w:spacing w:before="${Math.round((o.before ?? 0) * 20)}" w:after="${Math.round((o.after ?? 4) * 20)}"/>${o.ind ? `<w:ind w:left="${o.ind}"${o.hang ? ` w:hanging="${o.hang}"` : ""}/>` : ""}</w:pPr>${inner}</w:p>`;
-const ACCENT = "B8430F", DARK = "16202E", MUTED = "5B6474";
+const MUTED = "5B6474";
 
-function blockXml(b: Block): string {
+function blockXml(b: Block, look: DeckLook): string {
+  const DARK = look.heading, ACCENT = look.kicker;
   switch (b.k) {
     case "title": return para(run(b.text, { b: true, sz: 20, color: DARK }), { after: 4 });
     case "h1": return para(run(b.text, { b: true, sz: 13, color: DARK }), { before: 12, after: 4, keep: true });
@@ -248,8 +254,8 @@ function blockXml(b: Block): string {
       const scale = Math.min(1, 6.9 / b.widths.reduce((a, c) => a + c, 0));
       const tw = b.widths.map((w) => Math.round(w * scale * 1440));
       const cell = (t: string, i: number, head: boolean, shade: boolean) =>
-        `<w:tc><w:tcPr><w:tcW w:w="${tw[i]}" w:type="dxa"/>${head ? `<w:shd w:val="clear" w:color="auto" w:fill="${DARK}"/>` : shade ? '<w:shd w:val="clear" w:color="auto" w:fill="F1F3F6"/>' : ""}</w:tcPr>${(t ?? "").split("\n").map((line, k) => para(run(line, { sz: 9, b: head || (k === 0 && i === 0 && t.includes("\n")), color: head ? "FFFFFF" : k > 0 ? MUTED : undefined }), { after: 1, before: 1 })).join("")}</w:tc>`;
-      const border = (n: string) => `<w:${n} w:val="single" w:sz="4" w:space="0" w:color="D5D9E0"/>`;
+        `<w:tc><w:tcPr><w:tcW w:w="${tw[i]}" w:type="dxa"/>${head ? `<w:shd w:val="clear" w:color="auto" w:fill="${look.head}"/>` : shade ? `<w:shd w:val="clear" w:color="auto" w:fill="${look.band}"/>` : ""}</w:tcPr>${(t ?? "").split("\n").map((line, k) => para(run(line, { sz: 9, b: head || (k === 0 && i === 0 && t.includes("\n")), color: head ? look.headText : k > 0 ? MUTED : undefined }), { after: 1, before: 1 })).join("")}</w:tc>`;
+      const border = (n: string) => `<w:${n} w:val="single" w:sz="4" w:space="0" w:color="${look.line}"/>`;
       const rows = [`<w:tr><w:trPr><w:tblHeader/><w:cantSplit/></w:trPr>${b.head.map((h, i) => cell(h, i, true, false)).join("")}</w:tr>`,
         ...b.rows.map((r, ri) => `<w:tr><w:trPr><w:cantSplit/></w:trPr>${b.head.map((_, i) => cell(r[i] ?? "", i, false, ri % 2 === 1)).join("")}</w:tr>`)];
       return `<w:tbl><w:tblPr><w:tblW w:w="${tw.reduce((a, c) => a + c, 0)}" w:type="dxa"/><w:tblBorders>${["top", "left", "bottom", "right", "insideH", "insideV"].map(border).join("")}</w:tblBorders><w:tblLayout w:type="fixed"/><w:tblCellMar><w:left w:w="80" w:type="dxa"/><w:right w:w="80" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid>${tw.map((w) => `<w:gridCol w:w="${w}"/>`).join("")}</w:tblGrid>${rows.join("")}</w:tbl>${para("", { after: 4 })}`;
@@ -257,9 +263,9 @@ function blockXml(b: Block): string {
   }
 }
 
-/** The report as a Word file. */
-export async function reviewDocx(r: Review, o: ReviewFileOpts): Promise<Uint8Array> {
-  const body = reportBlocks(r, o).map(blockXml).join("");
+/** The report as a Word file, in the workspace's colors. */
+export async function reviewDocx(r: Review, o: ReviewFileOpts, look: DeckLook = DEFAULT_LOOK): Promise<Uint8Array> {
+  const body = reportBlocks(r, o).map((b) => blockXml(b, look)).join("");
   const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
   const footer = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr ${W}><w:p><w:pPr><w:jc w:val="right"/></w:pPr>${run(`${eventName(o)} · Post-event review · page `, { sz: 8, color: MUTED })}<w:r><w:rPr><w:sz w:val="16"/><w:color w:val="${MUTED}"/></w:rPr><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:rPr><w:sz w:val="16"/><w:color w:val="${MUTED}"/></w:rPr><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r><w:r><w:rPr><w:sz w:val="16"/><w:color w:val="${MUTED}"/></w:rPr><w:fldChar w:fldCharType="end"/></w:r></w:p></w:ftr>`;
   const doc = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document ${W}><w:body>${body}<w:sectPr><w:footerReference w:type="default" r:id="rId1"/><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1080" w:right="1080" w:bottom="1080" w:left="1080" w:header="500" w:footer="500" w:gutter="0"/></w:sectPr></w:body></w:document>`;
@@ -325,10 +331,14 @@ type Item = SlideItem;
 type Pane = SlidePane;
 export interface SlideSpec {
   kicker: string; title: string; notes: string;
+  /** Which part of the meeting the slide is in, for decks that open each part on its own slide. */
+  part?: { n: number; of: number; name: string };
   body:
     | { k: "cover"; sub: string; meta: string; agenda: string[];
         /** What the review measures, by category, and where each is addressed. */
-        table?: { head: string[]; rows: string[][]; widths: number[] } }
+        table?: { head: string[]; rows: string[][]; widths: number[] };
+        /** The table's title, when it isn't what the review measures. */
+        tableTitle?: string }
     | { k: "asks"; items: Array<{ n: number; ask: string; because: string }>; foot?: string }
     | { k: "table"; head: string[]; rows: string[][]; widths: number[]; foot?: string;
         /** A colored word under each row's first cell ("Missed"). */
@@ -356,15 +366,17 @@ const part = (i: number, n: number) => (n > 1 ? ` (${i + 1} of ${n})` : "");
 export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
   const s: SlideSpec[] = [], pt = point(r, o), bk = bookFor(r, o);
   const dates = eventDates(r, o.tz);
+  const PARTS = ["The score: plan against actual", "What went well, what did not, and why", "What we do about it"];
+  const partOf = (n: number) => ({ n, of: PARTS.length, name: PARTS[n - 1] });
   const byKey = new Map(r.findings.map((f) => [f.key, f]));
   s.push({ kicker: "Post-event review", title: dates ? `${eventName(o)}: ${dates}` : eventName(o), notes: "The score, then what went well and what did not by area, then what we do about it.",
-    body: { k: "cover", sub: projectLine(o), meta: [o.preparedBy, `Written ${o.date}`].filter(Boolean).join("  ·  "), agenda: ["The score: plan against actual", "What went well, what did not, and why", "What we do about it"],
+    body: { k: "cover", sub: projectLine(o), meta: [o.preparedBy, `Written ${o.date}`].filter(Boolean).join("  ·  "), agenda: PARTS,
       table: { head: ["Category", "What is measured", "Where it is addressed"], rows: bk.categories.map((c) => [c.name, c.measures, c.where]), widths: [1.3, 4.2, 2.3] } } });
 
   // 1. The score.
   const sc = bk.score;
   s.push({
-    kicker: "1 · The score: plan against actual", title: pt.headline, notes: [pt.headline, sc.line].filter(Boolean).join(" "),
+    kicker: "1 · The score: plan against actual", title: pt.headline, notes: [pt.headline, sc.line].filter(Boolean).join(" "), part: partOf(1),
     body: {
       k: "table", head: ["Measure", "Target", "Actual", "Result"], widths: [1.4, 2.4, 3.4, 1.7], lead: bk.delay,
       rows: sc.rows.map((x) => [measureCell(x), x.plan, x.actual, x.result]),
@@ -427,7 +439,7 @@ export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
     if (cur.length && !reads([...cur, u])) areaSlides.push([u]); else cur.push(u);
   }
   areaSlides.forEach((gs, i) => s.push({
-    kicker: `2 · What went well, what did not, and why${part(i, areaSlides.length)}`, title: areasTitle,
+    kicker: `2 · What went well, what did not, and why${part(i, areaSlides.length)}`, title: areasTitle, part: partOf(2),
     notes: bk.areas.filter((a) => gs.some((g) => g.rows[0][0] === a.name)).map((a) => `${a.name}: ${AREA_STATE_WORD[a.state].toLowerCase()}.`).join(" ") || `${gs[0].rows[0][0]}.`,
     body: {
       k: "table", head: AREA_HEAD, widths: AREA_W, span: { cols: 2, rows: gs.flatMap((g) => g.rows.map((_, j) => (j ? 0 : g.rows.length))) }, source: 2,
@@ -441,9 +453,9 @@ export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
   // 3. The action plan, seven to a slide.
   const groups: Array<typeof bk.actions> = [];
   for (let i = 0; i < bk.actions.length; i += 7) groups.push(bk.actions.slice(i, i + 7));
-  if (!groups.length) s.push({ kicker: "3 · What we do about it", title: bk.pending ? "No actions accepted yet" : "No actions for the next event", notes: bk.pending ? `${bk.pending} findings wait for a decision in the review.` : "Nothing in the records calls for a change.", body: { k: "asks", items: [], foot: "" } });
+  if (!groups.length) s.push({ kicker: "3 · What we do about it", part: partOf(3), title: bk.pending ? "No actions accepted yet" : "No actions for the next event", notes: bk.pending ? `${bk.pending} findings wait for a decision in the review.` : "Nothing in the records calls for a change.", body: { k: "asks", items: [], foot: "" } });
   groups.forEach((g, i) => s.push({
-    kicker: `3 · What we do about it${part(i, groups.length)}`, title: `${bk.actions.length === 1 ? "1 action" : `${bk.actions.length} actions`} for the next event`, notes: g.map((a) => `${a.n}. ${a.what}${a.benefit ? ` Benefit: ${a.benefit}` : ""}`).join(" "),
+    kicker: `3 · What we do about it${part(i, groups.length)}`, part: partOf(3), title: `${bk.actions.length === 1 ? "1 action" : `${bk.actions.length} actions`} for the next event`, notes: g.map((a) => `${a.n}. ${a.what}${a.benefit ? ` Benefit: ${a.benefit}` : ""}`).join(" "),
     body: {
       k: "table", head: ["What we will do", "How it will be done", "Benefit", "Who", "By", "Cost"], widths: [2.7, 3.0, 2.6, 1.2, 0.95, 0.95],
       rows: g.map((a) => [`${a.n}. ${a.what}\n${a.areaName} · ${appliesWord(a.applies, o.kind)}`, a.how, a.benefit || NOT_WRITTEN, a.who || NOT_SET, a.by || NOT_SET, a.cost || NOT_SET]),
@@ -460,19 +472,35 @@ export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
   return s;
 }
 
-/** The meeting slides as an editable PowerPoint. */
-export async function reviewPptx(r: Review, o: ReviewFileOpts, out: "blob" | "nodebuffer" = "blob"): Promise<Blob> {
+export interface SlidesOpts {
+  /** Colors and fonts: the workspace's (lookFromPalette) or the template's. */
+  look?: DeckLook;
+  /** The company template, when the workspace has one: the slides go onto its layouts. */
+  template?: { data: ArrayBuffer | Uint8Array; info: TemplateInfo; pick?: Partial<Record<LayoutRole, string>> } | null;
+  out?: "blob" | "nodebuffer";
+}
+
+/** The meeting slides as an editable PowerPoint: on the company template
+ *  when there is one, otherwise in the workspace's colors. */
+export async function reviewPptx(r: Review, o: ReviewFileOpts, opts: SlidesOpts = {}): Promise<Blob | Uint8Array> {
+  const look = opts.look ?? DEFAULT_LOOK;
+  if (opts.template) {
+    const { deckOnTemplate } = await import("@/lib/reviewTemplateDeck");
+    return deckOnTemplate(deckSlides(r, o), { info: opts.template.info, data: opts.template.data, look, pick: opts.template.pick, title: `${eventName(o)} post-event review` });
+  }
   const Pptx = (await import("pptxgenjs")).default;
   const p = new Pptx();
   p.layout = "LAYOUT_WIDE"; // 13.33 x 7.5 in
   p.title = `${eventName(o)} post-event review`;
-  const BG = "F6F4EF", INK = "16202E", ACC = "B8430F", SOFT = "4A5568";
-  const face = "Arial";
+  const BG = look.bg, INK = look.ink, KICK = look.kicker, SOFT = look.soft, HEAD = look.heading;
+  const face = look.font;
   const T = (v: string) => noEmDash(v);
   for (const spec of deckSlides(r, o)) {
     const s = p.addSlide();
     s.background = { color: BG };
     const b = spec.body;
+    // The accent: one short bar above the label, the mark that draws the eye.
+    const mark = (x: number, y: number) => s.addShape("rect", { x, y, w: 0.55, h: 0.07, fill: { color: look.accent }, line: { color: look.accent, width: 0 } });
     const bullets = (items: Item[], x: number, y: number, w: number, h: number, size: number) =>
       s.addText(items.map((it) => { const o = typeof it === "string" ? { text: it } : it; return { text: T(o.text), options: { bullet: o.bold ? false : { indent: 14 }, bold: !!o.bold, indentLevel: o.sub ? 1 : 0, breakLine: true, paraSpaceBefore: o.bold ? 6 : 0, paraSpaceAfter: 5 } }; }), { x, y, w, h, fontFace: face, fontSize: size, color: INK, valign: "top" });
     const table = (head: string[], rows: string[][], widths: number[], x: number, y: number, w: number, size?: number, tags?: Array<SlideTag | null>, span?: SlideSpan, source?: number) => {
@@ -482,13 +510,13 @@ export async function reviewPptx(r: Review, o: ReviewFileOpts, out: "blob" | "no
       // Rows band by group when rows share their first cells.
       let band = -1;
       const bands = rows.map((_, ri) => (!span || (span.rows[ri] ?? 1) > 0 ? ++band : band));
-      s.addTable([head.map((h) => ({ text: T(h), options: { bold: true, color: "FFFFFF", fill: { color: INK }, fontFace: face, fontSize: Math.max(9, fs - 2) } })),
+      s.addTable([head.map((h) => ({ text: T(h), options: { bold: true, color: look.headText, fill: { color: look.head }, fontFace: face, fontSize: Math.max(9, fs - 2) } })),
         ...rows.map((row, ri) => head.map((_, i) => {
           const down = span && i < span.cols ? span.rows[ri] ?? 1 : 1;
           if (down === 0) return null;
           // Another finding in the same area: a thin rule above it.
           const under = !!span && i >= span.cols && (span.rows[ri] ?? 1) === 0;
-          const options = { color: INK, fill: { color: bands[ri] % 2 ? "ECE8DF" : BG }, fontFace: face, fontSize: fs, valign: "top" as const, ...(down > 1 ? { rowspan: down } : {}), ...(under ? { border: [{ type: "solid", pt: 0.75, color: "CFC7B8" }, { type: "none" }, { type: "none" }, { type: "none" }] as [BorderLine, BorderLine, BorderLine, BorderLine] } : {}) };
+          const options = { color: INK, fill: { color: bands[ri] % 2 ? look.band : BG }, fontFace: face, fontSize: fs, valign: "top" as const, ...(down > 1 ? { rowspan: down } : {}), ...(under ? { border: [{ type: "solid", pt: 0.75, color: look.line }, { type: "none" }, { type: "none" }, { type: "none" }] as [BorderLine, BorderLine, BorderLine, BorderLine] } : {}) };
           // A first cell: what it is in bold, then the fact or the verdict under it.
           const [lead, ...more] = (row[i] ?? "").split("\n");
           const tag = i === 0 ? tags?.[ri] : null;
@@ -500,7 +528,7 @@ export async function reviewPptx(r: Review, o: ReviewFileOpts, out: "blob" | "no
       { x, y, w, colW: widths.map((c) => (c / total) * w), border: { type: "none" }, margin: [4, 6, 4, 6] });
     };
     const pane = (pn: Pane, x: number, y: number, w: number, h: number) => {
-      if (pn.title) s.addText(T(pn.title.toUpperCase()), { x, y, w, h: 0.3, fontFace: face, fontSize: 11, bold: true, color: ACC, charSpacing: 1 });
+      if (pn.title) s.addText(T(pn.title), { x, y, w, h: 0.3, fontFace: face, fontSize: 12, bold: true, color: KICK });
       const items = pn.items ?? [];
       const chars = items.reduce((n, it) => n + (typeof it === "string" ? it : it.text).length, 0);
       const size = chars > 620 ? 12 : chars > 420 ? 13 : !pn.title ? 18 : 15;
@@ -511,46 +539,50 @@ export async function reviewPptx(r: Review, o: ReviewFileOpts, out: "blob" | "no
       if (items.length) bullets(items, x, y + 0.35, w, used, size);
       if (pn.table) {
         const ty = y + 0.35 + (items.length ? used + 0.1 : 0);
-        if (pn.table.title) s.addText(T(pn.table.title.toUpperCase()), { x, y: ty, w, h: 0.3, fontFace: face, fontSize: 11, bold: true, color: ACC, charSpacing: 1 });
+        if (pn.table.title) s.addText(T(pn.table.title), { x, y: ty, w, h: 0.3, fontFace: face, fontSize: 12, bold: true, color: KICK });
         table(pn.table.head, pn.table.rows, pn.table.widths, x, ty + (pn.table.title ? 0.33 : 0), w, 11);
       }
     };
-    const foot = (t?: string) => { if (t) s.addText(T(t), { x: 0.6, y: 6.85, w: 12.1, h: 0.4, fontFace: face, fontSize: 10, color: "6B7280", valign: "top" }); };
-    if (b.k === "cover" && b.table) {
-      s.addText(T(spec.kicker.toUpperCase()), { x: 0.6, y: 0.4, w: 12.1, h: 0.3, fontFace: face, fontSize: 12, bold: true, color: ACC, charSpacing: 3 });
-      s.addText(T(spec.title), { x: 0.6, y: 0.72, w: 12.1, h: 0.6, fontFace: face, fontSize: 28, bold: true, color: INK });
-      s.addText(T(b.sub), { x: 0.6, y: 1.32, w: 12.1, h: 0.35, fontFace: face, fontSize: 14, color: SOFT });
-      s.addText("WHAT THIS REVIEW MEASURES", { x: 0.6, y: 1.8, w: 12.1, h: 0.3, fontFace: face, fontSize: 11, bold: true, color: ACC, charSpacing: 2 });
-      table(b.table.head, b.table.rows, b.table.widths, 0.6, 2.12, 12.1, 12);
-      s.addText(T(b.meta), { x: 0.6, y: 6.95, w: 12.1, h: 0.35, fontFace: face, fontSize: 11, color: SOFT });
-      s.addNotes(T(spec.notes));
-      continue;
-    }
+    const foot = (t?: string) => { if (t) s.addText(T(t), { x: 0.6, y: 6.85, w: 12.1, h: 0.4, fontFace: face, fontSize: 10, color: look.foot, valign: "top" }); };
     if (b.k === "cover") {
-      s.addText(T(spec.kicker.toUpperCase()), { x: 0.9, y: 1.5, w: 11.5, h: 0.4, fontFace: face, fontSize: 14, bold: true, color: ACC, charSpacing: 3 });
-      s.addText(T(spec.title), { x: 0.9, y: 1.95, w: 11.5, h: 1.1, fontFace: face, fontSize: 38, bold: true, color: INK });
-      s.addText(T(b.sub), { x: 0.9, y: 3.05, w: 11.5, h: 0.5, fontFace: face, fontSize: 18, color: SOFT });
-      s.addText(b.agenda.map((t, i) => ({ text: T(`${i + 1}.  ${t}`), options: { breakLine: true, paraSpaceAfter: 4 } })), { x: 0.9, y: 3.9, w: 8, h: 2.3, fontFace: face, fontSize: 15, color: INK, valign: "top" });
-      s.addText(T(b.meta), { x: 0.9, y: 6.6, w: 11.5, h: 0.4, fontFace: face, fontSize: 13, color: SOFT });
+      // The cover: a band of the deep color down the left, the accent mark, the title.
+      s.addShape("rect", { x: 0, y: 0, w: 0.28, h: 7.5, fill: { color: look.head }, line: { color: look.head, width: 0 } });
+      if (b.table) {
+        mark(0.6, 0.32);
+        s.addText(T(spec.kicker), { x: 0.6, y: 0.42, w: 12.1, h: 0.3, fontFace: face, fontSize: 13, bold: true, color: KICK });
+        s.addText(T(spec.title), { x: 0.6, y: 0.72, w: 12.1, h: 0.6, fontFace: face, fontSize: 28, bold: true, color: HEAD });
+        s.addText(T(b.sub), { x: 0.6, y: 1.32, w: 12.1, h: 0.35, fontFace: face, fontSize: 14, color: SOFT });
+        s.addText(T(b.tableTitle ?? "What this review measures"), { x: 0.6, y: 1.8, w: 12.1, h: 0.3, fontFace: face, fontSize: 12, bold: true, color: KICK });
+        table(b.table.head, b.table.rows, b.table.widths, 0.6, 2.12, 12.1, 12);
+        s.addText(T(b.meta), { x: 0.6, y: 6.95, w: 12.1, h: 0.35, fontFace: face, fontSize: 11, color: SOFT });
+      } else {
+        mark(0.9, 1.4);
+        s.addText(T(spec.kicker), { x: 0.9, y: 1.5, w: 11.5, h: 0.4, fontFace: face, fontSize: 15, bold: true, color: KICK });
+        s.addText(T(spec.title), { x: 0.9, y: 1.95, w: 11.5, h: 1.1, fontFace: face, fontSize: 38, bold: true, color: HEAD });
+        s.addText(T(b.sub), { x: 0.9, y: 3.05, w: 11.5, h: 0.5, fontFace: face, fontSize: 18, color: SOFT });
+        s.addText(b.agenda.map((t, i) => ({ text: T(`${i + 1}.  ${t}`), options: { breakLine: true, paraSpaceAfter: 4 } })), { x: 0.9, y: 3.9, w: 8, h: 2.3, fontFace: face, fontSize: 15, color: INK, valign: "top" });
+        s.addText(T(b.meta), { x: 0.9, y: 6.6, w: 11.5, h: 0.4, fontFace: face, fontSize: 13, color: SOFT });
+      }
       s.addNotes(T(spec.notes));
       continue;
     }
-    s.addText(T(spec.kicker.toUpperCase()), { x: 0.6, y: 0.35, w: 12.1, h: 0.3, fontFace: face, fontSize: 11, bold: true, color: ACC, charSpacing: 2 });
-    s.addText(T(spec.title), { x: 0.6, y: 0.65, w: 12.1, h: 0.8, fontFace: face, fontSize: spec.title.length > 70 ? 21 : 25, bold: true, color: INK, valign: "top" });
+    mark(0.6, 0.27);
+    s.addText(T(spec.kicker), { x: 0.6, y: 0.35, w: 12.1, h: 0.3, fontFace: face, fontSize: 12, bold: true, color: KICK });
+    s.addText(T(spec.title), { x: 0.6, y: 0.65, w: 12.1, h: 0.8, fontFace: face, fontSize: spec.title.length > 70 ? 21 : 25, bold: true, color: HEAD, valign: "top" });
     if (b.k === "asks") {
       const big = b.items.length <= 4;
       const rowH = Math.min(1.25, 5.1 / Math.max(1, b.items.length));
       if (!b.items.length) s.addText(T(spec.notes), { x: 0.6, y: 1.7, w: 12.1, h: 0.6, fontFace: face, fontSize: 20, color: INK });
       b.items.forEach((it, i) => {
         const y = 1.6 + i * rowH;
-        s.addText(String(it.n), { x: 0.6, y, w: 0.6, h: 0.6, fontFace: face, fontSize: big ? 26 : 22, bold: true, color: ACC, valign: "top" });
+        s.addText(String(it.n), { x: 0.6, y, w: 0.6, h: 0.6, fontFace: face, fontSize: big ? 26 : 22, bold: true, color: KICK, valign: "top" });
         s.addText([{ text: T(it.ask), options: { bold: true, fontSize: big ? 20 : 17, color: INK, breakLine: true } }, { text: T(it.because), options: { fontSize: big ? 15 : 13, color: SOFT } }], { x: 1.25, y, w: 11.4, h: rowH - 0.05, fontFace: face, valign: "top", margin: 0 });
       });
       foot(b.foot);
     } else if (b.k === "table") {
       // The tally sits in a line above the table: "1 met · 1 missed · 4 not measured".
       let y = 1.5;
-      if (b.lead) { s.addText(T(b.lead), { x: 0.6, y, w: 12.1, h: 0.42, fontFace: face, fontSize: 16, bold: true, color: ACC, valign: "middle" }); y += 0.48; }
+      if (b.lead) { s.addText(T(b.lead), { x: 0.6, y, w: 12.1, h: 0.42, fontFace: face, fontSize: 16, bold: true, color: KICK, valign: "middle" }); y += 0.48; }
       if (b.tally?.length) { s.addText(b.tally.flatMap((t, i) => [{ text: `${i ? "     " : ""}${t.n} `, options: { bold: true, fontSize: 20, color: TONE_HEX[t.tone].fg } }, { text: T(t.label), options: { fontSize: 13, color: SOFT } }]), { x: 0.6, y, w: 12.1, h: 0.45, fontFace: face, valign: "middle" }); y += 0.55; }
       table(b.head, b.rows, b.widths, 0.6, y === 1.5 ? 1.55 : y, 12.1, undefined, b.tags, b.span, b.source);
       foot(b.foot);
@@ -562,7 +594,7 @@ export async function reviewPptx(r: Review, o: ReviewFileOpts, out: "blob" | "no
     }
     s.addNotes(T(spec.notes));
   }
-  return (await p.write({ outputType: out })) as Blob;
+  return (await p.write({ outputType: opts.out ?? "blob" })) as Blob;
 }
 
 export { saveFile } from "@/lib/saveFile";

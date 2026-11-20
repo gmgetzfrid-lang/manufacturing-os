@@ -14,13 +14,17 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, Download, Loader2, Maximize2, X } from "lucide-react";
 import { noEmDash } from "@/lib/noEmDash";
-import { TONE_HEX, tablePt, type SlideItem, type SlideMore, type SlidePane, type SlideSpan, type SlideSpec, type SlideTag } from "@/lib/reviewFiles";
+import { DEFAULT_LOOK, TONE_HEX, tablePt, type SlideItem, type SlideMore, type SlidePane, type SlideSpan, type SlideSpec, type SlideTag } from "@/lib/reviewFiles";
+import type { DeckLook } from "@/lib/deckLook";
 
 // The slide in its own pixels: 13.33 x 7.5 in at 96 to the inch, so a point
 // size here is the point size in the PowerPoint.
 const W = 1280, H = 720;
 const pt = (n: number) => `${(n * 4) / 3}px`;
-const C = { bg: "#F6F4EF", ink: "#16202E", acc: "#B8430F", soft: "#4A5568", band: "#ECE8DF", foot: "#6B7280" };
+// The deck's colors (lib/deckLook), set as variables on the viewer so
+// every slide piece reads them: the workspace's, or the template's.
+const C = { bg: "var(--deck-bg)", ink: "var(--deck-ink)", acc: "var(--deck-kicker)", soft: "var(--deck-soft)", band: "var(--deck-band)", foot: "var(--deck-foot)", head: "var(--deck-head)", headText: "var(--deck-head-text)", line: "var(--deck-line)", heading: "var(--deck-heading)", accent: "var(--deck-accent)" };
+const deckVars = (l: DeckLook): React.CSSProperties => ({ "--deck-bg": `#${l.bg}`, "--deck-ink": `#${l.ink}`, "--deck-kicker": `#${l.kicker}`, "--deck-soft": `#${l.soft}`, "--deck-band": `#${l.band}`, "--deck-foot": `#${l.foot}`, "--deck-head": `#${l.head}`, "--deck-head-text": `#${l.headText}`, "--deck-line": `#${l.line}`, "--deck-heading": `#${l.heading}`, "--deck-accent": `#${l.accent}` } as React.CSSProperties);
 const T = (v: string) => noEmDash(v);
 type Open = (m: SlideMore) => void;
 const Tag = ({ tag, size }: { tag: SlideTag; size: string }) => (
@@ -40,8 +44,12 @@ const cell = (t: string, first: boolean) => {
   return first && more.length ? <><b>{T(lead)}</b><br /><span style={{ fontWeight: 400 }}>{T(more.join(" "))}</span></> : T(t);
 };
 
-export default function ReviewSlides({ slides, name, onClose, onDownload, downloading, ready }: {
+export default function ReviewSlides({ slides, name, onClose, onDownload, downloading, ready, look = DEFAULT_LOOK, template = null }: {
   slides: SlideSpec[]; name: string; onClose: () => void;
+  /** The colors and fonts the download is set in. */
+  look?: DeckLook;
+  /** The company template's file name, when the download goes onto it. */
+  template?: string | null;
   onDownload: () => void; downloading: boolean;
   /** The file is made and the browser wants a tap to hand it over. */
   ready: { name: string; onSave: () => void } | null;
@@ -89,10 +97,10 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
 
   // On the page's own body, so nothing the review sits in can crop it.
   return createPortal(
-    <div ref={shell} className="fixed inset-0 z-[400] bg-slate-950 text-white flex flex-col" role="dialog" aria-modal="true" aria-label={`${name}: slide ${at + 1} of ${slides.length}`} data-review-slides>
+    <div ref={shell} style={deckVars(look)} className="fixed inset-0 z-[400] bg-slate-950 text-white flex flex-col" role="dialog" aria-modal="true" aria-label={`${name}: slide ${at + 1} of ${slides.length}`} data-review-slides>
       {!full && (
         <div className="flex items-center gap-2 px-3 sm:px-5 py-2 border-b border-white/10">
-          <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-white/70">{name}</span>
+          <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-white/70">{name}{template && <span className="hidden md:inline font-normal text-white/55"> · The download goes onto {template}</span>}</span>
           <span className="text-[13px] font-bold text-white/60 tabular-nums whitespace-nowrap" data-slide-count>{at + 1} / {slides.length}</span>
           <button type="button" onClick={onDownload} disabled={downloading} className={bar}>{downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}<span className="hidden sm:inline">Download </span>PowerPoint</button>
           {canFull && wide && <button type="button" onClick={toggleFull} className={bar}><Maximize2 className="w-4 h-4" /> Full screen</button>}
@@ -110,8 +118,8 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
         onTouchEnd={(e) => { const s = touch.current, t = e.changedTouches[0]; touch.current = null; if (!s) return; const dx = t.clientX - s.x, dy = t.clientY - s.y; if (Math.abs(dx) > 60 && Math.abs(dx) > 2 * Math.abs(dy)) go(dx < 0 ? 1 : -1); }}>
         {box && (wide ? (
           <div data-slide={at} onClick={full ? (e) => go(e.clientX > box.w / 2 ? 1 : -1) : undefined}
-            style={{ position: "absolute", left: (box.w - W * scale) / 2, top: (box.h - H * scale) / 2, width: W, height: H, transform: `scale(${scale})`, transformOrigin: "top left", background: C.bg, color: C.ink, fontFamily: "Arial, Helvetica, sans-serif", overflow: "hidden", cursor: full ? "pointer" : undefined }}>
-            <Canvas spec={spec} open={full ? undefined : setMore} />
+            style={{ position: "absolute", left: (box.w - W * scale) / 2, top: (box.h - H * scale) / 2, width: W, height: H, transform: `scale(${scale})`, transformOrigin: "top left", background: C.bg, color: C.ink, fontFamily: `"${look.font}", Arial, Helvetica, sans-serif`, overflow: "hidden", cursor: full ? "pointer" : undefined }}>
+            <Canvas spec={spec} open={full ? undefined : setMore} mark={!template} />
           </div>
         ) : (
           <div key={at} data-slide={at} className="absolute inset-0 overflow-y-auto" style={{ background: C.bg, color: C.ink }}><Page spec={spec} open={setMore} /></div>
@@ -150,15 +158,20 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
 
 // ─── The slide as drawn (a computer) ───────────────────────────────
 
-function Canvas({ spec, open }: { spec: SlideSpec; open?: Open }) {
+function Canvas({ spec, open, mark }: { spec: SlideSpec; open?: Open; mark?: boolean }) {
   const b = spec.body;
+  // The accent: one short bar above the label, as on the downloaded slide.
+  const bar = mark ? <div aria-hidden style={{ width: 53, height: 7, background: C.accent, marginBottom: 4 }} /> : null;
+  // The cover's band of the deep color down the left.
+  const side = mark ? <div aria-hidden style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 27, background: C.head }} /> : null;
   if (b.k === "cover" && b.table) {
     return (
-      <div style={{ position: "absolute", inset: 0, padding: "34px 58px 0", display: "flex", flexDirection: "column" }}>
-        <div style={{ fontSize: pt(12), fontWeight: 700, color: C.acc }}>{T(spec.kicker)}</div>
-        <div style={{ fontSize: pt(28), fontWeight: 700, lineHeight: 1.1, marginTop: 6 }}>{T(spec.title)}</div>
+      <div style={{ position: "absolute", inset: 0, padding: "28px 58px 0", display: "flex", flexDirection: "column" }}>
+        {side}{bar}
+        <div style={{ fontSize: pt(13), fontWeight: 700, color: C.acc }}>{T(spec.kicker)}</div>
+        <div style={{ fontSize: pt(28), fontWeight: 700, lineHeight: 1.1, marginTop: 6, color: C.heading }}>{T(spec.title)}</div>
         <div style={{ fontSize: pt(14), color: C.soft, marginTop: 6 }}>{T(b.sub)}</div>
-        <div style={{ fontSize: pt(11), fontWeight: 700, color: C.acc, marginTop: 22, marginBottom: 6 }}>What this review measures</div>
+        <div style={{ fontSize: pt(11), fontWeight: 700, color: C.acc, marginTop: 22, marginBottom: 6 }}>{T(b.tableTitle ?? "What this review measures")}</div>
         <div style={{ flex: 1, minHeight: 0 }}><FitTable key={spec.title} body={{ k: "table", head: b.table.head, rows: b.table.rows, widths: b.table.widths }} /></div>
         <div style={{ height: 44, paddingTop: 10, fontSize: pt(11), color: C.soft }}>{T(b.meta)}</div>
       </div>
@@ -166,9 +179,10 @@ function Canvas({ spec, open }: { spec: SlideSpec; open?: Open }) {
   }
   if (b.k === "cover") {
     return (
-      <div style={{ position: "absolute", inset: 0, padding: "144px 86px 0" }}>
-        <div style={{ fontSize: pt(14), fontWeight: 700, color: C.acc }}>{T(spec.kicker)}</div>
-        <div style={{ fontSize: pt(38), fontWeight: 700, lineHeight: 1.1, marginTop: 10 }}>{T(spec.title)}</div>
+      <div style={{ position: "absolute", inset: 0, padding: "134px 86px 0" }}>
+        {side}{bar}
+        <div style={{ fontSize: pt(15), fontWeight: 700, color: C.acc }}>{T(spec.kicker)}</div>
+        <div style={{ fontSize: pt(38), fontWeight: 700, lineHeight: 1.1, marginTop: 10, color: C.heading }}>{T(spec.title)}</div>
         <div style={{ fontSize: pt(18), color: C.soft, marginTop: 14 }}>{T(b.sub)}</div>
         <div style={{ fontSize: pt(15), marginTop: 44, lineHeight: 1.5 }}>{b.agenda.map((t, i) => <div key={i}>{i + 1}.&nbsp;&nbsp;{T(t)}</div>)}</div>
         <div style={{ position: "absolute", left: 86, bottom: 48, fontSize: pt(13), color: C.soft }}>{T(b.meta)}</div>
@@ -176,9 +190,10 @@ function Canvas({ spec, open }: { spec: SlideSpec; open?: Open }) {
     );
   }
   return (
-    <div style={{ position: "absolute", inset: 0, padding: "32px 58px 0", display: "flex", flexDirection: "column" }}>
-      <div style={{ fontSize: pt(11), fontWeight: 700, color: C.acc }}>{T(spec.kicker)}</div>
-      <div style={{ fontSize: pt(spec.title.length > 70 ? 21 : 25), fontWeight: 700, lineHeight: 1.12, marginTop: 6, minHeight: b.k === "table" && spec.title.length <= 60 ? 40 : 74 }}>{T(spec.title)}</div>
+    <div style={{ position: "absolute", inset: 0, padding: "26px 58px 0", display: "flex", flexDirection: "column" }}>
+      {bar}
+      <div style={{ fontSize: pt(12), fontWeight: 700, color: C.acc }}>{T(spec.kicker)}</div>
+      <div style={{ fontSize: pt(spec.title.length > 70 ? 21 : 25), fontWeight: 700, lineHeight: 1.12, marginTop: 6, color: C.heading, minHeight: b.k === "table" && spec.title.length <= 60 ? 40 : 74 }}>{T(spec.title)}</div>
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden", marginTop: 10 }}>
         {b.k === "asks" ? (
           <div>
@@ -263,7 +278,7 @@ function SlideTable({ head, rows, widths, size, tags, more, open, span, source }
   return (
     <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed", fontSize: pt(fs), lineHeight: 1.22 }}>
       <colgroup>{widths.map((w, i) => <col key={i} style={{ width: `${(w / total) * 100}%` }} />)}</colgroup>
-      <thead><tr>{head.map((h) => <th key={h} style={{ background: C.ink, color: "#fff", textAlign: "left", padding: "0.4em 8px", fontWeight: 700, fontSize: "0.85em" }}>{T(h)}</th>)}</tr></thead>
+      <thead><tr>{head.map((h) => <th key={h} style={{ background: C.head, color: C.headText, textAlign: "left", padding: "0.4em 8px", fontWeight: 700, fontSize: "0.85em" }}>{T(h)}</th>)}</tr></thead>
       <tbody>{rows.map((r, ri) => {
         const m = open ? more?.[gs[ri].start] ?? null : null;
         const bg = gs[ri].band % 2 ? C.band : C.bg;
@@ -275,7 +290,7 @@ function SlideTable({ head, rows, widths, size, tags, more, open, span, source }
               const down = span && i < span.cols ? span.rows[ri] ?? 1 : 1;
               if (down === 0) return null;
               return (
-                <td key={i} rowSpan={down > 1 ? down : undefined} style={{ padding: "0.38em 8px", verticalAlign: "top", fontWeight: i === 0 ? 700 : 400, overflowWrap: "anywhere", background: bg, borderTop: under ? "1px solid #D5CEC1" : undefined }}>
+                <td key={i} rowSpan={down > 1 ? down : undefined} style={{ padding: "0.38em 8px", verticalAlign: "top", fontWeight: i === 0 ? 700 : 400, overflowWrap: "anywhere", background: bg, borderTop: under ? `1px solid ${C.line}` : undefined }}>
                   {i === 0 ? <>{cell(r[i] ?? "", true)}{tags?.[ri] && <div style={{ marginTop: 4 }}><Tag tag={tags[ri]!} size="0.78em" /></div>}</> : lines(r[i] ?? "", i === source)}
                 </td>
               );
@@ -294,10 +309,10 @@ function Page({ spec, open }: { spec: SlideSpec; open?: Open }) {
   return (
     <div className="px-4 py-5">
       <div className="text-[13px] font-semibold " style={{ color: C.acc }}>{T(spec.kicker)}</div>
-      <h2 className="mt-1 text-[21px] font-semibold leading-tight">{T(spec.title)}</h2>
+      <h2 className="mt-1 text-[21px] font-semibold leading-tight" style={{ color: C.heading }}>{T(spec.title)}</h2>
       {b.k === "cover" && <>
         {b.sub && <p className="mt-2 text-[14px]" style={{ color: C.soft }}>{T(b.sub)}</p>}
-        {b.table && <><div className="mt-5 text-[13px] font-semibold " style={{ color: C.acc }}>What this review measures</div><div className="mt-2"><Rows head={b.table.head} rows={b.table.rows} /></div></>}
+        {b.table && <><div className="mt-5 text-[13px] font-semibold " style={{ color: C.acc }}>{T(b.tableTitle ?? "What this review measures")}</div><div className="mt-2"><Rows head={b.table.head} rows={b.table.rows} /></div></>}
         {!b.table && <ol className="mt-5 space-y-1.5 text-[15px]">{b.agenda.map((t, i) => <li key={i}>{i + 1}. {T(t)}</li>)}</ol>}
         <p className="mt-6 text-[13px]" style={{ color: C.soft }}>{T(b.meta)}</p>
       </>}
@@ -358,11 +373,11 @@ function Rows({ head, rows, tags, more, open, span, source }: { head: string[]; 
         const m = open ? more?.[i] ?? null : null;
         const r = rows[i], own = span ? rows.slice(i, i + Math.max(1, span.rows[i] ?? 1)) : [r];
         return (
-          <li key={i} className="rounded-xl px-3 py-2.5 text-[14px] leading-snug" style={{ background: gi % 2 ? C.band : "#FFFDF9", border: "1px solid #DDD7CC", cursor: m ? "pointer" : undefined }} onClick={m ? () => open!(m) : undefined} data-row-more={m ? "" : undefined} data-row-group={gi}>
+          <li key={i} className="rounded-xl px-3 py-2.5 text-[14px] leading-snug" style={{ background: gi % 2 ? C.band : C.bg, border: `1px solid ${C.line}`, cursor: m ? "pointer" : undefined }} onClick={m ? () => open!(m) : undefined} data-row-more={m ? "" : undefined} data-row-group={gi}>
             <div className="flex items-baseline gap-2 flex-wrap font-bold text-[15px]"><span className="min-w-0">{cell(r[0] ?? "", true)}</span>{tags?.[i] && <Tag tag={tags[i]!} size="11.5px" />}</div>
             {r.slice(1, shared).map((c, n) => field(c, n + 1, `s${n}`))}
             {own.map((row, k) => row.slice(shared).some(Boolean) && (
-              <div key={k} className={k || shared > 1 ? "mt-2 pt-1 border-t" : ""} style={{ borderColor: "#D5CEC1" }} data-row-item>
+              <div key={k} className={k || shared > 1 ? "mt-2 pt-1 border-t" : ""} style={{ borderColor: C.line }} data-row-item>
                 {row.slice(shared).map((c, n) => field(c, n + shared, `o${n}`))}
               </div>
             ))}

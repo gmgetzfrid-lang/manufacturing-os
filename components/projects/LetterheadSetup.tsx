@@ -5,7 +5,9 @@
 // the report's place marked; nudge the margins; print a test page.
 
 import React, { useState } from "react";
-import { FileUp, Loader2, Printer, Trash2 } from "lucide-react";
+import { FileUp, Loader2, Presentation, Printer, Trash2 } from "lucide-react";
+import Link from "next/link";
+import { useOrgBranding } from "@/components/providers/OrgBrandingProvider";
 import { cleanLetterhead, layerHtml, letterheadDocument, type Letterhead } from "@/lib/letterhead";
 import { saveLetterhead, useLetterhead } from "@/lib/letterheadStore";
 import { useFileDrag } from "@/hooks/useFileDrag";
@@ -202,6 +204,22 @@ export function LetterheadStep({ projectId, canManage }: { projectId: string; ca
           <p className="text-[11.5px] text-[var(--color-text-muted)]">The shift report&apos;s Print and Email / Print both use it. For the best result print at 100% (no &ldquo;fit to page&rdquo;), with headers and footers off.</p>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Under the letterhead: where the slides' look comes from. The company
+ *  template is set once for the workspace, in Branding. */
+export function SlidesNote() {
+  const { branding, canEdit } = useOrgBranding();
+  const t = branding?.slides;
+  return (
+    <div className="mt-4 flex items-center gap-3 rounded-lg border border-[var(--color-border)] px-3 py-2.5">
+      <span aria-hidden className="ui-icon-tile is-sm"><Presentation className="w-4 h-4" /></span>
+      <span className="min-w-0 flex-1 text-[14px] text-[var(--color-text)]">
+        {t ? <>Slides go onto the company template, <b className="font-semibold">{t.name}</b>.</> : "Slides use the workspace colors. A company PowerPoint template can be added in Branding."}
+      </span>
+      {canEdit && <Link href="/admin/branding#slides" className={quiet}>{t ? "Change" : "Add template"}</Link>}
     </div>
   );
 }

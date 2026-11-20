@@ -9,8 +9,8 @@ import { useRole } from "@/components/providers/RoleContext";
 import { useOrgBranding } from "@/components/providers/OrgBrandingProvider";
 import { PALETTE_PRESETS, useTheme, sideOf, type Palette } from "@/components/providers/ThemeProvider";
 import { extractLogoColors } from "@/lib/logoTheme";
-import { signalFromLogo } from "@/lib/brandColors";
-import PalettePicker from "@/components/branding/PalettePicker";
+import { logoTriplets } from "@/lib/brandColors";
+import PalettePicker, { paletteFromTriplet } from "@/components/branding/PalettePicker";
 import { uploadToPath, getSignedUrlForPath } from "@/lib/storage";
 import { Upload, Check, Loader2, ShieldAlert, Trash2 } from "lucide-react";
 import { appAlert } from "@/components/providers/DialogProvider";
@@ -20,6 +20,7 @@ import { tryUpload } from "@/lib/uploadRetry";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, Card, heroPrimary } from "@/components/ui/PageHero";
 import { formatBytes } from "@/lib/formatBytes";
+import SlideTemplateSetup from "@/components/branding/SlideTemplateSetup";
 
 
 export default function AdminBrandingPage() {
@@ -58,6 +59,15 @@ export default function AdminBrandingPage() {
   const [logoPath, setLogoPath] = useState<string | undefined>(branding?.logoPath);
   const [logoPreview, setLogoPreview] = useState<string | null>(logoUrl);
   const [logoShape, setLogoShape] = useState<"mark" | "full">(branding?.logoShape ?? "full");
+  // The saved logo can arrive after the page opens: follow it until you
+  // change the logo here, so Save never drops it.
+  const [logoTouched, setLogoTouched] = useState(false);
+  useEffect(() => {
+    if (logoTouched) return;
+    setLogoPath(branding?.logoPath);
+    setLogoShape(branding?.logoShape ?? "full");
+    setLogoPreview(logoUrl);
+  }, [branding, logoUrl, logoTouched]);
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -82,18 +92,20 @@ export default function AdminBrandingPage() {
 
   async function handleLogo(file: File) {
     if (!activeOrgId) return;
+    setLogoTouched(true);
     setUploading(true);
     setPicked(file);
     setLogoError(null);
     try {
       // Local preview immediately.
       setLogoPreview(URL.createObjectURL(file));
-      // Suggest all three colors from the logo.
+      // Suggest all three colors from the logo: the best fit now, the
+      // others under Try another in Colors.
       try {
         const colors = (await extractLogoColors(file)).map((c) => c.hex);
         setLogoColors(colors);
-        const r = signalFromLogo(colors);
-        if (r) { setPalette({ id: "logo", name: "From your logo", primary: r.signal, secondary: r.second ?? r.signal, side: sideOf(palette) }); setLogoNote("Brand color set from your logo. You can pick another below."); }
+        const best = logoTriplets(colors)[0];
+        if (best) { setPalette(paletteFromTriplet(best, sideOf(palette))); setLogoNote("Colors set from your logo. Try another in Colors."); }
         else setLogoNote("The logo has no strong color (only black, white or grey), so the colors stay as they are.");
       } catch { /* keep current palette */ }
       // Upload to durable storage.
@@ -115,7 +127,7 @@ export default function AdminBrandingPage() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await save({ palette, logoPath, logoShape });
+      await save({ ...(branding ?? {}), palette, logoPath, logoShape });
       savedPalette.current = palette;
       setTouched(false);
       setSavedAt(Date.now());
@@ -174,7 +186,7 @@ export default function AdminBrandingPage() {
               {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />} Upload logo
             </button>
             {logoPreview && (
-              <button onClick={() => { setLogoPath(undefined); setLogoPreview(null); setPicked(null); setLogoError(null); }}
+              <button onClick={() => { setLogoTouched(true); setLogoPath(undefined); setLogoPreview(null); setPicked(null); setLogoError(null); setLogoColors([]); setLogoNote(null); }}
                 className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
                 <Trash2 className="w-4 h-4" /> Remove
               </button>
@@ -184,15 +196,15 @@ export default function AdminBrandingPage() {
             <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Logo shape</div>
             <div className="flex gap-1.5">
               {(["full", "mark"] as const).map((s) => (
-                <button key={s} onClick={() => setLogoShape(s)}
+                <button key={s} onClick={() => { setLogoTouched(true); setLogoShape(s); }}
                   aria-pressed={logoShape === s}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold border capitalize ${logoShape === s ? "border-transparent bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${logoShape === s ? "border-transparent bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
                   {s === "full" ? "Wide wordmark" : "Square mark"}
                 </button>
               ))}
             </div>
           </div>
-          <p className="text-[12px] text-[var(--color-text-muted)] mt-3">{logoNote ?? "Uploading a logo also sets the brand color from it."}</p>
+          <p className="text-[12px] text-[var(--color-text-muted)] mt-3">{logoNote ?? "Uploading a logo also sets the colors from it."}</p>
         </Card>
 
         {/* COLORS */}
@@ -200,6 +212,9 @@ export default function AdminBrandingPage() {
           <PalettePicker value={palette} onChange={setPalette} logoButton={false} logoColors={logoColors} />
           <p className="text-[12px] text-[var(--color-text-muted)] mt-3">The app shows them as you pick. Save to give them to everyone.</p>
         </Card>
+
+        {/* SLIDES: the company's PowerPoint template; saves on its own */}
+        <div id="slides" className="scroll-mt-20 lg:col-span-2"><SlideTemplateSetup /></div>
       </div>
       {savedAt && !touched && <p role="status" className="px-1 text-[14px] text-emerald-700 dark:text-emerald-400 font-semibold">Saved. Everyone in the workspace sees it now.</p>}
       </PageBody>

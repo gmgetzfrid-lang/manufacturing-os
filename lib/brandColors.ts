@@ -163,6 +163,13 @@ export function deepFor(hex: string, mode: "light" | "dark" = "light"): string {
 
 export interface AccentColor { fill: string; hover: string; fg: string; text: string }
 
+/** True when the accent is its own color: it has color and stands apart
+ *  from the brand by hue. Otherwise the accent is the brand's opposite. */
+export function accentUsesOwn(primary: string, secondary?: string | null): secondary is string {
+  if (!secondary || !isHex(secondary) || !isColorful(secondary)) return false;
+  return hueGap(toOklch(secondary)[2], toOklch(signalScale(primary)[600])[2]) >= 50;
+}
+
 /** The accent: the logo's second color when it stands apart from the
  *  brand, otherwise the brand's opposite on the color wheel. Tuned to be
  *  bright enough to pop and still carry its text (white, or graphite on
@@ -172,7 +179,7 @@ export function accentFor(primary: string, secondary?: string | null): AccentCol
   const h0 = toOklch(sc[600])[2];
   let h: number;
   let c: number;
-  if (secondary && isHex(secondary) && isColorful(secondary) && hueGap(toOklch(secondary)[2], h0) >= 50) {
+  if (accentUsesOwn(primary, secondary)) {
     [, c, h] = toOklch(secondary);
   } else {
     h = (h0 + 165) % 360;
@@ -188,6 +195,116 @@ export function accentFor(primary: string, secondary?: string | null): AccentCol
   let tl = Math.min(L, 0.5), text = fromOklch(tl, c, h);
   while (contrast(text, "#ffffff") < 4.5 && tl > 0.25) { tl -= 0.02; text = fromOklch(tl, c, h); }
   return { fill, hover, fg, text };
+}
+
+// ── Three colors from a logo ─────────────────────────────────────
+// A logo gives a few colors; the app offers ways to place them on the
+// three roles: the side menu (deep), the header band and links (main),
+// and the one main button (accent). Each suggestion holds the colors as
+// picked; the app still sets every lightness, as above.
+
+/** The colors for the three roles, as picked (the app tunes them). */
+export interface Triplet { deep: string; main: string; accent: string }
+
+/** What the app paints for a triplet: side menu, header band, main button. */
+export function paintTriplet(t: Triplet): Triplet {
+  return { deep: deepFor(t.deep), main: signalScale(t.main)[600], accent: accentFor(t.main, t.accent).fill };
+}
+
+function labGap(x: string, y: string): number {
+  const [l1, c1, h1] = toOklch(x), [l2, c2, h2] = toOklch(y);
+  const r = Math.PI / 180;
+  return Math.hypot(l1 - l2, c1 * Math.cos(h1 * r) - c2 * Math.cos(h2 * r), c1 * Math.sin(h1 * r) - c2 * Math.sin(h2 * r));
+}
+
+/** How far apart two triplets look once painted (0 means the same). */
+export function tripletGap(a: Triplet, b: Triplet): number {
+  const pa = paintTriplet(a), pb = paintTriplet(b);
+  return labGap(pa.deep, pb.deep) + labGap(pa.main, pb.main) + labGap(pa.accent, pb.accent);
+}
+
+const isYellowHue = (h: number) => h >= 75 && h < 112;
+const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+
+/** Ways to use a logo's colors (most prominent first), best first. Logo
+ *  colors go on all three roles where they fit; the side menu can also be
+ *  the main color's own deep shade, and the button the main's opposite.
+ *  Each is scored for readability (white text on the band and the side
+ *  menu), for a button that stands apart from the main color, and for
+ *  staying true to the logo. Near-duplicates (once painted) are dropped.
+ *  A logo with only black, white or grey gives none. */
+export function logoTriplets(colors: string[]): Triplet[] {
+  const usable: string[] = [];
+  for (const c of colors) if (isHex(c) && isColorful(c) && !usable.some((u) => labGap(u, c) < 0.03)) usable.push(c.toLowerCase());
+  const logo = usable.slice(0, 6);
+  if (!logo.length) return [];
+  const prom = (i: number) => 1 - i / logo.length;
+  const scored: { t: Triplet; score: number }[] = [];
+
+  const add = (mi: number, deepHex: string, di: number, accentHex: string, ai: number, bonus = 0) => {
+    const main = logo[mi];
+    const t: Triplet = { deep: deepHex, main, accent: accentHex };
+    const p = paintTriplet(t);
+    // Readability first: white text on the band, the side menu and (or
+    // graphite on) the button.
+    const acc = accentFor(main, accentHex);
+    if (contrast(p.main, "#ffffff") < 4.5 || contrast(p.deep, "#ffffff") < 7 || contrast(acc.fill, acc.fg) < 3) return;
+    const [mL, , mH0] = toOklch(main);
+    const [m6L, , mH] = toOklch(p.main);
+    let s = 0;
+    // Main: the logo's most prominent color, kept close to how it looks.
+    s += 1.2 * prom(mi) - 1.5 * Math.abs(mL - m6L);
+    if (isYellowHue(mH0)) s -= 1.5; // yellow turns brown on a white-text band
+    // Side menu: a dark logo color, in the main color's family.
+    const [dL, , dH] = toOklch(deepHex);
+    s += 0.8 * clamp01((0.7 - dL) / 0.45) + 0.5 * (1 - Math.min(hueGap(dH, mH), 90) / 90);
+    if (di !== mi) s += 0.3 * prom(di);
+    if (isYellowHue(dH)) s -= 1;
+    // Button: stands apart from the main color by hue; the logo's own
+    // color beats a made-up one.
+    const aH = toOklch(p.accent)[2];
+    s += Math.min(hueGap(aH, mH), 150) / 150;
+    if (ai >= 0) s += 0.6;
+    if (hueGap(aH, toOklch(p.deep)[2]) < 30) s -= 0.3;
+    // Using more of the logo reads as more on brand.
+    s += 0.25 * (new Set([mi, di, ai].filter((i) => i >= 0)).size - 1);
+    scored.push({ t, score: s + bonus });
+  };
+
+  logo.forEach((main, mi) => {
+    const mH = toOklch(signalScale(main)[600])[2];
+    const deeps = logo.map((hex, i) => ({ hex, i }));
+    for (const d of deeps) {
+      for (let ai = 0; ai < logo.length; ai++) {
+        if (ai === mi || ai === d.i || hueGap(toOklch(logo[ai])[2], mH) < 50) continue;
+        add(mi, d.hex, d.i, logo[ai], ai);
+      }
+      add(mi, d.hex, d.i, accentFor(main, main).fill, -1); // the main's opposite
+    }
+  });
+
+  const pick = (list: { t: Triplet; score: number }[]) => {
+    const out: Triplet[] = [];
+    for (const { t } of [...list].sort((a, b) => b.score - a.score)) {
+      if (out.length >= 8) break;
+      if (!out.some((o) => tripletGap(o, t) < 0.06)) out.push(t);
+    }
+    return out;
+  };
+  let out = pick(scored);
+  // Few colors (one, or all the same family): more buttons around the
+  // opposite of the best main color, so there is still a choice.
+  if (out.length < 4) {
+    const best = out[0];
+    const mi = logo.indexOf(best.main);
+    const h0 = toOklch(signalScale(best.main)[600])[2];
+    [135, 195, 120, 240, 90, 270].forEach((off, k) => {
+      const seed = fromOklch(0.66, 0.19, (h0 + off) % 360);
+      add(mi, best.deep, logo.indexOf(best.deep), accentFor(best.main, seed).fill, -1, -0.01 * (k + 1) - 5);
+    });
+    out = pick(scored);
+  }
+  return out;
 }
 
 /** Greys with a breath of the brand hue, so the page feels like one family. */

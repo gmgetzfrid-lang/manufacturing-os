@@ -4,7 +4,8 @@
 // the document root as CSS variables (see globals.css). Saved per device.
 //
 // Two main colors and one accent, the way the color video lays it out:
-//   deep    the brand's deep shade: the side menu (a big, quiet area)
+//   deep    a deep shade for the side menu (a big, quiet area): the
+//           brand's, or of its own color (a logo's darkest, say)
 //   main    the brand at full strength: the header band on every page,
 //           links, tabs, the current menu item, progress, charts
 //   accent  the surprise, kept small so it draws the eye: the one main
@@ -14,14 +15,17 @@
 // The app sets every lightness (lib/brandColors), so any logo works.
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { signalScale, chartColor, toOklch, fromOklch, mix, deepFor, accentFor, tintedNeutrals } from "@/lib/brandColors";
+import { signalScale, chartColor, toOklch, fromOklch, mix, deepFor, accentFor, tintedNeutrals, isColorful } from "@/lib/brandColors";
 
 export type ThemeMode = "light" | "dark";
 
+const isHex = (s: string) => /^#[0-9a-fA-F]{6}$/.test(s);
+
 /** A workspace's colors: `primary` the brand, `secondary` the accent's
  *  source (the logo's second color; the same as primary means "use the
- *  brand's opposite"), `side` the side menu ("deep" by default). */
-export interface Palette { id: string; name: string; primary: string; secondary: string; side?: "deep" | "light" | "dark"; base?: string; accent?: string }
+ *  brand's opposite"), `deep` the side menu's own source color (the
+ *  brand when unset), `side` the side menu ("deep" by default). */
+export interface Palette { id: string; name: string; primary: string; secondary: string; deep?: string; side?: "deep" | "light" | "dark"; base?: string; accent?: string }
 
 /** Ready-made pairs: a brand color and the accent that makes it pop. */
 export const PALETTE_PRESETS: Palette[] = [
@@ -37,6 +41,9 @@ export const PALETTE_PRESETS: Palette[] = [
 
 /** The side menu as saved: "deep" unless someone chose light. */
 export const sideOf = (p: Palette): "deep" | "light" => (p.side === "light" ? "light" : "deep");
+
+/** The color the side menu's deep shade comes from: its own, or the brand. */
+export const deepOf = (p: Palette): string => (p.deep && isHex(p.deep) && isColorful(p.deep) ? p.deep : p.primary);
 
 /** Every CSS variable the colors set, worked out once (also saved so the
  *  next page load paints them before React starts). */
@@ -72,11 +79,13 @@ export function themeVars(mode: ThemeMode, p: Palette): Record<string, string> {
   // Charts: the brand first, the accent's hue next.
   v["--viz-cat-1"] = mode === "dark" ? sc[400] : sc[600];
   v["--viz-cat-2"] = chartColor(acc.fill);
-  // Side menu: the deep shade (default), or light.
+  // Side menu: the deep shade (default), or light. The deep shade comes
+  // from its own color when one is set; the app still sets its lightness.
   if (sideOf(p) === "deep") {
-    const deep = deepFor(p.primary, mode);
+    const deep = deepFor(deepOf(p), mode);
+    const [dl, , dh] = toOklch(deep);
     Object.assign(v, {
-      "--side-bg": deep, "--side-surface": fromOklch(toOklch(deep)[0] + 0.06, 0.04, h), "--side-text": "#ffffff",
+      "--side-bg": deep, "--side-surface": fromOklch(dl + 0.06, 0.04, dh), "--side-text": "#ffffff",
       "--side-muted": "rgb(255 255 255 / 0.78)", "--side-faint": "rgb(255 255 255 / 0.6)",
       "--side-border": "rgb(255 255 255 / 0.12)", "--side-border-strong": "rgb(255 255 255 / 0.22)",
       "--side-current": sc[600], "--side-current-text": "#ffffff", "--side-accent-text": sc[200], "--side-logo-plate": "#ffffff",
@@ -131,8 +140,6 @@ const LS_MODE = "mfgos.theme.mode";
 const LS_PALETTE = "mfgos.theme.palette";   // JSON Palette
 const LS_ACCENT = "mfgos.theme.accent";     // legacy single hex
 
-const isHex = (s: string) => /^#[0-9a-fA-F]{6}$/.test(s);
-
 // ── lazy initial reads (client-only; pre-paint script handles flash) ──
 function initialMode(): ThemeMode {
   if (typeof window === "undefined") return "light";
@@ -145,7 +152,7 @@ function initialPalette(): Palette {
     const raw = localStorage.getItem(LS_PALETTE);
     if (raw) {
       const o = JSON.parse(raw);
-      if (o && isHex(o.primary)) return { id: o.id ?? "custom", name: o.name ?? "Custom", primary: o.primary, secondary: isHex(o.secondary ?? "") ? o.secondary : o.primary, ...(o.side === "light" ? { side: "light" as const } : {}) };
+      if (o && isHex(o.primary)) return { id: o.id ?? "custom", name: o.name ?? "Custom", primary: o.primary, secondary: isHex(o.secondary ?? "") ? o.secondary : o.primary, ...(isHex(o.deep ?? "") ? { deep: o.deep } : {}), ...(o.side === "light" ? { side: "light" as const } : {}) };
     }
     const legacy = localStorage.getItem(LS_ACCENT);
     if (legacy && isHex(legacy)) return { id: "custom", name: "Custom", primary: legacy, secondary: legacy };

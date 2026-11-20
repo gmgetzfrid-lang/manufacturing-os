@@ -12,7 +12,7 @@ import { setupChecklist, missingRequired, toDo, OPEN_SETUP_EVENT, takePendingSet
 import { loadOrg, orgStanding, ORG_CHANGED } from "@/lib/eventOrganization";
 import EventOrganization from "@/components/projects/EventOrganization";
 import { useLetterhead } from "@/lib/letterheadStore";
-import { LetterheadStep } from "@/components/projects/LetterheadSetup";
+import { LetterheadStep, SlidesNote } from "@/components/projects/LetterheadSetup";
 import { browserTimeZone, listTimeZones, tzLabel, DEFAULT_SCHEDULE_TZ } from "@/lib/scheduleTz";
 import { updateProjectMeta } from "@/lib/projects";
 import { useShiftTimes, useShiftTimesState, useShiftTimesSaved, saveProjectShiftTimes, shiftTimesProblem, saveProjectType } from "@/lib/shiftTimesStore";
@@ -309,7 +309,7 @@ function SetupWizard({ items: given, start, critical, onClose: close, ...rest }:
             {at === "baseline" && <BaselineStep {...p} done={item.done} />}
             {at === "manpower" && <ManpowerStep projectId={p.projectId} milestones={p.milestones} canManage={p.canManage} userId={p.userId} userEmail={p.userEmail} timezone={p.timezone} />}
             {at === "roles" && <EventOrganization projectId={p.projectId} canManage={p.canManage} actor={{ email: p.userEmail ?? null }} people={[]} />}
-            {at === "print" && <LetterheadStep projectId={p.projectId} canManage={p.canManage} />}
+            {at === "print" && <><LetterheadStep projectId={p.projectId} canManage={p.canManage} /><SlidesNote /></>}
           </div>
         </div>
       </ModalBody>

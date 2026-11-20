@@ -47,6 +47,10 @@ import { phaseStats, type CostEntry, type CostLine } from "@/lib/phaseReport";
 import type { AreaId, DelayPart, ScoreEntry } from "@/lib/postEventReview";
 import { overloaded } from "@/lib/crewFlow";
 import ReviewSlides from "@/components/projects/ReviewSlides";
+import { useTheme } from "@/components/providers/ThemeProvider";
+import { useOrgBranding } from "@/components/providers/OrgBrandingProvider";
+import { lookFromPalette, lookFromTemplate } from "@/lib/deckLook";
+import { loadSlideTemplate } from "@/lib/slideTemplateStore";
 import { useProjectFindings, useProjectUnit } from "@/components/projects/Findings";
 import { categoriesOf, guessCategories, isLive, leadTag, type Category } from "@/lib/findings";
 import { useProjectType } from "@/lib/shiftTimesStore";
@@ -105,6 +109,12 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  // The files' colors: the workspace's; the slides go onto the company template when there is one.
+  const { palette } = useTheme();
+  const { branding } = useOrgBranding();
+  const tpl = branding?.slides ?? null;
+  const wordLook = useMemo(() => lookFromPalette(palette), [palette]);
+  const slideLook = useMemo(() => (tpl ? lookFromTemplate(tpl) : wordLook), [tpl, wordLook]);
   // Until a person picks one: what needs a decision, else everything.
   const [filterPick, setFilter] = useState<Filter | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
@@ -298,8 +308,8 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
     try {
       const o = fileOpts();
       const made = kind === "word"
-        ? { data: await reviewDocx(review, o), name: `${fileStem(o)}.docx`, mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }
-        : { data: await reviewPptx(review, o), name: `${fileStem(o)} slides.pptx`, mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation" };
+        ? { data: await reviewDocx(review, o, wordLook), name: `${fileStem(o)}.docx`, mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }
+        : { data: await reviewPptx(review, o, { look: slideLook, template: tpl ? { ...(await loadSlideTemplate(tpl)), pick: tpl.pick } : null }), name: `${fileStem(o)} slides.pptx`, mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation" };
       if (!(await saveFile(made.data, made.name, made.mime))) setHeld(made);
     } catch (e) { setErr(`The file couldn't be made: ${(e as Error).message}`); }
     finally { setBusy(null); }
@@ -376,7 +386,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
       {msg && <div role="status" className="mt-2 text-[13px] font-semibold text-amber-900 dark:text-amber-200">{msg}</div>}
       {held && !viewing && <div role="status" className="mt-2 flex items-center gap-2 flex-wrap text-[13px] font-semibold text-[var(--color-text)]" data-file-ready><span className="min-w-0 flex-1 basis-40">The file is ready.</span><button type="button" onClick={() => void saveHeld()} className={pri}><Download className="w-4 h-4" /> Save file</button></div>}
       </Card>
-      {viewing && <ReviewSlides slides={deckSlides(review, fileOpts())} name={`${phase?.name ?? projectName} post-event review`} onClose={() => setViewing(false)} onDownload={() => void download("slides")} downloading={busy === "slides"} ready={held ? { name: held.name, onSave: () => void saveHeld() } : null} />}
+      {viewing && <ReviewSlides slides={deckSlides(review, fileOpts())} name={`${phase?.name ?? projectName} post-event review`} onClose={() => setViewing(false)} onDownload={() => void download("slides")} downloading={busy === "slides"} ready={held ? { name: held.name, onSave: () => void saveHeld() } : null} look={slideLook} template={tpl?.name ?? null} />}
 
       {carried.map(({ phase: p, actions }) => (
         <section key={p.id} className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] p-4 sm:p-5" data-review-carried={p.id}>

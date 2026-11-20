@@ -5,14 +5,18 @@
 
 import { supabase } from "@/lib/supabase";
 import type { Palette } from "@/components/providers/ThemeProvider";
+import type { SlideTemplateRef } from "@/lib/slideTemplate";
 
 export interface OrgBranding {
-  /** Enforced palette for the whole org. */
+  /** Enforced palette for the whole org, saved whole (its `deep` side
+   *  menu color included). */
   palette?: Palette;
   /** R2 storage path to the org logo (signed for display). */
   logoPath?: string;
   /** How the logo sits in the sidebar: 'mark' = square glyph, 'full' = wide wordmark. */
   logoShape?: "mark" | "full";
+  /** The company's PowerPoint template: slides are laid onto its layouts. */
+  slides?: SlideTemplateRef;
   updatedAt?: string;
 }
 
