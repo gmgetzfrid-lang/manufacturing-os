@@ -48,6 +48,11 @@ import { translatePostgresError } from "@/lib/inputValidation";
 import { normalizeTag } from "@/lib/assets";
 import ViewTabs, { EQUIPMENT_VIEWS } from "@/components/navigation/ViewTabs";
 import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
+import LoadingBlock from "@/components/ui/LoadingBlock";
+import MoreMenu from "@/components/ui/MoreMenu";
+import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
+import { useDraft } from "@/hooks/useDraft";
+import { badgeText } from "@/lib/badge";
 
 // DocCtrl belongs here: document controllers own the asset↔document wiring
 // (categories, codebook areas, file links), so gating them out of asset
@@ -58,7 +63,7 @@ const ADMIN_ROLES = ["Admin", "DocCtrl", "Manager", "Supervisor"];
 export default function AssetsPage() {
   // useSearchParams needs a Suspense boundary at build time.
   return (
-    <Suspense fallback={null}>
+    <Suspense fallback={<div className="p-4 sm:p-8"><LoadingBlock what="operating areas" /></div>}>
       <AssetsPageInner />
     </Suspense>
   );
@@ -271,7 +276,28 @@ function AssetsPageInner() {
 
   const searchActive = search.trim().length > 0 || typeFilter !== "" || filterMode !== "all";
 
-  if (!activeOrgId) return null;
+  if (!activeOrgId) return <div className="p-4 sm:p-8"><LoadingBlock what="operating areas" /></div>;
+
+  const printLabels = async () => {
+    const list = filtered.slice(0, 200);
+    if (list.length === 0) return;
+    try {
+      const { printEquipmentLabels } = await import("@/lib/physicalBridge");
+      await printEquipmentLabels(list.map((a) => ({
+        tag: a.tag,
+        description: a.description ?? null,
+        location: a.location ?? null,
+      })));
+    } catch (e) {
+      await appAlert({ title: "Couldn't print labels", message: (e as Error).message, tone: "danger" });
+    }
+  };
+  // Less-used tools fold into More: QR label sheets and the CSV import.
+  const moreItems = [
+    ...(filtered.length > 0 ? [{ icon: <QrCode className="w-4 h-4" />, label: `QR labels (${Math.min(filtered.length, 200)})`, onClick: () => void printLabels() }] : []),
+    ...(canEditEquipment ? [{ icon: <Upload className="w-4 h-4" />, label: "Import CSV", onClick: () => setCsvOpen(true) }] : []),
+  ];
+  const withoutPhotos = assets.reduce((n, a) => n + ((photoCounts.get(a.id) || 0) === 0 ? 1 : 0), 0);
 
   return (
     <div className="p-4 sm:p-8 pb-20">
@@ -284,40 +310,21 @@ function AssetsPageInner() {
               <Tag className="w-7 h-7 text-[var(--color-text-muted)]" />
               Operating Areas
             </h1>
-            <p className="text-sm text-[var(--color-text-muted)] mt-1 max-w-2xl">
-              Each operating area is a front door: step inside for its equipment by type, its
-              pinned libraries (P&amp;IDs, manuals, unit data), and every document that
-              references its equipment.
-            </p>
+            {!loading && !error && !unitFilter && (
+              <p className="text-sm text-[var(--color-text-muted)] mt-1 max-w-2xl">
+                {book.units.length > 0 && <>{book.units.length} operating area{book.units.length === 1 ? "" : "s"} · </>}
+                {assets.length} piece{assets.length === 1 ? "" : "s"} of equipment
+                {unitCounts.unassigned > 0 && <> · <span className="font-bold text-amber-700 dark:text-amber-400">{unitCounts.unassigned} not in an area</span></>}
+                {withoutPhotos > 0 && assets.length > 0 && <> · {withoutPhotos} without photos</>}
+              </p>
+            )}
           </div>
           {isAdmin && (
             <div className="flex items-center gap-2 flex-wrap">
-              {/* Bulk QR labels for whatever the filters currently show —
+              {/* Bulk QR labels for whatever the filters currently show:
                   laminate onto the equipment; every scan lands on that
                   asset's hub (drawings, holds, doc pack, report-a-problem). */}
-              <button
-                onClick={async () => {
-                  const list = filtered.slice(0, 200);
-                  if (list.length === 0) return;
-                  const { printEquipmentLabels } = await import("@/lib/physicalBridge");
-                  await printEquipmentLabels(list.map((a) => ({
-                    tag: a.tag,
-                    description: a.description ?? null,
-                    location: a.location ?? null,
-                  })));
-                }}
-                disabled={filtered.length === 0}
-                title={`Print a QR label sheet for the ${filtered.length} asset${filtered.length === 1 ? "" : "s"} currently shown (Avery 5163 layout)`}
-                className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-sm font-bold border border-[var(--color-border)] disabled:opacity-40"
-              >
-                <QrCode className="w-4 h-4" /> QR labels ({filtered.length})
-              </button>
-              {canEditEquipment && <button
-                onClick={() => setCsvOpen(true)}
-                className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-sm font-bold border border-[var(--color-border)]"
-              >
-                <Upload className="w-4 h-4" /> Import CSV
-              </button>}
+              {moreItems.length > 0 && <MoreMenu items={moreItems} />}
               {!unitFilter ? (
                 // The root IS the site — the primary act here is defining an
                 // operating area, not dropping a loose asset.
@@ -350,10 +357,10 @@ function AssetsPageInner() {
         </div>
 
         {!canEditEquipment && (
-          <div className="mb-6 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-start gap-2">
-            <Lock className="w-4 h-4 mt-0.5 shrink-0" />
-            <span>Only admins add or change equipment. Your role: <b>{activeRole}</b>. You can browse it{isAdmin ? ", print labels and add photos" : " and view photos"}; on a work order, ask an admin to add what&apos;s missing.</span>
-          </div>
+          <p className="mb-6 text-xs text-[var(--color-text-muted)] flex items-start gap-2">
+            <Lock className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            <span>Only admins add or change equipment. You can browse it{isAdmin ? ", print labels and add photos" : " and view photos"}. Ask an admin to add what&apos;s missing.</span>
+          </p>
         )}
 
         {/* No codebook units yet → show admins the path instead of a silently
@@ -435,17 +442,17 @@ function AssetsPageInner() {
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search all equipment - tag (E-22), site code (2030.22), description, location…"
-              className="w-full pl-10 pr-3 py-2.5 text-base sm:text-sm border border-[var(--color-border)] rounded-lg bg-[var(--color-surface)] focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:border-transparent outline-none"
+              placeholder="Search all equipment: tag (E-22), site code (2030.22), description, location…"
+              className="w-full pl-10 pr-3 py-2.5 text-base sm:text-sm border border-[var(--color-border)] rounded-lg bg-[var(--color-surface)] text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:border-transparent outline-none"
             />
           </div>
-          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="px-3 py-2.5 text-sm border border-[var(--color-border)] rounded-lg bg-[var(--color-surface)] font-medium">
+          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="px-3 py-2.5 text-sm border border-[var(--color-border)] rounded-lg bg-[var(--color-surface)] text-[var(--color-text)] font-medium">
             <option value="">All types</option>
             {types.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
           <div className="flex bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-1">
             {(["all", "with_photos", "no_photos"] as const).map((m) => (
-              <button key={m} onClick={() => setFilterMode(m)} className={`px-2.5 py-1.5 text-xs font-bold rounded-md ${filterMode === m ? "bg-slate-900 text-white" : "text-[var(--color-text-muted)]"}`}>
+              <button key={m} onClick={() => setFilterMode(m)} aria-pressed={filterMode === m} className={`px-2.5 py-1.5 text-xs font-bold rounded-md ${filterMode === m ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
                 {m === "all" ? "All" : m === "with_photos" ? "With photos" : "No photos"}
               </button>
             ))}
@@ -454,20 +461,23 @@ function AssetsPageInner() {
 
         {/* Grid */}
         {loading ? (
-          <div className="text-center py-16 text-sm text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin inline" /> Loading…</div>
+          <LoadingBlock what="the equipment" rows={6} />
         ) : error ? (
-          <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>
+          <p role="alert" className="border-l-2 border-red-500 pl-3 py-1 text-sm text-red-700 dark:text-red-400">
+            Couldn&apos;t load the equipment: {error}{" "}
+            <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
+          </p>
         ) : unitFilter ? (
           // ── The unit hub: equipment by type, then every document that
           //    references the unit's equipment.
           <div className="space-y-6">
             {filtered.length === 0 ? (
               unitFilter === "__unassigned" ? (
-                <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-8 text-center">
-                  <p className="text-sm font-black text-[var(--color-text)]">Everything is filed.</p>
+                <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-8 text-center">
+                  <p className="text-sm font-black text-emerald-700 dark:text-emerald-400">Everything is filed.</p>
                   <p className="text-xs text-[var(--color-text-muted)] mt-1">No equipment is missing an operating area.</p>
                   <button onClick={() => setUnitFilter(null)}
-                    className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-black shadow">
+                    className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-sm font-black">
                     <ArrowLeft className="w-4 h-4" /> Back to all areas
                   </button>
                 </div>
@@ -484,9 +494,7 @@ function AssetsPageInner() {
                   {/* Category headers are the unit's chapter titles — they
                       carry the codebook's code + prefixes so the numbering
                       system you taught is visibly at work. */}
-                  <div className={`flex items-center gap-2.5 mb-2.5 rounded-xl border px-3 py-2 ${isUncat
-                    ? "border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/30"
-                    : "border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)]"}`}>
+                  <div className={`flex items-center gap-2.5 mb-2.5 rounded-xl border px-3 py-2 border-[var(--color-border)] bg-[var(--color-surface-2)] ${isUncat ? "border-l-2 border-l-amber-500" : ""}`}>
                     <button type="button"
                       onClick={() => setClosedTypes((prev) => {
                         const next = new Set(prev);
@@ -495,9 +503,7 @@ function AssetsPageInner() {
                       })}
                       className="flex items-center gap-2.5 text-left flex-1 min-w-0">
                       <ChevronDown className={`w-4 h-4 shrink-0 ${isUncat ? "text-amber-500" : "text-[var(--color-text-muted)]"} transition-transform ${open ? "" : "-rotate-90"}`} />
-                      <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${isUncat
-                        ? "bg-amber-100 dark:bg-amber-900/50"
-                        : "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]"}`}>
+                      <span className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 bg-[var(--color-surface)]">
                         {isUncat
                           ? <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
                           : <Tag className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />}
@@ -505,10 +511,8 @@ function AssetsPageInner() {
                       <span className="min-w-0">
                         <span className="flex items-center gap-2 flex-wrap">
                           <span className="text-sm font-black text-[var(--color-text)]">{g.name}</span>
-                          <span className={`text-[11px] font-black rounded-full px-2 py-0.5 ${isUncat
-                            ? "bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300"
-                            : "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]"}`}>
-                            {g.list.length}
+                          <span className="text-[11px] font-black rounded-full px-2 py-0.5 bg-[var(--color-surface)] text-[var(--color-text)]">
+                            {badgeText(g.list.length)}
                           </span>
                           {cb && (
                             <span className="font-mono text-[11px] font-black text-[var(--color-text)] dark:text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] dark:border-[var(--color-border)] rounded px-1.5 py-0.5"
@@ -525,7 +529,7 @@ function AssetsPageInner() {
                         </span>
                         {isUncat && (
                           <span className="block text-[11px] text-amber-700 dark:text-amber-400 font-bold mt-0.5">
-                            File these: hit Categorize on a card, or run Auto-categorize above.
+                            Sort these: tap Categorize on a card, or Auto-categorize above.
                           </span>
                         )}
                       </span>
@@ -548,7 +552,7 @@ function AssetsPageInner() {
                         unitCode: unitFilter === "__unassigned" ? undefined : (unitFilter ?? undefined),
                       })}
                       className="w-full rounded-xl border-2 border-dashed border-[var(--color-border)] py-5 text-xs font-bold text-[var(--color-text-faint)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-accent-hover)]">
-                      No {g.name.toLowerCase()} in this area yet{canEditEquipment ? " - add the first" : ""}
+                      No {g.name.toLowerCase()} in this area yet{canEditEquipment ? ". Add the first." : ""}
                     </button>
                   ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -595,7 +599,7 @@ function AssetsPageInner() {
             ))}
             {unitCounts.unassigned > 0 && (
               <button onClick={() => setUnitFilter("__unassigned")}
-                className="text-left rounded-2xl border-2 border-dashed border-amber-300 bg-amber-50/50 hover:bg-amber-50 p-5 transition-colors">
+                className="text-left rounded-2xl border-2 border-dashed border-amber-300 dark:border-amber-800 bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] p-5 transition-colors">
                 <div className="flex items-center gap-2 mb-1">
                   <AlertTriangle className="w-4 h-4 text-amber-600" />
                   <span className="text-sm font-black text-[var(--color-text)]">No unit assigned</span>
@@ -764,7 +768,7 @@ function UnitCard({ summary, onOpen, onEdit }: {
         </div>
       )}
       {needPhotos > 0 && (
-        <div className="text-[11px] font-bold text-amber-700 flex items-center gap-1">
+        <div className="text-[11px] font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1">
           <Camera className="w-3 h-3" /> {needPhotos} without photos
         </div>
       )}
@@ -809,8 +813,8 @@ function UnitResources({ orgId, unitCode, links, canEdit, onChanged }: {
               </div>
             </Link>
             {canEdit && (
-              <button onClick={() => void removeLink(l.id)} disabled={busy} title="Unpin"
-                className="absolute top-1.5 right-1.5 p-0.5 rounded text-[var(--color-text-faint)] hover:text-rose-600 opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity">
+              <button onClick={() => void removeLink(l.id)} disabled={busy} title="Unpin" aria-label={`Unpin ${l.label}`}
+                className="absolute top-1.5 right-1.5 p-0.5 rounded text-[var(--color-text-faint)] hover:text-rose-600 opacity-70 group-hover:opacity-100 transition-opacity">
                 <X className="w-3 h-3" />
               </button>
             )}
@@ -824,7 +828,7 @@ function UnitResources({ orgId, unitCode, links, canEdit, onChanged }: {
                 : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:border-[var(--color-border)] hover:text-[var(--color-accent-hover)]"
             }`}>
             <Link2 className="w-3.5 h-3.5" />
-            {links.length === 0 ? "Pin this unit's libraries - P&IDs, manuals, unit data…" : "Pin another"}
+            {links.length === 0 ? "Pin this unit's libraries: P&IDs, manuals, unit data…" : "Pin another"}
           </button>
         )}
         {!canEdit && links.length === 0 && (
@@ -852,7 +856,7 @@ function LinkResourceModal({ orgId, onClose, onSave }: {
   orgId: string; onClose: () => void;
   onSave: (link: UnitResourceLink) => Promise<void>;
 }) {
-  const [libs, setLibs] = useState<Array<{ id: string; name: string }>>([]);
+  const [libs, setLibs] = useState<Array<{ id: string; name: string }> | null>(null);
   const [libraryId, setLibraryId] = useState("");
   const [folders, setFolders] = useState<PickerFolder[]>([]);
   const [folderId, setFolderId] = useState("");
@@ -862,7 +866,10 @@ function LinkResourceModal({ orgId, onClose, onSave }: {
 
   useEffect(() => {
     void supabase.from("libraries").select("id, name").eq("org_id", orgId).order("name")
-      .then(({ data }) => setLibs((data ?? []) as Array<{ id: string; name: string }>));
+      .then(({ data, error: e }) => {
+        if (e) { setError(`Couldn't load the libraries: ${e.message}`); setLibs([]); return; }
+        setLibs((data ?? []) as Array<{ id: string; name: string }>);
+      });
   }, [orgId]);
 
   useEffect(() => {
@@ -870,11 +877,11 @@ function LinkResourceModal({ orgId, onClose, onSave }: {
     let alive = true;
     listLibraryFoldersOnce(libraryId)
       .then((f) => { if (alive) setFolders(f); })
-      .catch(() => { if (alive) setFolders([]); });
+      .catch((e) => { if (alive) { setFolders([]); setError(`Couldn't load that library's folders: ${(e as Error).message}`); } });
     return () => { alive = false; };
   }, [libraryId]);
 
-  const lib = libs.find((l) => l.id === libraryId);
+  const lib = (libs ?? []).find((l) => l.id === libraryId);
   const folder = folders.find((f) => f.id === folderId);
   const effectiveLabel = label.trim() || folder?.name || lib?.name || "";
 
@@ -894,58 +901,49 @@ function LinkResourceModal({ orgId, onClose, onSave }: {
   };
 
   return (
-    <div className="fixed inset-0 z-[500] bg-slate-900/60 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl max-h-[90vh] flex flex-col">
-        <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2.5">
-          <Link2 className="w-4 h-4 text-[var(--color-text-muted)]" />
-          <div className="flex-1">
-            <div className="text-sm font-black text-[var(--color-text)]">Pin a library to this unit</div>
-            <div className="text-[11px] text-[var(--color-text-muted)]">A whole library, or one folder of it - labeled for what it means here.</div>
-          </div>
-          <button onClick={onClose} className="p-1.5 rounded hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4 text-[var(--color-text-muted)]" /></button>
+    <Modal onClose={onClose} size="sm" zIndex={500} dismissable={!busy}>
+      <ModalHeader icon={Link2} title="Pin a library to this unit" subtitle="A whole library, or one folder of it, named for what it means here." onClose={busy ? undefined : onClose} />
+      <ModalBody className="space-y-3">
+        <div>
+          <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Library</label>
+          <select value={libraryId} disabled={libs === null}
+            onChange={(e) => { setLibraryId(e.target.value); setFolders([]); setFolderId(""); }}
+            className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]">
+            <option value="">{libs === null ? "Loading libraries…" : "Pick a library"}</option>
+            {(libs ?? []).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+          </select>
         </div>
-        <div className="p-5 space-y-3 overflow-y-auto">
+        {folders.length > 0 && (
           <div>
-            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Library</label>
-            <select value={libraryId}
-              onChange={(e) => { setLibraryId(e.target.value); setFolders([]); setFolderId(""); }}
-              className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]">
-              <option value="">- Pick a library -</option>
-              {libs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Folder (optional)</label>
+            <select value={folderId} onChange={(e) => setFolderId(e.target.value)}
+              className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]">
+              <option value="">Whole library</option>
+              {folders.map((f) => (
+                <option key={f.id} value={f.id}>{f.pathNames.join(" › ") || f.name}</option>
+              ))}
             </select>
           </div>
-          {folders.length > 0 && (
-            <div>
-              <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Folder (optional)</label>
-              <select value={folderId} onChange={(e) => setFolderId(e.target.value)}
-                className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]">
-                <option value="">Whole library</option>
-                {folders.map((f) => (
-                  <option key={f.id} value={f.id}>{f.pathNames.join(" › ") || f.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
-          <div>
-            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Label on the unit page</label>
-            <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={effectiveLabel || "e.g. P&IDs, Operating manuals, Unit data"}
-              className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
-          </div>
-          {error && (
-            <div className="p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700 flex items-start gap-2">
-              <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
-            </div>
-          )}
+        )}
+        <div>
+          <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Label on the unit page</label>
+          <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={effectiveLabel || "e.g. P&IDs, Operating manuals, Unit data"}
+            className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
         </div>
-        <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] rounded-b-2xl flex items-center justify-end gap-2">
-          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
-          <button onClick={() => void save()} disabled={busy || !libraryId}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 shadow">
-            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />} Pin it
-          </button>
-        </div>
-      </div>
-    </div>
+        {error && (
+          <p role="alert" className="border-l-2 border-red-500 pl-2.5 text-xs text-red-700 dark:text-red-400 flex items-start gap-2">
+            <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
+          </p>
+        )}
+      </ModalBody>
+      <ModalFooter>
+        <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
+        <button onClick={() => void save()} disabled={busy || !libraryId}
+          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+          {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />} Pin it
+        </button>
+      </ModalFooter>
+    </Modal>
   );
 }
 
@@ -1022,8 +1020,7 @@ function UnassignedAssignPanel({ assets, book, userId, onAssigned }: {
     <div className="mt-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">
       <div className="text-sm font-black text-[var(--color-text)] mb-0.5">File this equipment under its operating area</div>
       <p className="text-xs text-[var(--color-text-muted)] mb-2.5">
-        Pick a unit for each asset and hit Assign - the site code fills in automatically.
-        Where the linked drawings already say which unit, it&apos;s pre-selected for you.
+        Pick a unit for each one. Where its drawings say which unit, it&apos;s picked already. The site code fills in.
       </p>
       <div className="space-y-1.5">
         {shown.map((a) => {
@@ -1036,11 +1033,11 @@ function UnassignedAssignPanel({ assets, book, userId, onAssigned }: {
                 value={choice}
                 onChange={(e) => setChoices((prev) => new Map(prev).set(a.id, e.target.value))}
                 disabled={busy}
-                className="px-2 py-1.5 border border-[var(--color-border-strong)] rounded-lg text-xs bg-[var(--color-surface)] font-bold"
+                className="px-2 py-1.5 border border-[var(--color-border-strong)] rounded-lg text-xs bg-[var(--color-surface)] text-[var(--color-text)] font-bold"
               >
-                <option value="">- pick a unit -</option>
+                <option value="">Pick a unit</option>
                 {book.units.map((u) => (
-                  <option key={u.code} value={u.code}>{u.code} - {u.label}</option>
+                  <option key={u.code} value={u.code}>{u.code} · {u.label}</option>
                 ))}
               </select>
               <span className="text-[11px] text-[var(--color-text-faint)] flex-1 min-w-[120px]">
@@ -1051,7 +1048,7 @@ function UnassignedAssignPanel({ assets, book, userId, onAssigned }: {
               <button
                 onClick={() => { if (choice) void assign([{ asset: a, unitCode: choice }]); }}
                 disabled={busy || !choice}
-                className="text-[11px] font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] rounded-lg px-2.5 py-1 disabled:opacity-40"
+                className="text-[11px] font-black text-[var(--color-text)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] rounded-lg px-2.5 py-1 disabled:opacity-40"
               >
                 Assign
               </button>
@@ -1084,11 +1081,13 @@ function UnitDocuments({ assetIds, assets }: { assetIds: string[]; assets: Asset
     libraryId: string; tags: string[];
   }> | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
   const idsKey = useMemo(() => [...assetIds].sort().join(","), [assetIds]);
 
   useEffect(() => {
     let alive = true;
     setRows(null);
+    setFailed(null);
     const tagById = new Map(assets.map((a) => [a.id, a.tag]));
     getDocumentsForAssetsHydrated(idsKey ? idsKey.split(",") : [])
       .then((links) => {
@@ -1107,7 +1106,7 @@ function UnitDocuments({ assetIds, assets }: { assetIds: string[]; assets: Asset
         setRows([...byDoc.values()].sort((a, b) =>
           (a.documentNumber ?? a.title ?? "").localeCompare(b.documentNumber ?? b.title ?? "", undefined, { numeric: true })));
       })
-      .catch(() => { if (alive) setRows([]); });
+      .catch((e) => { if (alive) { setRows([]); setFailed((e as Error).message || "Couldn't find them."); } });
     return () => { alive = false; };
     // assets is derived from the same filter as assetIds — idsKey covers both.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1120,6 +1119,9 @@ function UnitDocuments({ assetIds, assets }: { assetIds: string[]; assets: Asset
       </div>
     );
   }
+  if (failed) {
+    return <p role="alert" className="text-[11px] text-rose-700 dark:text-rose-400">Couldn&apos;t load the documents that reference this unit&apos;s equipment: {failed}</p>;
+  }
   if (rows.length === 0) return null;
   const shown = expanded ? rows : rows.slice(0, 12);
 
@@ -1128,7 +1130,7 @@ function UnitDocuments({ assetIds, assets }: { assetIds: string[]; assets: Asset
       <div className="flex items-center gap-2 mb-2">
         <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
         <span className="text-xs font-black text-[var(--color-text)]">Documents referencing this unit&apos;s equipment</span>
-        <span className="text-[11px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-full px-1.5">{rows.length}</span>
+        <span className="text-[11px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-full px-1.5">{badgeText(rows.length)}</span>
       </div>
       <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] bg-[var(--color-surface)]">
         {shown.map((d) => (
@@ -1174,17 +1176,10 @@ function AssetCard({
       {/* Cover area */}
       <button onClick={onClick} className="block aspect-[4/3] w-full relative overflow-hidden bg-[var(--color-surface-2)]">
         {coverUrl ? (
-          <>
-            <SignedImg path={coverUrl} alt={asset.tag} className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
-            {photoCount > 1 && (
-              <div className="absolute top-2 right-2 inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-black/60 backdrop-blur-sm text-white text-[11px] font-bold">
-                <Camera className="w-3 h-3" /> {photoCount}
-              </div>
-            )}
-          </>
+          <SignedImg path={coverUrl} alt={asset.tag} className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
         ) : (
           <div className="absolute inset-0 flex items-center justify-center">
-            <div className="p-5 rounded-2xl bg-white/60 backdrop-blur border border-white">
+            <div className="p-5 rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)]">
               <ImageIcon className="w-8 h-8 text-[var(--color-text-faint)]" />
             </div>
           </div>
@@ -1213,9 +1208,9 @@ function AssetCard({
         <div className="mt-2 pt-2 border-t border-[var(--color-border)] flex items-center justify-between">
           <div className="text-[11px] font-bold text-[var(--color-text-muted)]">
             {photoCount === 0 ? (
-              <span className="text-amber-700 inline-flex items-center gap-1"><AlertTriangle className="w-2.5 h-2.5" /> No photos</span>
+              <span className="text-amber-700 dark:text-amber-400 inline-flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> No photos</span>
             ) : (
-              <span className="inline-flex items-center gap-1 text-[var(--color-text)]"><Camera className="w-2.5 h-2.5" /> {photoCount} photo{photoCount === 1 ? "" : "s"}</span>
+              <span className="inline-flex items-center gap-1 text-[var(--color-text)]"><Camera className="w-3 h-3" /> {photoCount} photo{photoCount === 1 ? "" : "s"}</span>
             )}
           </div>
           {/* Always visible — a hover-only edit button doesn't exist on
@@ -1230,12 +1225,12 @@ function AssetCard({
               </button>
             )}
             {onAddPhotos && (
-              <button onClick={onAddPhotos} title="Add photos" className="p-1 text-[var(--color-text-faint)] hover:text-emerald-600 hover:bg-emerald-50 rounded">
+              <button onClick={onAddPhotos} title="Add photos" aria-label={`Add photos to ${asset.tag}`} className="p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded">
                 <Camera className="w-3.5 h-3.5" />
               </button>
             )}
             {onEdit && (
-              <button onClick={onEdit} title="Edit asset" className="p-1 text-[var(--color-text-faint)] hover:text-[var(--color-accent-hover)] hover:bg-[var(--color-surface-2)] rounded">
+              <button onClick={onEdit} title="Edit asset" aria-label={`Edit ${asset.tag}`} className="p-1 text-[var(--color-text-faint)] hover:text-[var(--color-accent-hover)] hover:bg-[var(--color-surface-2)] rounded">
                 <Edit3 className="w-3.5 h-3.5" />
               </button>
             )}
@@ -1260,11 +1255,11 @@ function EmptyState({ onCreate, hasAny }: { onCreate?: () => void; hasAny: boole
       <p className="text-sm text-[var(--color-text-muted)] max-w-md mx-auto mb-4">
         {hasAny
           ? "Try a different search or clear the filters."
-          : "Create your first asset - equipment, instrument, valve, anything taggable. Once an asset exists, its tag becomes a clickable chip everywhere you reference it."}
+          : "Add the first piece of equipment: a pump, instrument, valve, anything with a tag."}
       </p>
       {!hasAny && onCreate && (
-        <button onClick={onCreate} className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-black shadow-lg">
-          <Plus className="w-4 h-4" /> Create first asset
+        <button onClick={onCreate} className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-sm font-black">
+          <Plus className="w-4 h-4" /> Add the first piece of equipment
         </button>
       )}
     </div>
@@ -1309,19 +1304,30 @@ function AssetEditDrawer({
   const [error, setError] = useState<string | null>(null);
   const [hasTagConflict, setHasTagConflict] = useState(false);
   const [photos, setPhotos] = useState<AssetPhoto[]>([]);
+  const [photosFailed, setPhotosFailed] = useState(false);
   const [linkedDocs, setLinkedDocs] = useState<AssetDocumentRow[] | null>(null);
+  const [docsFailed, setDocsFailed] = useState(false);
   const [docPickerOpen, setDocPickerOpen] = useState(false);
+  // A new asset's description is kept on this device until it's created.
+  const descDraft = useDraft<string>(isCreate ? `new-asset:${orgId}:${preset?.unitCode ?? ""}` : null, description, setDescription, (v) => !v.trim());
 
   const refreshDocs = useCallback(() => {
     if (!asset) return;
-    getDocumentsForAssetHydrated(asset.id).then(setLinkedDocs).catch(() => setLinkedDocs([]));
+    setDocsFailed(false);
+    getDocumentsForAssetHydrated(asset.id).then(setLinkedDocs).catch(() => { setLinkedDocs([]); setDocsFailed(true); });
   }, [asset]);
 
   useEffect(() => {
     if (!asset) return;
-    listAssetPhotos(asset.id).then(setPhotos).catch(() => {});
+    listAssetPhotos(asset.id).then((p) => { setPhotos(p); setPhotosFailed(false); }).catch(() => setPhotosFailed(true));
     refreshDocs();
   }, [asset, refreshDocs]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !busy && !docPickerOpen) onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy, docPickerOpen, onClose]);
 
   const linkDocument = async (documentId: string) => {
     if (!asset) return;
@@ -1342,8 +1348,9 @@ function AssetEditDrawer({
       confirmLabel: "Unlink",
     });
     if (!ok) return;
-    await supabase.from("document_assets").delete()
+    const { error: e } = await supabase.from("document_assets").delete()
       .eq("document_id", documentId).eq("asset_id", asset.id);
+    if (e) { setError(`Couldn't unlink the document: ${e.message}`); return; }
     refreshDocs();
   };
 
@@ -1362,9 +1369,9 @@ function AssetEditDrawer({
           createdBy: userId,
         });
         invalidateAssetCache();
+        descDraft.clear();
         onSaved();
-        // Stay open so user can immediately upload photos
-        // Replace `asset` in url? Simplification: just close.
+        // Straight on to the next step: its photos.
         onOpenUploader(created);
       } else {
         await updateAsset(asset!.id, {
@@ -1381,7 +1388,7 @@ function AssetEditDrawer({
       }
     } catch (e) {
       const friendly = translatePostgresError(e, { entity: "asset", field: "tag" });
-      setError(`${friendly.heading} - ${friendly.message}`);
+      setError(`${friendly.heading}: ${friendly.message}`);
     }
     finally { setBusy(false); }
   };
@@ -1397,7 +1404,7 @@ function AssetEditDrawer({
       onClose();
     } catch (e) {
       const f = translatePostgresError(e, { entity: "asset" });
-      setError(`${f.heading} - ${f.message}`);
+      setError(`${f.heading}: ${f.message}`);
       setBusy(false);
     }
   };
@@ -1418,7 +1425,7 @@ function AssetEditDrawer({
   };
 
   return (
-    <div className="fixed inset-0 z-[400] flex" onClick={onClose}>
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-[400] flex" onClick={() => { if (!busy) onClose(); }}>
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" />
       <div onClick={(e) => e.stopPropagation()} className="relative ml-auto w-full max-w-xl bg-[var(--color-surface)] shadow-2xl border-l border-[var(--color-border)] flex flex-col h-dvh">
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
@@ -1428,7 +1435,7 @@ function AssetEditDrawer({
               <div className="text-sm font-black text-[var(--color-text)]">
                 {isCreate ? "Create asset" : `Edit ${asset?.tag}`}
               </div>
-              <div className="text-[11px] text-[var(--color-text-muted)]">Canonical record + photo gallery</div>
+              <div className="text-[11px] text-[var(--color-text-muted)]">{isCreate ? "Its tag, type and where it is" : "Its record, photos and documents"}</div>
             </div>
           </div>
           <div className="flex items-center gap-1">
@@ -1441,7 +1448,7 @@ function AssetEditDrawer({
                 size="sm"
               />
             )}
-            <button onClick={onClose} disabled={busy} className="p-1.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+            <button onClick={onClose} disabled={busy} aria-label="Close" className="p-1.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
@@ -1474,38 +1481,36 @@ function AssetEditDrawer({
             </div>
             <div>
               <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Type</label>
-              <select value={typeId} onChange={(e) => setTypeId(e.target.value)} disabled={!canEdit || busy} className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm">
-                <option value="">- Untyped -</option>
+              <select value={typeId} onChange={(e) => setTypeId(e.target.value)} disabled={!canEdit || busy} className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]">
+                <option value="">No type</option>
                 {types.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
             </div>
             <div>
               <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Description</label>
-              <textarea value={description} onChange={(e) => setDescription(e.target.value)} disabled={!canEdit || busy} rows={2} placeholder="What this thing is" className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y" />
+              <textarea value={description} onChange={(e) => setDescription(e.target.value)} disabled={!canEdit || busy} rows={2} placeholder="What it is" className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y bg-[var(--color-surface)] text-[var(--color-text)]" />
             </div>
             <div>
               <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Location</label>
-              <input value={location} onChange={(e) => setLocation(e.target.value)} disabled={!canEdit || busy} placeholder="e.g. Unit 200 cold side" className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
+              <input value={location} onChange={(e) => setLocation(e.target.value)} disabled={!canEdit || busy} placeholder="e.g. Unit 200 cold side" className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
             </div>
             {book.units.length > 0 && (
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Operating unit</label>
                   <select value={unitCode} onChange={(e) => setUnitCode(e.target.value)} disabled={!canEdit || busy}
-                    className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]">
-                    <option value="">-</option>
-                    {book.units.map((u) => <option key={u.code} value={u.code}>{u.code} - {u.label}</option>)}
+                    className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]">
+                    <option value="">None</option>
+                    {book.units.map((u) => <option key={u.code} value={u.code}>{u.code} · {u.label}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Site code</label>
                   <input value={siteCode} onChange={(e) => setSiteCode(e.target.value)} disabled={!canEdit || busy}
-                    placeholder="auto - e.g. 2030.22" className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm font-mono" />
+                    placeholder="Auto, e.g. 2030.22" className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm font-mono bg-[var(--color-surface)] text-[var(--color-text)]" />
                 </div>
               </div>
             )}
-            <div className="hidden">
-            </div>
           </div>
 
           {/* Photos section (edit mode only) */}
@@ -1518,17 +1523,21 @@ function AssetEditDrawer({
                 <div className="flex items-center gap-1.5">
                   {photos.length > 0 && (
                     <button onClick={() => onOpenCarousel(asset)} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">
-                      <ImageIcon className="w-3 h-3" /> Open carousel
+                      <ImageIcon className="w-3 h-3" /> Open photos
                     </button>
                   )}
                   {canEdit && (
-                    <button onClick={() => onOpenUploader(asset)} className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 hover:text-emerald-800">
+                    <button onClick={() => onOpenUploader(asset)} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">
                       <Camera className="w-3 h-3" /> Add photos
                     </button>
                   )}
                 </div>
               </div>
-              {photos.length === 0 ? (
+              {photosFailed ? (
+                <div role="alert" className="text-center text-xs text-rose-700 dark:text-rose-400 py-6 border border-dashed border-[var(--color-border)] rounded-lg">
+                  Couldn&apos;t load the photos.
+                </div>
+              ) : photos.length === 0 ? (
                 <div className="text-center text-xs text-[var(--color-text-faint)] italic py-6 border border-dashed border-[var(--color-border)] rounded-lg">
                   No photos yet.
                 </div>
@@ -1539,29 +1548,25 @@ function AssetEditDrawer({
                     return (
                       <div key={p.id} className="relative group rounded-lg overflow-hidden border border-[var(--color-border)] aspect-square bg-[var(--color-surface-2)]">
                         <SignedImg path={p.file_url} alt={p.caption || ""} className="w-full h-full object-cover" />
-                        <div className="absolute bottom-0 inset-x-0 p-1.5 bg-[var(--color-surface-2)]">
-                          <div className="text-[11px] text-white font-mono flex items-center gap-1">
-                            <span className={`w-1.5 h-1.5 rounded-full ${
-                              age.category === "fresh" ? "bg-emerald-400" :
-                              age.category === "aging" ? "bg-amber-400" :
-                              age.category === "stale" ? "bg-red-400" : "bg-slate-400"
-                            }`} />
-                            {p.captured_at ? new Date(p.captured_at).toLocaleDateString() : "no date"}
+                        {/* Date and status on one strip along the bottom of the photo. */}
+                        <div className="absolute bottom-0 inset-x-0 px-1.5 py-1 bg-black/65">
+                          <div className="text-[11px] font-mono flex items-center gap-1 text-white">
+                            <span className={age.category === "stale" ? "text-red-300" : age.category === "aging" ? "text-amber-300" : ""}>
+                              {p.captured_at ? new Date(p.captured_at).toLocaleDateString() : "No date"}
+                            </span>
+                            {p.status !== "current" && (
+                              <span className={`ml-auto font-sans font-bold ${p.status === "needs_verification" ? "text-amber-300" : "text-red-300"}`}>
+                                {p.status === "needs_verification" ? "Check" : "Old"}
+                              </span>
+                            )}
                           </div>
                         </div>
-                        {p.status !== "current" && (
-                          <div className={`absolute top-1 left-1 text-[11px] font-black uppercase px-1 py-0.5 rounded ${
-                            p.status === "needs_verification" ? "bg-amber-500 text-white" : "bg-red-500 text-white"
-                          }`}>
-                            {p.status === "needs_verification" ? "Verify" : "Old"}
-                          </div>
-                        )}
                         {canEdit && (
-                          <div className="absolute top-1 right-1 flex flex-col gap-1 opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={() => markPhotoStatus(p, p.status === "current" ? "needs_verification" : "current")} title="Toggle verification" className="p-1 bg-white/90 rounded hover:bg-[var(--color-surface)]">
+                          <div className="absolute top-1 right-1 flex flex-col gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
+                            <button onClick={() => markPhotoStatus(p, p.status === "current" ? "needs_verification" : "current")} title={p.status === "current" ? "Mark as needs checking" : "Mark as current"} aria-label={p.status === "current" ? "Mark as needs checking" : "Mark as current"} className="p-1 bg-[var(--color-surface)]/90 rounded hover:bg-[var(--color-surface)]">
                               <AlertTriangle className="w-3 h-3 text-amber-600" />
                             </button>
-                            <button onClick={() => onDeletePhoto(p)} title="Delete photo" className="p-1 bg-white/90 rounded hover:bg-[var(--color-surface)]">
+                            <button onClick={() => onDeletePhoto(p)} title="Delete photo" aria-label="Delete photo" className="p-1 bg-[var(--color-surface)]/90 rounded hover:bg-[var(--color-surface)]">
                               <Trash2 className="w-3 h-3 text-red-600" />
                             </button>
                           </div>
@@ -1603,7 +1608,11 @@ function AssetEditDrawer({
                 )}
               </div>
               {linkedDocs === null ? (
-                <div className="text-[11px] text-[var(--color-text-faint)] italic py-2">Loading…</div>
+                <div className="text-[11px] text-[var(--color-text-muted)] py-2 inline-flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" /> Loading linked documents…</div>
+              ) : docsFailed ? (
+                <div role="alert" className="text-xs text-rose-700 dark:text-rose-400 py-2">
+                  Couldn&apos;t load the linked documents. <button type="button" onClick={refreshDocs} className="font-bold underline">Try again</button>
+                </div>
               ) : linkedDocs.length === 0 ? (
                 <div className="text-center text-xs text-[var(--color-text-faint)] italic py-4 border border-dashed border-[var(--color-border)] rounded-lg">
                   No documents reference this asset yet.
@@ -1613,7 +1622,7 @@ function AssetEditDrawer({
                   {linkedDocs.map((d) => (
                     <li key={d.documentId} className="relative group/docrow">
                       {canEdit && (
-                        <button type="button" title="Unlink from this equipment"
+                        <button type="button" title="Unlink from this equipment" aria-label="Unlink from this equipment"
                           onClick={() => void unlinkDocument(d.documentId)}
                           className="absolute right-2 top-1/2 -translate-y-1/2 z-10 p-1.5 rounded-md text-[var(--color-text-faint)] hover:text-rose-600 opacity-0 group-hover/docrow:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
                           <X className="w-3.5 h-3.5" />
@@ -1655,9 +1664,9 @@ function AssetEditDrawer({
           )}
 
           {error && (
-            <div className="p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700 flex items-start gap-2">
+            <p role="alert" className="border-l-2 border-red-500 pl-2.5 text-xs text-red-700 dark:text-red-400 flex items-start gap-2">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
-            </div>
+            </p>
           )}
         </div>
 
@@ -1670,7 +1679,7 @@ function AssetEditDrawer({
           <div className="flex items-center gap-2">
             <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
             {canEdit && (
-              <button onClick={save} disabled={busy || !tag.trim() || hasTagConflict} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 shadow">
+              <button onClick={save} disabled={busy || !tag.trim() || hasTagConflict} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
                 {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
                 {isCreate ? "Create & add photos" : "Save"}
               </button>
@@ -1701,6 +1710,11 @@ function AddUnitModal({ orgId, userId, existingCodes, onClose, onCreated }: {
   const [label, setLabel] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !busy) onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy, onClose]);
 
   const save = async () => {
     const c = code.trim();
@@ -1717,7 +1731,7 @@ function AddUnitModal({ orgId, userId, existingCodes, onClose, onCreated }: {
   };
 
   return (
-    <div className="fixed inset-0 z-[700] flex items-start justify-center bg-black/50 pt-[14vh] p-4" onClick={onClose}>
+    <div role="dialog" aria-modal="true" aria-label="New operating area" className="fixed inset-0 z-[700] flex items-start justify-center bg-black/50 pt-[14vh] p-4" onClick={onClose}>
       <div className="w-full max-w-sm rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl p-4 space-y-3"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2">
@@ -1725,18 +1739,20 @@ function AddUnitModal({ orgId, userId, existingCodes, onClose, onCreated }: {
           <div className="flex-1">
             <div className="text-sm font-black text-[var(--color-text)]">New operating area</div>
             <div className="text-[11px] text-[var(--color-text-muted)]">
-              Written into your Site Codebook - the one place the whole app decodes units from.
+              Saved in your Site Codebook, where the whole app reads units from.
             </div>
           </div>
           <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
         </div>
         <div className="flex items-center gap-2">
-          <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Code (20)"
-            className="w-28 px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm font-mono" />
+          <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Code (20)" autoFocus
+            onKeyDown={(e) => { if (e.key === "Enter") void save(); }}
+            className="w-28 px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-sm font-mono" />
           <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Name (Crude Unit)"
-            className="flex-1 px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm" />
+            onKeyDown={(e) => { if (e.key === "Enter") void save(); }}
+            className="flex-1 px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-sm" />
         </div>
-        {error && <div className="text-[11px] text-rose-600">{error}</div>}
+        {error && <div role="alert" className="text-[11px] text-rose-700 dark:text-rose-400">{error}</div>}
         <div className="flex items-center justify-between gap-2">
           <Link href="/admin/codebook" className="text-[11px] font-bold text-[var(--color-accent)] hover:underline inline-flex items-center gap-1">
             <BookMarkedIcon className="w-3 h-3" /> Full codebook (AI import, decoder)
@@ -1763,6 +1779,11 @@ function AddCategoryModal({ orgId, userId, existingTypeCodes, onClose, onCreated
   const [typeCode, setTypeCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !busy) onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy, onClose]);
 
   const save = async () => {
     const n = name.trim();
@@ -1773,11 +1794,11 @@ function AddCategoryModal({ orgId, userId, existingTypeCodes, onClose, onCreated
     const px = prefixes.split(",").map((x) => x.trim().toUpperCase()).filter(Boolean);
     const tc = typeCode.trim();
     if (px.length > 0 && !tc) {
-      setError("Prefixes need a code to live under - add the equipment-type code (e.g. 02).");
+      setError("Prefixes need a code to go under. Add the equipment-type code (e.g. 02).");
       return;
     }
     if (tc && existingTypeCodes.some((c) => c.trim().toLowerCase() === tc.toLowerCase())) {
-      setError(`Code ${tc} is already used by another equipment type in the Site Codebook - pick a different code or leave it blank.`);
+      setError(`Code ${tc} is already used by another equipment type in the Site Codebook. Pick a different code or leave it blank.`);
       return;
     }
     setBusy(true); setError(null);
@@ -1793,11 +1814,11 @@ function AddCategoryModal({ orgId, userId, existingTypeCodes, onClose, onCreated
           origin: "manual", created_by: userId,
         });
         if (cbErr && cbErr.code === "23505") {
-          setError(`Code ${tc} is already used in the Site Codebook - pick a different code or leave it blank.`);
+          setError(`Code ${tc} is already used in the Site Codebook. Pick a different code or leave it blank.`);
           setBusy(false); return;
         }
         if (cbErr && cbErr.code === "42501") {
-          setError("Only Admin or Doc Control can teach the Site Codebook - leave the code blank to create the category alone, or ask a controller.");
+          setError("Only Admin or Doc Control can change the Site Codebook. Leave the code blank to make the category alone, or ask a controller.");
           setBusy(false); return;
         }
         if (cbErr) { setError(cbErr.message); setBusy(false); return; }
@@ -1810,7 +1831,7 @@ function AddCategoryModal({ orgId, userId, existingTypeCodes, onClose, onCreated
   };
 
   return (
-    <div className="fixed inset-0 z-[700] flex items-start justify-center bg-black/50 pt-[14vh] p-4" onClick={onClose}>
+    <div role="dialog" aria-modal="true" aria-label="New equipment category" className="fixed inset-0 z-[700] flex items-start justify-center bg-black/50 pt-[14vh] p-4" onClick={onClose}>
       <div className="w-full max-w-sm rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl p-4 space-y-3"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2">
@@ -1818,25 +1839,23 @@ function AddCategoryModal({ orgId, userId, existingTypeCodes, onClose, onCreated
           <div className="flex-1">
             <div className="text-sm font-black text-[var(--color-text)]">New equipment category</div>
             <div className="text-[11px] text-[var(--color-text-muted)]">
-              Becomes a section in every operating area. Add the tag prefix and it also teaches
-              your Site Codebook - future assets categorize themselves.
+              A section in every operating area. Add its tag prefix and new equipment sorts itself.
             </div>
           </div>
           <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
         </div>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (Exchanger)"
-          className="w-full px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm" />
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (Exchanger)" autoFocus
+          className="w-full px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-sm" />
         <div className="flex items-center gap-2">
-          <input value={prefixes} onChange={(e) => setPrefixes(e.target.value)} placeholder="Tag prefixes (E, EA) - optional"
-            className="flex-1 px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm font-mono" />
+          <input value={prefixes} onChange={(e) => setPrefixes(e.target.value)} placeholder="Tag prefixes (E, EA), optional"
+            className="flex-1 px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-sm font-mono" />
           <input value={typeCode} onChange={(e) => setTypeCode(e.target.value)} placeholder="Code (02)"
-            className="w-24 px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm font-mono" />
+            className="w-24 px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-sm font-mono" />
         </div>
         <p className="text-[11px] text-[var(--color-text-faint)]">
-          No numbering system? Leave prefixes blank and organize manually - you can teach the
-          codebook later and auto-categorize will catch up.
+          No numbering system? Leave prefixes blank. You can add them later.
         </p>
-        {error && <div className="text-[11px] text-rose-600">{error}</div>}
+        {error && <div role="alert" className="text-[11px] text-rose-700 dark:text-rose-400">{error}</div>}
         <div className="flex items-center justify-end gap-2">
           <button onClick={onClose} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
           <button onClick={() => void save()} disabled={busy}

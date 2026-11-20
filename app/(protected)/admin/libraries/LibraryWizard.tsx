@@ -19,6 +19,11 @@ import {
 } from "lucide-react";
 import type { AccessRule, LibraryConfig, LibraryType, MetadataFieldDefinition, Role } from "@/types/schema";
 import { ALL_ROLES } from "@/types/schema";
+import StepPath from "@/components/ui/StepPath";
+import { useDraft } from "@/hooks/useDraft";
+
+/** Where a new library's description is kept while it's being written. */
+export const newLibraryDraftKey = (orgId: string) => `new-library:${orgId}`;
 
 interface LibraryWizardProps {
   orgId: string;
@@ -116,7 +121,7 @@ function Tooltip({ text }: { text: string }) {
         onMouseLeave={() => setShow(false)}
       />
       {show && (
-        <span className="absolute left-5 top-0 z-50 w-48 bg-slate-900 text-white text-xs rounded-lg px-3 py-2 shadow-xl">
+        <span className="absolute left-5 top-0 z-50 w-48 bg-[var(--color-text)] text-[var(--color-surface)] text-xs rounded-lg px-3 py-2 shadow-xl">
           {text}
         </span>
       )}
@@ -164,8 +169,8 @@ function RolePicker({
                   onClick={() => toggle(role)}
                   className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all ${
                     active
-                      ? "bg-slate-900 text-white border-slate-900"
-                      : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-slate-400 hover:text-[var(--color-text)]"
+                      ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent"
+                      : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-text)]"
                   }`}
                 >
                   {role}
@@ -225,6 +230,16 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
       }
     })();
   }, [isOpen, initialData]);
+
+  // A new library's description autosaves on this device (not when editing).
+  useDraft<string>(isOpen && !initialData ? newLibraryDraftKey(orgId) : null, description, setDescription, (v) => !v.trim());
+
+  useEffect(() => {
+    if (!isOpen || isLoading) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isOpen, isLoading, onClose]);
 
   const handleNext = () => {
     setError(null);
@@ -306,7 +321,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
   const STEPS = ["Library Info", "Document Fields", "Permissions"];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/80 backdrop-blur-sm p-4">
+    <div role="dialog" aria-modal="true" aria-label={initialData ? "Edit Library" : "Create New Library"} className="fixed inset-0 z-50 flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/50 backdrop-blur-sm p-4">
       <div className="bg-[var(--color-surface)] w-full max-w-3xl rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-[var(--color-border)] max-h-[92vh]">
 
         {/* Header */}
@@ -315,34 +330,13 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
             <h2 className="text-xl font-black text-[var(--color-text)]">
               {initialData ? "Edit Library" : "Create New Library"}
             </h2>
-            <p className="text-[var(--color-text-muted)] text-sm mt-0.5">{STEPS[step - 1]}</p>
           </div>
-          <div className="flex items-center gap-3">
-            {/* Step indicators */}
-            <div className="flex items-center gap-1.5 mr-2">
-              {STEPS.map((label, i) => (
-                <React.Fragment key={i}>
-                  <div
-                    className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
-                      step > i + 1
-                        ? "bg-green-500 text-white"
-                        : step === i + 1
-                        ? "bg-[var(--color-surface-2)] text-[var(--color-text)]"
-                        : "bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"
-                    }`}
-                  >
-                    {step > i + 1 ? <CheckCircle2 className="w-4 h-4" /> : i + 1}
-                  </div>
-                  {i < STEPS.length - 1 && (
-                    <div className={`w-6 h-0.5 ${step > i + 1 ? "bg-green-400" : "bg-slate-200"}`} />
-                  )}
-                </React.Fragment>
-              ))}
-            </div>
-            <button onClick={onClose} className="p-2 text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] rounded-lg transition-colors">
-              <X className="w-5 h-5" />
-            </button>
-          </div>
+          <button onClick={onClose} disabled={isLoading} aria-label="Close" className="p-2 text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] rounded-lg transition-colors">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="px-8 pt-4 shrink-0">
+          <StepPath steps={STEPS} current={step - 1} onPick={(i) => setStep((i + 1) as 1 | 2 | 3)} />
         </div>
 
         {/* Body */}
@@ -360,7 +354,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     placeholder="e.g. Bakersfield P&IDs, Safety Procedures"
-                    className="w-full px-4 py-3 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl text-[var(--color-text)] font-bold focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:bg-[var(--color-surface)] outline-none transition-all text-lg placeholder:text-slate-300"
+                    className="w-full px-4 py-3 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl text-[var(--color-text)] font-bold focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:bg-[var(--color-surface)] outline-none transition-all text-lg placeholder:text-[var(--color-text-faint)]"
                     autoFocus
                   />
                 </div>
@@ -374,7 +368,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
                     onChange={(e) => setDescription(e.target.value)}
                     placeholder="Briefly describe what's stored here and who uses it..."
                     rows={2}
-                    className="w-full px-4 py-3 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:bg-[var(--color-surface)] outline-none resize-none transition-all placeholder:text-slate-300"
+                    className="w-full px-4 py-3 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:bg-[var(--color-surface)] outline-none resize-none transition-all placeholder:text-[var(--color-text-faint)]"
                   />
                 </div>
               </div>
@@ -617,7 +611,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
                 className="px-6 py-2.5 text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] rounded-xl shadow hover:bg-[var(--color-accent-hover)] flex items-center disabled:opacity-60 transition-all"
               >
                 <Save className="w-4 h-4 mr-2" />
-                {isLoading ? "Saving..." : "Create Library"}
+                {isLoading ? "Saving…" : initialData ? "Save Library" : "Create Library"}
               </button>
             )}
           </div>

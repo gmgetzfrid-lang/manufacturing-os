@@ -14,6 +14,10 @@ import {
   MessageSquare, Clock, Paperclip, FileText, Image as ImageIcon, File as FileIcon,
 } from "lucide-react";
 import { findInBackup } from "@/lib/archive";
+import { useFileDrag } from "@/hooks/useFileDrag";
+import FileThumb from "@/components/ui/FileThumb";
+
+const formatBytes = (n: number) => n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
 
 type ZipFile = { async(type: "blob"): Promise<Blob>; async(type: "string"): Promise<string> };
 type ZipLike = {
@@ -47,7 +51,7 @@ export default function TicketArchiveViewer({
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [dragging, setDragging] = useState(false);
+  const [picked, setPicked] = useState<File | null>(null);
   const [row, setRow] = useState<ArchivedRow | null>(null);
   const zipRef = useRef<ZipLike | null>(null);
   const entryPathsRef = useRef<string[]>([]);
@@ -62,6 +66,7 @@ export default function TicketArchiveViewer({
 
   const handleFile = useCallback(async (file: File) => {
     if (!/\.zip$/i.test(file.name)) { setError("Drop the archive .zip you saved for this ticket."); return; }
+    setPicked(file);
     setLoading(true); setError(null); setRow(null); setPreview(null); revoke();
     try {
       const JSZip = (await import("jszip")).default;
@@ -70,7 +75,7 @@ export default function TicketArchiveViewer({
       // Find THIS ticket's snapshot: tickets/<rowId>.json.
       const jsonPath = paths.find((p) => new RegExp(`(^|/)tickets/${ticketRowId}\\.json$`).test(p));
       if (!jsonPath) {
-        setError(`This archive doesn't contain ${ticketLabel || "this ticket"}${archiveId ? ` - is it ${archiveId}.zip?` : "."}`);
+        setError(`This archive doesn't contain ${ticketLabel || "this ticket"}.${archiveId ? ` It should be in ${archiveId}.zip.` : ""}`);
         return;
       }
       const f = z.file(jsonPath);
@@ -104,46 +109,59 @@ export default function TicketArchiveViewer({
     }
   }, [revoke]);
 
-  const onDrop = (e: React.DragEvent) => {
-    e.preventDefault(); setDragging(false);
-    const f = e.dataTransfer.files?.[0];
-    if (f) void handleFile(f);
-  };
+  const drag = useFileDrag((files) => { if (files[0]) void handleFile(files[0]); }, loading);
+  const close = useCallback(() => { revoke(); onClose(); }, [revoke, onClose]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [close]);
 
   const comments = Array.isArray(row?.comments) ? row!.comments! : [];
   const history = Array.isArray(row?.history) ? row!.history! : [];
   const attachments = Array.isArray(row?.attachments) ? row!.attachments! : [];
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-950/80 backdrop-blur-sm flex flex-col p-4 sm:p-8">
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-[200] bg-slate-900/50 backdrop-blur-sm flex flex-col p-4 sm:p-8">
       <div className="mx-auto w-full max-w-5xl flex-1 min-h-0 rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl flex flex-col overflow-hidden">
         <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
           <FileText className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
           <div className="text-sm font-black text-[var(--color-text)] truncate">
             View {ticketLabel || "ticket"} from archive{archiveId ? <span className="font-mono font-normal text-[var(--color-text-muted)]"> · {archiveId}</span> : null}
           </div>
-          <span className="ml-auto text-[11px] text-emerald-600 inline-flex items-center gap-1"><ShieldCheck className="w-3 h-3" /> in-browser only</span>
-          <button onClick={() => { revoke(); onClose(); }} className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-5 h-5" /></button>
+          <span className="ml-auto text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1"><ShieldCheck className="w-3 h-3" /> In this browser only</span>
+          <button onClick={close} aria-label="Close" className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-5 h-5" /></button>
         </div>
 
         {!row ? (
           <div className="flex-1 grid place-items-center p-8">
             <div
-              onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-              onDragLeave={() => setDragging(false)}
-              onDrop={onDrop}
+              {...drag.bind}
               onClick={() => inputRef.current?.click()}
-              className={`w-full max-w-lg rounded-2xl border-2 border-dashed p-10 text-center cursor-pointer transition-colors ${dragging ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]" : "border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]"}`}
+              className={`w-full max-w-lg rounded-2xl border-2 border-dashed p-10 text-center cursor-pointer transition-colors border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] ${drag.ring}`}
             >
               <input ref={inputRef} type="file" accept=".zip,application/zip" className="hidden"
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); }} />
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); e.target.value = ""; }} />
               {loading ? (
-                <div className="inline-flex items-center gap-2 text-sm text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Reading archive…</div>
+                <div className="flex flex-col items-center gap-2">
+                  {picked && (
+                    <div className="inline-flex items-center gap-2 text-left">
+                      <FileThumb file={picked} size={32} />
+                      <span className="min-w-0">
+                        <span className="block text-xs font-bold text-[var(--color-text)] truncate max-w-[16rem]">{picked.name}</span>
+                        <span className="block text-[11px] text-[var(--color-text-muted)]">{formatBytes(picked.size)}</span>
+                      </span>
+                    </div>
+                  )}
+                  <div className="inline-flex items-center gap-2 text-sm text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Reading archive…</div>
+                </div>
+              ) : drag.over ? (
+                <div className="text-sm font-bold text-[var(--color-text)]">{drag.say}</div>
               ) : (
                 <>
                   <UploadCloud className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-2" />
                   <div className="text-sm font-bold text-[var(--color-text)]">Drop {archiveId ? `${archiveId}.zip` : "the saved archive"} here, or click to choose</div>
-                  <div className="text-[11px] text-[var(--color-text-muted)] mt-1">Its comment thread, history and files open here - nothing is re-uploaded, and closing discards it.</div>
+                  <div className="text-[11px] text-[var(--color-text-muted)] mt-1">Its comments, history and files open here. Nothing is uploaded, and closing discards it.</div>
                 </>
               )}
             </div>
@@ -166,7 +184,7 @@ export default function TicketArchiveViewer({
                     <div key={c.id || i} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2.5">
                       <div className="flex items-center gap-2 mb-1">
                         <span className="text-[11px] font-bold text-[var(--color-text)]">{c.user || "Unknown"}</span>
-                        {c.type && c.type !== "General" && <span className="text-[11px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">{c.type}{c.category ? `: ${c.category}` : ""}</span>}
+                        {c.type && c.type !== "General" && <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-muted)]">{c.type}{c.category ? `: ${c.category}` : ""}</span>}
                         <span className="ml-auto text-[11px] text-[var(--color-text-faint)]">{fmtDate(c.date)}</span>
                       </div>
                       <div className="text-[12px] text-[var(--color-text)] whitespace-pre-wrap">{c.text}</div>
@@ -182,7 +200,7 @@ export default function TicketArchiveViewer({
                     {history.map((h, i) => (
                       <div key={i} className="text-[11px] text-[var(--color-text-muted)] flex gap-2">
                         <span className="text-[var(--color-text-faint)] shrink-0">{fmtDate(h.at || h.date)}</span>
-                        <span className="text-[var(--color-text)]">{h.action || h.note || h.detail}{h.from && h.to ? ` (${h.from} → ${h.to})` : ""}{h.by || h.user ? ` - ${h.by || h.user}` : ""}</span>
+                        <span className="text-[var(--color-text)]">{h.action || h.note || h.detail}{h.from && h.to ? ` (${h.from} → ${h.to})` : ""}{h.by || h.user ? `, ${h.by || h.user}` : ""}</span>
                       </div>
                     ))}
                   </div>
@@ -231,9 +249,9 @@ export default function TicketArchiveViewer({
         )}
 
         {error && (
-          <div className="m-3 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800 flex items-start gap-2">
+          <p role="alert" className="m-3 border-l-2 border-red-500 pl-3 text-xs text-red-700 dark:text-red-400 flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
-          </div>
+          </p>
         )}
       </div>
     </div>

@@ -101,12 +101,12 @@ export default function SignatureCeremony({
   );
 
   return (
-    <div className="fixed inset-0 z-[500] bg-slate-900/75 backdrop-blur-sm flex items-start sm:items-center justify-center p-4 overflow-y-auto" onClick={() => !busy && onCancel()}>
+    <div role="dialog" aria-modal="true" aria-label="Electronic signature" className="fixed inset-0 z-[500] bg-slate-900/50 backdrop-blur-sm flex items-start sm:items-center justify-center p-4 overflow-y-auto" onClick={() => !busy && onCancel()}>
       <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl my-4" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-5 py-4 border-b border-[var(--color-border)]">
           <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
           <h2 className="text-sm font-black text-[var(--color-text)] flex-1">Electronic signature</h2>
-          <button onClick={() => !busy && onCancel()} className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+          <button onClick={() => !busy && onCancel()} aria-label="Close" className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
 
         <div className="p-5 space-y-4">
@@ -159,6 +159,9 @@ export default function SignatureCeremony({
             </div>
           )}
 
+          {reauth === "loading" && (
+            <p className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]"><Loader2 className="w-3 h-3 animate-spin" /> Checking your sign-in…</p>
+          )}
           {reauth !== "loading" && reauth?.method === "password" && (
             <div>
               <label className="block text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5">
@@ -174,17 +177,17 @@ export default function SignatureCeremony({
               />
               {reauthError
                 ? <p className="text-[11px] text-rose-600 mt-1">{reauthError}</p>
-                : <p className="text-[11px] text-[var(--color-text-faint)] mt-1">Re-entered at the moment of signing, so a signature can only come from you - not from your unlocked screen.</p>}
+                : <p className="text-[11px] text-[var(--color-text-faint)] mt-1">Asked each time you sign, so nobody can sign from your unlocked screen.</p>}
             </div>
           )}
           {reauth !== "loading" && reauth?.method === "sso" && !reauth.fresh && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
-              <p className="text-xs text-amber-800">
-                Signatures need a recent sign-in. Verify it&apos;s you with your Microsoft account, then finish signing - you&apos;ll come straight back here.
+            <div className="border-l-2 border-amber-500 pl-3">
+              <p className="text-xs text-amber-800 dark:text-amber-300">
+                Signing needs a recent sign-in. Sign in with Microsoft again, then finish signing. You&apos;ll come straight back here.
               </p>
               <button
                 onClick={() => void reauthWithProvider()}
-                className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-bold hover:bg-[var(--color-accent-hover)]"
+                className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-xs font-bold hover:bg-[var(--color-surface-2)]"
               >
                 <KeyRound className="w-3.5 h-3.5" /> Re-authenticate with Microsoft
               </button>
@@ -202,7 +205,7 @@ export default function SignatureCeremony({
           <button
             onClick={submit}
             disabled={!canSign}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--color-accent)] text-white text-sm font-bold disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-bold disabled:opacity-50"
           >
             {busy || verifying ? <Loader2 className="w-4 h-4 animate-spin" /> : <PenLine className="w-4 h-4" />} Sign
           </button>

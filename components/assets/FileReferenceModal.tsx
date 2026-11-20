@@ -65,6 +65,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
   const [asset, setAsset] = useState<Asset | null>(null);
   const [files, setFiles] = useState<AssetFile[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
   const [resolving, setResolving] = useState(false);
@@ -80,24 +81,28 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
     onZoom: (f) => setZoom((z) => Math.min(3, Math.max(0.4, Math.round(z * f * 100) / 100))),
   });
 
-  const loadFiles = useCallback(async () => {
+  const loadFiles = useCallback(async (openDocId?: string) => {
     setLoading(true);
+    setLoadError(null);
     try {
       const a = await getAssetByTag(orgId, tag);
       setAsset(a);
       if (a) {
         const fs = await listAssetFiles(a.id);
         setFiles(fs);
-        setActiveId((cur) => (cur && fs.some((f) => f.id === cur) ? cur : (fs[0]?.id ?? null)));
+        const opened = openDocId ? fs.find((f) => f.document_id === openDocId) : undefined;
+        setActiveId((cur) => opened?.id ?? (cur && fs.some((f) => f.id === cur) ? cur : (fs[0]?.id ?? null)));
       } else {
         setFiles([]);
         setActiveId(null);
       }
+    } catch (e) {
+      setLoadError((e as Error).message || "Couldn't load the linked drawings.");
     } finally {
       setLoading(false);
     }
   }, [orgId, tag]);
-  useEffect(() => { loadFiles(); }, [loadFiles]);
+  useEffect(() => { void loadFiles(); }, [loadFiles]);
 
   const activeFile = files.find((f) => f.id === activeId) ?? null;
 
@@ -143,12 +148,22 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
     // admin's job (Operating areas), never a side effect of linking a file.
     const a = asset ?? await getAssetByTag(orgId, tag);
     if (!a) { await appAlert({ message: `${tag} isn't in the equipment list yet. An admin adds it in Operating areas, under its unit; then files can be linked to it.`, tone: "default" }); return; }
-    await linkAssetFile({ orgId, assetId: a.id, documentId: docId, createdBy: userId });
+    try {
+      await linkAssetFile({ orgId, assetId: a.id, documentId: docId, createdBy: userId });
+    } catch (e) {
+      await appAlert({ title: "Couldn't link the drawing", message: (e as Error).message, tone: "danger" });
+      return;
+    }
     setPickerOpen(false);
     setAsset(a);
+    // Open the drawing just linked.
+    await loadFiles(docId);
+  };
+  const handleUnlink = async (id: string) => {
+    try { await unlinkAssetFile(id); }
+    catch (e) { await appAlert({ title: "Couldn't remove the link", message: (e as Error).message, tone: "danger" }); return; }
     await loadFiles();
   };
-  const handleUnlink = async (id: string) => { await unlinkAssetFile(id); await loadFiles(); };
 
   // Print every linked drawing as ONE stamped (uncontrolled) PDF — the file-stack
   // counterpart to the collection book's "Print all".
@@ -168,8 +183,8 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
         try {
           const stamped = await stampPdf(url, {
             userLabel: email, email, timestamp: now, expiresAt,
-            watermarkText: `UNCONTROLLED - ${doc.document_number || "DOC"} Rev ${doc.rev || "-"}`,
-            footerNotice: `${doc.document_number || "Document"} Rev ${doc.rev ?? "?"} at time of issue - verify current revision before use.`,
+            watermarkText: `UNCONTROLLED: ${doc.document_number || "DOC"} Rev ${doc.rev || "-"}`,
+            footerNotice: `${doc.document_number || "Document"} Rev ${doc.rev ?? "?"} at time of issue. Verify current revision before use.`,
             verifyUrl: doc.id && doc.current_version_id && publicOrigin()
               ? `${publicOrigin()}/verify/${doc.id}?v=${doc.current_version_id}`
               : undefined,
@@ -179,7 +194,10 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
           copied.forEach((p) => merged.addPage(p));
         } catch (e) { console.error("Failed to add linked drawing", doc.document_number, e); }
       }
-      if (merged.getPageCount() === 0) return;
+      if (merged.getPageCount() === 0) {
+        await appAlert({ title: "Nothing to print", message: "None of the linked drawings could be opened for printing.", tone: "danger" });
+        return;
+      }
       const bytes = await merged.save();
       const u = URL.createObjectURL(new Blob([bytes as BlobPart], { type: "application/pdf" }));
       const w = window.open(u, "_blank");
@@ -188,20 +206,23 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
       w.addEventListener("load", () => setTimeout(() => w.print(), 250));
       if (userId) {
         const rows = docs.map((d) => ({ org_id: orgId, document_id: d.id, version_id: d.current_version_id ?? null, user_id: userId, user_email: email ?? null, created_at: now.toISOString(), expires_at: expiresAt.toISOString(), watermark_policy_id: null }));
-        try { await supabase.from("download_audits").insert(rows); } catch (e) { console.error(e); }
+        const { error: auditError } = await supabase.from("download_audits").insert(rows);
+        if (auditError) await appAlert({ title: "Printed, but not logged", message: `The print record didn't save: ${auditError.message}`, tone: "danger" });
       }
+    } catch (e) {
+      await appAlert({ title: "Couldn't print", message: (e as Error).message, tone: "danger" });
     } finally { setPrinting(false); }
   };
 
   return (
-    <div ref={rootRef} className="fixed inset-0 z-[500] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-3 sm:p-6" onClick={onClose}>
+    <div ref={rootRef} role="dialog" aria-modal="true" aria-label={`${tag} linked drawings`} className="fixed inset-0 z-[500] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-3 sm:p-6" onClick={onClose}>
       <div
         className={`bg-slate-900 shadow-2xl border border-slate-700 overflow-hidden flex flex-col ${isFull ? "w-screen h-dvh rounded-none" : "w-[94vw] sm:w-[80vw] h-[85dvh] max-w-[1400px] rounded-2xl"}`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="px-4 py-2.5 border-b border-slate-800 flex items-center gap-3 bg-slate-900 shrink-0">
-          <FileText className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
+          <FileText className="w-4 h-4 text-slate-400 shrink-0" />
           <div className="min-w-0">
             <div className="text-sm font-bold text-white truncate">{tag} <span className="text-[11px] font-medium text-slate-400">· {type || "Linked drawings"}</span></div>
           </div>
@@ -211,7 +232,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
                 <button onClick={() => setZoom((z) => Math.max(0.4, Math.round((z - 0.15) * 100) / 100))} className="p-1.5 rounded-lg hover:bg-white/10 text-slate-300 hover:text-white" title="Zoom out"><ZoomOut className="w-4 h-4" /></button>
                 <button onClick={() => setZoom(1)} className="w-9 text-center text-[11px] font-mono text-slate-300 hover:text-white" title="Fit to width (Ctrl + scroll to zoom)">{Math.round(zoom * 100)}%</button>
                 <button onClick={() => setZoom((z) => Math.min(3, Math.round((z + 0.15) * 100) / 100))} className="p-1.5 rounded-lg hover:bg-white/10 text-slate-300 hover:text-white" title="Zoom in"><ZoomIn className="w-4 h-4" /></button>
-                <button onClick={() => panZoom.setPanMode((v) => !v)} className={`p-1.5 rounded-lg hover:bg-white/10 ${panZoom.panMode ? "text-[var(--color-accent)]" : "text-slate-300 hover:text-white"}`} title={panZoom.panMode ? "Pan tool (drag to move) - click for cursor" : "Cursor - click for the pan/grab hand"}>
+                <button onClick={() => panZoom.setPanMode((v) => !v)} aria-pressed={panZoom.panMode} className={`p-1.5 rounded-lg ${panZoom.panMode ? "bg-white/20 text-white" : "hover:bg-white/10 text-slate-300 hover:text-white"}`} title={panZoom.panMode ? "Pan tool (drag to move). Click for the cursor." : "Cursor. Click for the pan hand."}>
                   {panZoom.panMode ? <Hand className="w-4 h-4" /> : <MousePointer2 className="w-4 h-4" />}
                 </button>
               </div>
@@ -236,13 +257,13 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
           {(files.length > 1 || canManage) && (
             <div className="w-56 shrink-0 border-r border-slate-800 bg-slate-900/60 overflow-y-auto">
               {files.map((f) => (
-                <div key={f.id} className={`group flex items-stretch border-b border-slate-800/60 ${activeId === f.id ? "bg-[var(--color-surface-2)]" : ""}`}>
-                  <button onClick={() => setActiveId(f.id)} className={`flex-1 min-w-0 text-left px-3 py-2.5 ${activeId === f.id ? "text-[var(--color-accent)]" : "text-slate-300 hover:text-white"}`}>
+                <div key={f.id} className={`group flex items-stretch border-b border-slate-800/60 ${activeId === f.id ? "bg-slate-800" : ""}`}>
+                  <button onClick={() => setActiveId(f.id)} aria-current={activeId === f.id ? "true" : undefined} className={`flex-1 min-w-0 text-left px-3 py-2.5 ${activeId === f.id ? "text-white" : "text-slate-300 hover:text-white"}`}>
                     <div className="text-[11px] font-mono font-bold truncate">{f.document?.document_number || f.document?.title || "Document"}</div>
                     <div className="text-[11px] text-slate-500 truncate">{f.document?.title || f.document?.name || ""}{f.document?.rev ? ` · Rev ${f.document.rev}` : ""}</div>
                   </button>
                   {canManage && (
-                    <button onClick={() => void handleUnlink(f.id)} title="Remove link" className="shrink-0 px-2 flex items-center text-slate-600 hover:text-red-400"><Trash2 className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => void handleUnlink(f.id)} title="Remove link" aria-label="Remove link" className="shrink-0 px-2 flex items-center text-slate-500 hover:text-red-400"><Trash2 className="w-3.5 h-3.5" /></button>
                   )}
                 </div>
               ))}
@@ -252,7 +273,14 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
 
           <div ref={scrollRef} className={`flex-1 overflow-auto bg-slate-950 min-w-0 ${panZoom.cursorClass}`} style={{ touchAction: "pan-x pan-y" }} {...panZoom.panHandlers}>
             {loading ? (
-              <Centered><Loader2 className="w-8 h-8 animate-spin text-[var(--color-text-muted)]" /></Centered>
+              <Centered><span className="inline-flex items-center gap-2 text-sm text-slate-400"><Loader2 className="w-6 h-6 animate-spin" /> Loading linked drawings…</span></Centered>
+            ) : loadError ? (
+              <Centered>
+                <div role="alert" className="text-sm text-red-300 text-center">
+                  Couldn&apos;t load the linked drawings: {loadError}{" "}
+                  <button type="button" onClick={() => void loadFiles()} className="font-bold underline">Try again</button>
+                </div>
+              </Centered>
             ) : !activeFile ? (
               <Centered>
                 <div className="text-center text-slate-500">
@@ -261,7 +289,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
                 </div>
               </Centered>
             ) : resolving ? (
-              <Centered><Loader2 className="w-8 h-8 animate-spin text-[var(--color-text-muted)]" /></Centered>
+              <Centered><span className="inline-flex items-center gap-2 text-sm text-slate-400"><Loader2 className="w-6 h-6 animate-spin" /> Opening the drawing…</span></Centered>
             ) : !resolvedUrl ? (
               <Centered><div className="text-slate-500 text-sm">Couldn’t load this drawing.</div></Centered>
             ) : (
@@ -269,7 +297,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
                 <Document options={PDF_DOC_OPTIONS}
                   file={resolvedUrl}
                   onLoadSuccess={({ numPages }) => setPageCount(numPages)}
-                  loading={<Centered><Loader2 className="w-8 h-8 animate-spin text-[var(--color-text-muted)]" /></Centered>}
+                  loading={<Centered><span className="inline-flex items-center gap-2 text-sm text-slate-400"><Loader2 className="w-6 h-6 animate-spin" /> Drawing the pages…</span></Centered>}
                   error={<Centered><div className="text-slate-500 text-sm">Couldn’t render this PDF</div></Centered>}
                   className="flex flex-col items-center gap-3"
                 >

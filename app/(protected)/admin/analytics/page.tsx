@@ -24,6 +24,8 @@ import {
 import { Ticket, DocumentRecord } from '@/types/schema';
 import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
 import UserAvatar from '@/components/ui/UserAvatar';
+import LoadingBlock from '@/components/ui/LoadingBlock';
+import { Modal, ModalHeader, ModalBody, ModalFooter } from '@/components/ui/Modal';
 
 // --- TYPES ---
 interface PerformanceMetric {
@@ -107,6 +109,7 @@ export default function AnalyticsPage() {
   const [viewMode, setViewMode] = useState<ViewMode>('drafter');
   const [selectedReason, setSelectedReason] = useState<string | null>(null);
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // FETCH DATA
   useEffect(() => {
@@ -114,11 +117,13 @@ export default function AnalyticsPage() {
 
     const fetchData = async () => {
       setLoading(true);
+      setLoadError(null);
       try {
-        const { data: ticketsData } = await supabase
+        const { data: ticketsData, error: tErr } = await supabase
           .from('tickets')
           .select('*')
           .eq('org_id', activeOrgId);
+        if (tErr) throw tErr;
         setTickets((ticketsData || []).map(r => ({
           id: r.id, orgId: r.org_id, ticketId: r.ticket_id,
           title: r.title, description: r.description, unit: r.unit,
@@ -132,10 +137,11 @@ export default function AnalyticsPage() {
           archivedAt: r.archived_at ?? null, metadata: r.metadata ?? null,
         } as Ticket)));
 
-        const { data: docsData } = await supabase
+        const { data: docsData, error: dErr } = await supabase
           .from('documents')
           .select('id, org_id, status, document_number, title')
           .eq('org_id', activeOrgId);
+        if (dErr) throw dErr;
         setDocuments((docsData || []).map(r => ({
           id: r.id, orgId: r.org_id, status: r.status,
           documentNumber: r.document_number, title: r.title,
@@ -143,6 +149,7 @@ export default function AnalyticsPage() {
 
       } catch (e) {
         console.error("Analytics Load Error:", e);
+        setLoadError(e instanceof Error ? e.message : String((e as { message?: string })?.message ?? "Couldn't load the numbers."));
       } finally {
         setLoading(false);
       }
@@ -346,7 +353,7 @@ export default function AnalyticsPage() {
     return <div className="p-8 text-center text-sm text-[var(--color-text-muted)]">Analytics is limited to management and document control. An Admin can change this under Admin → Permissions → Action permissions.</div>;
   }
   if (loading) {
-    return <div className="p-8 text-center text-[var(--color-text-muted)] animate-pulse">Loading Analytics Engine...</div>;
+    return <PageShell width="work"><LoadingBlock what="analytics" rows={6} /></PageShell>;
   }
 
   return (
@@ -356,22 +363,9 @@ export default function AnalyticsPage() {
       {/* MODAL 1: ROOT CAUSE DRILL DOWN */}
       {/* --------------------------------------------------------------------------- */}
       {selectedReason && (
-        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl w-full max-w-4xl max-h-[80vh] flex flex-col border border-[var(--color-border)] animate-in fade-in zoom-in-95">
-            <div className="px-6 py-4 border-b border-[var(--color-border)] flex justify-between items-center bg-[var(--color-surface-2)] rounded-t-2xl">
-              <div>
-                <h3 className="text-lg font-bold text-[var(--color-text)] flex items-center">
-                  <AlertTriangle className="w-5 h-5 mr-2 text-[var(--color-text-muted)]" />
-                  {selectedReason}
-                </h3>
-                <p className="text-xs text-[var(--color-text-muted)] mt-1">Found {selectedTickets.length} occurrences across tickets.</p>
-              </div>
-              <button onClick={() => setSelectedReason(null)} className="p-2 hover:bg-slate-200 rounded-full text-[var(--color-text-muted)] transition-colors">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            
-            <div className="overflow-y-auto p-6 custom-scrollbar bg-slate-50/50">
+        <Modal onClose={() => setSelectedReason(null)} size="xl" zIndex={50}>
+          <ModalHeader icon={AlertTriangle} title={selectedReason} subtitle={`Found ${selectedTickets.length} occurrences across tickets.`} onClose={() => setSelectedReason(null)} />
+            <ModalBody className="bg-[var(--color-surface-2)]">
               {selectedTickets.length === 0 ? (
                 <div className="text-center py-12 text-[var(--color-text-faint)]">No details found.</div>
               ) : (
@@ -402,23 +396,21 @@ export default function AnalyticsPage() {
                   ))}
                 </div>
               )}
-            </div>
-            <div className="p-4 border-t border-[var(--color-border)] bg-[var(--color-surface)] rounded-b-2xl flex justify-end">
-              <button onClick={() => setSelectedReason(null)} className="px-6 py-2 bg-[var(--color-surface-2)] text-[var(--color-text)] font-bold rounded-lg hover:bg-slate-200 transition-colors">Close</button>
-            </div>
-          </div>
-        </div>
+            </ModalBody>
+          <ModalFooter>
+            <button onClick={() => setSelectedReason(null)} className="px-6 py-2 bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] font-bold rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">Close</button>
+          </ModalFooter>
+        </Modal>
       )}
 
       {/* --------------------------------------------------------------------------- */}
       {/* MODAL 2: USER PERFORMANCE PROFILE */}
       {/* --------------------------------------------------------------------------- */}
       {userProfile && (
-        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col border border-[var(--color-border)] animate-in fade-in zoom-in-95">
+        <Modal onClose={() => setSelectedUser(null)} size="2xl" zIndex={50}>
 
             {/* HEADER */}
-            <div className="px-8 py-6 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] rounded-t-2xl flex justify-between items-start">
+            <div className="relative px-8 py-6 pr-16 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] rounded-t-2xl flex justify-between items-start shrink-0">
               <div className="flex items-center">
                 <UserAvatar uid={userProfile.metric.uid} name={userProfile.metric.name} size={48} rounded="full" className="shadow-lg mr-4" />
                 <div>
@@ -432,19 +424,19 @@ export default function AnalyticsPage() {
                       <p className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase tracking-wider">Avg Revisions</p>
                       <p className={`text-xl font-black ${userProfile.metric.avgRevisions > 1.5 ? 'text-[var(--color-text)]' : 'text-[var(--color-text)]'}`}>{userProfile.metric.avgRevisions.toFixed(2)}</p>
                     </div>
-                    <div className="w-px h-8 bg-slate-300 mx-2" />
+                    <div className="w-px h-8 bg-[var(--color-border-strong)] mx-2" />
                     <div className="text-right">
                       <p className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase tracking-wider">Revision Rate</p>
-                      <p className={`text-xl font-black ${userProfile.metric.revisionRate > 0.3 ? 'text-red-600' : 'text-green-600'}`}>{formatPercent(userProfile.metric.revisionRate)}</p>
+                      <p className={`text-xl font-black ${userProfile.metric.revisionRate > 0.3 ? 'text-red-600' : 'text-emerald-600'}`}>{formatPercent(userProfile.metric.revisionRate)}</p>
                     </div>
                  </div>
               </div>
-              <button onClick={() => setSelectedUser(null)} className="absolute top-4 right-4 p-2 hover:bg-slate-200 rounded-full text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] transition-colors">
+              <button onClick={() => setSelectedUser(null)} aria-label="Close" className="absolute top-4 right-4 p-2 hover:bg-[var(--color-border)] rounded-full text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] transition-colors">
                 <X className="w-6 h-6" />
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-8 custom-scrollbar bg-slate-50/30">
+            <div className="flex-1 overflow-y-auto p-8 custom-scrollbar bg-[var(--color-surface-2)]">
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 
                 {/* COLUMN 1: ROOT CAUSE BREAKDOWN */}
@@ -465,16 +457,15 @@ export default function AnalyticsPage() {
                               <span className="shrink-0">{formatPercent(c.percent)}</span>
                             </div>
                             <div className="w-full bg-[var(--color-surface-2)] h-2 rounded-full overflow-hidden">
-                              <div className="bg-slate-800 h-full rounded-full" style={{ width: `${c.percent * 100}%` }} />
+                              <div className="bg-[var(--color-text)] h-full rounded-full" style={{ width: `${c.percent * 100}%` }} />
                             </div>
                           </div>
                         ))}
                       </div>
                     )}
-                    <div className="mt-6 p-4 bg-[var(--color-surface-2)] rounded-lg border border-[var(--color-border)] text-xs text-[var(--color-text)] leading-relaxed">
-                      <p className="font-bold mb-1">Analysis Tip:</p>
-                      This chart shows the specific reasons why this user&rsquo;s work is being revised (if Drafter) or rejected (if Requester). Use this to identify training gaps or communication issues.
-                    </div>
+                    <p className="mt-6 text-[11px] text-[var(--color-text-muted)] leading-relaxed">
+                      {viewMode === 'drafter' ? "Why this person's work was sent back for revision." : "Why this person's requests were sent back."}
+                    </p>
                   </div>
                 </div>
 
@@ -488,8 +479,8 @@ export default function AnalyticsPage() {
                     <div className="flex-1 overflow-hidden">
                       {userProfile.tickets.length === 0 ? (
                         <div className="h-full flex flex-col items-center justify-center text-[var(--color-text-faint)]">
-                          <CheckCircle2 className="w-12 h-12 mb-3 text-green-100" />
-                          <p>No revisions found! Perfect record.</p>
+                          <CheckCircle2 className="w-12 h-12 mb-3 text-[var(--color-text-faint)]" />
+                          <p>No revisions found.</p>
                         </div>
                       ) : (
                         <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
@@ -523,8 +514,7 @@ export default function AnalyticsPage() {
 
               </div>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
 
 
@@ -532,8 +522,14 @@ export default function AnalyticsPage() {
       <PageHeaderBar
         icon={BarChart3}
         title="System Analytics"
-        subtitle="Real-time performance metrics for Document Control and Drafting Operations."
+        subtitle={`${metrics.totalTickets} requests · ${metrics.totalDocs} documents${metrics.staleTickets > 0 ? ` · ${metrics.staleTickets} untouched for over a week` : ""}.`}
       />
+
+      {loadError && (
+        <p role="alert" className="border-l-2 border-red-500 pl-3 text-sm text-red-700 dark:text-red-400">
+          Couldn&apos;t load the numbers, so these may be empty: {loadError}
+        </p>
+      )}
 
       {/* KPI GRID */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -561,7 +557,7 @@ export default function AnalyticsPage() {
         <div className="bg-[var(--color-surface)] p-6 rounded-xl border border-[var(--color-border)] shadow-sm relative overflow-hidden">
           <div className="flex justify-between items-start mb-4">
             <div><p className="text-xs font-bold text-[var(--color-text-faint)] uppercase tracking-wider">First-Time Quality</p><h3 className="text-3xl font-black text-[var(--color-text)] mt-1">{formatPercent(1 - metrics.globalRevisionRate)}</h3></div>
-            <div className={`p-2 rounded-lg ${metrics.globalRevisionRate > 0.3 ? 'bg-amber-50 text-amber-600' : 'bg-green-50 text-green-600'}`}><CheckCircle2 className="w-5 h-5" /></div>
+            <div className={`p-2 rounded-lg ${metrics.globalRevisionRate > 0.3 ? 'bg-amber-50 text-amber-600 dark:bg-amber-950/40' : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40'}`}><CheckCircle2 className="w-5 h-5" /></div>
           </div>
           <div className="w-full bg-[var(--color-surface-2)] h-1.5 rounded-full mt-2 overflow-hidden"><div className={`h-full rounded-full ${metrics.globalRevisionRate > 0.3 ? 'bg-amber-500' : 'bg-green-500'}`} style={{ width: `${(1 - metrics.globalRevisionRate) * 100}%` }} /></div>
         </div>
@@ -570,7 +566,7 @@ export default function AnalyticsPage() {
         <div className="bg-[var(--color-surface)] p-6 rounded-xl border border-[var(--color-border)] shadow-sm relative overflow-hidden">
           <div className="flex justify-between items-start mb-4">
             <div><p className="text-xs font-bold text-[var(--color-text-faint)] uppercase tracking-wider">Stale Tickets</p><h3 className="text-3xl font-black text-[var(--color-text)] mt-1">{metrics.staleTickets}</h3></div>
-            <div className="p-2 bg-amber-50 text-amber-600 rounded-lg"><Clock className="w-5 h-5" /></div>
+            <div className={`p-2 rounded-lg ${metrics.staleTickets > 0 ? 'bg-amber-50 text-amber-600 dark:bg-amber-950/40' : 'bg-[var(--color-surface-2)] text-[var(--color-text-muted)]'}`}><Clock className="w-5 h-5" /></div>
           </div>
           <p className="text-xs text-[var(--color-text-muted)]">Active tickets untouched for &gt;7 days.</p>
         </div>
@@ -601,9 +597,9 @@ export default function AnalyticsPage() {
               const height = (d.count / max) * 100;
               return (
                 <div key={i} className="flex flex-col items-center flex-1 group min-w-[20px]">
-                  <div className="w-full bg-[var(--color-surface-2)] rounded-t-sm relative flex items-end justify-center transition-all group-hover:bg-slate-200" style={{ height: '100%' }}>
+                  <div className="w-full bg-[var(--color-surface-2)] rounded-t-sm relative flex items-end justify-center transition-all group-hover:bg-[var(--color-border)]" style={{ height: '100%' }}>
                     <div 
-                      className="w-full mx-0.5 bg-[var(--color-text-muted)] rounded-t-sm transition-all duration-500 ease-out group-hover:bg-[var(--color-surface-2)] relative min-h-[4px]" 
+                      className="w-full mx-0.5 bg-[var(--color-text-muted)] rounded-t-sm transition-all duration-500 ease-out group-hover:bg-[var(--color-text)] relative min-h-[4px]" 
                       style={{ height: `${height}%` }}
                     >
                        <span className="absolute -top-6 left-1/2 -translate-x-1/2 text-xs font-bold text-[var(--color-text-muted)] opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity bg-[var(--color-surface)] px-2 py-1 rounded shadow-sm z-10 border border-[var(--color-border)]">{d.count}</span>
@@ -622,18 +618,15 @@ export default function AnalyticsPage() {
             <div className="flex justify-between items-start">
               <div>
                 <h3 className="font-bold text-[var(--color-text)] flex items-center"><HelpCircle className="w-5 h-5 mr-2 text-[var(--color-text-faint)]" /> Root Cause Analysis</h3>
-                <p className="text-xs text-[var(--color-text-muted)] mt-1">Click on a category to see associated tickets.</p>
+                <p className="text-xs text-[var(--color-text-muted)] mt-1">Tap a reason to see its tickets.</p>
               </div>
-              <span className="bg-[var(--color-surface-2)] text-[var(--color-text)] text-[11px] font-bold px-2 py-1 rounded-lg border border-[var(--color-border)] animate-pulse flex items-center">
-                <MousePointerClick className="w-3 h-3 mr-1" /> Interactive
-              </span>
             </div>
           </div>
           
           <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
             {metrics.rootCauseData.length === 0 ? (
                <div className="flex flex-col items-center justify-center h-48 text-center">
-                 <AlertTriangle className="w-8 h-8 text-slate-200 mb-2" />
+                 <AlertTriangle className="w-8 h-8 text-[var(--color-text-faint)] mb-2" />
                  <p className="text-xs text-[var(--color-text-faint)]">No revision data available yet.</p>
                </div>
             ) : (
@@ -654,9 +647,9 @@ export default function AnalyticsPage() {
                       <div className="w-full bg-[var(--color-surface-2)] h-2 rounded-full overflow-hidden">
                         <div 
                           className={`h-full rounded-full transition-colors ${
-                            item.reason.includes('Drafter') || item.reason.includes('Drafting') ? 'bg-[var(--color-text-muted)] group-hover:bg-[var(--color-surface-2)]' :
-                            item.reason.includes('Requester') || item.reason.includes('Info') ? 'bg-[var(--color-text-muted)] group-hover:bg-[var(--color-surface-2)]' :
-                            'bg-slate-500 group-hover:bg-slate-600'
+                            item.reason.includes('Drafter') || item.reason.includes('Drafting') ? 'bg-[var(--color-text-muted)] group-hover:bg-[var(--color-text)]' :
+                            item.reason.includes('Requester') || item.reason.includes('Info') ? 'bg-[var(--color-text-muted)] group-hover:bg-[var(--color-text)]' :
+                            'bg-[var(--color-text-faint)] group-hover:bg-[var(--color-text)]'
                           }`} 
                           style={{ width: `${item.percentage * 100}%` }} 
                         />
@@ -677,12 +670,12 @@ export default function AnalyticsPage() {
 
       {/* SECTION 3: PERFORMANCE TABLE */}
       <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm overflow-hidden">
-        <div className="px-6 py-4 border-b border-[var(--color-border)] bg-slate-50/50 flex justify-between items-center">
+        <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex justify-between items-center">
           <div>
             <h3 className="font-bold text-[var(--color-text)] flex items-center"><Users className="w-5 h-5 mr-2 text-[var(--color-text-faint)]" /> {viewMode === 'drafter' ? 'Drafter Performance' : 'Requester Quality'}</h3>
-            <p className="text-xs text-[var(--color-text-muted)] mt-1 flex items-center"><MousePointerClick className="w-3 h-3 mr-1" /> Click on a user row to investigate performance factors.</p>
+            <p className="text-xs text-[var(--color-text-muted)] mt-1 flex items-center"><MousePointerClick className="w-3 h-3 mr-1" /> Tap a person to see why their work came back.</p>
           </div>
-          <div className="flex bg-slate-200 rounded-lg p-1 space-x-1">
+          <div className="flex bg-[var(--color-border)] rounded-lg p-1 space-x-1">
              <button onClick={() => setViewMode('drafter')} className={`px-3 py-1.5 text-xs font-bold rounded transition-all ${viewMode === 'drafter' ? 'bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm' : 'text-[var(--color-text-muted)]'}`}>Drafters</button>
              <button onClick={() => setViewMode('requester')} className={`px-3 py-1.5 text-xs font-bold rounded transition-all ${viewMode === 'requester' ? 'bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm' : 'text-[var(--color-text-muted)]'}`}>Requesters</button>
           </div>
@@ -727,7 +720,7 @@ export default function AnalyticsPage() {
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                       <span className={`px-2 py-1 rounded text-xs font-bold ${d.revisionRate > 0.3 ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>
+                       <span className={`px-2 py-1 rounded text-xs font-bold ${d.revisionRate > 0.3 ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'}`}>
                          {formatPercent(d.revisionRate)}
                        </span>
                     </td>

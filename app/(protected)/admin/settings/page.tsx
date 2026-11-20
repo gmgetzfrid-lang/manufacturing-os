@@ -19,7 +19,7 @@ import { supabase } from "@/lib/supabase";
 import { kickEmailDrain } from "@/lib/notifications";
 import { formatTicketNumber, getTicketNumberConfig, TICKET_NUMBER_DEFAULTS, type TicketNumberConfig } from "@/lib/ticketNumber";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
-import { Spinner } from "@/components/ui/Spinner";
+import LoadingBlock from "@/components/ui/LoadingBlock";
 import { appAlert } from "@/components/providers/DialogProvider";
 
 const ADMIN_ROLES = new Set(["Admin", "DocCtrl"]);
@@ -47,13 +47,17 @@ export default function WorkspaceSettingsPage() {
   const [numbering, setNumbering] = useState<TicketNumberConfig>(TICKET_NUMBER_DEFAULTS);
   const [savingNum, setSavingNum] = useState(false);
   const [numSaved, setNumSaved] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
     if (!activeOrgId) return;
     (async () => {
       setLoading(true);
+      setLoadError(null);
       try {
-        const { data } = await supabase.from("orgs").select("*").eq("id", activeOrgId).single();
+        const { data, error: orgErr } = await supabase.from("orgs").select("*").eq("id", activeOrgId).single();
+        if (orgErr) throw orgErr;
         setOrg(data as OrgSummary);
         setNumbering(await getTicketNumberConfig(activeOrgId));
         const [{ count: members }, { count: libs }] = await Promise.all([
@@ -80,23 +84,28 @@ export default function WorkspaceSettingsPage() {
             setEmailQueueStatus(j?.configured === false ? "no-key" : "ok");
           }
         } catch { /* leave unknown */ }
+      } catch (e) {
+        setLoadError(e instanceof Error ? e.message : String((e as { message?: string })?.message ?? e));
       } finally { setLoading(false); }
     })();
-  }, [activeOrgId]);
+  }, [activeOrgId, reloadTick]);
 
   // Reset dead-letter emails to 'queued' so the next drain retries them.
   const requeueFailed = async () => {
     if (!activeOrgId || requeuing) return;
     setRequeuing(true);
     try {
-      await supabase.from("email_notifications")
+      const { error: upErr } = await supabase.from("email_notifications")
         .update({ status: "queued", attempt_count: 0 })
         .eq("org_id", activeOrgId).eq("status", "failed").gte("attempt_count", 5);
+      if (upErr) throw upErr;
       await kickEmailDrain();
       const { count: dead } = await supabase.from("email_notifications")
         .select("id", { count: "exact", head: true })
         .eq("org_id", activeOrgId).eq("status", "failed").gte("attempt_count", 5);
       setFailedEmails(dead ?? 0);
+    } catch (e) {
+      await appAlert({ title: "Couldn't send them again", message: e instanceof Error ? e.message : String((e as { message?: string })?.message ?? e), tone: "danger" });
     } finally { setRequeuing(false); }
   };
 
@@ -126,7 +135,7 @@ export default function WorkspaceSettingsPage() {
           <Settings className="w-6 h-6 text-[var(--color-text-muted)] shrink-0" />
           <div>
             <h1 className="text-xl font-black text-[var(--color-text)]">Workspace Settings</h1>
-            <p className="text-sm text-[var(--color-text-muted)] mt-1">Admin-class only.</p>
+            <p className="text-sm text-[var(--color-text-muted)] mt-1">Only Admin and Doc Control see workspace settings.</p>
           </div>
         </div>
       </div>
@@ -134,16 +143,20 @@ export default function WorkspaceSettingsPage() {
   }
 
   if (loading) {
-    return (
-      <div className="min-h-full flex items-center justify-center">
-        <Spinner />
-      </div>
-    );
+    return <PageShell width="form"><LoadingBlock what="workspace settings" /></PageShell>;
   }
 
   return (
     <PageShell width="form">
-      <PageHeaderBar icon={Settings} title="Workspace Settings" />
+      <PageHeaderBar icon={Settings} title="Workspace Settings"
+        subtitle={org ? `${org.name} · ${memberCount ?? 0} members · ${libraryCount ?? 0} libraries${failedEmails ? ` · ${failedEmails} email${failedEmails === 1 ? "" : "s"} not sent` : ""}` : undefined} />
+
+        {loadError && (
+          <p role="alert" className="mb-4 border-l-2 border-red-500 pl-3 text-xs text-red-700 dark:text-red-400">
+            Couldn&apos;t load the workspace settings: {loadError}{" "}
+            <button type="button" onClick={() => setReloadTick((n) => n + 1)} className="font-bold underline">Try again</button>
+          </p>
+        )}
 
         {/* Identity */}
         <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
@@ -161,7 +174,7 @@ export default function WorkspaceSettingsPage() {
             <Hash className="w-3.5 h-3.5" /> Request Numbering
           </div>
           <p className="text-xs text-[var(--color-text-muted)] mb-4">
-            How new request numbers are built. The sequence is allocated atomically and resets each year, so every number is unique - no collisions even under simultaneous submissions.
+            How new request numbers are built. The count restarts each year and never repeats, even when two are sent at once.
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <label className="block">
@@ -171,7 +184,7 @@ export default function WorkspaceSettingsPage() {
                 onChange={(e) => { setNumbering((n) => ({ ...n, prefix: e.target.value.toUpperCase() })); setNumSaved(false); }}
                 placeholder="e.g. KE"
                 maxLength={8}
-                className="mt-1 w-full px-3 py-2 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg text-sm font-bold focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+                className="mt-1 w-full px-3 py-2 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg text-sm font-bold text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
               />
             </label>
             <label className="block">
@@ -181,7 +194,7 @@ export default function WorkspaceSettingsPage() {
                 onChange={(e) => { setNumbering((n) => ({ ...n, recordCode: e.target.value.toUpperCase() })); setNumSaved(false); }}
                 placeholder="DDRT"
                 maxLength={10}
-                className="mt-1 w-full px-3 py-2 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg text-sm font-bold focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+                className="mt-1 w-full px-3 py-2 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg text-sm font-bold text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
               />
             </label>
             <label className="block">
@@ -190,7 +203,7 @@ export default function WorkspaceSettingsPage() {
                 type="number" min={1} max={9}
                 value={numbering.pad}
                 onChange={(e) => { setNumbering((n) => ({ ...n, pad: Math.min(9, Math.max(1, parseInt(e.target.value || "4", 10))) })); setNumSaved(false); }}
-                className="mt-1 w-full px-3 py-2 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg text-sm font-bold focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+                className="mt-1 w-full px-3 py-2 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg text-sm font-bold text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
               />
             </label>
           </div>
@@ -202,7 +215,7 @@ export default function WorkspaceSettingsPage() {
             <button
               onClick={() => void saveNumbering()}
               disabled={savingNum}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
             >
               {savingNum ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : numSaved ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
               {numSaved ? "Saved" : "Save"}
@@ -220,10 +233,9 @@ export default function WorkspaceSettingsPage() {
             <div className="flex-1">
               <span className="text-sm font-bold text-[var(--color-text)]">Per-user keys in Knowledge Libraries</span>
               <p className="text-xs text-[var(--color-text-muted)] mt-1">
-                AI runs only inside Knowledge Libraries, only with a key each user connects
-                themselves, and only after they accept the data-use agreement. Usage is metered
-                per user with monthly spend caps. There is no org-wide AI and nothing runs
-                automatically over your data - configure providers under Knowledge → AI settings.
+                AI runs only inside Knowledge Libraries, with a key each person connects and only
+                after they accept the data-use agreement. Use is counted per person with a monthly
+                spend limit. Nothing runs over your data on its own. Set providers in Knowledge, AI settings.
               </p>
             </div>
           </div>
@@ -234,8 +246,8 @@ export default function WorkspaceSettingsPage() {
           <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3">Email Delivery</div>
           <div className="flex items-start gap-3">
             <div className={`p-2.5 rounded-lg border ${
-              emailQueueStatus === "ok" ? "bg-emerald-50 border-emerald-200 text-emerald-700"
-              : emailQueueStatus === "no-key" ? "bg-amber-50 border-amber-200 text-amber-700"
+              emailQueueStatus === "ok" ? "bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-950/40 dark:border-emerald-900 dark:text-emerald-300"
+              : emailQueueStatus === "no-key" ? "bg-amber-50 border-amber-200 text-amber-700 dark:bg-amber-950/40 dark:border-amber-900 dark:text-amber-300"
               : "bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text-muted)]"
             }`}>
               <Mail className="w-4 h-4" />
@@ -243,11 +255,12 @@ export default function WorkspaceSettingsPage() {
             <div className="flex-1">
               <div className="text-sm font-bold text-[var(--color-text)] inline-flex items-center gap-2">
                 Outbound email
-                {emailQueueStatus === "ok" && <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700"><CheckCircle2 className="w-3 h-3" /> Configured</span>}
-                {emailQueueStatus === "no-key" && <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700"><XCircle className="w-3 h-3" /> No RESEND_API_KEY</span>}
+                {emailQueueStatus === "ok" && <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-400"><CheckCircle2 className="w-3 h-3" /> Set up</span>}
+                {emailQueueStatus === "no-key" && <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 dark:text-amber-400"><XCircle className="w-3 h-3" /> No RESEND_API_KEY</span>}
               </div>
               <p className="text-xs text-[var(--color-text-muted)] mt-1">
-                Resend powers outbound delivery. Without RESEND_API_KEY set, rows stay <code className="text-[11px] bg-[var(--color-surface-2)] px-1 rounded">queued</code> and the whole backlog sends as soon as the key is configured. Per-user opt-outs live at the user&apos;s notification settings page.
+                Resend sends outbound email. Without RESEND_API_KEY, emails wait as <code className="text-[11px] bg-[var(--color-surface-2)] px-1 rounded">queued</code> and all go out once the key is set.
+                {emailQueueStatus === "no-key" && <> Set <code className="text-[11px] bg-[var(--color-surface-2)] px-1 rounded">RESEND_API_KEY</code> and <code className="text-[11px] bg-[var(--color-surface-2)] px-1 rounded">RESEND_FROM_EMAIL</code> in the server settings.</>}the user&apos;s notification settings page.
               </p>
               <Link href="/settings/notifications" className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] mt-2">
                 Open my notification preferences <ExternalLink className="w-2.5 h-2.5" />
@@ -257,38 +270,29 @@ export default function WorkspaceSettingsPage() {
 
           {/* Dead-letter requeue — failed past the auto-retry cap. */}
           {failedEmails !== null && failedEmails > 0 && (
-            <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 flex items-center gap-3">
+            <div className="mt-4 border-l-2 border-rose-500 pl-3 flex items-center gap-3">
               <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
               <div className="flex-1 min-w-0">
-                <div className="text-xs font-bold text-rose-900">{failedEmails} email{failedEmails === 1 ? "" : "s"} failed to send</div>
-                <div className="text-[11px] text-rose-700">They exceeded the {5}-attempt auto-retry. Requeue to try again (e.g. after fixing RESEND_API_KEY).</div>
+                <div className="text-xs font-bold text-rose-700 dark:text-rose-400">{failedEmails} email{failedEmails === 1 ? "" : "s"} didn&apos;t send</div>
+                <div className="text-[11px] text-[var(--color-text-muted)]">Each was tried 5 times. Send them again once the cause is fixed (for example RESEND_API_KEY).</div>
               </div>
               <button
                 onClick={() => void requeueFailed()}
                 disabled={requeuing}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 disabled:opacity-50 shrink-0"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 shrink-0"
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${requeuing ? "animate-spin" : ""}`} /> Requeue
+                <RefreshCw className={`w-3.5 h-3.5 ${requeuing ? "animate-spin" : ""}`} /> Try again
               </button>
             </div>
           )}
           {failedEmails === 0 && (
-            <div className="mt-3 text-[11px] text-emerald-700 inline-flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> No failed deliveries.</div>
+            <div className="mt-3 text-[11px] text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Nothing failed to send.</div>
           )}
         </div>
 
         {/* Database health — are the hand-applied migrations actually applied? */}
         <SchemaHealthCard orgId={activeOrgId} />
 
-        {/* Help banner — what's left unconfigured */}
-        {emailQueueStatus === "no-key" && (
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-800">
-            <div className="font-bold flex items-center gap-1.5 mb-1"><AlertTriangle className="w-4 h-4" /> Setup checklist</div>
-            <ul className="ml-5 list-disc space-y-0.5">
-              <li>Set <code className="bg-amber-100 px-1 rounded">RESEND_API_KEY</code> and <code className="bg-amber-100 px-1 rounded">RESEND_FROM_EMAIL</code> in your env to enable outbound email.</li>
-            </ul>
-          </div>
-        )}
     </PageShell>
   );
 }
@@ -344,31 +348,31 @@ function SchemaHealthCard({ orgId }: { orgId: string | null }) {
       </div>
 
       {state.phase === "loading" || state.phase === "idle" ? (
-        <div className="text-xs text-[var(--color-text-muted)] inline-flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Probing every table the code expects…</div>
+        <div className="text-xs text-[var(--color-text-muted)] inline-flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking every table the app expects…</div>
       ) : state.phase === "error" ? (
-        <div className="text-xs text-rose-700 inline-flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" /> {state.message}</div>
+        <div role="alert" className="text-xs text-rose-700 dark:text-rose-400 inline-flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" /> Couldn&apos;t check: {state.message}</div>
       ) : state.healthy ? (
-        <div className="text-xs text-emerald-700 inline-flex items-center gap-1.5">
-          <CheckCircle2 className="w-3.5 h-3.5" /> All {state.checkedTables} expected tables are present - every migrated feature has its schema.
+        <div className="text-xs text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1.5">
+          <CheckCircle2 className="w-3.5 h-3.5" /> All {state.checkedTables} expected tables are there.
         </div>
       ) : (
         <div className="space-y-3">
-          <div className="text-xs font-bold text-amber-800 inline-flex items-center gap-1.5">
+          <div className="text-xs font-bold text-amber-800 dark:text-amber-300 inline-flex items-center gap-1.5">
             <AlertTriangle className="w-3.5 h-3.5" />
-            {state.missingTables.length + state.missingColumns.length} schema gap{state.missingTables.length + state.missingColumns.length === 1 ? "" : "s"} found - features backed by these render empty until their migration runs.
+            {state.missingTables.length + state.missingColumns.length} missing piece{state.missingTables.length + state.missingColumns.length === 1 ? "" : "s"}. Features that use them show nothing until their migration runs.
           </div>
           {state.missingTables.length > 0 && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-900 space-y-1">
+            <div className="border-l-2 border-amber-500 pl-3 text-[11px] text-[var(--color-text)] space-y-1">
               {state.missingTables.map((t) => (
-                <div key={t.table}><code className="bg-amber-100 px-1 rounded">{t.table}</code> - run <code className="bg-amber-100 px-1 rounded">{t.migration}</code></div>
+                <div key={t.table}><code className="bg-[var(--color-surface-2)] px-1 rounded">{t.table}</code>: run <code className="bg-[var(--color-surface-2)] px-1 rounded">{t.migration}</code></div>
               ))}
             </div>
           )}
           {state.missingColumns.length > 0 && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-900 space-y-1">
+            <div className="border-l-2 border-amber-500 pl-3 text-[11px] text-[var(--color-text)] space-y-1">
               {state.missingColumns.map((c) => (
                 <div key={`${c.table}.${c.column}`}>
-                  <code className="bg-amber-100 px-1 rounded">{c.table}.{c.column}</code> ({c.feature}) - run <code className="bg-amber-100 px-1 rounded">{c.migration}</code>
+                  <code className="bg-[var(--color-surface-2)] px-1 rounded">{c.table}.{c.column}</code> ({c.feature}): run <code className="bg-[var(--color-surface-2)] px-1 rounded">{c.migration}</code>
                 </div>
               ))}
             </div>

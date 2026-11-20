@@ -30,6 +30,7 @@ import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
 import ConnectionSkillsPanel from "@/components/intelligence/ConnectionSkillsPanel";
 import EstateReviewPanel from "@/components/intelligence/EstateReviewPanel";
+import LoadingBlock from "@/components/ui/LoadingBlock";
 
 const TIER_STYLE: Record<ProposalTier, string> = {
   provable: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300",
@@ -57,25 +58,25 @@ interface RunResult {
 function diagnose(inputs: RunInputs): string[] {
   const out: string[] = [];
   if (inputs.withNumbers === 0) {
-    out.push("No documents carry document numbers yet - references can't resolve to anything. Fill in numbers (the title-block ingest wizard reads them automatically).");
+    out.push("No documents have document numbers yet, so references can't point at anything. Fill in numbers (the title-block reader fills them in for you).");
   }
   if (inputs.registryAssets === 0) {
-    out.push("The equipment registry is empty, so the Shared equipment skill has nothing to compare. Add assets under Admin → Assets, or run the registry sweep.");
+    out.push("The equipment list is empty, so Shared equipment has nothing to compare. Add equipment in Operating areas, or run the registry sweep.");
   } else if (inputs.equipmentLinks === 0) {
-    out.push("No documents are linked to equipment yet - run an Equipment sweep on a library to bridge them.");
+    out.push("No documents are linked to equipment yet. Run an Equipment sweep on a library to link them.");
   }
   if (inputs.mirroredDocs === 0) {
     out.push("No knowledge documents mirror controlled documents. Link a document-control library as a knowledge source so extraction can read the real files.");
   } else if (inputs.extractedRefs === 0) {
-    out.push("Extraction hasn't found cross-references in the mirrored documents yet (they may not be drawings, or haven't been indexed).");
+    out.push("No cross-references were found in the linked documents yet (they may not be drawings, or aren't indexed yet).");
   }
   if (inputs.citedQuestions === 0) {
-    out.push("No answered questions cite two controlled documents yet - the Answered-together skill grows with use.");
+    out.push("No answered questions cite two controlled documents yet. Answered-together grows with use.");
   }
   if (inputs.customSkills === 0 && inputs.skillsInstalled) {
-    out.push("No custom skills yet - teach the engine your facility's own numbering conventions above.");
+    out.push("No custom skills yet. Teach it your site's own numbering conventions above.");
   } else if (inputs.customSkills > 0 && inputs.chunksScanned === 0) {
-    out.push("Custom skills had no indexed text to scan - index the source documents into a knowledge library first.");
+    out.push("Custom skills had no indexed text to scan. Index the source documents into a knowledge library first.");
   }
   return out;
 }
@@ -90,11 +91,12 @@ export default function ProposedLinksPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [lastRun, setLastRun] = useState<RunResult | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
-    try { setRows(await listProposals(activeOrgId)); setError(null); }
-    catch (e) { setError((e as Error).message); }
+    try { setRows(await listProposals(activeOrgId)); setLoadError(null); }
+    catch (e) { setLoadError((e as Error).message || "Couldn't load the proposals."); }
   }, [activeOrgId]);
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -135,8 +137,8 @@ export default function ProposedLinksPage() {
   };
 
   const decide = async (p: LinkProposal, approve: boolean) => {
-    if (!uid) return;
-    setBusyId(p.id);
+    if (!uid) { setError("Your sign-in is still loading. Try again in a moment."); return; }
+    setBusyId(p.id); setError(null);
     try {
       const actor = { userId: uid, userName: userEmail ?? undefined };
       if (approve) await approveProposal(p, actor);
@@ -158,7 +160,9 @@ export default function ProposedLinksPage() {
         icon={Waypoints}
         eyebrow="Link discovery"
         title="Proposed connections"
-        subtitle="What the system found in your own extracted data - each with the evidence behind it. Nothing here was applied without you."
+        subtitle={rows
+          ? `${rows.length} connection${rows.length === 1 ? "" : "s"} waiting for a decision, each with the reason it was found.`
+          : "Connections found in your documents, each with the reason it was found."}
         actions={canRun ? (
           <button onClick={() => void runProposers()} disabled={running}
             className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
@@ -173,10 +177,10 @@ export default function ProposedLinksPage() {
       <ConnectionSkillsPanel />
 
       {error && (
-        <div className="mb-4 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 dark:bg-rose-950/40 p-3">
+        <p role="alert" className="mb-4 flex items-start gap-2 border-l-2 border-rose-500 pl-3">
           <AlertTriangle className="w-4 h-4 text-rose-600 mt-0.5 shrink-0" />
-          <div className="text-xs text-rose-700 dark:text-rose-300">{error}</div>
-        </div>
+          <span className="text-xs text-rose-700 dark:text-rose-300">{error}</span>
+        </p>
       )}
 
       {lastRun && (
@@ -185,8 +189,8 @@ export default function ProposedLinksPage() {
             Scanned {lastRun.scanned} documents · {lastRun.autoApplied} provable connection{lastRun.autoApplied === 1 ? "" : "s"} applied · {lastRun.proposed} queued for review
           </div>
           {lastRun.evidenceLost > 0 && (
-            <div className="text-[11px] text-amber-700">
-              {lastRun.evidenceLost} existing system link{lastRun.evidenceLost === 1 ? "" : "s"} no longer match their original evidence - marked, not removed.
+            <div className="text-[11px] text-amber-700 dark:text-amber-400">
+              {lastRun.evidenceLost} existing system link{lastRun.evidenceLost === 1 ? "" : "s"} no longer match the reason they were made. Marked, not removed.
             </div>
           )}
           {lastRun.notes.map((n) => (
@@ -204,12 +208,12 @@ export default function ProposedLinksPage() {
               </div>
               {diagnose(lastRun.inputs).map((d) => (
                 <div key={d} className="text-[11px] text-[var(--color-text-muted)] flex items-start gap-1.5">
-                  <span className="mt-1 w-1 h-1 rounded-full bg-amber-500 shrink-0" /> {d}
+                  <span aria-hidden className="shrink-0">·</span> {d}
                 </div>
               ))}
               {diagnose(lastRun.inputs).length === 0 && (
                 <div className="text-[11px] text-[var(--color-text-muted)]">
-                  The inputs look healthy - everything discoverable is likely already linked or was previously decided.
+                  Everything it needs is there. What it can find is likely already linked or was decided before.
                 </div>
               )}
             </div>
@@ -217,15 +221,20 @@ export default function ProposedLinksPage() {
         </div>
       )}
 
-      {rows === null ? (
-        <div className="flex items-center justify-center py-20"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-faint)]" /></div>
+      {rows === null && loadError ? (
+        <p role="alert" className="border-l-2 border-rose-500 pl-3 py-1 text-sm text-rose-700 dark:text-rose-400">
+          Couldn&apos;t load the proposals: {loadError}{" "}
+          <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
+        </p>
+      ) : rows === null ? (
+        <LoadingBlock what="proposed connections" />
       ) : rows.length === 0 ? (
         <div className="text-center py-16 space-y-2">
           <Sparkles className="w-8 h-8 mx-auto text-[var(--color-text-faint)]" />
           <div className="text-sm font-bold text-[var(--color-text)]">Nothing waiting on you</div>
           <p className="text-xs text-[var(--color-text-muted)] max-w-md mx-auto">
             {canRun
-              ? "Run “Find connections” to scan your off-page connectors, equipment tags and aliases. Provable links apply themselves; anything less certain lands here for review."
+              ? "“Find connections” reads your off-page connectors, equipment tags and aliases. Sure links are made for you; anything less sure waits here."
               : "When the system finds connections that need a human decision, they'll appear here."}
           </p>
         </div>
@@ -272,7 +281,7 @@ export default function ProposedLinksPage() {
                       <X className="w-3.5 h-3.5" /> Not related
                     </button>
                     <button onClick={() => void decide(p, true)} disabled={busyId === p.id}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-black text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50">
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[11px] font-black text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
                       {busyId === p.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Link them
                     </button>
                   </div>
@@ -281,8 +290,8 @@ export default function ProposedLinksPage() {
             </div>
           ))}
           <div className="flex items-center gap-1.5 pt-2 text-[11px] text-[var(--color-text-muted)]">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-            Dismissed pairs are remembered - the system won&apos;t propose them again unless a new revision brings new evidence.
+            <ShieldCheck className="w-3.5 h-3.5 text-[var(--color-text-faint)]" />
+            Pairs marked “Not related” stay that way unless a new revision gives a new reason.
           </div>
         </div>
       )}

@@ -13,6 +13,9 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import LoadingBlock from "@/components/ui/LoadingBlock";
+import { useDraft } from "@/hooks/useDraft";
 import {
   HardHat, Plus, Search, Loader2, AlertTriangle, X, Check, Phone, Mail,
   Trophy, GitPullRequestArrow, Briefcase, ShieldAlert, BookOpenCheck, Timer,
@@ -20,7 +23,6 @@ import {
 import { useRole } from "@/components/providers/RoleContext";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
-import { Spinner } from "@/components/ui/Spinner";
 import {
   listCompanies, saveCompany, gatherCompanyProfile,
   COMPANY_KIND_LABEL, type Company, type CompanyProfileData,
@@ -34,6 +36,8 @@ const KIND_FILTERS = ["all", "contractor", "vendor", "rental", "internal"] as co
 export default function CompaniesPage() {
   const { activeOrgId, uid, hasAnyRole } = useRole();
   const canManage = hasAnyRole(["Admin", "DocCtrl"]);
+  const router = useRouter();
+  const [profileFailed, setProfileFailed] = useState<Set<string>>(new Set());
 
   const [companies, setCompanies] = useState<Company[]>([]);
   const [profiles, setProfiles] = useState<Map<string, CompanyProfileData>>(new Map());
@@ -60,7 +64,7 @@ export default function CompaniesPage() {
           try {
             const p = await gatherCompanyProfile(c);
             setProfiles((prev) => new Map(prev).set(c.id, p));
-          } catch { /* card stays basic */ }
+          } catch { setProfileFailed((prev) => new Set(prev).add(c.id)); }
         }
       });
       await Promise.all(workers);
@@ -83,7 +87,7 @@ export default function CompaniesPage() {
       <PageHeaderBar
         icon={HardHat}
         title="Known Companies"
-        subtitle={<>Every contractor, vendor, and crew you work with - scored on the evidence this platform witnesses, never on opinion.</>}
+        subtitle={loading ? "Contractors, vendors and crews, scored only on recorded work." : `${companies.length} compan${companies.length === 1 ? "y" : "ies"}${companies.some((c) => c.status === "do_not_use") ? ` · ${companies.filter((c) => c.status === "do_not_use").length} marked do not use` : ""}. Scored only on recorded work, never on opinion.`}
         actions={canManage ? (
           <Button onClick={() => setShowAdd(true)}><Plus className="w-4 h-4" /> Add company</Button>
         ) : undefined}
@@ -91,10 +95,10 @@ export default function CompaniesPage() {
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
         {KIND_FILTERS.map((k) => (
-          <button key={k} onClick={() => setKindFilter(k)}
+          <button key={k} onClick={() => setKindFilter(k)} aria-pressed={kindFilter === k}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
               kindFilter === k
-                ? "bg-slate-900 text-white"
+                ? "bg-[var(--color-text)] text-[var(--color-surface)]"
                 : "bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
             {k === "all" ? "All" : COMPANY_KIND_LABEL[k]}
           </button>
@@ -103,34 +107,35 @@ export default function CompaniesPage() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)]" />
           <input value={search} onChange={(e) => setSearch(e.target.value)}
             placeholder="Search by name or trade…"
-            className="w-full pl-9 pr-3 py-2 bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
+            className="w-full pl-9 pr-3 py-2 bg-[var(--color-surface)] text-[var(--color-text)] rounded-xl border border-[var(--color-border)] text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
         </div>
       </div>
 
       {error && (
-        <div className="mb-4 flex items-center gap-2 rounded-xl border border-rose-500/50 bg-rose-500/[0.08] px-3 py-2.5 text-xs font-bold text-rose-700 dark:text-rose-300">
-          <AlertTriangle className="w-4 h-4 shrink-0" /> {error}
-        </div>
+        <p role="alert" className="mb-4 flex items-center gap-2 border-l-2 border-rose-500 pl-3 text-xs font-bold text-rose-700 dark:text-rose-300">
+          <AlertTriangle className="w-4 h-4 shrink-0" /> Couldn&apos;t load the companies: {error}
+          <button type="button" onClick={() => void refresh()} className="underline">Try again</button>
+        </p>
       )}
 
       {loading ? (
-        <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)] p-8"><Spinner size="sm" /> Loading the registry…</div>
+        <LoadingBlock what="companies" />
       ) : shown.length === 0 ? (
         <div className="bg-[var(--color-surface)] border border-dashed border-[var(--color-border-strong)] rounded-2xl p-12 text-center">
-          <HardHat className="w-10 h-10 mx-auto text-slate-300 mb-3" />
+          <HardHat className="w-10 h-10 mx-auto text-[var(--color-text-faint)] mb-3" />
           <h3 className="text-base font-black text-[var(--color-text)] mb-1">
             {companies.length === 0 ? "No companies in the registry yet" : "No companies match"}
           </h3>
           <p className="text-xs text-[var(--color-text-muted)] max-w-md mx-auto">
             {companies.length === 0
-              ? "Add the contractors and vendors you work with. Their record - awards, change orders, turnover acceptance, safety events - builds itself as projects run."
+              ? "Add the contractors and vendors you work with. Their record (awards, change orders, turnover acceptance, safety events) fills in as projects run."
               : "Try a different filter or search."}
           </p>
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {shown.map((c) => (
-            <CompanyCard key={c.id} company={c} profile={profiles.get(c.id) ?? null} />
+            <CompanyCard key={c.id} company={c} profile={profiles.get(c.id) ?? null} failed={profileFailed.has(c.id)} />
           ))}
         </div>
       )}
@@ -138,7 +143,7 @@ export default function CompaniesPage() {
       {showAdd && activeOrgId && uid && (
         <AddCompanyModal orgId={activeOrgId} actorId={uid}
           onClose={() => setShowAdd(false)}
-          onCreated={() => { setShowAdd(false); void refresh(); }} />
+          onCreated={(created) => { setShowAdd(false); router.push(`/companies/${created.id}`); }} />
       )}
     </PageShell>
   );
@@ -146,7 +151,7 @@ export default function CompaniesPage() {
 
 // ── The juicy card ───────────────────────────────────────────────────────
 
-function CompanyCard({ company: c, profile }: { company: Company; profile: CompanyProfileData | null }) {
+function CompanyCard({ company: c, profile, failed }: { company: Company; profile: CompanyProfileData | null; failed?: boolean }) {
   const sc = profile?.scorecard ?? null;
   const band = scoreBand(sc?.composite ?? null);
   const safety = useMemo(() => {
@@ -207,8 +212,11 @@ function CompanyCard({ company: c, profile }: { company: Company; profile: Compa
                 )}
               </div>
             ))}
-            {!profile && (
-              <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-faint)]"><Loader2 className="w-3 h-3 animate-spin" /> gathering the record…</div>
+            {!profile && failed && (
+              <div className="text-[11px] text-rose-700 dark:text-rose-400">Couldn&apos;t gather the record. Open the company to try again.</div>
+            )}
+            {!profile && !failed && (
+              <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-faint)]"><Loader2 className="w-3 h-3 animate-spin" /> Gathering the record…</div>
             )}
           </div>
         </div>
@@ -256,7 +264,7 @@ function CompanyCard({ company: c, profile }: { company: Company; profile: Compa
 // ── Add modal ────────────────────────────────────────────────────────────
 
 function AddCompanyModal({ orgId, actorId, onClose, onCreated }: {
-  orgId: string; actorId: string; onClose: () => void; onCreated: () => void;
+  orgId: string; actorId: string; onClose: () => void; onCreated: (created: Company) => void;
 }) {
   const [name, setName] = useState("");
   const [kind, setKind] = useState<Company["kind"]>("contractor");
@@ -267,59 +275,69 @@ function AddCompanyModal({ orgId, actorId, onClose, onCreated }: {
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const notesDraft = useDraft<string>(`new-company-notes:${orgId}`, notes, setNotes, (v) => !v.trim());
+
+  useEffect(() => {
+    if (busy) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy, onClose]);
 
   const submit = async () => {
     setBusy(true); setError(null);
     try {
-      await saveCompany({
+      const created = await saveCompany({
         orgId, name, kind, trade,
         contactName, contactEmail, contactPhone, notes,
         actorId,
       });
-      onCreated();
+      notesDraft.clear();
+      // Straight to the new company's file.
+      onCreated(created);
     } catch (e) {
       setError((e as Error).message);
     } finally { setBusy(false); }
   };
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+    <div role="dialog" aria-modal="true" aria-label="Add a known company" className="fixed inset-0 z-[200] bg-slate-900/50 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="p-2 bg-[var(--color-surface-2)] rounded-lg"><HardHat className="w-5 h-5 text-[var(--color-text-muted)]" /></div>
           <div className="flex-1">
             <div className="text-sm font-black text-[var(--color-text)]">Add a known company</div>
-            <div className="text-xs text-[var(--color-text-muted)]">Their record builds itself from real work - this is just the front of the file.</div>
+            <div className="text-xs text-[var(--color-text-muted)]">Their record fills in from real work. This is the front of the file.</div>
           </div>
-          <button onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"><X className="w-4 h-4" /></button>
+          <button onClick={onClose} disabled={busy} aria-label="Close" className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"><X className="w-4 h-4" /></button>
         </div>
         <div className="px-6 py-5 space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Company name *" autoFocus
-              className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
+              className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
             <select value={kind} onChange={(e) => setKind(e.target.value as Company["kind"])}
-              className="px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]">
+              className="px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]">
               {(Object.keys(COMPANY_KIND_LABEL) as Company["kind"][]).map((k) => (
                 <option key={k} value={k}>{COMPANY_KIND_LABEL[k]}</option>
               ))}
             </select>
           </div>
           <input value={trade} onChange={(e) => setTrade(e.target.value)} placeholder="Trade (piping, E&I, scaffolding…)"
-            className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
+            className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
           <div className="grid grid-cols-3 gap-3">
             <input value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="Contact name"
-              className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
+              className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
             <input value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} placeholder="Email"
-              className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
+              className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
             <input value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} placeholder="Phone"
-              className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
+              className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
           </div>
           <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Notes"
-            className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y bg-[var(--color-surface)]" />
+            className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y bg-[var(--color-surface)] text-[var(--color-text)]" />
           {error && (
-            <div className="flex items-start gap-2 p-3 rounded-lg border border-rose-500/40 bg-rose-500/[0.07] text-xs font-bold text-rose-700 dark:text-rose-300">
+            <p role="alert" className="flex items-start gap-2 border-l-2 border-rose-500 pl-3 text-xs font-bold text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {error}
-            </div>
+            </p>
           )}
         </div>
         <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">

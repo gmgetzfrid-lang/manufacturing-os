@@ -34,10 +34,11 @@ export default function AliasPanel({
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
 
   const refresh = useCallback(async () => {
-    try { setRows(await listAssetAliases(assetId)); }
-    catch { setRows([]); }
+    try { setRows(await listAssetAliases(assetId)); setLoadFailed(false); }
+    catch { setLoadFailed(true); setRows([]); }
   }, [assetId]);
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -53,7 +54,19 @@ export default function AliasPanel({
     finally { setBusy(false); }
   };
 
-  if (rows === null) return null;
+  const remove = async (a: AssetAlias) => {
+    setError(null);
+    try { await removeAssetAlias(a.id); await refresh(); }
+    catch (e) { setError(`Couldn't remove ${a.alias}: ${(e as Error).message}`); }
+  };
+
+  if (rows === null) {
+    return (
+      <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5 text-xs text-[var(--color-text-muted)] inline-flex items-center gap-2 w-full">
+        <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading other names…
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-2.5">
@@ -62,9 +75,13 @@ export default function AliasPanel({
         <h2 className="text-xs font-black uppercase tracking-widest text-[var(--color-text)]">Also known as</h2>
       </div>
       <p className="text-[11px] text-[var(--color-text-muted)]">
-        Nicknames, old tags before a renumber, vendor names. Spelling and punctuation are already
-        handled - this is for what a rule can&apos;t guess.
+        Nicknames, old tags before a renumber, vendor names.
       </p>
+      {loadFailed && (
+        <p role="alert" className="text-[11px] text-rose-700 dark:text-rose-400">
+          Couldn&apos;t load the other names. <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
+        </p>
+      )}
 
       {rows.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
@@ -77,7 +94,7 @@ export default function AliasPanel({
                 <Icon className="w-3 h-3 text-[var(--color-text-faint)]" />
                 {a.alias}
                 {canManage && (
-                  <button onClick={() => void removeAssetAlias(a.id).then(refresh)}
+                  <button onClick={() => void remove(a)}
                     aria-label={`Remove alias ${a.alias}`}
                     className="p-0.5 rounded-full text-[var(--color-text-faint)] hover:text-rose-600 opacity-50 group-hover:opacity-100">
                     <X className="w-2.5 h-2.5" />
@@ -105,10 +122,10 @@ export default function AliasPanel({
         </div>
       )}
 
-      {rows.length === 0 && !canManage && (
+      {rows.length === 0 && !canManage && !loadFailed && (
         <div className="text-[11px] text-[var(--color-text-faint)] italic">No other names recorded.</div>
       )}
-      {error && <div className="text-[11px] text-rose-600">{error}</div>}
+      {error && <div role="alert" className="text-[11px] text-rose-700 dark:text-rose-400">{error}</div>}
     </div>
   );
 }

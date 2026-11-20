@@ -1,17 +1,11 @@
 "use client";
 
-// TrialBanner — slim top-of-page strip during the free trial.
-// Hides automatically once subscription_status leaves 'trialing'.
-//
-// Colors get more urgent as the trial winds down:
-//   30+ days left  -> emerald (informational)
-//   7-29 days      -> amber (reminder)
-//   1-6 days       -> orange (urgent)
-//   0 days / expired -> red (blocked)
+// TrialBanner: one quiet line at the top of the page during the free trial.
+// Hides once subscription_status leaves 'trialing'. Not a banner: the days
+// left turn amber in the last week and red once it has ended, nothing else.
 
 import React from "react";
 import Link from "next/link";
-import { Clock, ArrowRight, AlertTriangle } from "lucide-react";
 import { useSubscription } from "@/components/providers/SubscriptionProvider";
 import { trialDaysRemaining, isTrialExpired, shouldShowTrialBanner } from "@/lib/subscription";
 
@@ -21,36 +15,23 @@ export default function TrialBanner() {
 
   const days = trialDaysRemaining(info);
   const expired = isTrialExpired(info);
-
-  // Pick the color tone
-  let tone = "bg-emerald-600 text-white";
-  let icon = <Clock className="w-4 h-4" />;
-  let label = "";
-
-  if (expired) {
-    tone = "bg-red-600 text-white";
-    icon = <AlertTriangle className="w-4 h-4" />;
-    label = "Your free trial has ended. Subscribe to keep using Manufacturing OS.";
-  } else if (days !== null) {
-    if (days <= 6) {
-      tone = "bg-[var(--color-surface-2)] text-[var(--color-text)]";
-      icon = <AlertTriangle className="w-4 h-4" />;
-    } else if (days <= 29) {
-      tone = "bg-amber-500 text-[var(--color-text)]";
-    }
-    label = `${days} day${days === 1 ? "" : "s"} left in your free trial`;
-  }
+  const label = expired
+    ? "Free trial ended."
+    : days !== null
+      ? `Free trial: ${days} day${days === 1 ? "" : "s"} left.`
+      : "Free trial.";
+  const tone = expired
+    ? "text-rose-700 dark:text-rose-400 font-semibold"
+    : days !== null && days <= 6
+      ? "text-amber-700 dark:text-amber-400 font-semibold"
+      : "";
 
   return (
-    <div className={`${tone} px-4 py-2 text-xs font-bold flex items-center justify-center gap-3 shadow`}>
-      {icon}
-      <span>{label}</span>
-      <Link
-        href="/admin/billing"
-        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-white/20 hover:bg-white/30 text-[11px] font-black uppercase tracking-wide backdrop-blur"
-      >
-        Subscribe <ArrowRight className="w-3 h-3" />
+    <p className="px-4 py-1 text-xs text-center text-[var(--color-text-muted)] bg-[var(--color-surface)] border-b border-[var(--color-border)]">
+      <span className={tone}>{label}</span>{" "}
+      <Link href="/admin/billing" className="font-semibold text-[var(--color-accent)] hover:underline">
+        Subscribe
       </Link>
-    </div>
+    </p>
   );
 }

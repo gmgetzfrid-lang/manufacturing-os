@@ -11,6 +11,11 @@ import { X, Upload, Trash2, Loader2, Image as ImageIcon } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { useOrgBranding } from "@/components/providers/OrgBrandingProvider";
 import { uploadToPath } from "@/lib/storage";
+import { tryUpload } from "@/lib/uploadRetry";
+import { useFileDrag } from "@/hooks/useFileDrag";
+import FileThumb from "@/components/ui/FileThumb";
+
+const formatBytes = (n: number) => n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
 
 export default function LogoUploadModal({ onClose }: { onClose: () => void }) {
   const { activeOrgId } = useRole();
@@ -19,6 +24,7 @@ export default function LogoUploadModal({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [shape, setShape] = useState<"mark" | "full">(branding?.logoShape ?? "full");
+  const [picked, setPicked] = useState<File | null>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -28,14 +34,18 @@ export default function LogoUploadModal({ onClose }: { onClose: () => void }) {
 
   const pick = async (file: File | undefined | null) => {
     if (!file || !activeOrgId) return;
-    if (!file.type.startsWith("image/")) { setError("Please choose an image file."); return; }
-    setBusy(true); setError(null);
+    if (!file.type.startsWith("image/")) { setError("Choose an image file."); return; }
+    setBusy(true); setError(null); setPicked(file);
     try {
       const ext = (file.name.split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "");
       const rand = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}`;
       const path = `orgs/${activeOrgId}/branding/logo-${rand}.${ext}`;
-      await uploadToPath(file, path, { contentType: file.type });
-      await save({ ...branding, logoPath: path, logoShape: shape });
+      // Upload, then point the workspace at it. Safe to repeat: same file,
+      // same path, and saving the logo again just sets it again.
+      await tryUpload(file.name, async () => {
+        await uploadToPath(file, path, { contentType: file.type });
+        await save({ ...branding, logoPath: path, logoShape: shape });
+      });
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed");
@@ -54,20 +64,24 @@ export default function LogoUploadModal({ onClose }: { onClose: () => void }) {
     }
   };
 
+  const drag = useFileDrag((files) => void pick(files[0]), busy);
+
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+    <div role="dialog" aria-modal="true" aria-label="Workspace logo" className="fixed inset-0 z-[200] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
       <div className="relative w-full max-w-sm bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
           <h2 className="text-sm font-black text-[var(--color-text)]">Workspace logo</h2>
-          <button onClick={onClose} className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
+          <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
             <X className="w-4 h-4" />
           </button>
         </div>
 
         <div className="p-5 space-y-4">
-          <div className="rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-surface-2)] h-24 grid place-items-center overflow-hidden p-2">
-            {logoUrl ? (
+          <div {...drag.bind} className={`rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-surface-2)] h-24 grid place-items-center overflow-hidden p-2 ${drag.ring}`}>
+            {drag.over ? (
+              <div className="text-xs font-bold text-[var(--color-text)]">{drag.say}</div>
+            ) : logoUrl ? (
               // eslint-disable-next-line @next/next/no-img-element -- signed storage URL
               <img src={logoUrl} alt="Workspace logo" className="max-h-16 max-w-[80%] object-contain" draggable={false} />
             ) : (
@@ -87,18 +101,30 @@ export default function LogoUploadModal({ onClose }: { onClose: () => void }) {
             </div>
           </div>
 
-          {error && <div className="text-xs text-red-600">{error}</div>}
+          {picked && (
+            <div className="flex items-center gap-2.5">
+              <FileThumb file={picked} size={32} />
+              <span className="min-w-0 flex-1">
+                <span className="block text-xs font-bold text-[var(--color-text)] truncate">{picked.name}</span>
+                <span className="block text-[11px] text-[var(--color-text-muted)]">{formatBytes(picked.size)}{busy ? " · uploading…" : ""}</span>
+              </span>
+              {!busy && error && (
+                <button type="button" onClick={() => void pick(picked)} className="shrink-0 px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Try again</button>
+              )}
+            </div>
+          )}
+          {error && <div role="alert" className="text-xs text-red-700 dark:text-red-400">{error}</div>}
 
-          <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => void pick(e.target.files?.[0])} />
+          <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { void pick(e.target.files?.[0]); e.target.value = ""; }} />
           <button onClick={() => fileRef.current?.click()} disabled={busy}
-            className="w-full py-2.5 rounded-xl bg-[var(--color-accent)] text-white font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-60 hover:opacity-90 transition-opacity">
+            className="w-full py-2.5 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-60 transition-colors">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
             {logoUrl ? "Replace logo" : "Upload logo"}
           </button>
 
           {logoUrl && (
             <button onClick={remove} disabled={busy}
-              className="w-full py-2 rounded-xl text-xs font-bold text-red-600 hover:bg-red-50 flex items-center justify-center gap-1.5 disabled:opacity-60 transition-colors">
+              className="w-full py-2 rounded-xl text-xs font-bold text-red-600 hover:bg-[var(--color-surface-2)] flex items-center justify-center gap-1.5 disabled:opacity-60 transition-colors">
               <Trash2 className="w-3.5 h-3.5" /> Remove logo
             </button>
           )}

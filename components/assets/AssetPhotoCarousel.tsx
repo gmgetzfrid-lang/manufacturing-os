@@ -3,8 +3,8 @@
 // AssetPhotoCarousel — full-screen photo viewer for a single asset.
 //
 // Open by clicking an AssetTagChip with photos, or directly from the
-// asset detail drawer. Apple-style dark backdrop blur, keyboard nav,
-// thumbnail strip, age-coded date watermark on each photo.
+// asset detail drawer. Dark backdrop, keyboard nav, thumbnail strip,
+// and the photo's date and age on a line under it.
 
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
@@ -121,6 +121,9 @@ export default function AssetPhotoCarousel({
   if (typeof document === "undefined") return null;
   return createPortal(
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Photos of ${asset.tag}`}
       className="fixed inset-0 z-[500] bg-slate-950/95 backdrop-blur-md flex flex-col"
       onClick={onClose}
       onMouseDown={(e) => e.stopPropagation()}
@@ -161,12 +164,12 @@ export default function AssetPhotoCarousel({
               <Edit3 className="w-3.5 h-3.5" /> Edit asset
             </button>
           )}
-          {canManage && onUploadClick && (
-            <button onClick={onUploadClick} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg transition-colors">
+          {canManage && onUploadClick && photos.length > 0 && (
+            <button onClick={onUploadClick} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-xs font-bold transition-colors">
               <Upload className="w-3.5 h-3.5" /> Add photos
             </button>
           )}
-          <button onClick={onClose} title="Close (Esc)" className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors">
+          <button onClick={onClose} title="Close (Esc)" aria-label="Close" className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -181,8 +184,8 @@ export default function AssetPhotoCarousel({
           </div>
         )}
         {error && (
-          <div className="text-red-300 flex items-center gap-2 px-4 py-2 bg-red-500/10 rounded-lg">
-            <AlertTriangle className="w-4 h-4" /> {error}
+          <div role="alert" className="text-red-300 flex items-center gap-2 border-l-2 border-red-400 pl-3">
+            <AlertTriangle className="w-4 h-4" /> Couldn&apos;t load the photos: {error}
           </div>
         )}
         {!loading && !error && photos.length === 0 && (
@@ -198,6 +201,7 @@ export default function AssetPhotoCarousel({
                   onClick={prev}
                   className="absolute left-4 top-1/2 -translate-y-1/2 z-10 p-3 rounded-full bg-white/10 hover:bg-white/20 text-white backdrop-blur transition-all hover:scale-105"
                   title="Previous (←)"
+                  aria-label="Previous photo"
                 >
                   <ChevronLeft className="w-5 h-5" />
                 </button>
@@ -205,6 +209,7 @@ export default function AssetPhotoCarousel({
                   onClick={next}
                   className="absolute right-4 top-1/2 -translate-y-1/2 z-10 p-3 rounded-full bg-white/10 hover:bg-white/20 text-white backdrop-blur transition-all hover:scale-105"
                   title="Next (→)"
+                  aria-label="Next photo"
                 >
                   <ChevronRight className="w-5 h-5" />
                 </button>
@@ -236,40 +241,29 @@ export default function AssetPhotoCarousel({
                 />
               </div>
 
-              {/* Date watermark overlay */}
-              {age && (
-                <div className="absolute bottom-3 right-3 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-950/70 backdrop-blur-sm text-white text-[11px] font-mono shadow-lg">
-                  <Calendar className="w-3 h-3" />
-                  {active.captured_at ? new Date(active.captured_at).toLocaleDateString() : "date unknown"}
-                  <span className={`w-1.5 h-1.5 rounded-full ${
-                    age.category === "fresh" ? "bg-emerald-400" :
-                    age.category === "aging" ? "bg-amber-400" :
-                    age.category === "stale" ? "bg-red-400" :
-                    "bg-slate-400"
-                  }`} />
-                  <span className="opacity-70">· {age.label}</span>
-                </div>
-              )}
-
-              {/* Status badge if not 'current' */}
-              {active.status !== "current" && (
-                <div className={`absolute top-3 left-3 flex items-center gap-1 px-2.5 py-1 rounded-lg backdrop-blur-sm text-white text-[11px] font-black uppercase tracking-wide shadow-lg ${
-                  active.status === "needs_verification"
-                    ? "bg-amber-500/90"
-                    : "bg-red-500/90"
-                }`}>
-                  {active.status === "needs_verification" ? <AlertTriangle className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-                  {active.status === "needs_verification" ? "Needs Verification" : "Superseded"}
-                </div>
-              )}
             </div>
           </>
         )}
       </div>
 
-      {/* Caption */}
+      {/* Date, age and status, then the caption: plain lines under the photo. */}
+      {active && !loading && (
+        <div className="shrink-0 px-6 pt-3 flex items-center justify-center gap-2 flex-wrap text-[11px] text-white/70" onClick={(e) => e.stopPropagation()}>
+          <Calendar className="w-3 h-3" />
+          <span className="font-mono">{active.captured_at ? new Date(active.captured_at).toLocaleDateString() : "Date unknown"}</span>
+          {age && age.category !== "unknown" && (
+            <span className={age.category === "stale" ? "text-red-300 font-bold" : age.category === "aging" ? "text-amber-300 font-bold" : ""}>· {age.label}</span>
+          )}
+          {active.status !== "current" && (
+            <span className={`inline-flex items-center gap-1 font-bold ${active.status === "needs_verification" ? "text-amber-300" : "text-red-300"}`}>
+              · {active.status === "needs_verification" ? <AlertTriangle className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+              {active.status === "needs_verification" ? "Needs checking" : "Superseded"}
+            </span>
+          )}
+        </div>
+      )}
       {active?.caption && (
-        <div className="shrink-0 px-6 py-3 text-center text-sm text-white/80 max-w-3xl mx-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="shrink-0 px-6 py-2 text-center text-sm text-white/80 max-w-3xl mx-auto" onClick={(e) => e.stopPropagation()}>
           {active.caption}
         </div>
       )}
@@ -278,33 +272,24 @@ export default function AssetPhotoCarousel({
       {photos.length > 1 && (
         <div className="shrink-0 px-6 py-3 border-t border-white/10" onClick={(e) => e.stopPropagation()}>
           <div className="flex gap-2 overflow-x-auto pb-1">
-            {photos.map((p, i) => {
-              const pAge = photoAgeCategory(p.captured_at);
-              return (
-                <button
-                  key={p.id}
-                  onClick={() => { setActiveIdx(i); setImageLoaded(false); }}
-                  className={`shrink-0 w-20 h-20 rounded-lg overflow-hidden border-2 transition-all relative group ${
-                    i === activeIdx ? "border-white ring-2 ring-white/40" : "border-white/20 hover:border-white/50 opacity-70 hover:opacity-100"
-                  }`}
-                >
-                  <SignedImg path={p.file_url} alt="" className="w-full h-full object-cover" />
-                  <div className="absolute bottom-0 left-0 right-0 px-1 py-0.5 flex items-center justify-between bg-[var(--color-surface-2)]">
-                    <span className={`w-1.5 h-1.5 rounded-full ${
-                      pAge.category === "fresh" ? "bg-emerald-400" :
-                      pAge.category === "aging" ? "bg-amber-400" :
-                      pAge.category === "stale" ? "bg-red-400" :
-                      "bg-slate-400"
-                    }`} />
-                    {p.status !== "current" && (
-                      <span className="text-[11px] font-black uppercase text-white">
-                        {p.status === "needs_verification" ? "Verify" : "Old"}
-                      </span>
-                    )}
-                  </div>
-                </button>
-              );
-            })}
+            {photos.map((p, i) => (
+              <button
+                key={p.id}
+                onClick={() => { setActiveIdx(i); setImageLoaded(false); }}
+                aria-label={`Photo ${i + 1}${p.status === "needs_verification" ? ", needs checking" : p.status !== "current" ? ", superseded" : ""}`}
+                aria-current={i === activeIdx ? "true" : undefined}
+                className={`shrink-0 w-20 h-20 rounded-lg overflow-hidden border-2 transition-all relative group ${
+                  i === activeIdx ? "border-white ring-2 ring-white/40" : "border-white/20 hover:border-white/50 opacity-70 hover:opacity-100"
+                }`}
+              >
+                <SignedImg path={p.file_url} alt="" className="w-full h-full object-cover" />
+                {p.status !== "current" && (
+                  <span className={`absolute bottom-0 inset-x-0 px-1 py-0.5 bg-black/70 text-[11px] font-bold text-center ${p.status === "needs_verification" ? "text-amber-300" : "text-red-300"}`}>
+                    {p.status === "needs_verification" ? "Check" : "Old"}
+                  </span>
+                )}
+              </button>
+            ))}
           </div>
         </div>
       )}
@@ -321,13 +306,12 @@ function EmptyState({ canUpload, onUpload }: { canUpload: boolean; onUpload?: ()
       </div>
       <h3 className="text-base font-black text-white mb-1">No photos yet</h3>
       <p className="text-xs text-white/60 leading-relaxed mb-4">
-        Once photos are uploaded for this asset they&apos;ll appear here. Field workers, engineers, and
-        operators all see the same gallery - wherever this tag appears in your library.
+        Photos added here show wherever this tag appears.
       </p>
       {canUpload && onUpload && (
         <button
           onClick={onUpload}
-          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-black shadow-lg shadow-emerald-900/30"
+          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-black"
         >
           <Upload className="w-4 h-4" /> Upload first photo
         </button>

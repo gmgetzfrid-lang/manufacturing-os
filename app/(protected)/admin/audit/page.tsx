@@ -20,7 +20,7 @@ import ViewTabs, { ACTIVITY_VIEWS } from "@/components/navigation/ViewTabs";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Input, Select as UiSelect } from "@/components/ui/Field";
-import { Spinner } from "@/components/ui/Spinner";
+import LoadingBlock from "@/components/ui/LoadingBlock";
 
 // Auditor included: the role exists FOR audit review — it was defined with an
 // "audit" capability yet locked out of the one page that shows the trail.
@@ -46,37 +46,37 @@ interface LibraryLite { id: string; name: string }
 const ACTION_STYLE: Record<string, { icon: React.ComponentType<{ className?: string }>; tone: string }> = {
   VIEW:                  { icon: Eye,           tone: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" },
   DOWNLOAD:              { icon: Download,      tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  UPLOAD:                { icon: Upload,        tone: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  UPLOAD:                { icon: Upload,        tone: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900" },
   CHECK_OUT:             { icon: Lock,          tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  CHECK_IN:              { icon: Unlock,        tone: "bg-emerald-50 text-emerald-700 border-emerald-200" },
-  ABANDON:               { icon: Unlock,        tone: "bg-amber-50 text-amber-700 border-amber-200" },
-  FORCE_RELEASE:         { icon: AlertOctagon,  tone: "bg-rose-50 text-rose-700 border-rose-200" },
+  CHECK_IN:              { icon: Unlock,        tone: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900" },
+  ABANDON:               { icon: Unlock,        tone: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-900" },
+  FORCE_RELEASE:         { icon: AlertOctagon,  tone: "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-900" },
   JOIN:                  { icon: ArrowUpRight,  tone: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" },
   REV_UP:                { icon: GitBranch,     tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
   REV_BACKFILL:          { icon: GitBranch,     tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
   SUPERSEDE_DOC:         { icon: ArrowUpRight,  tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  REVERT:                { icon: ArrowUpRight,  tone: "bg-amber-50 text-amber-700 border-amber-200" },
+  REVERT:                { icon: ArrowUpRight,  tone: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-900" },
   ARCHIVE_DOC:           { icon: ShieldOff,     tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border-strong)]" },
   DOC_SPLIT:             { icon: GitBranch,     tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
   CREATED_FROM_SPLIT:    { icon: Zap,      tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
   DOC_MERGED:            { icon: GitBranch,     tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
   CREATED_FROM_MERGE:    { icon: Zap,      tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  DOC_RENUMBERED:        { icon: Pencil,        tone: "bg-amber-50 text-amber-700 border-amber-200" },
+  DOC_RENUMBERED:        { icon: Pencil,        tone: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-900" },
   SET_REV_UP:            { icon: GitBranch,     tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
   DOC_SPLIT_REVERSED:    { icon: AlertTriangle, tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
   DOC_MERGE_REVERSED:    { icon: AlertTriangle, tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
   DOC_RENUMBER_REVERSED: { icon: AlertTriangle, tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  HOLD_OPENED:           { icon: AlertOctagon,  tone: "bg-rose-50 text-rose-700 border-rose-200" },
-  HOLD_RELEASED:         { icon: Unlock,        tone: "bg-emerald-50 text-emerald-700 border-emerald-200" },
-  MILESTONE_CREATED:     { icon: Zap,      tone: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  HOLD_OPENED:           { icon: AlertOctagon,  tone: "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-900" },
+  HOLD_RELEASED:         { icon: Unlock,        tone: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900" },
+  MILESTONE_CREATED:     { icon: Zap,      tone: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900" },
   MILESTONE_UPDATED:     { icon: Pencil,        tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  MILESTONE_COMPLETED:   { icon: Zap,      tone: "bg-emerald-50 text-emerald-700 border-emerald-200" },
-  MILESTONE_MISSED:      { icon: AlertOctagon,  tone: "bg-amber-50 text-amber-700 border-amber-200" },
-  MILESTONE_BLOCKED:     { icon: AlertOctagon,  tone: "bg-rose-50 text-rose-700 border-rose-200" },
-  MILESTONE_DELETED:     { icon: Trash2,        tone: "bg-rose-50 text-rose-700 border-rose-200" },
-  EQUIPMENT_STATE_CHANGED: { icon: Layers,      tone: "bg-amber-50 text-amber-700 border-amber-200" },
+  MILESTONE_COMPLETED:   { icon: Zap,      tone: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900" },
+  MILESTONE_MISSED:      { icon: AlertOctagon,  tone: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-900" },
+  MILESTONE_BLOCKED:     { icon: AlertOctagon,  tone: "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-900" },
+  MILESTONE_DELETED:     { icon: Trash2,        tone: "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-900" },
+  EQUIPMENT_STATE_CHANGED: { icon: Layers,      tone: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-900" },
   NOTE_CREATED:          { icon: Pencil,        tone: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" },
-  NOTE_DELETED:          { icon: Trash2,        tone: "bg-rose-50 text-rose-700 border-rose-200" },
+  NOTE_DELETED:          { icon: Trash2,        tone: "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-900" },
   PROJECT_CREATED:       { icon: Briefcase,     tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
   MARKUP_REQUESTED:      { icon: FileSignature, tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
   DATA_EXPORT:           { icon: Download,      tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
@@ -197,7 +197,7 @@ export default function AuditLogPage() {
     return (
       <div className="p-8">
         <div className="max-w-3xl mx-auto bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-6 shadow-sm flex items-center gap-3">
-          <div className="p-3 bg-slate-900 rounded-xl"><ScrollText className="w-6 h-6 text-white" /></div>
+          <div className="p-3 bg-[var(--color-surface-2)] rounded-xl"><ScrollText className="w-6 h-6 text-[var(--color-text)]" /></div>
           <div>
             <h1 className="text-xl font-black text-[var(--color-text)]">Audit Log</h1>
             <p className="text-sm text-[var(--color-text-muted)] mt-1">Admin-class roles only. Ask your workspace admin if you need access.</p>
@@ -239,23 +239,15 @@ export default function AuditLogPage() {
           }
         />
 
-        {/* KPI strip */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-          <Kpi label="Events" value={kpis.total.toString()} tone="slate" />
-          <Kpi label="Deletes / undo / force" value={kpis.deletes.toString()} tone={kpis.deletes > 0 ? "rose" : "slate"} />
-          <Kpi
-            label="Top action"
-            value={kpis.topAction ? prettyAction(kpis.topAction[0]) : "-"}
-            sub={kpis.topAction ? `${kpis.topAction[1]} occurrence${kpis.topAction[1] === 1 ? "" : "s"}` : undefined}
-            tone="indigo"
-          />
-          <Kpi
-            label="Top user"
-            value={kpis.topUser ? kpis.topUser[0] : "-"}
-            sub={kpis.topUser ? `${kpis.topUser[1]} event${kpis.topUser[1] === 1 ? "" : "s"}` : undefined}
-            tone="emerald"
-          />
-        </div>
+        {/* What matters, in one line. */}
+        <p className="mb-5 text-sm text-[var(--color-text-muted)]">
+          <b className="text-[var(--color-text)]">{kpis.total}</b> event{kpis.total === 1 ? "" : "s"}
+          {range === "24h" ? " in the last 24 hours" : range === "7d" ? " in the last 7 days" : range === "30d" ? " in the last 30 days" : ""}
+          {" · "}
+          <span className={kpis.deletes > 0 ? "font-bold text-rose-700 dark:text-rose-400" : ""}>{kpis.deletes} delete{kpis.deletes === 1 ? "" : "s"}, undo{kpis.deletes === 1 ? "" : "s"} or forced change{kpis.deletes === 1 ? "" : "s"}</span>
+          {kpis.topAction && <> · most common: <b className="text-[var(--color-text)]">{prettyAction(kpis.topAction[0])}</b> ({kpis.topAction[1]})</>}
+          {kpis.topUser && <> · most active: <b className="text-[var(--color-text)]">{kpis.topUser[0]}</b> ({kpis.topUser[1]})</>}
+        </p>
 
         {/* Filters */}
         <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-sm p-3 mb-5 flex flex-wrap items-center gap-2">
@@ -294,23 +286,24 @@ export default function AuditLogPage() {
             <span className="text-[11px] text-[var(--color-text-faint)]">Showing {filtered.length} of {rows.length}</span>
             <button
               onClick={() => setLimit((n) => n + 200)}
-              className="text-[11px] font-bold text-[var(--color-text)] px-2 py-1 rounded-md bg-[var(--color-surface-2)] hover:bg-slate-200 transition-colors"
-            >Load 200 more</button>
+              className="text-[11px] font-bold text-[var(--color-text)] px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] transition-colors"
+            >Show 200 more</button>
           </div>
         </div>
 
         {/* Feed */}
         {error && (
-          <div className="mb-3 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800 flex items-start gap-2">
-            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
-          </div>
+          <p role="alert" className="mb-3 border-l-2 border-red-500 pl-3 text-xs text-red-700 dark:text-red-400 flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> Couldn&apos;t load the audit log: {error}{" "}
+            <button type="button" onClick={() => void fetchRows()} className="font-bold underline">Try again</button>
+          </p>
         )}
 
         <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-sm overflow-hidden">
           {loading && rows.length === 0 ? (
-            <div className="py-12 flex flex-col items-center gap-2 text-[var(--color-text-muted)] text-xs">
-              <Spinner /> Loading audit log…
-            </div>
+            <LoadingBlock what="the audit log" className="border-0 rounded-none" />
+          ) : error && rows.length === 0 ? (
+            <div className="py-16 text-center text-[var(--color-text-muted)] text-sm">The audit log didn&apos;t load.</div>
           ) : filtered.length === 0 ? (
             <div className="py-16 text-center text-[var(--color-text-faint)] text-sm italic">No matching events.</div>
           ) : (
@@ -322,23 +315,6 @@ export default function AuditLogPage() {
           )}
         </div>
     </PageShell>
-  );
-}
-
-interface KpiProps { label: string; value: string; sub?: string; tone: "slate" | "rose" | "indigo" | "emerald" }
-function Kpi({ label, value, sub, tone }: KpiProps) {
-  const ring = {
-    slate:   "ring-[var(--color-border)] bg-[var(--color-surface)]",
-    rose:    "ring-rose-200 bg-rose-50/40",
-    indigo:  "ring-[var(--color-border-strong)] bg-[var(--color-surface-2)]",
-    emerald: "ring-emerald-200 bg-emerald-50/40",
-  }[tone];
-  return (
-    <div className={`rounded-2xl ring-1 shadow-sm p-4 ${ring}`}>
-      <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">{label}</div>
-      <div className="mt-1 text-xl font-black text-[var(--color-text)] truncate">{value}</div>
-      {sub && <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">{sub}</div>}
-    </div>
   );
 }
 
@@ -373,7 +349,7 @@ function AuditRowItem({ row, docMeta }: AuditRowItemProps) {
   })();
 
   return (
-    <li className="px-4 py-3 hover:bg-slate-50/60 transition-colors flex items-start gap-3">
+    <li className="px-4 py-3 hover:bg-[var(--color-surface-2)] transition-colors flex items-start gap-3">
       <div className={`shrink-0 w-8 h-8 rounded-lg border ${style.tone} flex items-center justify-center`}>
         <Icon className="w-4 h-4" />
       </div>
@@ -401,7 +377,7 @@ function AuditRowItem({ row, docMeta }: AuditRowItemProps) {
         </div>
         <div className="text-[11px] text-[var(--color-text-muted)] mt-1 flex items-center flex-wrap gap-x-2 gap-y-0.5">
           <span>{row.userEmail || row.userId}{row.userRole ? ` (${row.userRole})` : ""}</span>
-          <span className="text-slate-300">·</span>
+          <span className="text-[var(--color-text-faint)]">·</span>
           <time className="text-[var(--color-text-muted)]" dateTime={row.timestamp}>{formatTime(row.timestamp)}</time>
         </div>
         {(row.details && Object.keys(row.details).length > 0) && (

@@ -27,12 +27,12 @@ export default function ArchiveViewPage() {
     return () => { alive = false; };
   }, [activeOrgId, activeRole]);
   if (allowed === false) {
-    return <div className="p-8 text-center text-sm text-[var(--color-text-muted)]">The backup viewer is limited to Admin and Document Control. An Admin can change this under Admin → Permissions → Action permissions.</div>;
+    return <div className="p-8 text-center text-sm text-[var(--color-text-muted)]">The backup viewer is for Admin and Document Control. An Admin can change this in Admin, Permissions, Action permissions.</div>;
   }
   return (
     <div className="max-w-5xl mx-auto p-4 sm:p-6">
       <div className="flex items-start gap-3 mb-5">
-        <Link href="/admin/storage" className="p-2 mt-1 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] transition-colors">
+        <Link href="/admin/storage" aria-label="Back to Storage" className="p-2 mt-1 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] transition-colors">
           <ArrowLeft className="w-5 h-5" />
         </Link>
         <div className="flex-1 min-w-0">
@@ -40,7 +40,7 @@ export default function ArchiveViewPage() {
             <Archive className="w-5 h-5 text-[var(--color-text-muted)]" /> View from a backup
           </h1>
           <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-            Drop a backup .zip to browse and view its files in your browser. Useful when a file has been archived for space - view it here, then it&apos;s gone again.
+            Open files from a backup .zip in this browser. Nothing is uploaded, and it&apos;s gone when you leave.
           </p>
         </div>
       </div>

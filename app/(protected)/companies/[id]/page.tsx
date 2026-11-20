@@ -20,7 +20,8 @@ import {
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
-import { Spinner } from "@/components/ui/Spinner";
+import LoadingBlock from "@/components/ui/LoadingBlock";
+import { useDraft } from "@/hooks/useDraft";
 import {
   getCompany, saveCompany, gatherCompanyProfile, addCompanyEvent, confirmQualityManual,
   COMPANY_KIND_LABEL, EVENT_KIND_LABEL,
@@ -49,6 +50,9 @@ export default function CompanyProfilePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showEdit, setShowEdit] = useState(false);
+  // Errors from the panels below show as a line here; they never hide the page.
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [profileError, setProfileError] = useState<string | null>(null);
 
   const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => {
@@ -62,8 +66,12 @@ export default function CompanyProfilePage() {
         setError(null);
         setCompany(c);
         setLoading(false);
-        const p = await gatherCompanyProfile(c);
-        if (!cancelled) setProfile(p);
+        try {
+          const p = await gatherCompanyProfile(c);
+          if (!cancelled) { setProfile(p); setProfileError(null); }
+        } catch (pe) {
+          if (!cancelled) setProfileError((pe as Error).message || "Couldn't gather the record.");
+        }
       } catch (e) {
         if (!cancelled) { setError((e as Error).message); setLoading(false); }
       }
@@ -72,12 +80,17 @@ export default function CompanyProfilePage() {
   }, [params.id, reloadKey]);
   const refresh = useCallback(() => setReloadKey((k) => k + 1), []);
 
-  if (loading) return <div className="min-h-full flex items-center justify-center"><Spinner /></div>;
+  if (loading) return <div className="max-w-5xl mx-auto px-6 py-6"><LoadingBlock what="the company" /></div>;
   if (error || !company) return (
     <div className="min-h-full p-8">
-      <div className="max-w-2xl mx-auto bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700 flex items-start gap-2">
+      <div role="alert" className="max-w-2xl mx-auto border-l-2 border-red-500 pl-3 text-sm text-red-700 dark:text-red-400 flex items-start gap-2">
         <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-        <div>{error ?? "Company not found."}<div className="mt-2"><Link href="/companies" className="underline">Back to companies</Link></div></div>
+        <div>{error ?? "Company not found."}
+          <div className="mt-2 flex gap-3">
+            {error && error !== "Company not found." && <button type="button" onClick={() => { setLoading(true); refresh(); }} className="font-bold underline">Try again</button>}
+            <Link href="/companies" className="underline">Back to companies</Link>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -91,6 +104,13 @@ export default function CompanyProfilePage() {
         className="inline-flex items-center gap-1.5 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
         <ArrowLeft className="w-3.5 h-3.5" /> Back to companies
       </button>
+
+      {actionError && (
+        <p role="alert" className="border-l-2 border-red-500 pl-3 text-xs text-red-700 dark:text-red-400 flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {actionError}
+          <button type="button" onClick={() => setActionError(null)} className="ml-auto font-bold underline">Dismiss</button>
+        </p>
+      )}
 
       {/* ── Header card ── */}
       <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-5 shadow-sm">
@@ -139,11 +159,16 @@ export default function CompanyProfilePage() {
                   )}
                 </div>
               ))}
-              {!profile && <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-faint)]"><Loader2 className="w-3 h-3 animate-spin" /> gathering the record…</div>}
+              {!profile && profileError && (
+                <div role="alert" className="text-[11px] text-rose-700 dark:text-rose-400">
+                  Couldn&apos;t gather the record: {profileError} <button type="button" onClick={refresh} className="font-bold underline">Try again</button>
+                </div>
+              )}
+              {!profile && !profileError && <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-faint)]"><Loader2 className="w-3 h-3 animate-spin" /> Gathering the record…</div>}
             </div>
             {sc && (
               <div className="mt-2 text-[11px] text-[var(--color-text-faint)]">
-                Score computed from {sc.evidenceCount} recorded evidence point{sc.evidenceCount === 1 ? "" : "s"} - never from typed-in ratings. Dimensions without evidence stay Unrated and don&apos;t count.
+                Scored from {sc.evidenceCount} recorded evidence point{sc.evidenceCount === 1 ? "" : "s"}, never from typed-in ratings. A part with no evidence stays Unrated and doesn&apos;t count.
               </div>
             )}
           </div>
@@ -151,11 +176,11 @@ export default function CompanyProfilePage() {
       </div>
 
       <QualityManualPanel orgId={activeOrgId ?? company.orgId} company={company} canManage={canManage}
-        actorId={uid ?? ""} onChanged={() => void refresh()} setErr={setError} />
+        actorId={uid ?? ""} onChanged={() => void refresh()} setErr={setActionError} />
 
       <EventsPanel orgId={company.orgId} company={company} events={profile?.events ?? []}
         canManage={canManage} actorId={uid ?? ""} actorName={userEmail?.split("@")[0] ?? null}
-        onChanged={() => void refresh()} setErr={setError} />
+        onChanged={() => void refresh()} setErr={setActionError} />
 
       <HistoryPanels profile={profile} scorecard={sc} />
 
@@ -242,7 +267,7 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
             {Math.round(company.qualityManualScore)}% coverage
           </span>
         ) : (
-          <span className="text-[11px] text-[var(--color-text-muted)]">Not evaluated - the score gauges how much of a real quality program their manual covers.</span>
+          <span className="text-[11px] text-[var(--color-text-muted)]">Not checked yet. The score shows how much of a real quality program their manual covers.</span>
         )}
         {company.qualityManualReviewedAt && (
           <span className="ml-auto text-[11px] text-[var(--color-text-faint)]">confirmed {new Date(company.qualityManualReviewedAt).toLocaleDateString()}</span>
@@ -267,18 +292,18 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
                 {doc ? (
                   <span className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] px-2.5 py-1.5 text-xs font-bold text-[var(--color-text)]">
                     <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {doc.label}
-                    <button onClick={() => setDoc(null)} className="text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3 h-3" /></button>
+                    <button onClick={() => setDoc(null)} aria-label={`Remove ${doc.label}`} className="text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3 h-3" /></button>
                   </span>
                 ) : (
                   <span className="relative flex-1 min-w-64">
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-faint)]" />
                     <input value={query} onChange={(e) => setQuery(e.target.value)}
                       placeholder="Find their quality manual in document control…"
-                      className="w-full h-8 pl-8 pr-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-xs" />
+                      className="w-full h-8 pl-8 pr-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-xs" />
                   </span>
                 )}
                 <button onClick={() => void evaluate()} disabled={!doc || evaluating}
-                  className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
+                  className="h-8 inline-flex items-center gap-1 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[11px] font-black hover:bg-[var(--color-surface-2)] disabled:opacity-50"
                   title="AI reads the manual against the ISO 9001-shaped rubric (doc control, welding, NDE, calibration, ITPs, materials, NCRs, training, records). You review before anything lands.">
                   {evaluating ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Evaluate
                 </button>
@@ -299,7 +324,7 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
             <>
               <div className="flex items-center gap-2">
                 <span className="text-xs font-black text-[var(--color-text)]">Proposed: {proposal.score}% coverage</span>
-                <span className="text-[11px] text-[var(--color-text-muted)]">Review the findings - nothing lands on the record until you confirm.</span>
+                <span className="text-[11px] text-[var(--color-text-muted)]">Check the findings. Nothing goes on the record until you confirm.</span>
                 <span className="ml-auto flex items-center gap-2">
                   <button onClick={() => setProposal(null)} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Discard</button>
                   <button onClick={() => void confirm()} disabled={confirming}
@@ -335,6 +360,8 @@ function EventsPanel({ orgId, company, events, canManage, actorId, actorName, on
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [desc, setDesc] = useState("");
   const [busy, setBusy] = useState(false);
+  // What happened autosaves on this device until it's logged.
+  useDraft<string>(canManage ? `company-event:${company.id}` : null, desc, setDesc, (v) => !v.trim());
 
   const add = async () => {
     setBusy(true); setErr(null);
@@ -351,12 +378,12 @@ function EventsPanel({ orgId, company, events, canManage, actorId, actorName, on
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
         <ShieldAlert className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-sm font-bold text-[var(--color-text)]">Safety &amp; performance log</span>
-        <span className="text-[11px] text-[var(--color-text-muted)]">Dated facts, attributed - these feed the safety score. Near-miss REPORTING barely costs points; it&apos;s healthy culture.</span>
+        <span className="text-[11px] text-[var(--color-text-muted)]">Dated, named facts that feed the safety score. Reporting a near miss costs almost nothing: it&apos;s a healthy habit.</span>
       </div>
       {canManage && (
         <div className="px-4 py-2.5 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
           <select value={kind} onChange={(e) => setKind(e.target.value as CompanyEvent["kind"])}
-            className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
+            className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] px-2 text-xs">
             {(Object.keys(EVENT_KIND_LABEL) as CompanyEvent["kind"][]).map((k) => (
               <option key={k} value={k}>{EVENT_KIND_LABEL[k]}</option>
             ))}
@@ -366,7 +393,7 @@ function EventsPanel({ orgId, company, events, canManage, actorId, actorName, on
           <input value={desc} onChange={(e) => setDesc(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && desc.trim()) void add(); }}
             placeholder="What happened? (goes on their permanent record)"
-            className="h-8 flex-1 min-w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+            className="h-8 flex-1 min-w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] px-2 text-xs" />
           <button onClick={() => void add()} disabled={busy || !desc.trim()}
             className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Log it
@@ -453,7 +480,7 @@ function HistoryPanels({ profile, scorecard }: { profile: CompanyProfileData | n
                 <span className="text-[var(--color-text)]">{co.title}</span>
                 <span className="font-black tabular-nums">{fmtMoney(co.amount)}</span>
                 <span className={`text-[11px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${co.reasonCode === "scope_gap" ? "border-rose-500/40 bg-rose-500/[0.06] text-rose-700 dark:text-rose-300" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}
-                  title={co.reasonCode === "scope_gap" ? "Their bid missed this scope - counts against their cost discipline" : undefined}>
+                  title={co.reasonCode === "scope_gap" ? "Their bid missed this scope. It counts against their cost discipline." : undefined}>
                   {CO_REASON_LABEL[co.reasonCode as CoReason] ?? co.reasonCode}
                 </span>
                 <span className="ml-auto text-[11px] font-bold uppercase text-[var(--color-text-faint)]">{co.status}</span>
@@ -482,6 +509,13 @@ function EditCompanyModal({ company, actorId, onClose, onSaved }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (busy) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy, onClose]);
+
   const submit = async () => {
     setBusy(true); setError(null);
     try {
@@ -498,18 +532,18 @@ function EditCompanyModal({ company, actorId, onClose, onSaved }: {
   };
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+    <div role="dialog" aria-modal="true" aria-label={`Edit ${company.name}`} className="fixed inset-0 z-[200] bg-slate-900/50 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="text-sm font-black text-[var(--color-text)] flex-1">Edit {company.name}</div>
-          <button onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"><X className="w-4 h-4" /></button>
+          <button onClick={onClose} disabled={busy} aria-label="Close" className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"><X className="w-4 h-4" /></button>
         </div>
         <div className="px-6 py-5 space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Company name *"
-              className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
+              className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
             <select value={kind} onChange={(e) => setKind(e.target.value as Company["kind"])}
-              className="px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]">
+              className="px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]">
               {(Object.keys(COMPANY_KIND_LABEL) as Company["kind"][]).map((k) => (
                 <option key={k} value={k}>{COMPANY_KIND_LABEL[k]}</option>
               ))}
@@ -517,9 +551,9 @@ function EditCompanyModal({ company, actorId, onClose, onSaved }: {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <input value={trade} onChange={(e) => setTrade(e.target.value)} placeholder="Trade"
-              className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
+              className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
             <select value={status} onChange={(e) => setStatus(e.target.value as Company["status"])}
-              className="px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]"
+              className="px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]"
               title="'Do not use' keeps the record but flags the company across the app.">
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
@@ -528,18 +562,18 @@ function EditCompanyModal({ company, actorId, onClose, onSaved }: {
           </div>
           <div className="grid grid-cols-3 gap-3">
             <input value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="Contact name"
-              className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
+              className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
             <input value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} placeholder="Email"
-              className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
+              className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
             <input value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} placeholder="Phone"
-              className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
+              className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
           </div>
           <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Notes"
-            className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y bg-[var(--color-surface)]" />
+            className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y bg-[var(--color-surface)] text-[var(--color-text)]" />
           {error && (
-            <div className="flex items-start gap-2 p-3 rounded-lg border border-rose-500/40 bg-rose-500/[0.07] text-xs font-bold text-rose-700 dark:text-rose-300">
+            <p role="alert" className="flex items-start gap-2 border-l-2 border-rose-500 pl-3 text-xs font-bold text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {error}
-            </div>
+            </p>
           )}
         </div>
         <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">

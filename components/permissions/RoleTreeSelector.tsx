@@ -81,7 +81,7 @@ export function RoleTreeSelector({ selected, onChange, disabled }: RoleTreeSelec
         return (
           <div key={group.name} className="border-b border-[var(--color-border)] last:border-0">
             {/* Group Header */}
-            <div className="flex items-center bg-slate-50/50 hover:bg-slate-100/80 transition-colors py-2 px-3 cursor-pointer">
+            <div className="flex items-center bg-[var(--color-surface-2)] hover:bg-[var(--color-border)] transition-colors py-2 px-3 cursor-pointer">
               <button 
                 onClick={(e) => { e.stopPropagation(); toggleExpand(group.name); }}
                 className="p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] mr-1"
@@ -96,7 +96,7 @@ export function RoleTreeSelector({ selected, onChange, disabled }: RoleTreeSelec
                  <div className={`mr-2 ${disabled ? 'opacity-50' : ''}`}>
                     {isAll ? <CheckSquare className="w-4 h-4 text-[var(--color-text-muted)]" /> : 
                      isSome ? <MinusSquare className="w-4 h-4 text-[var(--color-text-muted)]" /> : 
-                     <Square className="w-4 h-4 text-slate-300" />}
+                     <Square className="w-4 h-4 text-[var(--color-text-faint)]" />}
                  </div>
                  <span className="text-sm font-bold text-[var(--color-text)]">{group.name}</span>
                  <span className="ml-auto text-xs text-[var(--color-text-faint)] font-medium">{groupSelectedCount} / {group.roles.length}</span>
@@ -115,7 +115,7 @@ export function RoleTreeSelector({ selected, onChange, disabled }: RoleTreeSelec
                       className={`flex items-center pl-10 pr-4 py-1.5 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors ${disabled ? 'opacity-50 pointer-events-none' : ''}`}
                     >
                       <div className="mr-3">
-                        {isSelected ? <CheckSquare className="w-4 h-4 text-[var(--color-text-muted)]" /> : <Square className="w-4 h-4 text-slate-200" />}
+                        {isSelected ? <CheckSquare className="w-4 h-4 text-[var(--color-text-muted)]" /> : <Square className="w-4 h-4 text-[var(--color-text-faint)]" />}
                       </div>
                       <span className={`text-sm ${isSelected ? 'font-semibold text-[var(--color-text)]' : 'text-[var(--color-text-muted)]'}`}>{role}</span>
                     </div>

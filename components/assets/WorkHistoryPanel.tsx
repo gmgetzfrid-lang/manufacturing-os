@@ -12,7 +12,7 @@ import { fmtInTz } from "@/lib/scheduleTz";
 
 const STATUS: Record<string, { word: string; cls: string }> = {
   completed: { word: "Done", cls: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300" },
-  in_progress: { word: "Under way", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)]" },
+  in_progress: { word: "Under way", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)]" },
   on_hold: { word: "On hold", cls: "bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300" },
   blocked: { word: "Blocked", cls: "bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300" },
 };
@@ -59,10 +59,10 @@ export default function WorkHistoryPanel({ orgId, assetId, code, tag, unitCode }
         <ul className="divide-y divide-[var(--color-border)]">
           {[...byProject.entries()].map(([pid, js]) => (
             <li key={pid} className="px-4 py-3 space-y-1.5">
-              <Link href={`/projects/${pid}`} className="text-[13.5px] font-black text-[var(--color-text)] hover:text-[var(--color-accent)]">{js[0].projectName}</Link>
+              <Link href={`/projects/${pid}?tab=work`} className="text-[13.5px] font-black text-[var(--color-text)] hover:text-[var(--color-accent)]">{js[0].projectName}</Link>
               <ul className="space-y-1.5">
                 {js.map((j) => {
-                  const st = j.cancelled ? { word: "Cancelled", cls: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300" } : STATUS[j.status] ?? { word: "Not started", cls: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300" };
+                  const st = j.cancelled ? { word: "Cancelled", cls: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" } : STATUS[j.status] ?? { word: "Not started", cls: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" };
                   const did = span(j.actualStart, j.actualFinish, j.tz);
                   const plan = span(j.plannedStart, j.plannedFinish, j.tz);
                   return (

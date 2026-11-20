@@ -12,6 +12,11 @@ import { extractLogoColors } from "@/lib/logoTheme";
 import { uploadToPath, getSignedUrlForPath } from "@/lib/storage";
 import { Palette as PaletteIcon, Upload, Check, Loader2, ShieldAlert, Zap, Trash2 } from "lucide-react";
 import { appAlert } from "@/components/providers/DialogProvider";
+import { useFileDrag } from "@/hooks/useFileDrag";
+import FileThumb from "@/components/ui/FileThumb";
+import { tryUpload } from "@/lib/uploadRetry";
+
+const formatBytes = (n: number) => n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
 
 function hexToRgb(hex: string): [number, number, number] {
   const h = hex.replace("#", ""); const n = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
@@ -31,23 +36,31 @@ export default function AdminBrandingPage() {
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [picked, setPicked] = useState<File | null>(null);
+  const [logoError, setLogoError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const drag = useFileDrag((files) => {
+    const f = files.find((x) => x.type.startsWith("image/"));
+    if (f) void handleLogo(f); else setLogoError("Pick an image file for the logo.");
+  }, uploading);
 
   const isAdmin = activeRole === "Admin";
 
   if (!isAdmin) {
     return (
       <div className="p-8 max-w-2xl">
-        <div className="flex items-center gap-3 p-4 rounded-xl bg-[var(--color-accent-soft)] text-[var(--color-text)]">
+        <p className="flex items-center gap-3 text-sm text-[var(--color-text-muted)]">
           <ShieldAlert className="w-5 h-5" /> <span>Only Admins can manage workspace branding.</span>
-        </div>
+        </p>
       </div>
     );
   }
 
-  const handleLogo = async (file: File) => {
+  async function handleLogo(file: File) {
     if (!activeOrgId) return;
     setUploading(true);
+    setPicked(file);
+    setLogoError(null);
     try {
       // Local preview immediately.
       setLogoPreview(URL.createObjectURL(file));
@@ -64,13 +77,17 @@ export default function AdminBrandingPage() {
       const ext = (file.name.split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "");
       const rand = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}`;
       const path = `orgs/${activeOrgId}/branding/logo-${rand}.${ext}`;
-      await uploadToPath(file, path, { contentType: file.type });
+      // Same file, same place: safe to try again. Nothing is saved until Save.
+      await tryUpload(file.name, () => uploadToPath(file, path, { contentType: file.type }), {
+        onRetried: () => { setLogoPath(path); setPicked(null); setLogoError(null); },
+      });
       setLogoPath(path);
+      setPicked(null);
       try { setLogoPreview(await getSignedUrlForPath(path, 604800)); } catch { /* keep object url */ }
     } catch (e) {
-      await appAlert({ message: `Logo upload failed: ${e instanceof Error ? e.message : "unknown"}`, tone: "danger" });
+      setLogoError(`The logo didn't upload: ${e instanceof Error ? e.message : "unknown"}`);
     } finally { setUploading(false); }
-  };
+  }
 
   const handleSave = async () => {
     setSaving(true);
@@ -85,7 +102,7 @@ export default function AdminBrandingPage() {
   return (
     <div className="p-6 lg:p-8 max-w-4xl mx-auto">
       <div className="flex items-center gap-3 mb-6">
-        <div className="w-11 h-11 rounded-2xl grid place-items-center text-white" style={{ background: "var(--brand-gradient)" }}>
+        <div className="w-11 h-11 rounded-2xl grid place-items-center bg-[var(--color-surface-2)] text-[var(--color-text)]">
           <PaletteIcon className="w-5 h-5" />
         </div>
         <div>
@@ -98,14 +115,31 @@ export default function AdminBrandingPage() {
         {/* LOGO */}
         <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
           <h2 className="text-sm font-black text-[var(--color-text)] mb-3">Logo</h2>
-          <div className="rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface-2)] h-28 flex items-center justify-center mb-3 overflow-hidden">
-            {logoPreview ? (
+          <div {...drag.bind} className={`rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface-2)] h-28 flex items-center justify-center mb-3 overflow-hidden ${drag.ring}`}>
+            {drag.over ? (
+              <span className="text-sm font-bold text-[var(--color-text)]">{drag.say}</span>
+            ) : logoPreview ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={logoPreview} alt="Logo preview" className="max-h-20 max-w-[80%] object-contain" />
             ) : (
-              <span className="text-sm text-[var(--color-text-muted)]">No logo yet</span>
+              <span className="text-sm text-[var(--color-text-muted)]">No logo yet. Drop one here.</span>
             )}
           </div>
+          {picked && (
+            <div className="mb-3 flex items-center gap-2.5">
+              <FileThumb file={picked} size={32} />
+              <span className="min-w-0 flex-1">
+                <span className="block text-xs font-bold text-[var(--color-text)] truncate">{picked.name}</span>
+                <span className="block text-[11px] text-[var(--color-text-muted)]">
+                  {formatBytes(picked.size)}{uploading && <span className="inline-flex items-center gap-1 ml-2"><Loader2 className="w-3 h-3 animate-spin" /> Uploading…</span>}
+                </span>
+              </span>
+              {!uploading && logoError && (
+                <button type="button" onClick={() => void handleLogo(picked)} className="shrink-0 px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Try again</button>
+              )}
+            </div>
+          )}
+          {logoError && <p role="alert" className="mb-3 text-[11px] text-red-700 dark:text-red-400">{logoError}</p>}
           <div className="flex items-center gap-2">
             <input ref={fileRef} type="file" accept="image/*" className="hidden"
               onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleLogo(f); e.target.value = ""; }} />
@@ -114,7 +148,7 @@ export default function AdminBrandingPage() {
               {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />} Upload logo
             </button>
             {logoPreview && (
-              <button onClick={() => { setLogoPath(undefined); setLogoPreview(null); }}
+              <button onClick={() => { setLogoPath(undefined); setLogoPreview(null); setPicked(null); setLogoError(null); }}
                 className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
                 <Trash2 className="w-4 h-4" /> Remove
               </button>
@@ -125,7 +159,8 @@ export default function AdminBrandingPage() {
             <div className="flex gap-1.5">
               {(["full", "mark"] as const).map((s) => (
                 <button key={s} onClick={() => setLogoShape(s)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold border capitalize ${logoShape === s ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
+                  aria-pressed={logoShape === s}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold border capitalize ${logoShape === s ? "border-transparent bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
                   {s === "full" ? "Wide wordmark" : "Square mark"}
                 </button>
               ))}
@@ -169,11 +204,11 @@ export default function AdminBrandingPage() {
       </div>
 
       <div className="mt-6 flex items-center gap-3">
-        <button onClick={handleSave} disabled={saving}
-          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-[var(--color-accent-fg)] disabled:opacity-50" style={{ background: "var(--color-accent)" }}>
+        <button onClick={handleSave} disabled={saving || uploading}
+          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save branding
         </button>
-        {savedAt && <span className="text-sm text-emerald-600 font-semibold">Saved - applied for everyone.</span>}
+        {savedAt && <span role="status" className="text-sm text-emerald-700 dark:text-emerald-400 font-semibold">Saved. Everyone in the workspace sees it now.</span>}
       </div>
     </div>
   );

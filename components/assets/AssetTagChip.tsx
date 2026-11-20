@@ -137,11 +137,11 @@ function PhotoTagChip({
               : creating
                 ? `Loading ${tag}…`
                 : hasPhotos
-                  ? `Quick-look - ${photoCount} photo${photoCount === 1 ? "" : "s"} of ${tag}`
+                  ? `Quick look: ${photoCount} photo${photoCount === 1 ? "" : "s"} of ${tag}`
                   : cachedAsset
                     ? `Add photos to ${tag}`
                     : canManage
-                      ? `Click to add ${tag} + photos`
+                      ? `Open ${tag} to add photos`
                       : tag
           }
           className={`${baseClasses} ${stateClasses}`}
@@ -153,12 +153,12 @@ function PhotoTagChip({
           {creating ? (
             <Loader2 className="w-2.5 h-2.5 ml-1.5 animate-spin text-[var(--color-text-muted)]" />
           ) : hasPhotos ? (
-            <span className="ml-1.5 inline-flex items-center gap-0.5 px-1 py-px rounded bg-white/80 text-[var(--color-text)] text-[11px] font-black">
+            <span className="ml-1.5 inline-flex items-center gap-0.5 px-1 py-px rounded bg-[var(--color-surface)] text-[var(--color-text)] text-[11px] font-black">
               <Camera className="w-2.5 h-2.5" />
               {photoCount}
             </span>
           ) : interactive ? (
-            <span className="ml-1.5 inline-flex items-center text-slate-300">
+            <span className="ml-1.5 inline-flex items-center text-[var(--color-text-faint)]">
               <Camera className="w-2.5 h-2.5" />
             </span>
           ) : null}
@@ -189,7 +189,7 @@ function PhotoTagChip({
             asset={asset}
             userId={userId}
             onClose={() => setUploaderOpen(false)}
-            onUploaded={() => { invalidateAssetCache(); setUploaderOpen(false); setPopoverOpen(true); }}
+            onUploaded={(allDone) => { invalidateAssetCache(); if (allDone) { setUploaderOpen(false); setPopoverOpen(true); } }}
           />
         )}
       </>

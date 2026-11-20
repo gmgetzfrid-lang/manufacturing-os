@@ -1,20 +1,18 @@
 import { WifiOff } from "lucide-react";
 import Link from "next/link";
 
-// Offline fallback — served by the service worker when a navigation can't
+// Offline fallback, served by the service worker when a navigation can't
 // reach the network and nothing is cached. Intentionally static and
 // dependency-free so it works with zero connectivity.
 export default function OfflinePage() {
   return (
-    <div className="min-h-dvh flex flex-col items-center justify-center bg-slate-950 text-center p-6">
-      <div className="w-16 h-16 rounded-2xl flex items-center justify-center shadow-lg mb-5 bg-[var(--color-text)]">
-        <WifiOff className="w-8 h-8 text-white" />
+    <div className="min-h-dvh flex flex-col items-center justify-center bg-[var(--color-canvas)] text-center p-6">
+      <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-5 bg-[var(--color-surface-2)] text-[var(--color-text)]">
+        <WifiOff className="w-8 h-8" />
       </div>
-      <h1 className="text-xl font-black text-white">You&apos;re offline</h1>
-      <p className="text-sm text-[var(--color-text-faint)] mt-2 max-w-sm">
-        Manufacturing OS can&apos;t reach the network right now. Pages and data you
-        opened recently are still available; this screen appears for anything
-        that wasn&apos;t cached. Reconnect to pick up where you left off.
+      <h1 className="text-xl font-black text-[var(--color-text)]">You&apos;re offline</h1>
+      <p className="text-sm text-[var(--color-text-muted)] mt-2 max-w-sm">
+        This page wasn&apos;t saved on this device. Pages you opened recently still work.
       </p>
       <Link
         href="/"

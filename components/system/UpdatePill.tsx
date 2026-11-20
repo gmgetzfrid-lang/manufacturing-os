@@ -1,9 +1,9 @@
 "use client";
 
-// A tab left open across deploys runs OLD code forever — and every fix
+// A tab left open across deploys runs OLD code forever, and every fix
 // shipped since looks like it never happened. This polls the serving build
 // id (5-minute cadence + whenever the tab regains focus) and, the moment it
-// diverges from the id this tab first saw, shows an unmissable refresh pill.
+// diverges from the id this tab first saw, shows a refresh pill.
 // "dev" ids never trigger it, so local development stays quiet.
 
 import React, { useEffect, useState } from "react";
@@ -41,10 +41,10 @@ export default function UpdatePill() {
     <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[100] animate-pop">
       <button
         onClick={() => window.location.reload()}
-        className="inline-flex items-center gap-2 rounded-full border-2 border-amber-400 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/95 px-4 py-2 text-xs font-black text-amber-900 dark:text-amber-200 shadow-xl hover:bg-amber-100 dark:hover:bg-amber-900 transition-colors"
+        className="inline-flex items-center gap-2 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-4 py-2 text-xs font-bold text-[var(--color-text)] shadow-lg hover:bg-[var(--color-surface-2)] transition-colors"
       >
         <RefreshCw className="w-3.5 h-3.5" />
-        This tab is running an old version - tap to load the update
+        A new version is ready. Tap to reload.
       </button>
     </div>
   );

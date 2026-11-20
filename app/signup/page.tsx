@@ -90,14 +90,18 @@ export default function SignupPage() {
     setError(null);
 
     try {
-      await fetch('/api/auth/request-access', {
+      const res = await fetch('/api/auth/request-access', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestData),
       });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null) as { error?: string } | null;
+        throw new Error(body?.error || `The request didn't go through (${res.status}).`);
+      }
       setRequestSent(true);
-    } catch {
-      setError("Failed to send request. Please try again.");
+    } catch (err) {
+      setError(err instanceof Error && err.message ? `${err.message} Try again.` : "The request didn't go through. Try again.");
     } finally {
       setLoading(false);
     }
@@ -105,13 +109,11 @@ export default function SignupPage() {
 
   return (
     <div className="min-h-dvh bg-slate-950 flex flex-col items-center justify-center p-4 relative overflow-hidden">
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-slate-950 to-black z-0" />
-      <div className="absolute top-0 left-0 right-0 h-px z-10 bg-[var(--color-text)]" />
 
       <div className="w-full max-w-lg relative z-20">
         {/* Header */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl mb-4 shadow-lg ring-1 ring-white/10 bg-[var(--color-text)]">
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl mb-4 ring-1 ring-white/10 bg-white/10">
             <Layout className="w-7 h-7 text-white" />
           </div>
           <h1 className="text-3xl font-black text-white tracking-tight">ManufacturingOS</h1>
@@ -122,13 +124,19 @@ export default function SignupPage() {
         <div className="flex bg-slate-900 rounded-2xl p-1 mb-6 border border-slate-800">
           <button
             onClick={() => { setMode("new-org"); setError(null); }}
+            aria-pressed={mode === "new-org"}
             className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-bold transition-all ${mode === "new-org" ? "bg-[var(--color-text)] text-[var(--color-surface)] shadow-lg" : "text-slate-400 hover:text-white"}`}
           >
             <Building2 className="w-4 h-4" />
             New Organization
           </button>
           <button
-            onClick={() => { setMode("request-access"); setError(null); }}
+            onClick={() => {
+              setMode("request-access"); setError(null);
+              // Carry over what was already typed.
+              setRequestData((r) => ({ ...r, displayName: r.displayName || formData.displayName, email: r.email || formData.email, orgName: r.orgName || formData.companyName }));
+            }}
+            aria-pressed={mode === "request-access"}
             className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-bold transition-all ${mode === "request-access" ? "bg-[var(--color-text)] text-[var(--color-surface)] shadow-lg" : "text-slate-400 hover:text-white"}`}
           >
             <Users className="w-4 h-4" />
@@ -143,11 +151,11 @@ export default function SignupPage() {
             <>
               <div className="bg-slate-900 px-8 py-6 border-b border-slate-800">
                 <h2 className="text-lg font-black text-white">Create Your Workspace</h2>
-                <p className="text-slate-400 text-sm mt-1">Set up a new organization - you&rsquo;ll be the Admin</p>
+                <p className="text-slate-400 text-sm mt-1">Set up a new organization. You&rsquo;ll be its Admin.</p>
               </div>
               <div className="p-8">
                 {error && (
-                  <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-xl flex items-start">
+                  <div role="alert" className="mb-6 border-l-2 border-red-500 pl-3 flex items-start">
                     <AlertCircle className="w-5 h-5 text-red-600 mr-3 shrink-0 mt-0.5" />
                     <p className="text-sm text-red-700 font-medium">{error}</p>
                   </div>
@@ -208,7 +216,7 @@ export default function SignupPage() {
                   <button type="submit" disabled={loading}
                     className="w-full py-4 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] font-bold rounded-xl shadow-lg transition-all flex items-center justify-center disabled:opacity-70 disabled:cursor-not-allowed mt-2">
                     {loading ? (
-                      <><Loader2 className="w-5 h-5 animate-spin mr-2" /> Creating Workspace...</>
+                      <><Loader2 className="w-5 h-5 animate-spin mr-2" /> Creating workspace…</>
                     ) : (
                       <span className="flex items-center">Create Organization <ArrowRight className="w-5 h-5 ml-2" /></span>
                     )}
@@ -239,14 +247,12 @@ export default function SignupPage() {
                 ) : (
                   <>
                     {error && (
-                      <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-xl flex items-start">
+                      <div role="alert" className="mb-6 border-l-2 border-red-500 pl-3 flex items-start">
                         <AlertCircle className="w-5 h-5 text-red-600 mr-3 shrink-0 mt-0.5" />
                         <p className="text-sm text-red-700 font-medium">{error}</p>
                       </div>
                     )}
-                    <div className="mb-6 p-4 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl">
-                      <p className="text-sm text-[var(--color-text)] font-medium">Your account will be created by your organization&rsquo;s Admin. This form notifies them of your request.</p>
-                    </div>
+                    <p className="mb-6 text-sm text-slate-600 font-medium">This tells your organization&rsquo;s Admin, who creates your account.</p>
                     <form onSubmit={handleRequestAccess} className="space-y-5">
                       <div>
                         <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 ml-1">Your Full Name</label>
@@ -278,7 +284,7 @@ export default function SignupPage() {
                       <button type="submit" disabled={loading}
                         className="w-full py-4 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] font-bold rounded-xl shadow-lg transition-all flex items-center justify-center disabled:opacity-70 disabled:cursor-not-allowed">
                         {loading ? (
-                          <><Loader2 className="w-5 h-5 animate-spin mr-2" /> Sending Request...</>
+                          <><Loader2 className="w-5 h-5 animate-spin mr-2" /> Sending request…</>
                         ) : (
                           <span className="flex items-center">Send Access Request <ArrowRight className="w-5 h-5 ml-2" /></span>
                         )}

@@ -206,6 +206,15 @@ export default function PermissionsDrawer(props: {
     onClose();
   };
 
+  // Escape closes, like the X (not while saving).
+  useEffect(() => {
+    if (!isOpen || saving) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, saving]);
+
   const nodeLabel = useMemo(() => {
     if (props.title) return props.title;
     const t = nodeType[0].toUpperCase() + nodeType.slice(1);
@@ -288,7 +297,7 @@ export default function PermissionsDrawer(props: {
       // reconstructable. Best-effort: the save above already committed.
       if (activeOrgId) {
         const { data: auth } = await supabase.auth.getUser();
-        await supabase.from("audit_logs").insert({
+        const { error: auditError } = await supabase.from("audit_logs").insert({
           action: "NODE_ACL_CHANGED",
           resource_type: nodeType,
           resource_id: nodeId,
@@ -299,12 +308,15 @@ export default function PermissionsDrawer(props: {
             before: { acl: props.acl ?? null, visibility: props.visibility ?? "normal" },
             after: { acl: nextAcl, visibility },
           },
-        }).then(() => undefined, () => undefined);
+        });
+        if (auditError) {
+          await appAlert({ title: "Saved, but not logged", message: `The permission change saved, but its audit record didn't: ${auditError.message}`, tone: "danger" });
+        }
       }
       close();
     } catch (e) {
       console.error(e);
-      await appAlert({ message: "Failed to save permissions (check rules/network).", tone: "danger" });
+      await appAlert({ title: "Couldn't save permissions", message: (e as Error)?.message || "Check the rules and your connection, then try again.", tone: "danger" });
     } finally {
       setSaving(false);
     }
@@ -313,27 +325,28 @@ export default function PermissionsDrawer(props: {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[90] flex justify-end bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
-      <div className="h-full w-full max-w-[560px] bg-zinc-950 text-zinc-100 shadow-2xl border-l border-zinc-800 animate-in slide-in-from-right duration-300 ease-fluid">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
+    <div role="dialog" aria-modal="true" aria-label={`Permissions for ${nodeLabel}`} className="fixed inset-0 z-[90] flex justify-end bg-slate-900/50 backdrop-blur-sm animate-in fade-in">
+      <div className="h-full w-full max-w-[560px] bg-[var(--color-surface)] text-[var(--color-text)] shadow-2xl border-l border-[var(--color-border)] animate-in slide-in-from-right duration-300 ease-fluid">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]">
           {/* ... (Header content) */}
           <div className="flex items-center gap-3 min-w-0">
-            <div className="h-9 w-9 shrink-0 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center">
+            <div className="h-9 w-9 shrink-0 rounded-xl bg-[var(--color-surface-2)] border border-[var(--color-border)] flex items-center justify-center">
               <Shield className="h-5 w-5" />
             </div>
             <div className="min-w-0">
               <div className="text-base font-semibold truncate">{nodeLabel}</div>
-              <div className="text-xs text-zinc-400 truncate">
-                Node: <span className="text-zinc-300">{nodeType}</span> /{" "}
-                <span className="text-zinc-300">{nodeId}</span>
+              <div className="text-xs text-[var(--color-text-muted)] truncate">
+                Node: <span className="text-[var(--color-text)]">{nodeType}</span> /{" "}
+                <span className="text-[var(--color-text)]">{nodeId}</span>
               </div>
             </div>
           </div>
 
           <button
             onClick={close}
-            className="p-2 rounded-lg hover:bg-zinc-900 border border-transparent hover:border-zinc-800"
+            className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] border border-transparent hover:border-[var(--color-border)]"
             title="Close"
+            aria-label="Close"
           >
             <X className="h-5 w-5" />
           </button>
@@ -341,18 +354,18 @@ export default function PermissionsDrawer(props: {
 
         <div className="h-[calc(100%-64px)] overflow-y-auto px-5 py-5 space-y-6">
           {/* ... (Visibility Section) */}
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-950/50 p-4">
+          <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">
             <div className="flex items-center justify-between">
               <div className="text-sm font-semibold flex items-center gap-2">
                 {visibility === "hidden" || visibility === "private" ? (
-                  <EyeOff className="h-4 w-4 text-amber-400" />
+                  <EyeOff className="h-4 w-4 text-amber-600 dark:text-amber-400" />
                 ) : (
-                  <Eye className="h-4 w-4 text-emerald-400" />
+                  <Eye className="h-4 w-4 text-[var(--color-text-muted)]" />
                 )}
                 Visibility and Inheritance
               </div>
               {!canEdit && (
-                <div className="text-xs text-amber-300 flex items-center gap-1">
+                <div className="text-xs text-amber-700 dark:text-amber-300 flex items-center gap-1">
                   <ShieldAlert className="h-4 w-4" />
                   Read-only
                 </div>
@@ -360,16 +373,17 @@ export default function PermissionsDrawer(props: {
             </div>
 
             <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-3">
-                <div className="text-xs text-zinc-400 mb-2">Visibility</div>
+              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
+                <div className="text-xs text-[var(--color-text-muted)] mb-2">Visibility</div>
                 <div className="flex gap-2">
                   <button
                     disabled={!canEdit}
                     onClick={() => setVisibility("normal")}
+                    aria-pressed={visibility === "normal"}
                     className={`flex-1 rounded-lg px-3 py-2 text-sm border ${
                       visibility === "normal"
-                        ? "border-emerald-500/40 bg-emerald-500/10"
-                        : "border-zinc-800 hover:bg-zinc-900"
+                        ? "border-transparent bg-[var(--color-text)] text-[var(--color-surface)]"
+                        : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
                     } ${!canEdit ? "opacity-50 cursor-not-allowed" : ""}`}
                   >
                     Normal
@@ -377,33 +391,34 @@ export default function PermissionsDrawer(props: {
                   <button
                     disabled={!canEdit}
                     onClick={() => setVisibility("hidden")}
+                    aria-pressed={visibility === "hidden"}
                     className={`flex-1 rounded-lg px-3 py-2 text-sm border ${
                       visibility === "hidden"
-                        ? "border-amber-500/40 bg-amber-500/10"
-                        : "border-zinc-800 hover:bg-zinc-900"
+                        ? "border-transparent bg-[var(--color-text)] text-[var(--color-surface)]"
+                        : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
                     } ${!canEdit ? "opacity-50 cursor-not-allowed" : ""}`}
                   >
                     Hidden
                   </button>
                 </div>
-                <div className="mt-2 text-xs text-zinc-500">
+                <div className="mt-2 text-xs text-[var(--color-text-faint)]">
                   Hidden = not discoverable unless explicitly allowed.
                 </div>
               </div>
 
-              <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-3">
-                <div className="text-xs text-zinc-400 mb-2">Inherit from parent</div>
+              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
+                <div className="text-xs text-[var(--color-text-muted)] mb-2">Inherit from parent</div>
                 <label className="flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
                     disabled={!canEdit}
                     checked={inherit}
                     onChange={(e) => setInherit(e.target.checked)}
-                    className="h-4 w-4 accent-emerald-500"
+                    className="h-4 w-4 accent-[var(--color-text)]"
                   />
                   Inherit ACL rules
                 </label>
-                <div className="mt-2 text-xs text-zinc-500">
+                <div className="mt-2 text-xs text-[var(--color-text-faint)]">
                   If enabled, parent rules apply unless overridden here.
                 </div>
               </div>
@@ -411,20 +426,20 @@ export default function PermissionsDrawer(props: {
           </div>
 
           {/* ... (Rules List Section) */}
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-950/50 p-4">
+          <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">
             <div className="text-sm font-semibold">Rules</div>
-            <div className="text-xs text-zinc-500 mt-1">
+            <div className="text-xs text-[var(--color-text-faint)] mt-1">
               Deny rules win, and inheritance can be cut at any node.
             </div>
 
             <div className="mt-4 space-y-3">
               {rules.length === 0 ? (
-                <div className="text-sm text-zinc-400">No rules yet.</div>
+                <div className="text-sm text-[var(--color-text-muted)]">No rules yet.</div>
               ) : (
                 rules.map((r, idx) => (
                   <div
                     key={idx}
-                    className="rounded-xl border border-zinc-800 bg-zinc-950 p-3"
+                    className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
@@ -432,19 +447,19 @@ export default function PermissionsDrawer(props: {
                           <span
                             className={`text-xs px-2 py-1 rounded-lg border ${
                               r.effect === "allow"
-                                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
-                                : "border-rose-500/40 bg-rose-500/10 text-rose-200"
+                                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                                : "border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-300"
                             }`}
                           >
                             {r.effect.toUpperCase()}
                           </span>
 
-                          <span className="text-xs px-2 py-1 rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-200">
+                          <span className="text-xs px-2 py-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]">
                             {r.subject.type}: {subjectLabel(r.subject.type, r.subject.id)}
                           </span>
 
                           {r.expiresAt && (
-                            <span className="text-[11px] px-2 py-1 rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-400">
+                            <span className="text-[11px] px-2 py-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
                               expires {toDateInput(r.expiresAt).replace("T", " ")}
                             </span>
                           )}
@@ -454,7 +469,7 @@ export default function PermissionsDrawer(props: {
                           {(r.actions || []).map((a) => (
                             <span
                               key={a}
-                              className="text-[11px] px-2 py-1 rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-300"
+                              className="text-[11px] px-2 py-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]"
                             >
                               {a}
                             </span>
@@ -465,10 +480,11 @@ export default function PermissionsDrawer(props: {
                       <button
                         disabled={!canEdit}
                         onClick={() => removeRule(idx)}
-                        className={`p-2 rounded-lg border border-zinc-800 hover:bg-zinc-900 ${
+                        className={`p-2 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] ${
                           !canEdit ? "opacity-50 cursor-not-allowed" : ""
                         }`}
                         title="Remove rule"
+                        aria-label="Remove rule"
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>
@@ -479,7 +495,7 @@ export default function PermissionsDrawer(props: {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-950/50 p-4">
+          <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">
             <div className="flex items-center justify-between mb-4">
               <div className="text-sm font-semibold flex items-center gap-2">
                 <Plus className="h-4 w-4" />
@@ -487,7 +503,7 @@ export default function PermissionsDrawer(props: {
               </div>
               <button
                 onClick={() => setShowBulkSelector(!showBulkSelector)}
-                className="text-xs flex items-center bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-2 py-1 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors"
+                className="text-xs flex items-center border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors"
               >
                 <Users className="w-3 h-3 mr-1" />
                 {showBulkSelector ? "Manual Entry" : "Use Directory Tree"}
@@ -496,12 +512,12 @@ export default function PermissionsDrawer(props: {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <div className="text-xs text-zinc-400 mb-1">Effect</div>
+                <div className="text-xs text-[var(--color-text-muted)] mb-1">Effect</div>
                 <select
                   disabled={!canEdit}
                   value={effect}
                   onChange={(e) => setEffect(e.target.value as PermissionEffect)}
-                  className={`w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm ${
+                  className={`w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm ${
                     !canEdit ? "opacity-50 cursor-not-allowed" : ""
                   }`}
                 >
@@ -512,8 +528,8 @@ export default function PermissionsDrawer(props: {
 
               {showBulkSelector ? (
                 <div className="sm:col-span-2">
-                  <div className="text-xs text-zinc-400 mb-1">Select Roles (Multi)</div>
-                  <div className="max-h-64 overflow-y-auto custom-scrollbar border border-zinc-800 rounded-lg">
+                  <div className="text-xs text-[var(--color-text-muted)] mb-1">Select Roles (Multi)</div>
+                  <div className="max-h-64 overflow-y-auto custom-scrollbar border border-[var(--color-border)] rounded-lg">
                     <RoleTreeSelector 
                       selected={bulkRoles} 
                       onChange={setBulkRoles} 
@@ -524,12 +540,12 @@ export default function PermissionsDrawer(props: {
               ) : (
                 <>
                   <div>
-                    <div className="text-xs text-zinc-400 mb-1">Subject type</div>
+                    <div className="text-xs text-[var(--color-text-muted)] mb-1">Subject type</div>
                     <select
                       disabled={!canEdit}
                       value={subjectType}
                       onChange={(e) => setSubjectType(e.target.value as PermissionSubjectType)}
-                      className={`w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm ${
+                      className={`w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm ${
                         !canEdit ? "opacity-50 cursor-not-allowed" : ""
                       }`}
                     >
@@ -543,12 +559,12 @@ export default function PermissionsDrawer(props: {
 
                   {subjectType === "role" ? (
                     <div className="sm:col-span-2">
-                      <div className="text-xs text-zinc-400 mb-1">Role</div>
+                      <div className="text-xs text-[var(--color-text-muted)] mb-1">Role</div>
                       <select
                         disabled={!canEdit}
                         value={rolePick}
                         onChange={(e) => setRolePick(e.target.value as Role)}
-                        className={`w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm ${
+                        className={`w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm ${
                           !canEdit ? "opacity-50 cursor-not-allowed" : ""
                         }`}
                       >
@@ -561,12 +577,12 @@ export default function PermissionsDrawer(props: {
                     </div>
                   ) : subjectType === "user" ? (
                     <div className="sm:col-span-2">
-                      <div className="text-xs text-zinc-400 mb-1">Person</div>
+                      <div className="text-xs text-[var(--color-text-muted)] mb-1">Person</div>
                       <select
                         disabled={!canEdit}
                         value={subjectId}
                         onChange={(e) => setSubjectId(e.target.value)}
-                        className={`w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm ${!canEdit ? "opacity-50 cursor-not-allowed" : ""}`}
+                        className={`w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm ${!canEdit ? "opacity-50 cursor-not-allowed" : ""}`}
                       >
                         <option value="">Select a person…</option>
                         {orgMembers.map((u) => (
@@ -576,29 +592,29 @@ export default function PermissionsDrawer(props: {
                     </div>
                   ) : subjectType === "team" ? (
                     <div className="sm:col-span-2">
-                      <div className="text-xs text-zinc-400 mb-1">Team</div>
+                      <div className="text-xs text-[var(--color-text-muted)] mb-1">Team</div>
                       <select
                         disabled={!canEdit}
                         value={subjectId}
                         onChange={(e) => setSubjectId(e.target.value)}
-                        className={`w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm ${!canEdit ? "opacity-50 cursor-not-allowed" : ""}`}
+                        className={`w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm ${!canEdit ? "opacity-50 cursor-not-allowed" : ""}`}
                       >
                         <option value="">Select a team…</option>
                         {teams.map((t) => (
                           <option key={t.id} value={t.id}>{t.name} · {t.memberCount ?? 0} member{(t.memberCount ?? 0) === 1 ? "" : "s"}</option>
                         ))}
                       </select>
-                      {teams.length === 0 && <div className="text-[11px] text-zinc-500 mt-1">No teams yet - create them in Admin → Teams.</div>}
+                      {teams.length === 0 && <div className="text-[11px] text-[var(--color-text-faint)] mt-1">No teams yet. Create them in Admin, Teams.</div>}
                     </div>
                   ) : (
                     <div className="sm:col-span-2">
-                      <div className="text-xs text-zinc-400 mb-1">Subject id</div>
+                      <div className="text-xs text-[var(--color-text-muted)] mb-1">Subject id</div>
                       <input
                         disabled={!canEdit}
                         value={subjectId}
                         onChange={(e) => setSubjectId(e.target.value)}
                         placeholder={SUBJECT_TYPES.find((x) => x.key === subjectType)?.placeholder ?? "id"}
-                        className={`w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm ${!canEdit ? "opacity-50 cursor-not-allowed" : ""}`}
+                        className={`w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm ${!canEdit ? "opacity-50 cursor-not-allowed" : ""}`}
                       />
                     </div>
                   )}
@@ -606,7 +622,7 @@ export default function PermissionsDrawer(props: {
               )}
 
               <div className="sm:col-span-2">
-                <div className="text-xs text-zinc-400 mb-2">Actions</div>
+                <div className="text-xs text-[var(--color-text-muted)] mb-2">Actions</div>
                 <div className="flex flex-wrap gap-2">
                   {ACTIONS.map((a) => {
                     const on = actions.includes(a.key);
@@ -617,10 +633,11 @@ export default function PermissionsDrawer(props: {
                         onClick={() => toggleAction(a.key)}
                         className={`text-xs px-3 py-2 rounded-xl border ${
                           on
-                            ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
-                            : "border-zinc-800 bg-zinc-950 hover:bg-zinc-900 text-zinc-200"
+                            ? "border-transparent bg-[var(--color-text)] text-[var(--color-surface)]"
+                            : "border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)]"
                         } ${!canEdit ? "opacity-50 cursor-not-allowed" : ""}`}
                         title={a.hint}
+                        aria-pressed={on}
                         type="button"
                       >
                         {a.label}
@@ -631,13 +648,13 @@ export default function PermissionsDrawer(props: {
               </div>
 
               <div className="sm:col-span-2">
-                <div className="text-xs text-zinc-400 mb-1">Expires (optional)</div>
+                <div className="text-xs text-[var(--color-text-muted)] mb-1">Expires (optional)</div>
                 <input
                   disabled={!canEdit}
                   type="datetime-local"
                   value={expiresAt}
                   onChange={(e) => setExpiresAt(e.target.value)}
-                  className={`w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm ${
+                  className={`w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm ${
                     !canEdit ? "opacity-50 cursor-not-allowed" : ""
                   }`}
                 />
@@ -648,7 +665,7 @@ export default function PermissionsDrawer(props: {
                   disabled={!canEdit}
                   onClick={showBulkSelector ? addBulkRules : addRule}
                   type="button"
-                  className={`flex-1 rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm hover:bg-zinc-900 flex items-center justify-center gap-2 ${
+                  className={`flex-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm hover:bg-[var(--color-surface-2)] flex items-center justify-center gap-2 ${
                     !canEdit ? "opacity-50 cursor-not-allowed" : ""
                   }`}
                 >
@@ -666,7 +683,7 @@ export default function PermissionsDrawer(props: {
                       setSubjectType("user");
                     }}
                     type="button"
-                    className={`rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm hover:bg-zinc-900 ${
+                    className={`rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm hover:bg-[var(--color-surface-2)] ${
                       !canEdit ? "opacity-50 cursor-not-allowed" : ""
                     }`}
                     title="Preset for blind drilling"
@@ -681,14 +698,14 @@ export default function PermissionsDrawer(props: {
           <div className="pb-8 flex gap-3">
             <button
               onClick={close}
-              className="flex-1 rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm hover:bg-zinc-900"
+              className="flex-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm hover:bg-[var(--color-surface-2)]"
             >
               Cancel
             </button>
             <button
               disabled={!canEdit || saving}
               onClick={save}
-              className={`flex-1 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm hover:bg-emerald-500/15 flex items-center justify-center gap-2 ${
+              className={`flex-1 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] font-bold px-3 py-2 text-sm flex items-center justify-center gap-2 disabled:opacity-60 ${
                 !canEdit ? "opacity-50 cursor-not-allowed" : ""
               }`}
             >
@@ -697,9 +714,6 @@ export default function PermissionsDrawer(props: {
             </button>
           </div>
 
-          <div className="text-[11px] text-zinc-500">
-            ACL is stored on the node and flattened into aclIndex for Firestore rules.
-          </div>
         </div>
       </div>
     </div>

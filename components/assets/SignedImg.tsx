@@ -9,6 +9,7 @@
 // strip in the carousel) — one fetch per path, cached by path.
 
 import React, { useEffect, useState } from "react";
+import { Loader2, ImageOff } from "lucide-react";
 import { getSignedUrlForPath } from "@/lib/storage";
 
 interface SignedImgProps extends Omit<React.ImgHTMLAttributes<HTMLImageElement>, "src"> {
@@ -32,17 +33,29 @@ async function resolveCached(path: string, expiresIn = 3600): Promise<string> {
 
 export default function SignedImg({ path, placeholder, expiresIn, ...imgProps }: SignedImgProps) {
   const [src, setSrc] = useState<string | null>(() => urlCache.get(path)?.url ?? null);
+  const [failedPath, setFailedPath] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
     if (!path) return;
     resolveCached(path, expiresIn)
-      .then((url) => { if (alive) setSrc(url); })
-      .catch(() => { if (alive) setSrc(null); });
+      .then((url) => { if (alive) { setSrc(url); setFailedPath(null); } })
+      .catch(() => { if (alive) { setSrc(null); setFailedPath(path); } });
     return () => { alive = false; };
   }, [path, expiresIn]);
 
-  if (!src) return <>{placeholder ?? null}</>;
+  if (!src) {
+    if (placeholder) return <>{placeholder}</>;
+    // Never a blank box: a small spinner while the link is fetched, or a
+    // broken-image mark (with its reason on hover) when it can't be.
+    const failed = failedPath === path;
+    return (
+      <span className={`${imgProps.className ?? ""} inline-flex items-center justify-center text-[var(--color-text-faint)]`}
+        title={failed ? "Couldn't load this photo" : "Loading photo…"} role="img" aria-label={failed ? "Couldn't load this photo" : "Loading photo"}>
+        {failed ? <ImageOff className="w-4 h-4" /> : <Loader2 className="w-4 h-4 animate-spin" />}
+      </span>
+    );
+  }
   // eslint-disable-next-line @next/next/no-img-element, jsx-a11y/alt-text
   return <img src={src} {...imgProps} />;
 }

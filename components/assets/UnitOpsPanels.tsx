@@ -43,21 +43,24 @@ export function CategorizeBanner({ orgId, userId, assets, types, book, onDone }:
 }) {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<CategorizationResult | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
   const plan = useMemo(() => planCategorization(assets, types, book), [assets, types, book]);
   const uncategorized = plan.assignments.length + plan.unmatched.length;
   if (uncategorized === 0 && plan.unitAssignments.length === 0 && !result) return null;
 
   const run = async () => {
     setBusy(true);
+    setRunError(null);
     try {
       setResult(await applyCategorization(orgId, userId, plan, types));
       onDone();
+    } catch (e) {
+      setRunError((e as Error).message || "Couldn't sort the equipment.");
     } finally { setBusy(false); }
   };
 
   return (
-    <div className="mb-4 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/30 px-3.5 py-3"
-      style={{ animation: "rise 0.4s var(--ease-fluid) both" }}>
+    <div className="mb-4 border-l-2 border-amber-500 pl-3.5 py-1">
       {result ? (
         <div className="space-y-1">
           <div className="flex items-center gap-2 text-xs font-black text-emerald-700 dark:text-emerald-300">
@@ -68,7 +71,7 @@ export function CategorizeBanner({ orgId, userId, assets, types, book, onDone }:
           {result.unmatched.length > 0 && (
             <div className="text-[11px] text-amber-800 dark:text-amber-300">
               No codebook prefix matched: <b className="font-mono">{result.unmatched.slice(0, 8).join(", ")}{result.unmatched.length > 8 ? "…" : ""}</b>.
-              {" "}Teach the prefix in the <Link href="/admin/codebook" className="underline font-black">Site Codebook</Link> and run again - that fixes every future asset too.
+              {" "}Teach the prefix in the <Link href="/admin/codebook" className="underline font-black">Site Codebook</Link> and run again. That fixes every future asset too.
             </div>
           )}
         </div>
@@ -82,14 +85,15 @@ export function CategorizeBanner({ orgId, userId, assets, types, book, onDone }:
               {uncategorized > 0 && plan.unitAssignments.length > 0 ? ` · ${plan.unitAssignments.length} unfiled to areas` : ""}
             </div>
             <div className="text-[11px] text-[var(--color-text-muted)]">
-              Your Site Codebook already knows the taxonomy - {plan.assignments.length > 0
-                ? <>its prefixes decode {plan.assignments.length} of them{plan.typesToCreate.length > 0 ? `, creating ${plan.typesToCreate.slice(0, 4).join(", ")}${plan.typesToCreate.length > 4 ? "…" : ""}` : ""}.</>
-                : <>but none of its prefixes match these tags. Add the prefixes in the <Link href="/admin/codebook" className="underline font-bold">Site Codebook</Link>.</>}
+              {plan.assignments.length > 0
+                ? <>Your Site Codebook&apos;s prefixes sort {plan.assignments.length} of them{plan.typesToCreate.length > 0 ? `, creating ${plan.typesToCreate.slice(0, 4).join(", ")}${plan.typesToCreate.length > 4 ? "…" : ""}` : ""}.</>
+                : <>None of your Site Codebook&apos;s prefixes match these tags. Add the prefixes in the <Link href="/admin/codebook" className="underline font-bold">Site Codebook</Link>.</>}
             </div>
+            {runError && <div role="alert" className="mt-1 text-[11px] font-bold text-rose-700 dark:text-rose-400">Couldn&apos;t sort them: {runError}</div>}
           </div>
           {(plan.assignments.length > 0 || plan.unitAssignments.length > 0) && (
             <button onClick={() => void run()} disabled={busy}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-white bg-amber-600 hover:bg-amber-500 disabled:opacity-60 shrink-0">
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-[var(--color-text)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] disabled:opacity-60 shrink-0">
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
               Auto-categorize from codebook
             </button>
@@ -115,9 +119,11 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
   const [busyId, setBusyId] = useState<string | null>(null);
   const [readerOpen, setReaderOpen] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
+      setLoadError(null);
       const all = await listProcessFlows(orgId);
       if (all === null) { setFlows(null); return; }
       const mine = new Set(unitAssets.map((a) => a.id));
@@ -139,7 +145,7 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
         for (const r of (data as Array<{ id: string; tag: string }>) ?? []) map.set(r.id, r.tag);
       }
       setTagById(map);
-    } catch { setFlows([]); }
+    } catch (e) { setLoadError((e as Error).message || "Couldn't load the flows."); setFlows((f) => f ?? []); }
   }, [orgId, unitCode, unitAssets]);
 
   useEffect(() => { void refresh(); }, [refresh]);
@@ -148,17 +154,25 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
     kind === "unit" ? `Unit ${ref}` : (tagById.get(ref) ?? "…");
 
   const decide = async (f: ProcessFlow, accept: boolean) => {
-    setBusyId(f.id);
+    setBusyId(f.id); setNote(null);
     try { await decideFlow(f.id, accept, { userId, userName }); await refresh(); }
+    catch (e) { setNote(`Couldn't ${accept ? "confirm" : "reject"} that flow: ${(e as Error).message}`); }
     finally { setBusyId(null); }
   };
   const remove = async (f: ProcessFlow) => {
-    setBusyId(f.id);
+    setBusyId(f.id); setNote(null);
     try { await deleteFlow(f.id); await refresh(); }
+    catch (e) { setNote(`Couldn't remove that flow: ${(e as Error).message}`); }
     finally { setBusyId(null); }
   };
 
-  if (flows === undefined) return null;
+  if (flows === undefined) {
+    return (
+      <div id="area-flow-panel" className="mt-6 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3.5 text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-2 w-full">
+        <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading process flows…
+      </div>
+    );
+  }
 
   const proposed = (flows ?? []).filter((f) => f.status === "proposed");
   const confirmed = (flows ?? []).filter((f) => f.status === "confirmed");
@@ -186,14 +200,19 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
 
       {flows === null ? (
         <div className="text-[11px] text-[var(--color-text-muted)]">
-          Process flows aren&apos;t installed yet - run the process-flows migration to map what feeds what.
+          Process flows aren&apos;t installed yet. Run the process-flows migration to map what feeds what.
         </div>
       ) : (
         <>
-          {note && <div className="text-[11px] text-[var(--color-text-muted)] mb-2">{note}</div>}
+          {loadError && (
+            <div role="alert" className="text-[11px] text-rose-700 dark:text-rose-400 mb-2">
+              Couldn&apos;t load the flows: {loadError} <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
+            </div>
+          )}
+          {note && <div role="status" className={`text-[11px] mb-2 ${note.startsWith("Couldn't") ? "text-rose-700 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>{note}</div>}
           {proposed.length > 0 && (
             <div className="space-y-1 mb-2">
-              <div className="text-[11px] font-black uppercase tracking-widest text-amber-700">Proposed - the AI read these; you decide</div>
+              <div className="text-[11px] font-black uppercase tracking-widest text-amber-700 dark:text-amber-400">Proposed by the AI. Confirm or reject each.</div>
               {proposed.map((f) => (
                 <div key={f.id} className="flex items-center gap-2 rounded-lg border border-dashed border-amber-300 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20 px-2.5 py-1.5">
                   <span className="text-[11px] font-black text-[var(--color-text)]">{endpointLabel(f.from_kind, f.from_ref)}</span>
@@ -209,11 +228,11 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
                   {isAdmin && (
                     <>
                       <button onClick={() => void decide(f, false)} disabled={busyId === f.id}
-                        className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-rose-600" title="Not a real flow">
+                        className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-rose-600" title="Not a real flow" aria-label="Reject this flow">
                         <X className="w-3.5 h-3.5" />
                       </button>
                       <button onClick={() => void decide(f, true)} disabled={busyId === f.id}
-                        className="p-1.5 rounded-lg text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/40" title="Confirm - draw it on the graph">
+                        className="p-1.5 rounded-lg text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40" title="Confirm and draw it on the graph" aria-label="Confirm this flow">
                         {busyId === f.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
                       </button>
                     </>
@@ -224,7 +243,7 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
           )}
           {confirmed.length === 0 && proposed.length === 0 ? (
             <div className="text-[11px] text-[var(--color-text-muted)]">
-              Nothing mapped yet. Draw flows on the <Link href="/graph" className="underline font-bold">graph</Link> (Connect two equipment items - the first feeds the second){isAdmin ? ", or point the reader at a process flow diagram." : "."}
+              Nothing mapped yet. Draw flows on the <Link href="/graph" className="underline font-bold">graph</Link> (Connect two equipment items: the first feeds the second){isAdmin ? ", or point the reader at a process flow diagram." : "."}
             </div>
           ) : (
             <div className="flex flex-wrap gap-1.5">
@@ -236,7 +255,7 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
                   {f.label && <span className="text-[11px] text-[var(--color-text-muted)] italic">“{f.label}”</span>}
                   {isAdmin && (
                     <button onClick={() => void remove(f)} disabled={busyId === f.id}
-                      className="opacity-0 group-hover:opacity-100 text-[var(--color-text-faint)] hover:text-rose-600 transition-opacity" title="Remove this flow">
+                      className="opacity-60 group-hover:opacity-100 text-[var(--color-text-faint)] hover:text-rose-600 transition-opacity" title="Remove this flow" aria-label="Remove this flow">
                       <Trash2 className="w-3 h-3" />
                     </button>
                   )}
@@ -302,6 +321,11 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
      
   }, [orgId]);
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   // "Not synced yet" has a one-click answer: reconcile EVERY knowledge
   // library with doc control right now instead of waiting for the cron.
@@ -323,12 +347,12 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
     }
     await load();
     if (failures.length > 0) {
-      setError(`Sync hit ${failures.length} problem${failures.length === 1 ? "" : "s"} - ${failures[0]}${failures.length > 1 ? " (and more)" : ""}`);
+      setError(`Sync hit ${failures.length} problem${failures.length === 1 ? "" : "s"}: ${failures[0]}${failures.length > 1 ? " (and more)" : ""}`);
       if (added > 0) setSyncNote(`${added} document${added === 1 ? "" : "s"} still pulled in before the errors.`);
     } else {
       setSyncNote(added > 0
-        ? `Synced - ${added} document${added === 1 ? "" : "s"} pulled in from document control.`
-        : "Synced - already up to date with document control.");
+        ? `Synced: ${added} document${added === 1 ? "" : "s"} pulled in from document control.`
+        : "Synced: already up to date with document control.");
     }
     setSyncing(false);
   };
@@ -342,14 +366,14 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
       const res = await addKnowledgeSources(orgId, klId, [{ type: target.type, id: target.id }]);
       setLinking(null);
       await load();
-      setSyncNote(`Linked “${target.name}” - ${res.added} document${res.added === 1 ? "" : "s"} pulled in. Indexing starts automatically.`);
+      setSyncNote(`Linked “${target.name}”: ${res.added} document${res.added === 1 ? "" : "s"} pulled in. Indexing starts automatically.`);
     } catch (e) { setError((e as Error).message); }
     finally { setLinkingKey(null); }
   };
   const requestLink = (target: { type: "library" | "folder"; id: string; name: string }) => {
     if (!model?.canSync) return;
     if (model.knowledgeLibraries.length === 0) {
-      setError("Create an AI knowledge library first (Knowledge tab) - then Link connects folders to it from right here.");
+      setError("Make an AI knowledge library first (Knowledge tab). Then Link connects folders to it from here.");
       return;
     }
     if (model.knowledgeLibraries.length === 1) {
@@ -391,9 +415,11 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Reading failed.");
+      const read: number[] = Array.isArray(json.pagesRead) ? json.pagesRead : [];
+      const readLine = read.length > 0 ? `Read page${read.length === 1 ? "" : "s"} ${read.join(", ")}. ` : "";
       onDone(json.proposed > 0
-        ? `${json.proposed} flow${json.proposed === 1 ? "" : "s"} proposed from pages ${json.pagesRead.join(", ")} - review them above.`
-        : (json.note ?? "No new flows found."));
+        ? `${readLine}Found ${json.proposed} flow${json.proposed === 1 ? "" : "s"}. Review them below.`
+        : `${readLine}${json.note ?? "No new flows found."}`);
     } catch (e) { setError((e as Error).message); }
     finally { setRunningId(null); }
   };
@@ -424,10 +450,10 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
 
   // ── One row per document, its AI state printed on it ──────────────────
   const STATE_META: Record<Exclude<DcDocRow["state"], "ready">, { label: string; hint: string }> = {
-    indexing: { label: "Indexing…", hint: "Mirrored and being indexed - the Read button appears when it finishes (usually under a minute). Reopen or Sync to refresh." },
-    pending_sync: { label: "Not synced yet", hint: "Watched by the AI - press Sync to mirror it now." },
-    unwatched: { label: "Not linked to AI", hint: "No knowledge library watches this folder - press Link to connect it right here." },
-    not_pdf: { label: "No PDF revision", hint: "The AI reads PDFs only - attach a PDF current revision." },
+    indexing: { label: "Indexing…", hint: "Being indexed. Read shows up when it finishes, usually in under a minute. Reopen or Sync to refresh." },
+    pending_sync: { label: "Not synced yet", hint: "Watched by the AI. Press Sync to copy it in now." },
+    unwatched: { label: "Not linked to AI", hint: "No knowledge library watches this folder. Press Link to connect it here." },
+    not_pdf: { label: "No PDF revision", hint: "The AI reads PDFs only. Attach a PDF current revision." },
     not_current: { label: "Superseded / archived", hint: "Only current revisions are read." },
     no_file: { label: "No file yet", hint: "This document has no current file attached." },
     held_back: { label: "Held back from AI", hint: "A controller excluded this document from AI reading." },
@@ -475,7 +501,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
         ) : d.state === "unwatched" && model?.canSync && container ? (
           <button type="button" onClick={() => requestLink(container)} disabled={linkingKey !== null}
             title={`Connect “${container.name}” to an AI knowledge library`}
-            className="text-[11px] font-black px-2 py-1 rounded-md border border-amber-300 text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/40 disabled:opacity-50 shrink-0">
+            className="text-[11px] font-black px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 shrink-0">
             {linkingKey === container.id ? "Linking…" : "Link to AI"}
           </button>
         ) : (
@@ -494,20 +520,17 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
   const renderFolder = (f: DcFolderNode, depth: number) => (
     <div key={f.id} className={depth > 0 ? "ml-3 pl-2 border-l border-[var(--color-border)]/60" : ""}>
       <div className="flex items-center gap-1.5 px-1 py-1 text-[11px] font-black text-[var(--color-text)]">
-        <FolderOpen className={`w-3.5 h-3.5 shrink-0 ${f.watched ? "text-[var(--color-text-muted)]" : "text-amber-500"}`} />
+        <FolderOpen className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" />
         {f.name}
         <span className="text-[11px] font-bold text-[var(--color-text-muted)]">· {f.totalDocs}</span>
-        {!f.watched && (model?.canSync ? (
+        {!f.watched && <span className="text-[11px] font-bold text-amber-700 dark:text-amber-400">Not linked to AI</span>}
+        {!f.watched && model?.canSync && (
           <button type="button" disabled={linkingKey !== null}
             onClick={() => requestLink({ type: "folder", id: f.id, name: f.name })}
-            className="text-[11px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900 disabled:opacity-50">
-            {linkingKey === f.id ? "linking…" : "not linked to AI - link now"}
+            className="text-[11px] font-black px-1.5 py-0.5 rounded border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+            {linkingKey === f.id ? "Linking…" : "Link now"}
           </button>
-        ) : (
-          <span className="text-[11px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">
-            not linked to AI
-          </span>
-        ))}
+        )}
       </div>
       {f.docs.length > 0 && (
         <div className="space-y-1 mb-1">
@@ -519,7 +542,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
   );
 
   const sheet = (
-    <div className="fixed inset-0 z-[700] flex items-start justify-center bg-black/50 pt-[6vh] p-4 overscroll-contain" onClick={onClose}>
+    <div role="dialog" aria-modal="true" aria-label="Read flows from a document" className="fixed inset-0 z-[700] flex items-start justify-center bg-black/50 pt-[6vh] p-4 overscroll-contain" onClick={onClose}>
       <div className="w-full max-w-lg max-h-[86vh] flex flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)] shrink-0">
@@ -527,8 +550,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
           <div className="flex-1">
             <div className="text-sm font-black text-[var(--color-text)]">Read flows from a document</div>
             <div className="text-[11px] text-[var(--color-text-muted)]">
-              Your document libraries and folders, exactly as filed. Every file shows its AI status -
-              ready ones read flows, blocked ones say why.
+              Your libraries and folders as filed. Each file says whether the AI can read it.
             </div>
           </div>
           {model?.canSync && model.knowledgeLibraries.length > 0 && (
@@ -546,7 +568,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
         <div className="p-3 space-y-2 shrink-0 border-b border-[var(--color-border)]">
           <div className="flex items-center gap-2 flex-wrap">
             <select value={dcLibFilter} onChange={(e) => setDcLibFilter(e.target.value)}
-              className="flex-1 min-w-[10rem] px-2.5 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm">
+              className="flex-1 min-w-[10rem] px-2.5 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-sm">
               <option value="">All document libraries</option>
               {(model?.tree ?? []).map((l) => (
                 <option key={l.id} value={l.id}>{l.name} ({l.totalDocs})</option>
@@ -559,13 +581,13 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
               <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
               <input value={query} onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search by name…"
-                className="w-full pl-8 pr-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm" />
+                className="w-full pl-8 pr-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-sm" />
             </div>
           </div>
           <div className="flex items-center gap-2">
             <input value={pagesRaw} onChange={(e) => setPagesRaw(e.target.value)}
-              placeholder="Pages (optional): 1-4 or 2,5,9 - up to 6 per read"
-              className="flex-1 px-2.5 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-xs font-mono" />
+              placeholder="Pages (optional): 1-4 or 2,5,9, up to 6 per read"
+              className="flex-1 px-2.5 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-xs font-mono" />
             {pages.length > 0 && (
               <span className="text-[11px] font-black text-[var(--color-text)] shrink-0">reads p. {pages.join(", ")}</span>
             )}
@@ -573,13 +595,13 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
           {/* Multiple AI libraries → the link needs a destination. One click
               picks it; the linking + sync happen right here. */}
           {linking && (
-            <div className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50/80 dark:bg-amber-950/30 px-2.5 py-2 text-[11px] text-amber-900 dark:text-amber-300">
+            <div className="border-l-2 border-[var(--color-border-strong)] pl-2.5 text-[11px] text-[var(--color-text)]">
               <div className="font-black mb-1">Link &ldquo;{linking.name}&rdquo; to which AI knowledge library?</div>
               <div className="flex items-center gap-1.5 flex-wrap">
                 {(model?.knowledgeLibraries ?? []).map((kl) => (
                   <button key={kl.id} type="button" disabled={linkingKey !== null}
                     onClick={() => void doLink(kl.id, linking)}
-                    className="px-2.5 py-1 rounded-lg border border-amber-400 bg-white dark:bg-transparent text-[11px] font-black text-amber-800 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/50 disabled:opacity-50">
+                    className="px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[11px] font-black text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
                     {linkingKey !== null ? "Linking…" : kl.name}
                   </button>
                 ))}
@@ -591,50 +613,48 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
             </div>
           )}
           {syncNote && (
-            <div className="rounded-lg border border-emerald-200 bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-2 text-[11px] font-bold text-emerald-700 dark:text-emerald-300">
+            <p role="status" className="border-l-2 border-emerald-500 pl-2.5 text-[11px] font-bold text-emerald-700 dark:text-emerald-300">
               {syncNote}
-            </div>
+            </p>
           )}
           {error && (
-            <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 dark:bg-rose-950/40 px-2.5 py-2 text-[11px] text-rose-700 dark:text-rose-300">
+            <p role="alert" className="flex items-start gap-2 border-l-2 border-rose-500 pl-2.5 text-[11px] text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
-            </div>
+            </p>
           )}
         </div>
 
         <div className="flex-1 overflow-y-auto p-3 space-y-4 min-h-0">
           {model === null && loadError === null ? (
-            <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-text-faint)]" /></div>
+            <div className="flex justify-center items-center gap-2 py-6 text-[11px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Loading your libraries…</div>
           ) : loadError ? (
-            <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 dark:bg-rose-950/40 px-2.5 py-2 text-[11px] text-rose-700 dark:text-rose-300">
-              <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {loadError}
-            </div>
+            <p role="alert" className="flex items-start gap-2 border-l-2 border-rose-500 pl-2.5 text-[11px] text-rose-700 dark:text-rose-300">
+              <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+              <span>Couldn&apos;t load the libraries: {loadError} <button type="button" onClick={() => void load()} className="font-bold underline">Try again</button></span>
+            </p>
           ) : viewTree.length === 0 && viewUploads.length === 0 ? (
             <div className="text-center text-[11px] text-[var(--color-text-muted)] py-6">
-              {q ? "No documents match that search." : "No documents yet - upload PDFs in Documents or a knowledge library."}
+              {q ? "No documents match that search." : "No documents yet. Upload PDFs in Documents or a knowledge library."}
             </div>
           ) : (
             <>
               {viewTree.map((l) => (
                 <div key={l.id}>
                   <div className="flex items-center gap-2 mb-1.5">
-                    <BookOpen className={`w-3.5 h-3.5 shrink-0 ${l.watched ? "text-[var(--color-text-muted)]" : "text-amber-500"}`} />
+                    <BookOpen className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" />
                     <span className="text-xs font-black text-[var(--color-text)]">{l.name}</span>
                     <span className="text-[11px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-full px-1.5">
                       {l.totalDocs} doc{l.totalDocs === 1 ? "" : "s"}
                     </span>
-                    {!l.watched && (model?.canSync ? (
+                    {!l.watched && <span className="text-[11px] font-bold text-amber-700 dark:text-amber-400">Not linked to AI</span>}
+                    {!l.watched && model?.canSync && (
                       <button type="button" disabled={linkingKey !== null}
                         onClick={() => requestLink({ type: "library", id: l.id, name: l.name })}
-                        title="Watch this whole library - every folder, now and in the future"
-                        className="text-[11px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900 disabled:opacity-50">
-                        {linkingKey === l.id ? "linking…" : "not linked to AI - link whole library"}
+                        title="Watch this whole library: every folder, now and later"
+                        className="text-[11px] font-black px-1.5 py-0.5 rounded border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+                        {linkingKey === l.id ? "Linking…" : "Link whole library"}
                       </button>
-                    ) : (
-                      <span className="text-[11px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">
-                        not linked to AI
-                      </span>
-                    ))}
+                    )}
                   </div>
                   {l.docs.length > 0 && (
                     <div className="space-y-1 mb-1">

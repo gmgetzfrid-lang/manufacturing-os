@@ -1,7 +1,7 @@
 'use client';
 
 // Segment boundary for everything behind the shell. A render crash in one
-// page (a bad graph frame, a viewer choking on a PDF) lands here — INSIDE
+// page (a bad graph frame, a viewer choking on a PDF) lands here, INSIDE
 // the layout — so the sidebar and navigation stay alive and the user can
 // walk away to any other page instead of losing the whole app.
 
@@ -30,7 +30,7 @@ export default function ProtectedError({
           <div className="min-w-0 flex-1">
             <h1 className="text-base font-black text-[var(--color-text)]">This page hit an error</h1>
             <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-              The rest of the app is fine - only this view crashed. Try again, or head back to your dashboard.
+              Only this view stopped. The rest of the app still works.
             </p>
             <div className="mt-4 flex flex-wrap gap-2">
               <button

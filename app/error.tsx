@@ -28,8 +28,7 @@ export default function GlobalError({
                 Something went wrong
               </h1>
               <p className="mt-2 text-sm text-[var(--color-text-muted)]">
-                An unexpected error occurred. You can try again, or reload the
-                page.
+                The app stopped on this screen. Try again, or reload the page.
               </p>
 
               <div className="mt-6 flex flex-wrap gap-3">

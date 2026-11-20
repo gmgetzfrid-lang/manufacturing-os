@@ -3,7 +3,7 @@
 // ServiceWorkerManager — registers the Field Mode service worker and surfaces
 // two ambient signals the field needs:
 //
-//   1. Offline status: a small amber pill when the network drops, so a plant
+//   1. Offline status: a small pill when the network drops, so a plant
 //      worker knows they're seeing cached data (not stale-because-broken).
 //   2. Update available: a quiet toast when a new app version is cached,
 //      letting them refresh on their own schedule rather than mid-task.
@@ -72,18 +72,18 @@ export default function ServiceWorkerManager() {
   return (
     <div className="fixed bottom-4 left-4 z-[200] flex flex-col gap-2 pointer-events-none">
       {offline && (
-        <div className="pointer-events-auto inline-flex items-center gap-2 rounded-full bg-amber-500 text-white text-xs font-bold px-3 py-1.5 shadow-lg">
+        <div role="status" className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] text-amber-800 dark:text-amber-300 text-xs font-bold px-3 py-1.5 shadow-md">
           <WifiOff className="w-3.5 h-3.5" />
-          Offline - showing cached data
+          Offline. Showing what was saved on this device.
         </div>
       )}
       {updateReady && (
         <button
           onClick={applyUpdate}
-          className="pointer-events-auto inline-flex items-center gap-2 rounded-full bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-white text-xs font-bold px-3 py-1.5 shadow-lg transition-colors"
+          className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-xs font-bold px-3 py-1.5 shadow-md transition-colors"
         >
           <RefreshCw className="w-3.5 h-3.5" />
-          Update available - tap to refresh
+          A new version is ready. Tap to reload.
         </button>
       )}
     </div>

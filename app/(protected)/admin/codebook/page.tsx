@@ -25,7 +25,10 @@ import { supabase } from "@/lib/supabase";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Field";
-import { Spinner } from "@/components/ui/Spinner";
+import LoadingBlock from "@/components/ui/LoadingBlock";
+import StepPath from "@/components/ui/StepPath";
+import FileThumb from "@/components/ui/FileThumb";
+import { useDraft } from "@/hooks/useDraft";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import {
   loadCodebook, upsertEntry, deleteEntry, saveConfig, applyImport, diffImport, parseDrawingNumber,
@@ -35,6 +38,8 @@ import CodebookLearn from "@/components/admin/CodebookLearn";
 import { useFileDrag } from "@/hooks/useFileDrag";
 
 const WRITER_ROLES = new Set(["Admin", "DocCtrl"]);
+
+const formatBytes = (n: number) => n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
 
 type Tab = "units" | "equipment" | "drawings" | "numbering" | "legend";
 
@@ -53,11 +58,15 @@ export default function CodebookPage() {
   const [tab, setTab] = useState<Tab>("units");
   const [importOpen, setImportOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
-    const next = await loadCodebook(activeOrgId);
-    setBook(next);
+    try {
+      const next = await loadCodebook(activeOrgId);
+      setBook(next);
+      setLoadError(null);
+    } catch (e) { setLoadError((e as Error).message || "Couldn't load the codebook."); }
   }, [activeOrgId]);
 
   useEffect(() => {
@@ -65,14 +74,39 @@ export default function CodebookPage() {
     return () => clearTimeout(t);
   }, [refresh]);
 
-  if (!book) return <div className="min-h-full flex items-center justify-center"><Spinner /></div>;
+  if (!book) {
+    return (
+      <PageShell width="work">
+        {loadError ? (
+          <p role="alert" className="border-l-2 border-red-500 pl-3 py-1 text-sm text-red-700 dark:text-red-400">
+            Couldn&apos;t load the Site Codebook: {loadError}{" "}
+            <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
+          </p>
+        ) : <LoadingBlock what="the Site Codebook" />}
+      </PageShell>
+    );
+  }
+
+  // Setup, in order. The page leads with the one step that's next.
+  const setup: Array<{ done: boolean; label: string; tab: Tab; say: React.ReactNode; optional?: boolean }> = [
+    { done: book.units.length > 0, label: "Units", tab: "units",
+      say: <>Add your <b>units</b> (20 = Crude, 25 = DHT…), or use “Build from a document”.</> },
+    { done: book.equipmentTypes.length > 0, label: "Equipment types", tab: "equipment",
+      say: <>Add <b>equipment type codes</b> with their tag prefixes (30 = Exchangers, prefix E, so E-22 becomes 2030.22).</> },
+    { done: !!book.drawingNumber, label: "Drawing numbers", tab: "numbering",
+      say: <>Describe your <b>drawing numbers</b> and check the preview with a real one, like 2002-D-10001 SHT.4.</> },
+    { done: book.legendDocIds.length > 0, label: "Legend", tab: "legend", optional: true,
+      say: <>Attach your P&amp;ID <b>legend</b> sheets (optional). The AI reads them on every question.</> },
+  ];
+  const nextStep = setup.find((x) => !x.done) ?? null;
+  const doneCount = setup.filter((x) => x.done).length;
 
   return (
     <PageShell width="work">
       <PageHeaderBar
         icon={BookMarked}
         title="Site Codebook"
-        subtitle="Your site's numbering language - units, equipment codes, drawing conventions - taught once, used by every feature. Everything is optional; empty means no opinion."
+        subtitle={`${book.units.length} unit${book.units.length === 1 ? "" : "s"} · ${book.equipmentTypes.length} equipment type${book.equipmentTypes.length === 1 ? "" : "s"} · ${book.drawingTypes.length} drawing type${book.drawingTypes.length === 1 ? "" : "s"}. Taught once, used everywhere.`}
         actions={canWrite ? (
           <Button variant="secondary" size="sm" onClick={() => setImportOpen(true)}>
             <Sparkles className="w-3.5 h-3.5" /> Build from a document
@@ -81,46 +115,56 @@ export default function CodebookPage() {
       />
 
       {!canWrite && (
-        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-          Read-only - only Admins and Document Controllers edit the codebook.
-        </div>
+        <p className="mb-3 text-xs text-[var(--color-text-muted)]">
+          Read only. Admins and Document Controllers edit the codebook.
+        </p>
       )}
 
       {/* What the site's own numbers already show, for a person to accept. */}
       <CodebookLearn orgId={activeOrgId!} uid={uid!} book={book} canWrite={canWrite} onChanged={refresh} onError={setError} />
 
-      {/* Getting started — the whole path in one place, with live progress.
-          This page is step 1-4; step 5 happens on the P&ID library. */}
+      {/* Getting started: the next step in one line; the whole path folds away.
+          This page is steps 1-4; step 5 happens on the P&ID library. */}
       {canWrite && (
         <div className="mb-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-          <div className="text-xs font-black text-[var(--color-text)] mb-2">Setup path - do these once, in order</div>
-          <ol className="space-y-1.5 text-xs">
-            <SetupStep done={book.units.length > 0} n={1}
-              label={<>Add your <b>units</b> (20 = Crude, 25 = DHT…) - type them in the Units tab, or hit “Build from a document” and let AI read your standard.</>}
-              onGo={() => setTab("units")} goLabel="Units tab" />
-            <SetupStep done={book.equipmentTypes.length > 0} n={2}
-              label={<>Add <b>equipment type codes</b> with their tag prefixes (30 = Exchangers, prefix E - that&apos;s how E-22 becomes 2030.22).</>}
-              onGo={() => setTab("equipment")} goLabel="Equipment tab" />
-            <SetupStep done={!!book.drawingNumber} n={3}
-              label={<>Describe your <b>drawing numbers</b> as segments and check the live preview with a real number like 2002-D-10001 SHT.4.</>}
-              onGo={() => setTab("numbering")} goLabel="Numbering tab" />
-            <SetupStep done={book.legendDocIds.length > 0} n={4} optional
-              label={<>Attach your P&amp;ID <b>legend</b> sheets (optional but recommended - the AI reads them on every question).</>}
-              onGo={() => setTab("legend")} goLabel="Legend tab" />
-            <li className="flex items-start gap-2 text-[var(--color-text-muted)]">
-              <span className="shrink-0 w-4 h-4 rounded-full border border-[var(--color-border-strong)] text-[11px] font-black flex items-center justify-center mt-0.5">5</span>
-              <span>Then open your P&amp;ID <b>document library</b> → the orange <b>Equipment</b> button → pick your equipment column → Sweep → Apply. From then on it runs on every newly indexed drawing.</span>
-            </li>
-          </ol>
-          <p className="text-[11px] text-[var(--color-text-faint)] mt-2">
-            The Equipment registry breaks into operating areas automatically once step 1 has units. Drafting request unit dropdowns fill from step 1 too.
-          </p>
+          <div className="flex items-start gap-3 flex-wrap">
+            <div className="flex-1 min-w-[14rem] text-xs text-[var(--color-text)]">
+              <div className="font-black mb-0.5">Setup: {doneCount} of {setup.length} done</div>
+              {nextStep ? (
+                <span>{nextStep.say}{nextStep.optional && <span className="text-[var(--color-text-faint)]"> (optional)</span>}</span>
+              ) : (
+                <span className="text-[var(--color-text-muted)]">
+                  Last step: open your P&amp;ID <b>document library</b>, then <b>Equipment</b>, pick your equipment column, Sweep, Apply. After that it runs on every newly indexed drawing.
+                </span>
+              )}
+            </div>
+            {nextStep && tab !== nextStep.tab && (
+              <button onClick={() => setTab(nextStep.tab)} className="shrink-0 text-[12px] font-bold text-[var(--color-accent)] hover:underline">
+                Go to {nextStep.label} →
+              </button>
+            )}
+          </div>
+          <details className="mt-2">
+            <summary className="cursor-pointer text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">All setup steps</summary>
+            <ol className="mt-2 space-y-1.5 text-xs">
+              {setup.map((x, i) => (
+                <SetupStep key={x.label} done={x.done} n={i + 1} label={x.say} optional={x.optional} />
+              ))}
+              <li className="flex items-start gap-2 text-[var(--color-text-muted)]">
+                <span className="shrink-0 w-4 h-4 rounded-full border border-[var(--color-border-strong)] text-[11px] font-black flex items-center justify-center mt-0.5">5</span>
+                <span>Then open your P&amp;ID <b>document library</b>, then <b>Equipment</b>, pick your equipment column, Sweep, Apply.</span>
+              </li>
+            </ol>
+            <p className="text-[11px] text-[var(--color-text-faint)] mt-2">
+              Once step 1 has units, Operating areas groups equipment by unit and drafting request unit lists fill in.
+            </p>
+          </details>
         </div>
       )}
       {error && (
-        <div className="mb-3 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800 flex items-center gap-2">
+        <p role="alert" className="mb-3 border-l-2 border-red-500 pl-3 text-xs text-red-700 dark:text-red-400 flex items-center gap-2">
           <AlertTriangle className="w-4 h-4 shrink-0" /> {error}
-        </div>
+        </p>
       )}
 
       <div className="inline-flex items-center gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-1 mb-4 flex-wrap">
@@ -136,17 +180,17 @@ export default function CodebookPage() {
 
       {tab === "units" && (
         <EntryTable kind="unit" title="Operating areas / units" entries={book.units} canWrite={canWrite}
-          codeHint='Unit number - "20"' labelHint='Name - "Crude Unit"'
+          codeHint="Unit number, e.g. 20" labelHint="Name, e.g. Crude Unit"
           orgId={activeOrgId!} uid={uid!} onChanged={refresh} onError={setError} />
       )}
       {tab === "equipment" && (
         <EntryTable kind="equipment_type" title="Equipment type codes" entries={book.equipmentTypes} canWrite={canWrite}
-          codeHint='Type code - "30"' labelHint='Label - "Exchangers"' withPrefixes
+          codeHint="Type code, e.g. 30" labelHint="Label, e.g. Exchangers" withPrefixes
           orgId={activeOrgId!} uid={uid!} onChanged={refresh} onError={setError} />
       )}
       {tab === "drawings" && (
         <EntryTable kind="drawing_type" title="Drawing / document type codes" entries={book.drawingTypes} canWrite={canWrite}
-          codeHint='Type code - "02"' labelHint='Label - "P&ID"'
+          codeHint="Type code, e.g. 02" labelHint="Label, e.g. P&ID"
           orgId={activeOrgId!} uid={uid!} onChanged={refresh} onError={setError} />
       )}
       {tab === "numbering" && (
@@ -165,8 +209,8 @@ export default function CodebookPage() {
   );
 }
 
-function SetupStep({ done, n, label, onGo, goLabel, optional }: {
-  done: boolean; n: number; label: React.ReactNode; onGo: () => void; goLabel: string; optional?: boolean;
+function SetupStep({ done, n, label, optional }: {
+  done: boolean; n: number; label: React.ReactNode; optional?: boolean;
 }) {
   return (
     <li className="flex items-start gap-2">
@@ -178,9 +222,6 @@ function SetupStep({ done, n, label, onGo, goLabel, optional }: {
       <span className={done ? "text-[var(--color-text-muted)] line-through decoration-emerald-500/40" : "text-[var(--color-text)]"}>
         {label}{optional && !done && <span className="text-[var(--color-text-faint)]"> (optional)</span>}
       </span>
-      {!done && (
-        <button onClick={onGo} className="ml-auto shrink-0 text-[11px] font-bold text-[var(--color-accent)] hover:underline">{goLabel} →</button>
-      )}
     </li>
   );
 }
@@ -212,7 +253,7 @@ function EntryTable({ kind, title, entries, canWrite, codeHint, labelHint, withP
 
   const remove = async (e: CodebookEntry) => {
     const ok = await appConfirm({
-      title: `Remove ${e.code} - ${e.label}?`,
+      title: `Remove ${e.code} (${e.label})?`,
       message: "Features stop recognizing this code. Nothing else is deleted.",
       confirmLabel: "Remove",
     });
@@ -241,7 +282,7 @@ function EntryTable({ kind, title, entries, canWrite, codeHint, labelHint, withP
             ))}
             {entries.length === 0 && (
               <tr><td colSpan={5} className="px-4 py-4 text-[var(--color-text-muted)] italic">
-                Nothing defined yet - add rows below, or use “Build from a document” to import your written standard.
+                Nothing here yet. Add rows below, or use “Build from a document”.
               </td></tr>
             )}
           </tbody>
@@ -252,7 +293,7 @@ function EntryTable({ kind, title, entries, canWrite, codeHint, labelHint, withP
           <Input value={draft.code} onChange={(e) => setDraft({ ...draft, code: e.target.value })} placeholder={codeHint} className="w-32 font-mono" />
           <Input value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} placeholder={labelHint} className="w-56" />
           {withPrefixes && (
-            <Input value={draft.prefixes} onChange={(e) => setDraft({ ...draft, prefixes: e.target.value })} placeholder='Prefixes - "E" or "EA, E"' className="w-40 font-mono" />
+            <Input value={draft.prefixes} onChange={(e) => setDraft({ ...draft, prefixes: e.target.value })} placeholder="Prefixes, e.g. E or EA, E" className="w-40 font-mono" />
           )}
           <Button size="sm" onClick={() => void add()} disabled={busy || !draft.code.trim() || !draft.label.trim()}>
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Add
@@ -305,11 +346,11 @@ function EntryRow({ entry, withPrefixes, canWrite, orgId, uid, onChanged, onErro
           <div className="flex items-center gap-1">
             {editing ? (
               <>
-                <button onClick={() => void save()} className="p-1 text-emerald-600 hover:bg-emerald-50 rounded" title="Save"><Check className="w-3.5 h-3.5" /></button>
-                <button onClick={() => { setEditing(false); setLabel(entry.label); setPrefixes((entry.meta.tagPrefixes ?? []).join(", ")); }} className="p-1 text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] rounded" title="Cancel"><X className="w-3.5 h-3.5" /></button>
+                <button onClick={() => void save()} className="p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 rounded" title="Save" aria-label="Save"><Check className="w-3.5 h-3.5" /></button>
+                <button onClick={() => { setEditing(false); setLabel(entry.label); setPrefixes((entry.meta.tagPrefixes ?? []).join(", ")); }} className="p-1 text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] rounded" title="Cancel" aria-label="Cancel"><X className="w-3.5 h-3.5" /></button>
               </>
             ) : (
-              <button onClick={onRemove} className="p-1 text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-50 rounded" title="Remove"><Trash2 className="w-3.5 h-3.5" /></button>
+              <button onClick={onRemove} className="p-1 text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-[var(--color-surface-2)] rounded" title="Remove" aria-label={`Remove ${entry.code}`}><Trash2 className="w-3.5 h-3.5" /></button>
             )}
           </div>
         </td>
@@ -360,10 +401,9 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
   return (
     <div className="space-y-4">
       <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-        <div className="text-xs font-black text-[var(--color-text)] mb-1">Drawing number segments - in order</div>
+        <div className="text-xs font-black text-[var(--color-text)] mb-1">Drawing number segments, in order</div>
         <p className="text-[11px] text-[var(--color-text-muted)] mb-3">
-          Describe your convention piece by piece; separators (dashes, dots, “SHT”) are handled automatically.
-          Example: Unit (2) → Drawing type (2) → Paper size (1) → Number → Sheet reads <span className="font-mono">2002-D-10001 SHT.4</span>.
+          Separators (dashes, dots, “SHT”) are handled for you. Unit (2), Drawing type (2), Paper size (1), Number, Sheet reads <span className="font-mono">2002-D-10001 SHT.4</span>.
         </p>
         <div className="space-y-1.5">
           {segments.map((seg, i) => (
@@ -371,7 +411,7 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
               <span className="text-[11px] font-black text-[var(--color-text-faint)] w-4">{i + 1}.</span>
               <select value={seg.kind} disabled={!canWrite}
                 onChange={(e) => setSegments(segments.map((s, j) => j === i ? { kind: e.target.value as DrawingSegment["kind"], digits: 2, letters: 1 } : s))}
-                className="h-8 px-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold">
+                className="h-8 px-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-xs font-bold">
                 {SEGMENT_KINDS.map((k) => <option key={k.kind} value={k.kind}>{k.label}</option>)}
               </select>
               {(seg.kind === "unit" || seg.kind === "drawing_type") && (
@@ -390,7 +430,7 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
               )}
               {canWrite && (
                 <button onClick={() => setSegments(segments.filter((_, j) => j !== i))}
-                  className="p-1 text-[var(--color-text-faint)] hover:text-rose-600 rounded" title="Remove segment">
+                  className="p-1 text-[var(--color-text-faint)] hover:text-rose-600 rounded" title="Remove segment" aria-label="Remove segment">
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
               )}
@@ -406,13 +446,13 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
       </div>
 
       <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-        <div className="text-xs font-black text-[var(--color-text)] mb-2">Live preview - paste one of your real drawing numbers</div>
+        <div className="text-xs font-black text-[var(--color-text)] mb-2">Preview: paste one of your real drawing numbers</div>
         <Input value={sample} onChange={(e) => setSample(e.target.value)} className="font-mono max-w-md" placeholder="2002-D-10001 SHT.4" />
         <div className="mt-2.5 flex flex-wrap gap-1.5 text-[11px]">
           {segments.length === 0 ? (
             <span className="text-[var(--color-text-muted)] italic">Add segments above to see the decode.</span>
           ) : !parsed ? (
-            <span className="inline-flex items-center gap-1 text-rose-700 font-bold"><AlertTriangle className="w-3.5 h-3.5" /> Doesn&apos;t match the segments - adjust the map or the sample.</span>
+            <span className="inline-flex items-center gap-1 text-rose-700 dark:text-rose-400 font-bold"><AlertTriangle className="w-3.5 h-3.5" /> Doesn&apos;t match the segments. Change the segments or the sample.</span>
           ) : (
             <>
               <PreviewChip label="Unit" value={parsed.unitCode} extra={parsed.unitLabel} />
@@ -450,7 +490,7 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
 
 function PreviewChip({ label, value, extra }: { label: string; value: string | null; extra?: string | null }) {
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border font-bold ${value ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"}`}>
+    <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border font-bold ${value ? "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300" : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"}`}>
       <span className="text-[11px] uppercase tracking-wider opacity-70">{label}</span>
       <span className="font-mono">{value ?? "-"}</span>
       {extra && <span className="opacity-80">· {extra}</span>}
@@ -504,7 +544,7 @@ function LegendTab({ book, canWrite, orgId, uid, onChanged, onError }: {
             <span className="text-xs font-bold text-[var(--color-text)] truncate flex-1">{names.get(id) ?? id}</span>
             {canWrite && (
               <button onClick={() => void setLegend(book.legendDocIds.filter((x) => x !== id))}
-                className="p-1 text-[var(--color-text-faint)] hover:text-rose-600 rounded" title="Detach">
+                className="p-1 text-[var(--color-text-faint)] hover:text-rose-600 rounded" title="Detach" aria-label="Detach legend">
                 <X className="w-3.5 h-3.5" />
               </button>
             )}
@@ -520,7 +560,7 @@ function LegendTab({ book, canWrite, orgId, uid, onChanged, onError }: {
               {results.map((r) => (
                 <button key={r.id} onClick={() => { setQuery(""); void setLegend([...book.legendDocIds, r.id]); }}
                   className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--color-surface-2)] flex items-center gap-2">
-                  <Plus className="w-3 h-3 text-emerald-600" /> {r.name}
+                  <Plus className="w-3 h-3 text-[var(--color-text-muted)]" /> {r.name}
                 </button>
               ))}
             </div>
@@ -540,7 +580,11 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
   const [docQuery, setDocQuery] = useState("");
   const [docResults, setDocResults] = useState<Array<{ id: string; name: string }>>([]);
   const [pickedDoc, setPickedDoc] = useState<{ id: string; name: string } | null>(null);
-  const [pickedFile, setPickedFile] = useState<{ name: string; base64: string } | null>(null);
+  const [pickedFile, setPickedFile] = useState<{ name: string; base64: string; file: File } | null>(null);
+  // What the AI read, said back once it's done ("Read 12 pages, found 40 codes").
+  const [readLine, setReadLine] = useState<string | null>(null);
+  // Pasted standards text is kept on this device until it's applied.
+  const pasteDraft = useDraft<string>(`codebook-import:${orgId}`, text, setText, (v) => !v.trim());
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState("");
@@ -553,7 +597,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
   const handleFile = async (file: File) => {
     setError(null);
     if (file.size > 3_000_000) {
-      setError(`"${file.name}" is over the 3 MB upload limit - index it in a knowledge library instead, then pick it from the search below.`);
+      setError(`"${file.name}" is over the 3 MB limit. Index it in a knowledge library, then pick it from the search below.`);
       return;
     }
     const buf = await file.arrayBuffer();
@@ -562,10 +606,16 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
     for (let i = 0; i < bytes.length; i += 0x8000) {
       binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
     }
-    setPickedFile({ name: file.name, base64: btoa(binary) });
+    setPickedFile({ name: file.name, base64: btoa(binary), file });
     setPickedDoc(null);
   };
-  const codeDrag = useFileDrag((fs) => { void handleFile(fs[0]); });
+  const codeDrag = useFileDrag((fs) => { void handleFile(fs[0]); }, running);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !running && !applying) onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [running, applying, onClose]);
 
   useEffect(() => {
     const q = docQuery.trim();
@@ -602,7 +652,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
   };
 
   const run = async () => {
-    setRunning(true); setError(null); setDiff(null); setProgress("");
+    setRunning(true); setError(null); setDiff(null); setProgress(""); setReadLine(null);
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const headers = { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` };
@@ -633,7 +683,8 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
           visionPages = Math.min(pageCount, MAX_VISION_PAGES);
         }
       }
-      if (!sourceText && visionPages === 0) throw new Error("Nothing to read - upload a file, paste text, or pick a document.");
+      if (!sourceText && visionPages === 0) throw new Error("Nothing to read. Upload a file, paste text, or pick a document.");
+      let partsRead = 0;
 
       // 2. Propose in bounded parts, sequentially, one retry each. A slow or
       //    flaky part degrades to a warning — never a wasted run.
@@ -659,17 +710,18 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
             const r = await post(payload).catch(() => post(payload)); // one retry
             allProposals.push(...(r.proposals ?? []));
             if (r.notes) allNotes.push(String(r.notes));
+            partsRead += pages.length;
           } catch {
             failedParts.push(label);
           }
         }
         if (pageCount > visionPages) {
-          allNotes.push(`Only the first ${visionPages} of ${pageCount} pages were read visually - split the PDF and re-run for the rest.`);
+          allNotes.push(`Only the first ${visionPages} of ${pageCount} pages were read visually. Split the PDF and run it again for the rest.`);
         }
       } else {
         const chunks = chunkText(sourceText);
         for (let i = 0; i < chunks.length; i++) {
-          setProgress(chunks.length > 1 ? `Extracting codes - part ${i + 1} of ${chunks.length}…` : "Extracting codes…");
+          setProgress(chunks.length > 1 ? `Finding codes: part ${i + 1} of ${chunks.length}…` : "Finding codes…");
           const payload = {
             orgId, text: chunks[i],
             partLabel: chunks.length > 1 ? `part ${i + 1} of ${chunks.length}` : undefined,
@@ -678,21 +730,29 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
             const r = await post(payload).catch(() => post(payload)); // one retry
             allProposals.push(...(r.proposals ?? []));
             if (r.notes) allNotes.push(String(r.notes));
+            partsRead += 1;
           } catch {
             failedParts.push(`part ${i + 1}`);
           }
         }
       }
       if (allProposals.length === 0 && failedParts.length > 0) {
-        throw new Error(`Every part failed (${failedParts.length}) - check your AI key in AI settings and try again.`);
+        throw new Error(`Every part failed (${failedParts.length}). Check your AI key in AI settings and try again.`);
       }
 
       const existing = [...book.units, ...book.equipmentTypes, ...book.drawingTypes];
       const d = diffImport(existing, allProposals);
       setDiff(d);
-      setNotes([...new Set(allNotes)].slice(0, 2).join(" - "));
+      setNotes([...new Set(allNotes)].slice(0, 2).join(" "));
+      const found = allProposals.length;
+      const what = visionPages > 0
+        ? `Read ${partsRead} page${partsRead === 1 ? "" : "s"}${pageCount > partsRead ? ` of ${pageCount}` : ""}`
+        : pageCount > 0
+          ? `Read ${pageCount} page${pageCount === 1 ? "" : "s"}`
+          : `Read ${sourceText.length.toLocaleString()} characters${partsRead > 1 ? ` in ${partsRead} parts` : ""}`;
+      setReadLine(`${what}, found ${found} code${found === 1 ? "" : "s"}.`);
       if (failedParts.length > 0) {
-        setError(`${failedParts.join(", ")} of the document couldn't be read - the proposal below may be incomplete. Apply what's here and re-run for the rest.`);
+        setError(`${failedParts.join(", ")} of the document couldn't be read, so the list below may be missing some. Apply what's here and run it again for the rest.`);
       }
       // Adds + changes start accepted; unchanged needs no action.
       setAccepted(new Set([...d.adds.map(keyOf), ...d.changes.map((c) => keyOf(c.proposed))]));
@@ -706,6 +766,8 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
     try {
       const rows = [...diff.adds, ...diff.changes.map((c) => c.proposed)].filter((p) => accepted.has(keyOf(p)));
       await applyImport(orgId, rows, uid);
+      pasteDraft.clear();
+      setText("");
       onApplied();
     } catch (e) { setError((e as Error).message); setApplying(false); }
   };
@@ -719,7 +781,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
   const KIND_LABEL: Record<string, string> = { unit: "Unit", equipment_type: "Equipment", drawing_type: "Drawing" };
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4 animate-in fade-in">
+    <div role="dialog" aria-modal="true" aria-label="Build the codebook from a document" className="fixed inset-0 z-[200] bg-slate-900/50 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4 animate-in fade-in">
       <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl flex flex-col max-h-[88vh] animate-in zoom-in-95">
         <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2.5">
           <Sparkles className="w-4 h-4 text-[var(--color-text-muted)]" />
@@ -727,10 +789,12 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
             <div className="text-sm font-black text-[var(--color-text)]">Build the codebook from a document</div>
             <div className="text-[11px] text-[var(--color-text-muted)]">Runs on your own AI key. Nothing is written until you review and apply.</div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4 text-[var(--color-text-muted)]" /></button>
+          <button onClick={onClose} disabled={running || applying} aria-label="Close" className="p-1.5 rounded hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4 text-[var(--color-text-muted)]" /></button>
         </div>
 
         <div className="p-5 space-y-3 overflow-y-auto">
+          <StepPath steps={["Pick the source", "Check what it found", "Apply"]} current={applying ? 2 : diff ? 1 : 0}
+            onPick={running || applying ? undefined : (i) => { if (i === 0) { setDiff(null); setError(null); setReadLine(null); } }} />
           {!diff && (
             <>
               <div>
@@ -739,9 +803,13 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
                   accept=".pdf,.docx,.txt,.md,.csv,.tsv,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                   onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); e.target.value = ""; }} />
                 {pickedFile ? (
-                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50 text-xs font-bold text-emerald-900">
-                    <FileText className="w-3.5 h-3.5" /> {pickedFile.name}
-                    <button onClick={() => setPickedFile(null)} className="ml-auto p-0.5 hover:text-rose-600"><X className="w-3.5 h-3.5" /></button>
+                  <div className="flex items-center gap-2.5 px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-xs">
+                    <FileThumb file={pickedFile.file} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block font-bold text-[var(--color-text)] truncate">{pickedFile.name}</span>
+                      <span className="block text-[11px] text-[var(--color-text-muted)]">{formatBytes(pickedFile.file.size)}</span>
+                    </span>
+                    <button onClick={() => setPickedFile(null)} disabled={running} aria-label={`Remove ${pickedFile.name}`} className="ml-auto p-0.5 text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3.5 h-3.5" /></button>
                   </div>
                 ) : (
                   <button
@@ -750,24 +818,25 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
                     className={`w-full border-2 border-dashed border-[var(--color-border-strong)] rounded-xl px-4 py-5 text-center hover:bg-[var(--color-surface-2)] transition-colors ${codeDrag.ring}`}
                   >
                     <div className="text-xs font-bold text-[var(--color-text)]">{codeDrag.over ? codeDrag.say : "Drop your standards document here, or click to pick"}</div>
-                    <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">PDF, Word (.docx), TXT, CSV, MD · up to 3 MB · CAD-exported and scanned PDFs are read visually, page by page</div>
+                    <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">PDF, Word (.docx), TXT, CSV, MD · up to 3 MB. Scanned and CAD PDFs are read page by page.</div>
                   </button>
                 )}
               </div>
               <div className="text-center text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">or</div>
               <div>
                 <div className="text-[11px] font-black text-[var(--color-text)] mb-1">Paste your standard</div>
+                {pasteDraft.restored && text.trim() && <p className="text-[11px] text-[var(--color-text-muted)] mb-1">Brought back what you pasted last time.</p>}
                 <textarea value={text} onChange={(e) => setText(e.target.value)} rows={7}
                   placeholder={"Paste the unit list / identifier tables / numbering convention…\n\ne.g.  20  Crude Unit\n      25  DHT\n      Equipment: 30 Exchangers (E-), 10 Vessels (V-) …"}
-                  className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 px-3 py-2 text-xs font-mono resize-y" />
+                  className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 text-[var(--color-text)] px-3 py-2 text-xs font-mono resize-y" />
               </div>
               <div className="text-center text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">or</div>
               <div>
                 <div className="text-[11px] font-black text-[var(--color-text)] mb-1">Pick an indexed document</div>
                 {pickedDoc ? (
-                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50 text-xs font-bold text-emerald-900">
-                    <FileText className="w-3.5 h-3.5" /> {pickedDoc.name}
-                    <button onClick={() => setPickedDoc(null)} className="ml-auto p-0.5 hover:text-rose-600"><X className="w-3.5 h-3.5" /></button>
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-xs font-bold text-[var(--color-text)]">
+                    <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {pickedDoc.name}
+                    <button onClick={() => setPickedDoc(null)} disabled={running} aria-label={`Remove ${pickedDoc.name}`} className="ml-auto p-0.5 text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3.5 h-3.5" /></button>
                   </div>
                 ) : (
                   <>
@@ -787,15 +856,16 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
           )}
 
           {error && (
-            <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800 flex items-start gap-2">
+            <p role="alert" className="border-l-2 border-red-500 pl-3 text-xs text-red-700 dark:text-red-400 flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {error}
-            </div>
+            </p>
           )}
 
           {diff && (
             <>
+              {readLine && <div className="text-xs font-bold text-[var(--color-text)]">{readLine}</div>}
               <div className="text-xs text-[var(--color-text-muted)]">
-                <b className="text-[var(--color-text)]">{diff.adds.length}</b> new · <b className="text-[var(--color-text)]">{diff.changes.length}</b> changed · {diff.unchanged.length} already match - check what to apply.
+                <b className="text-[var(--color-text)]">{diff.adds.length}</b> new · <b className="text-[var(--color-text)]">{diff.changes.length}</b> changed · {diff.unchanged.length} already match. Tick what to apply.
               </div>
               {notes && (
                 <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 text-[11px] text-[var(--color-text)]">
@@ -821,12 +891,12 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
                       <span className="font-mono font-black text-[var(--color-text)] w-14">{p.code}</span>
                       <span className="font-bold text-[var(--color-text)] flex-1">{p.label}</span>
                       {p.tagPrefixes && p.tagPrefixes.length > 0 && <span className="font-mono text-[var(--color-text-muted)]">{p.tagPrefixes.join(", ")}-</span>}
-                      {change && <span className="text-[11px] font-black uppercase text-amber-700 bg-amber-50 border border-amber-200 rounded px-1 py-0.5" title={`Currently: ${change.label}`}>replaces “{change.label}”</span>}
+                      {change && <span className="text-[11px] font-bold text-amber-700 dark:text-amber-400" title={`Currently: ${change.label}`}>replaces “{change.label}”</span>}
                     </label>
                   );
                 })}
                 {diff.adds.length === 0 && diff.changes.length === 0 && (
-                  <div className="px-3 py-4 text-xs text-[var(--color-text-muted)] italic">Nothing new - the codebook already matches this document.</div>
+                  <div className="px-3 py-4 text-xs text-[var(--color-text-muted)] italic">Nothing new. The codebook already matches this document.</div>
                 )}
               </div>
             </>
@@ -834,7 +904,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
         </div>
 
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
-          <button onClick={onClose} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
+          <button onClick={onClose} disabled={running || applying} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
           {!diff ? (
             <Button onClick={() => void run()} disabled={running || (!text.trim() && !pickedDoc && !pickedFile)}>
               {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}

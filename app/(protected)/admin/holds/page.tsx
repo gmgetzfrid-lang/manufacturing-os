@@ -28,6 +28,7 @@ import {
 import type { DocumentHold } from "@/types/schema";
 import { supabase } from "@/lib/supabase";
 import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
+import { useDraft } from "@/hooks/useDraft";
 
 const ADMIN_ROLES = new Set(["Admin", "Manager", "Supervisor", "DocCtrl"]);
 
@@ -49,6 +50,8 @@ export default function HoldsPage() {
   const [releasingId, setReleasingId] = useState<string | null>(null);
   const [releaseDraft, setReleaseDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  // The release note autosaves on this device while it's being written.
+  useDraft<string>(releasingId ? `hold-release:${releasingId}` : null, releaseDraft, setReleaseDraft, (v) => !v.trim());
 
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
@@ -84,8 +87,9 @@ export default function HoldsPage() {
   useEffect(() => { void refresh(); }, [refresh]);
 
   const onRelease = async (holdId: string) => {
-    if (!uid) return;
+    if (!uid) { setError("Your sign-in is still loading. Try again in a moment."); return; }
     setBusy(true);
+    setError(null);
     try {
       await releaseHold({
         holdId, releasedBy: uid,
@@ -97,7 +101,7 @@ export default function HoldsPage() {
       setReleasingId(null);
       setReleaseDraft("");
       await refresh();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(`Couldn't release the hold: ${(e as Error).message}`); }
     finally { setBusy(false); }
   };
 
@@ -112,23 +116,28 @@ export default function HoldsPage() {
       <PageHeaderBar
         icon={AlertOctagon}
         title="Hold Queue"
-        subtitle="Documents currently blocked. Oldest first. Click a row to open the document; release from there or here."
+        subtitle="Blocked documents, oldest first."
       />
 
       {error && (
-        <div className="flex items-center gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-          <AlertTriangle className="w-3.5 h-3.5" /> {error}
-        </div>
+        <p role="alert" className="flex items-center gap-2 text-xs text-red-700 dark:text-red-400 border-l-2 border-red-500 pl-3">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> {error}
+          {!busy && <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>}
+        </p>
       )}
 
-      {/* KPI strip */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <Kpi label="Active" value={metrics?.activeCount ?? 0} tone="amber" icon={<Lock className="w-3.5 h-3.5" />} />
-        <Kpi label="Longest open" value={`${metrics?.longestActiveDays ?? 0}d`} tone="red" icon={<Clock className="w-3.5 h-3.5" />} />
-        <Kpi label="Avg closed (90d)" value={`${metrics?.avgClosedDurationDays ?? 0}d`} tone="slate" icon={<TrendingUp className="w-3.5 h-3.5" />} />
-        <Kpi label="Opened (7d)" value={metrics?.openedLast7Days ?? 0} tone="amber" />
-        <Kpi label="Released (7d)" value={metrics?.releasedLast7Days ?? 0} tone="emerald" />
-      </div>
+      {/* What matters, in one line. */}
+      {metrics && (
+        <p className="text-sm text-[var(--color-text-muted)] flex items-center gap-x-2 gap-y-1 flex-wrap">
+          <span className="inline-flex items-center gap-1"><Lock className="w-3.5 h-3.5" /><b className={metrics.activeCount > 0 ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text)]"}>{metrics.activeCount}</b> on hold</span>
+          <span>·</span>
+          <span className="inline-flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> longest <b className={metrics.longestActiveDays > 14 ? "text-red-700 dark:text-red-400" : "text-[var(--color-text)]"}>{metrics.longestActiveDays}d</b></span>
+          <span>·</span>
+          <span className="inline-flex items-center gap-1"><TrendingUp className="w-3.5 h-3.5" /> average closed in <b className="text-[var(--color-text)]">{metrics.avgClosedDurationDays}d</b> (90 days)</span>
+          <span>·</span>
+          <span>last 7 days: {metrics.openedLast7Days} opened, {metrics.releasedLast7Days} released</span>
+        </p>
+      )}
 
       {/* By reason */}
       {totalByReason.length > 0 && (
@@ -160,8 +169,7 @@ export default function HoldsPage() {
         <div className="text-sm text-[var(--color-text-muted)] py-12 text-center border border-dashed border-[var(--color-border-strong)] rounded-xl px-6 space-y-2">
           <div className="font-bold text-[var(--color-text)]">No active holds.</div>
           <div className="text-xs text-[var(--color-text-muted)] max-w-md mx-auto">
-            Holds appear here when a document is blocked - waiting on engineering signoff, vendor data, field verification, or client review.
-            Place a hold from the document inspector. Duration tracks automatically; metrics show the queue&apos;s bottlenecks at a glance.
+            A hold is placed from the document&apos;s side panel, for example while waiting on sign-off, vendor data or a field check.
           </div>
         </div>
       ) : (
@@ -173,25 +181,25 @@ export default function HoldsPage() {
               const expectedMs = h.expectedReleaseAt ? new Date(h.expectedReleaseAt as string).getTime() : null;
               const lateDays = expectedMs && Date.now() > expectedMs ? Math.round((Date.now() - expectedMs) / 86400_000) : 0;
               return (
-                <div key={h.id} className="px-4 py-3 hover:bg-slate-50/60 transition-colors flex items-start gap-3">
+                <div key={h.id} className="px-4 py-3 hover:bg-[var(--color-surface-2)] transition-colors flex items-start gap-3">
                   <div className="shrink-0 w-1 h-10 rounded-full bg-amber-500 mt-1" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       {meta ? (
-                        <Link href={`/documents/${meta.libraryId}`} className="text-sm font-bold text-[var(--color-text)] hover:text-[var(--color-accent-hover)] inline-flex items-center gap-1">
+                        <Link href={`/documents/${meta.libraryId}?doc=${h.documentId}`} className="text-sm font-bold text-[var(--color-text)] hover:text-[var(--color-accent-hover)] inline-flex items-center gap-1">
                           {meta.documentNumber && <span className="font-mono">{meta.documentNumber}</span>}
-                          {meta.title && <span className="text-[var(--color-text)]">- {meta.title}</span>}
+                          {meta.title && <span className="text-[var(--color-text)]">{meta.documentNumber ? "· " : ""}{meta.title}</span>}
                           <ChevronRight className="w-3 h-3" />
                         </Link>
                       ) : (
                         <span className="text-sm font-mono text-[var(--color-text-muted)]">(document)</span>
                       )}
-                      <span className="text-[11px] font-bold text-amber-800 bg-amber-100 border border-amber-200 px-1.5 py-0.5 rounded">{h.reason}</span>
+                      <span className="text-[11px] font-bold text-amber-800 bg-amber-100 border border-amber-200 dark:text-amber-300 dark:bg-amber-950/40 dark:border-amber-900 px-1.5 py-0.5 rounded">{h.reason}</span>
                     </div>
                     <div className="mt-1 text-[11px] text-[var(--color-text-muted)] flex items-center gap-2 flex-wrap">
                       <span className="inline-flex items-center gap-0.5">
                         <Clock className="w-3 h-3" /> {ageDays === 0 ? "today" : `${ageDays}d`}
-                        {lateDays > 0 && <span className="ml-1 font-bold text-red-700">(+{lateDays}d late)</span>}
+                        {lateDays > 0 && <span className="ml-1 font-bold text-red-700 dark:text-red-400">(+{lateDays}d late)</span>}
                       </span>
                       {h.openedByName && <span>opened by {h.openedByName}</span>}
                     </div>
@@ -201,14 +209,15 @@ export default function HoldsPage() {
                         <input
                           value={releaseDraft}
                           onChange={(e) => setReleaseDraft(e.target.value)}
-                          placeholder="Resolution (optional)"
-                          className="flex-1 text-[11px] border border-[var(--color-border-strong)] rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                          placeholder="How it was resolved (optional)"
+                          onKeyDown={(e) => { if (e.key === "Enter" && !busy) void onRelease(h.id!); }}
+                          className="flex-1 text-xs border border-[var(--color-border-strong)] rounded px-2 py-1 bg-[var(--color-surface)] text-[var(--color-text)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-ring)]"
                           autoFocus
                         />
-                        <button onClick={() => onRelease(h.id!)} disabled={busy} className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40 transition-colors">
+                        <button onClick={() => onRelease(h.id!)} disabled={busy} className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] disabled:opacity-40 transition-colors">
                           <Check className="w-3 h-3" /> Release
                         </button>
-                        <button onClick={() => { setReleasingId(null); setReleaseDraft(""); }} disabled={busy} className="p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors">
+                        <button onClick={() => { setReleasingId(null); setReleaseDraft(""); }} disabled={busy} aria-label="Cancel release" className="p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors">
                           <X className="w-3 h-3" />
                         </button>
                       </div>
@@ -217,7 +226,7 @@ export default function HoldsPage() {
                   {canRelease && releasingId !== h.id && (
                     <button
                       onClick={() => { setReleasingId(h.id!); setReleaseDraft(""); }}
-                      className="shrink-0 text-[11px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-1 rounded inline-flex items-center gap-1 transition-colors"
+                      className="shrink-0 text-[11px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] px-2 py-1 rounded inline-flex items-center gap-1 transition-colors"
                     >
                       <Check className="w-3 h-3" /> Release
                     </button>
@@ -232,16 +241,3 @@ export default function HoldsPage() {
   );
 }
 
-function Kpi({ label, value, tone, icon }: { label: string; value: string | number; tone: "amber" | "red" | "slate" | "emerald"; icon?: React.ReactNode }) {
-  const toneClass =
-    tone === "amber" ? "border-amber-200 bg-amber-50 text-amber-900"
-    : tone === "red" ? "border-red-200 bg-red-50 text-red-900"
-    : tone === "emerald" ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-    : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]";
-  return (
-    <div className={`border ${toneClass} rounded-xl px-3 py-2`}>
-      <div className="text-[11px] font-bold uppercase tracking-widest opacity-70 flex items-center gap-1">{icon}{label}</div>
-      <div className="text-xl font-black mt-0.5">{value}</div>
-    </div>
-  );
-}

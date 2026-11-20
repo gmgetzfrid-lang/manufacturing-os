@@ -10,6 +10,11 @@ import {
   X, KeyRound, Loader2, AlertTriangle, CheckCircle2, Upload, ChevronRight, ArrowLeft,
 } from "lucide-react";
 import { createAsset, listAssetTypes, type AssetType } from "@/lib/assets";
+import StepPath from "@/components/ui/StepPath";
+import { useDraft } from "@/hooks/useDraft";
+
+const STEPS = ["Paste", "Match columns", "Check", "Done"];
+const STEP_INDEX: Record<"paste" | "map" | "preview" | "done", number> = { paste: 0, map: 1, preview: 2, done: 3 };
 
 interface Props {
   isOpen: boolean;
@@ -64,11 +69,22 @@ export default function AssetCsvImportModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ImportResult | null>(null);
+  const [typesFailed, setTypesFailed] = useState(false);
+  const [progress, setProgress] = useState(0);
+  // The pasted list is kept on this device until it's imported.
+  const draft = useDraft<string>(isOpen && orgId ? `asset-csv:${orgId}` : null, raw, setRaw, (v) => !v.trim());
 
   useEffect(() => {
     if (!isOpen || !orgId) return;
-    void listAssetTypes(orgId).then(setTypes).catch(() => { /* ignore */ });
+    void listAssetTypes(orgId).then((t) => { setTypes(t); setTypesFailed(false); }).catch(() => setTypesFailed(true));
   }, [isOpen, orgId]);
+
+  useEffect(() => {
+    if (!isOpen || busy) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isOpen, busy, onClose]);
 
   const typeByName = useMemo(() => {
     const m = new Map<string, string>();
@@ -107,7 +123,7 @@ export default function AssetCsvImportModal({
   };
 
   const commit = async () => {
-    setBusy(true); setError(null);
+    setBusy(true); setError(null); setProgress(0);
     const failed: Array<{ row: number; reason: string }> = [];
     let ok = 0;
     const headerIndex: Record<string, number> = {};
@@ -135,43 +151,55 @@ export default function AssetCsvImportModal({
       } catch (e) {
         failed.push({ row: rIdx + 2, reason: (e as Error).message });
       }
+      setProgress(rIdx + 1);
     }
     setResult({ ok, failed });
     setStep("done");
     setBusy(false);
-    if (ok > 0) onImported?.(ok);
+    if (ok > 0) {
+      // Imported: the pasted list has done its job.
+      if (failed.length === 0) { draft.clear(); setRaw(""); }
+      onImported?.(ok);
+    }
   };
 
   return (
-    <div className="fixed inset-0 z-[400] bg-slate-900/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4">
+    <div role="dialog" aria-modal="true" aria-label="Import equipment from CSV" className="fixed inset-0 z-[400] bg-slate-900/50 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="p-2 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)]"><KeyRound className="w-5 h-5" /></div>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-black text-[var(--color-text)]">Import assets from CSV</div>
-            <div className="text-xs text-[var(--color-text-muted)]">Bulk-create equipment tags with type, description, and location.</div>
+            <div className="text-xs text-[var(--color-text-muted)]">Add many tags at once, with type, description and location.</div>
           </div>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
+          <button onClick={onClose} disabled={busy} aria-label="Close" className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
             <X className="w-4 h-4" />
           </button>
         </div>
 
         <div className="px-5 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
+          <StepPath steps={STEPS} current={STEP_INDEX[step]} onPick={busy || step === "done" ? undefined : (i) => setStep(i === 0 ? "paste" : i === 1 ? "map" : "preview")} />
           {error && (
-            <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-xs text-red-800 flex items-start gap-2">
+            <p role="alert" className="border-l-2 border-red-500 pl-3 text-xs text-red-700 dark:text-red-400 flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
-            </div>
+            </p>
+          )}
+          {typesFailed && step !== "done" && (
+            <p className="border-l-2 border-amber-500 pl-3 text-xs text-amber-800 dark:text-amber-300">
+              Couldn&apos;t load the equipment types, so the type column will be left blank.
+            </p>
           )}
 
           {step === "paste" && (
             <div className="space-y-2">
               <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Paste CSV</label>
+              {draft.restored && raw.trim() && <p className="text-[11px] text-[var(--color-text-muted)]">Brought back what you pasted last time.</p>}
               <textarea
                 value={raw}
                 onChange={(e) => setRaw(e.target.value)}
                 placeholder={`tag,type,description,location\nP-101,Pump,Crude charge pump,Unit 100\nV-201,Vessel,Reflux drum,Unit 200`}
                 rows={10}
-                className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-mono"
+                className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-xs font-mono"
               />
               <div className="text-[11px] text-[var(--color-text-muted)]">First row = headers. The <code>type</code> column matches an existing asset-type by name (case-insensitive); unmatched types are left blank.</div>
             </div>
@@ -188,9 +216,9 @@ export default function AssetCsvImportModal({
                     <select
                       value={mapping[f.key] ?? ""}
                       onChange={(e) => setMapping({ ...mapping, [f.key]: e.target.value })}
-                      className="flex-1 px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-surface)] text-xs"
+                      className="flex-1 px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-xs"
                     >
-                      <option value="">- skip -</option>
+                      <option value="">Skip</option>
                       {headers.map((h, i) => <option key={i} value={h}>{h}</option>)}
                     </select>
                   </div>
@@ -231,13 +259,13 @@ export default function AssetCsvImportModal({
 
           {step === "done" && result && (
             <div className="space-y-2">
-              <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3 text-xs text-emerald-800 flex items-start gap-2">
+              <p className="text-sm text-emerald-700 dark:text-emerald-400 flex items-start gap-2">
                 <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />
-                Created <b>{result.ok}</b> asset{result.ok === 1 ? "" : "s"}.
-              </div>
+                <span>Added <b>{result.ok}</b> piece{result.ok === 1 ? "" : "s"} of equipment.</span>
+              </p>
               {result.failed.length > 0 && (
-                <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-xs text-red-800">
-                  <div className="font-bold flex items-center gap-1.5 mb-1"><AlertTriangle className="w-4 h-4" /> {result.failed.length} failed</div>
+                <div className="border-l-2 border-red-500 pl-3 text-xs text-red-700 dark:text-red-400">
+                  <div className="font-bold flex items-center gap-1.5 mb-1"><AlertTriangle className="w-4 h-4" /> {result.failed.length} not added. Fix these rows and paste them again.</div>
                   <ul className="ml-5 list-disc space-y-0.5">
                     {result.failed.slice(0, 8).map((f, i) => (
                       <li key={i}>Row {f.row}: {f.reason}</li>
@@ -252,28 +280,28 @@ export default function AssetCsvImportModal({
 
         <div className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between gap-2">
           {step !== "paste" && step !== "done" && (
-            <button onClick={() => setStep(step === "preview" ? "map" : "paste")} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
+            <button onClick={() => setStep(step === "preview" ? "map" : "paste")} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
               <ArrowLeft className="w-3.5 h-3.5" /> Back
             </button>
           )}
           <div className="ml-auto flex items-center gap-2">
-            <button onClick={onClose} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
+            <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
               {step === "done" ? "Close" : "Cancel"}
             </button>
             {step === "paste" && (
-              <button onClick={parseCsv} disabled={!raw.trim()} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold disabled:opacity-50">
+              <button onClick={parseCsv} disabled={!raw.trim()} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-xs font-bold disabled:opacity-50">
                 Continue <ChevronRight className="w-3.5 h-3.5" />
               </button>
             )}
             {step === "map" && (
-              <button onClick={goPreview} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold">
+              <button onClick={goPreview} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-xs font-bold">
                 Preview <ChevronRight className="w-3.5 h-3.5" />
               </button>
             )}
             {step === "preview" && (
               <button onClick={commit} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-xs font-bold disabled:opacity-50">
                 {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
-                {busy ? "Importing…" : `Create ${rows.length} asset${rows.length === 1 ? "" : "s"}`}
+                {busy ? `Adding ${progress} of ${rows.length}…` : `Add ${rows.length} item${rows.length === 1 ? "" : "s"}`}
               </button>
             )}
           </div>

@@ -79,14 +79,14 @@ function SubscriptionBlocked({
   return (
     <div className="min-h-full w-full flex items-center justify-center p-6 bg-[var(--color-canvas)]">
       <div className="w-full max-w-md bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-xl p-8 text-center">
-        <div className="w-14 h-14 rounded-2xl bg-amber-50 border border-amber-200 mx-auto flex items-center justify-center mb-4">
+        <div className="w-14 h-14 rounded-2xl bg-amber-50 border border-amber-200 dark:bg-amber-950/40 dark:border-amber-900 mx-auto flex items-center justify-center mb-4">
           <Lock className="w-7 h-7 text-amber-600" />
         </div>
         <h1 className="text-xl font-black text-[var(--color-text)]">Subscription required</h1>
         <p className="text-sm text-[var(--color-text-muted)] mt-2">{reason}</p>
         <p className="text-sm text-[var(--color-text-muted)] mt-1">
           {admin
-            ? "Renew to restore access. Your documents, audit trail, and history are safe and unchanged."
+            ? "Renew to get access back. Your documents, audit trail and history are safe and unchanged."
             : "Your documents and audit trail are safe. Ask a workspace admin to renew access."}
         </p>
 

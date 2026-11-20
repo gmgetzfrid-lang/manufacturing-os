@@ -18,7 +18,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
-import { Spinner } from "@/components/ui/Spinner";
+import LoadingBlock from "@/components/ui/LoadingBlock";
 
 interface Prefs {
   email_enabled: boolean;
@@ -47,17 +47,20 @@ export default function NotificationSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
 
   useEffect(() => {
     if (!uid) return;
     (async () => {
       setLoading(true);
       try {
-        const { data } = await supabase
+        const { data, error: readErr } = await supabase
           .from("notification_preferences")
           .select("*")
           .eq("user_id", uid)
           .maybeSingle();
+        if (readErr) throw readErr;
+        setLoadFailed(false);
         if (data) {
           setPrefs({
             email_enabled: data.email_enabled ?? true,
@@ -70,7 +73,10 @@ export default function NotificationSettingsPage() {
           });
         }
       } catch (e) {
-        setError((e as Error).message);
+        // Don't show the defaults as if they were saved: saving them would
+        // overwrite the real choices.
+        setLoadFailed(true);
+        setError(`Couldn't load your notification settings: ${(e as Error).message}`);
       } finally {
         setLoading(false);
       }
@@ -95,31 +101,29 @@ export default function NotificationSettingsPage() {
   };
 
   if (loading) {
-    return (
-      <div className="min-h-full flex items-center justify-center">
-        <Spinner />
-      </div>
-    );
+    return <PageShell width="form"><LoadingBlock what="your notification settings" /></PageShell>;
   }
 
   return (
     <PageShell width="form">
         <div className="flex items-start gap-3">
-          <Link href="/dashboard" className="p-2 mt-1 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] transition-colors">
+          <Link href="/dashboard" aria-label="Back to Home" className="p-2 mt-1 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] transition-colors">
             <ArrowLeft className="w-5 h-5" />
           </Link>
           <PageHeaderBar
             className="flex-1 min-w-0"
             icon={Bell}
             title="Notifications"
-            subtitle="Control which events email you. In-app bell notifications are always on."
+            subtitle={prefs.email_enabled
+              ? `Email is on for ${[prefs.email_on_mention, prefs.email_on_assignment, prefs.email_on_status_change, prefs.email_on_watched_activity, prefs.email_on_sla_warning].filter(Boolean).length} of 5 kinds of event. The bell in the app always shows everything.`
+              : "Email is off. The bell in the app always shows everything."}
           />
         </div>
 
         {error && (
-          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800 flex items-start gap-2">
+          <p role="alert" className="mb-4 border-l-2 border-red-500 pl-3 text-xs text-red-700 dark:text-red-400 flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
-          </div>
+          </p>
         )}
 
         {/* Master switch */}
@@ -128,9 +132,9 @@ export default function NotificationSettingsPage() {
             <Mail className="w-5 h-5 text-[var(--color-text-muted)] shrink-0 mt-0.5" />
             <div className="flex-1">
               <div className="text-sm font-black text-[var(--color-text)]">Email notifications</div>
-              <div className="text-xs text-[var(--color-text-muted)] mt-0.5">Master switch. Off here means no email regardless of the per-event toggles below.</div>
+              <div className="text-xs text-[var(--color-text-muted)] mt-0.5">Off means no email at all, whatever is set below.</div>
             </div>
-            <Toggle on={prefs.email_enabled} onChange={(v) => setPrefs({ ...prefs, email_enabled: v })} />
+            <Toggle label="Email notifications" on={prefs.email_enabled} onChange={(v) => setPrefs({ ...prefs, email_enabled: v })} />
           </div>
         </div>
 
@@ -146,12 +150,13 @@ export default function NotificationSettingsPage() {
         {/* Digest cadence */}
         <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mt-4">
           <div className="text-sm font-black text-[var(--color-text)] mb-1">Delivery cadence</div>
-          <div className="text-xs text-[var(--color-text-muted)] mb-3">Currently the backend honors immediate vs. never. Hourly/daily digests are wired into the schema and will batch when implemented.</div>
+          <div className="text-xs text-[var(--color-text-muted)] mb-3">Only Immediate and Never work today. Hourly and daily batching isn&apos;t built yet.</div>
           <div className="flex flex-wrap gap-2">
             {(["immediate", "hourly", "daily", "never"] as const).map((opt) => (
               <button
                 key={opt}
                 onClick={() => setPrefs({ ...prefs, digest_frequency: opt })}
+                aria-pressed={prefs.digest_frequency === opt}
                 className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${prefs.digest_frequency === opt ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}
               >
                 {opt[0].toUpperCase() + opt.slice(1)}
@@ -161,8 +166,8 @@ export default function NotificationSettingsPage() {
         </div>
 
         <div className="mt-6 flex items-center justify-end gap-3">
-          {saved && <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700"><Check className="w-3.5 h-3.5" /> Saved</span>}
-          <Button onClick={save} loading={saving}>
+          {saved && <span role="status" className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 dark:text-emerald-400"><Check className="w-3.5 h-3.5" /> Saved</span>}
+          <Button onClick={save} loading={saving} disabled={loadFailed} title={loadFailed ? "Reload the page to load your settings first" : undefined}>
             {!saving && <Save className="w-4 h-4" />}
             Save preferences
           </Button>
@@ -186,16 +191,20 @@ function PrefRow({ icon: Icon, title, hint, on, onChange }: PrefRowProps) {
         <div className="text-sm font-bold text-[var(--color-text)]">{title}</div>
         <div className="text-xs text-[var(--color-text-muted)] mt-0.5">{hint}</div>
       </div>
-      <Toggle on={on} onChange={onChange} />
+      <Toggle label={title} on={on} onChange={onChange} />
     </div>
   );
 }
 
-function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+function Toggle({ on, onChange, label }: { on: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
     <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
       onClick={() => onChange(!on)}
-      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)] focus-visible:ring-offset-2 ${on ? "bg-emerald-500" : "bg-slate-300"}`}
+      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)] focus-visible:ring-offset-2 ${on ? "bg-[var(--color-text)]" : "bg-[var(--color-border-strong)]"}`}
     >
       <span className={`inline-block h-5 w-5 transform rounded-full bg-[var(--color-surface)] shadow transition-transform ${on ? "translate-x-5" : "translate-x-1"}`} />
     </button>

@@ -18,7 +18,8 @@ import {
 import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
 import { Button } from '@/components/ui/Button';
 import { Input, Select } from '@/components/ui/Field';
-import { Spinner } from '@/components/ui/Spinner';
+import LoadingBlock from '@/components/ui/LoadingBlock';
+import { Modal, ModalHeader, ModalBody } from '@/components/ui/Modal';
 import UserAvatar from '@/components/ui/UserAvatar';
 import { appAlert, appConfirm } from '@/components/providers/DialogProvider';
 
@@ -35,6 +36,12 @@ interface MemberRow {
 
 // The member's role collection, tolerating pre-migration rows that only have
 // the single `role`.
+// The role last picked when adding someone comes back as the default.
+const LAST_ROLE_KEY = 'admin:add-member-role';
+const lastRole = (): string => {
+  try { return localStorage.getItem(LAST_ROLE_KEY) || 'Viewer'; } catch { return 'Viewer'; }
+};
+
 const rolesOf = (m: MemberRow): Role[] =>
   (m.roles && m.roles.length > 0 ? m.roles : [m.role]) as Role[];
 
@@ -69,6 +76,7 @@ export default function AdminUsersPage() {
 
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [orgName, setOrgName] = useState<string>('');
   const [savingRoleId, setSavingRoleId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
@@ -101,14 +109,17 @@ export default function AdminUsersPage() {
     if (!activeOrgId) return;
     setLoading(true);
     try {
-      const { data } = await supabase
+      const { data, error: e } = await supabase
         .from('org_members')
         .select('*')
         .eq('org_id', activeOrgId)
         .order('created_at', { ascending: false });
+      if (e) throw e;
       setMembers(data || []);
+      setLoadError(null);
     } catch (e) {
       console.error("Fetch members error:", e);
+      setLoadError(e instanceof Error ? e.message : "Couldn't load members.");
     } finally {
       setLoading(false);
     }
@@ -216,7 +227,8 @@ export default function AdminUsersPage() {
       const body = await res.json();
       if (!res.ok) throw new Error(body.error || 'Failed to create user');
 
-      setFormData({ firstName: '', lastName: '', email: '', password: '', role: 'Viewer' });
+      try { localStorage.setItem(LAST_ROLE_KEY, formData.role); } catch { /* private mode */ }
+      setFormData({ firstName: '', lastName: '', email: '', password: '', role: formData.role });
       setIsModalOpen(false);
       fetchMembers();
 
@@ -229,7 +241,7 @@ export default function AdminUsersPage() {
   };
 
   if (!['Admin', 'Manager'].includes(activeRole)) {
-    return <div className="p-8 text-red-600">Access Denied. Admins Only.</div>;
+    return <div className="p-8 text-sm text-[var(--color-text-muted)]">Only Admins and Managers manage members.</div>;
   }
 
   return (
@@ -242,11 +254,11 @@ export default function AdminUsersPage() {
         subtitle={
           <span className="inline-flex items-center gap-2 font-medium">
             <Building2 className="w-4 h-4" />
-            <span>Organization: <span className="text-[var(--color-text)] font-bold">{orgName || 'Loading...'}</span></span>
+            <span>Organization: <span className="text-[var(--color-text)] font-bold">{orgName || 'Loading…'}</span>{!loading && !loadError && <> · {members.length} member{members.length === 1 ? '' : 's'}</>}</span>
           </span>
         }
         actions={
-          <Button onClick={() => setIsModalOpen(true)}>
+          <Button onClick={() => { setFormData((f) => ({ ...f, role: lastRole() })); setError(null); setIsModalOpen(true); }}>
             <UserPlus className="w-4 h-4" />
             Add Team Member
           </Button>
@@ -255,12 +267,17 @@ export default function AdminUsersPage() {
 
       {/* Main Content */}
         <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-hidden">
-          {loading ? (
-            <div className="p-12 text-center text-[var(--color-text-muted)]"><Spinner className="mx-auto" /></div>
+          {loading && members.length === 0 ? (
+            <LoadingBlock what="members" className="border-0 rounded-none" />
+          ) : loadError ? (
+            <p role="alert" className="m-4 border-l-2 border-red-500 pl-3 text-sm text-red-700 dark:text-red-400">
+              Couldn&apos;t load members: {loadError}{" "}
+              <button type="button" onClick={() => void fetchMembers()} className="font-bold underline">Try again</button>
+            </p>
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-[var(--color-border)]">
-                <thead className="bg-slate-50/50">
+                <thead className="bg-[var(--color-surface-2)]">
                   <tr>
                     <th className="px-6 py-4 text-left text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider">User</th>
                     <th className="px-6 py-4 text-left text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider">Role</th>
@@ -295,7 +312,7 @@ export default function AdminUsersPage() {
                                   <span
                                     key={r}
                                     title={r === headline ? 'Primary role (highest access)' : undefined}
-                                    className={`inline-flex items-center gap-1 pl-2.5 ${canRemove ? 'pr-1' : 'pr-2.5'} py-0.5 rounded-full text-[11px] font-bold border ${r === headline ? 'bg-slate-900 text-white border-slate-900' : 'bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]'}`}
+                                    className={`inline-flex items-center gap-1 pl-2.5 ${canRemove ? 'pr-1' : 'pr-2.5'} py-0.5 rounded-full text-[11px] font-bold border ${r === headline ? 'bg-[var(--color-text)] text-[var(--color-surface)] border-transparent' : 'bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]'}`}
                                   >
                                     {r}
                                     {canRemove && (
@@ -303,7 +320,8 @@ export default function AdminUsersPage() {
                                         type="button"
                                         onClick={() => removeRole(m, r)}
                                         title={`Remove ${r}`}
-                                        className="rounded-full p-0.5 hover:bg-white/20"
+                                        aria-label={`Remove ${r}`}
+                                        className="rounded-full p-0.5 hover:bg-[var(--color-border)]"
                                       >
                                         <X className="w-3 h-3" />
                                       </button>
@@ -320,7 +338,7 @@ export default function AdminUsersPage() {
                         })()}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`px-2 py-1 inline-flex text-xs leading-5 font-bold rounded-full ${m.status === 'active' ? 'text-emerald-700 bg-emerald-50' : 'text-[var(--color-text-muted)] bg-[var(--color-surface-2)]'}`}>
+                        <span className={`px-2 py-1 inline-flex text-xs leading-5 font-bold rounded-full ${m.status === 'active' ? 'text-[var(--color-text)] bg-[var(--color-surface-2)]' : 'text-[var(--color-text-muted)] bg-[var(--color-surface-2)]'}`}>
                           {m.status}
                         </span>
                       </td>
@@ -332,6 +350,7 @@ export default function AdminUsersPage() {
                           onClick={() => handleRemoveMember(m)}
                           disabled={removingId === m.id || (!!uid && m.uid === uid)}
                           title={!!uid && m.uid === uid ? "You can't remove yourself" : 'Remove from workspace'}
+                          aria-label={`Remove ${m.display_name || m.email} from workspace`}
                           className="text-[var(--color-text-faint)] hover:text-red-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                           {removingId === m.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
@@ -350,22 +369,15 @@ export default function AdminUsersPage() {
 
       {/* Add User Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95">
-            <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex justify-between items-center">
-              <h3 className="text-lg font-bold text-[var(--color-text)]">Add Team Member</h3>
-              <button onClick={() => setIsModalOpen(false)} className="text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] transition-colors">
-                <span className="sr-only">Close</span>
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateMember} className="p-6 space-y-4">
+        <Modal onClose={() => { if (!processing) setIsModalOpen(false); }} size="sm" dismissable={!processing}>
+          <ModalHeader icon={UserPlus} title="Add Team Member" onClose={processing ? undefined : () => setIsModalOpen(false)} />
+          <ModalBody>
+            <form onSubmit={handleCreateMember} className="space-y-4">
               {error && (
-                <div className="p-3 rounded-lg bg-red-50 text-red-600 text-sm font-medium flex items-center">
-                  <AlertCircle className="w-4 h-4 mr-2" />
+                <p role="alert" className="border-l-2 border-red-500 pl-3 text-red-700 dark:text-red-400 text-sm font-medium flex items-center">
+                  <AlertCircle className="w-4 h-4 mr-2 shrink-0" />
                   {error}
-                </div>
+                </p>
               )}
 
               <div className="grid grid-cols-2 gap-4">
@@ -423,12 +435,12 @@ export default function AdminUsersPage() {
                   Create Account
                 </Button>
                 <p className="text-xs text-center text-[var(--color-text-faint)] mt-3">
-                  User will be able to log in immediately with these credentials.
+                  They can sign in right away with these details.
                 </p>
               </div>
             </form>
-          </div>
-        </div>
+          </ModalBody>
+        </Modal>
       )}
     </PageShell>
   );

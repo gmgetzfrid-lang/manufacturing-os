@@ -48,11 +48,11 @@ export default function FileTagChip({ tag, type = "Linked drawings", orgId, user
         <span className={hasFiles ? "text-[var(--color-text-muted)] mr-1" : "text-[var(--color-text-faint)] mr-1"}><FileText className="w-3 h-3" /></span>
         <span>{tag}</span>
         {hasFiles ? (
-          <span className="ml-1.5 inline-flex items-center gap-0.5 px-1 py-px rounded bg-white/80 text-[var(--color-text)] text-[11px] font-black">
+          <span className="ml-1.5 inline-flex items-center gap-0.5 px-1 py-px rounded bg-[var(--color-surface)] text-[var(--color-text)] text-[11px] font-black">
             <Files className="w-2.5 h-2.5" />{fileCount}
           </span>
         ) : interactive ? (
-          <span className="ml-1.5 inline-flex items-center text-slate-300"><Link2 className="w-2.5 h-2.5" /></span>
+          <span className="ml-1.5 inline-flex items-center text-[var(--color-text-faint)]"><Link2 className="w-2.5 h-2.5" /></span>
         ) : null}
       </button>
 

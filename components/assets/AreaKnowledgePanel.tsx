@@ -77,7 +77,9 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
   const [error, setError] = useState<string | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [note, setNote] = useState<string | null>(null);
+  const [note, setNoteState] = useState<{ text: string; bad: boolean } | null>(null);
+  const setNote = (text: string | null, bad = false) => setNoteState(text ? { text, bad } : null);
+  const [countsFailed, setCountsFailed] = useState(false);
 
   // Client-side deep-read signals — RLS lets any member count them.
   const [flowCount, setFlowCount] = useState<number | null>(null);
@@ -102,6 +104,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
   useEffect(() => {
     let alive = true;
     (async () => {
+      setCountsFailed(false);
       const assetSet = new Set(unitAssetIds);
       const flows = await listProcessFlows(orgId);
       if (alive && flows) {
@@ -121,9 +124,10 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
         for (let i = 0; i < unitAssetIds.length; i += 200) {
           const chunk = unitAssetIds.slice(i, i + 200);
           for (let from = 0; ; from += 1000) {
-            const { data: links } = await supabase.from("document_assets")
+            const { data: links, error: le } = await supabase.from("document_assets")
               .select("document_id").in("asset_id", chunk)
               .order("document_id").range(from, from + 999);
+            if (le) throw new Error(le.message);
             for (const l of links ?? []) docIds.add(l.document_id as string);
             if (!links || links.length < 1000 || from >= 20000) break;
           }
@@ -134,9 +138,10 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
       // sites with more than 50 plans.
       let marks = 0;
       for (let from = 0; ; from += 100) {
-        const { data: plots } = await supabase.from("plot_plans")
+        const { data: plots, error: pe } = await supabase.from("plot_plans")
           .select("markers").eq("org_id", orgId)
           .order("id").range(from, from + 99);
+        if (pe) throw new Error(pe.message);
         for (const p of plots ?? []) {
           for (const mk of ((p.markers as Array<{ assetId?: string }> | null) ?? [])) {
             if (mk.assetId && assetSet.has(mk.assetId)) marks++;
@@ -145,7 +150,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
         if (!plots || plots.length < 100 || from >= 2000) break;
       }
       if (alive) setPlotMarkCount(marks);
-    })().catch(() => { if (alive) { setFlowCount(0); setDocLinkCount(0); setPlotMarkCount(0); } });
+    })().catch(() => { if (alive) { setCountsFailed(true); setFlowCount((c) => c ?? 0); setDocLinkCount((c) => c ?? 0); setPlotMarkCount((c) => c ?? 0); } });
     return () => { alive = false; };
   }, [orgId, unit.code, unitAssetIds]);
 
@@ -156,9 +161,9 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
       const r = await syncKnowledgeSources(orgId, status.boundLibrary.id);
       await loadStatus();
       setNote(r.added > 0
-        ? `Synced - ${r.added} new document${r.added === 1 ? "" : "s"} pulled in.`
-        : "Synced - up to date.");
-    } catch (e) { setNote((e as Error).message); }
+        ? `Synced: ${r.added} new document${r.added === 1 ? "" : "s"} pulled in.`
+        : "Synced: up to date.");
+    } catch (e) { setNote(`Sync didn't finish: ${(e as Error).message}`, true); }
     finally { setSyncing(false); }
   };
 
@@ -168,8 +173,8 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
     try {
       const r = await addKnowledgeSources(orgId, status.boundLibrary.id, [{ type: "folder", id: folderId }]);
       await loadStatus();
-      setNote(`Linked “${name}” - ${r.added} document${r.added === 1 ? "" : "s"} pulled in.`);
-    } catch (e) { setNote((e as Error).message); }
+      setNote(`Linked “${name}”: ${r.added} document${r.added === 1 ? "" : "s"} pulled in.`);
+    } catch (e) { setNote(`Couldn't link “${name}”: ${(e as Error).message}`, true); }
     finally { setSyncing(false); }
   };
 
@@ -179,7 +184,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
       await removeKnowledgeSource(orgId, sourceId);
       await loadStatus();
       setNote("Removed the link to the deleted folder.");
-    } catch (e) { setNote((e as Error).message); }
+    } catch (e) { setNote(`Couldn't remove the link: ${(e as Error).message}`, true); }
     finally { setSyncing(false); }
   };
 
@@ -244,7 +249,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
                 {" · "}{status.counts.ready} readable{status.counts.pending > 0 ? ` · ${status.counts.pending} indexing` : ""}
                 {" · "}{status.sources.length} watched source{status.sources.length === 1 ? "" : "s"}
               </>
-            ) : "The setup path for this operating area, in order - each step shows its live state."}
+            ) : "Four steps to set up this area. Each one shows where it stands."}
           </div>
         </div>
         {status?.boundLibrary && status.canManage && (
@@ -256,20 +261,26 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
       </div>
 
       {error && (
-        <div className="mt-1 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 dark:bg-rose-950/40 px-2.5 py-2 text-[11px] text-rose-700 dark:text-rose-300">
-          <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
-        </div>
+        <p role="alert" className="mt-1 flex items-start gap-2 border-l-2 border-rose-500 pl-2.5 text-[11px] text-rose-700 dark:text-rose-300">
+          <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <span>Couldn&apos;t load this area&apos;s knowledge: {error} <button type="button" onClick={() => void loadStatus()} className="font-bold underline">Try again</button></span>
+        </p>
       )}
       {note && (
-        <div className="mt-1 rounded-lg border border-emerald-200 bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-1.5 text-[11px] font-bold text-emerald-700 dark:text-emerald-300">
-          {note}
-        </div>
+        <p role={note.bad ? "alert" : "status"} className={`mt-1 border-l-2 pl-2.5 text-[11px] font-bold ${note.bad ? "border-rose-500 text-rose-700 dark:text-rose-300" : "border-emerald-500 text-emerald-700 dark:text-emerald-300"}`}>
+          {note.text}
+        </p>
+      )}
+      {countsFailed && (
+        <p className="mt-1 border-l-2 border-amber-500 pl-2.5 text-[11px] text-amber-800 dark:text-amber-300">
+          Couldn&apos;t count every link and marker, so the numbers in step 3 may be low.
+        </p>
       )}
 
       {/* Drift — doc control was reorganized after linking. Said HERE, on
           open, with the fix one click away — never a silent sync surprise. */}
       {hasDrift && drift && (
-        <div className="mt-2 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/80 dark:bg-amber-950/30 px-3 py-2.5 space-y-1.5 text-[11px] text-amber-900 dark:text-amber-300">
+        <div className="mt-2 border-l-2 border-amber-500 pl-3 py-0.5 space-y-1.5 text-[11px] text-amber-900 dark:text-amber-300">
           <div className="font-black flex items-center gap-1.5">
             <AlertTriangle className="w-3.5 h-3.5" /> Document control changed since this area was linked
           </div>
@@ -288,7 +299,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
             <div>
               {drift.movedOutTotal} document{drift.movedOutTotal === 1 ? " was" : "s were"} moved out of the
               watched folders ({drift.movedOut.slice(0, 3).map((d) => d.name).join(", ")}
-              {drift.movedOutTotal > 3 ? "…" : ""}) - the next sync will drop {drift.movedOutTotal === 1 ? "it" : "them"} from
+              {drift.movedOutTotal > 3 ? "…" : ""}). The next sync will drop {drift.movedOutTotal === 1 ? "it" : "them"} from
               this area&apos;s knowledge. Link {drift.movedOutTotal === 1 ? "its" : "their"} new folder below to keep {drift.movedOutTotal === 1 ? "it" : "them"}.
             </div>
           )}
@@ -326,7 +337,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
           ) : undefined}>
           {status?.boundLibrary
             ? <>Watching {status.sources.length} source{status.sources.length === 1 ? "" : "s"}. New files, revisions, and removals inside them track automatically.</>
-            : <>One knowledge library per area keeps its answers pure - asking {unit.label} never surfaces another unit&apos;s drawings. The wizard finds this area&apos;s folders for you.</>}
+            : <>One library per area, so asking about {unit.label} only finds its own drawings. Setup finds this area&apos;s folders for you.</>}
         </Step>
         <Step n={3} title="Deep read the drawings"
           state={status === null || flowCount === null ? "loading" : (flowCount > 0 ? "done" : "todo")}
@@ -378,7 +389,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
   const bound = status.boundLibrary;
   // Library choice: the bound one, an existing one, or create-new.
   const [libChoice, setLibChoice] = useState<string>(bound?.id ?? "__new");
-  const [newName, setNewName] = useState(`${unit.label} - Knowledge`);
+  const [newName, setNewName] = useState(`${unit.label} Knowledge`);
   const [browse, setBrowse] = useState<SourceBrowseResult | null>(null);
   const [checked, setChecked] = useState<Set<string>>(new Set()); // "folder:<id>" | "library:<id>"
   const [busy, setBusy] = useState(false);
@@ -426,6 +437,12 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
     return () => { alive = false; };
   }, [orgId, suggestedIds]);
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !busy) onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy, onClose]);
+
   const toggle = (key: string) => setChecked((prev) => {
     const next = new Set(prev);
     if (next.has(key)) next.delete(key); else next.add(key);
@@ -446,7 +463,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
         if (createdRef.current) {
           klId = createdRef.current.id; klName = createdRef.current.name;
         } else {
-          const name = newName.trim() || `${unit.label} - Knowledge`;
+          const name = newName.trim() || `${unit.label} Knowledge`;
           const kl = await createKnowledgeLibrary({
             orgId, name,
             description: `Everything the AI may read about ${unit.label} (unit ${unit.code}).`,
@@ -476,7 +493,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
         const r = await addKnowledgeSources(orgId, klId, add.slice(i, i + 25));
         added += r.added; linked += r.linked;
       }
-      onDone(`${unit.label} is connected to “${klName}” - ${linked} source${linked === 1 ? "" : "s"} watched, ${added} document${added === 1 ? "" : "s"} pulled in. Indexing runs automatically.`);
+      onDone(`${unit.label} is connected to “${klName}”: ${linked} source${linked === 1 ? "" : "s"} watched, ${added} document${added === 1 ? "" : "s"} pulled in. Indexing runs automatically.`);
     } catch (e) {
       setError((e as Error).message);
     } finally { setBusy(false); }
@@ -498,7 +515,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
   }, [browse]);
 
   const sheet = (
-    <div className="fixed inset-0 z-[700] flex items-start justify-center bg-black/50 pt-[6vh] p-4 overscroll-contain" onClick={onClose}>
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-[700] flex items-start justify-center bg-black/50 pt-[6vh] p-4 overscroll-contain" onClick={onClose}>
       <div className="w-full max-w-lg max-h-[86vh] flex flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)] shrink-0">
@@ -538,8 +555,8 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
                 <input type="radio" name="area-kl" checked={libChoice === "__new"} onChange={() => setLibChoice("__new")} />
                 <Plus className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                 <input value={newName} onChange={(e) => { setNewName(e.target.value); setLibChoice("__new"); }}
-                  className="flex-1 px-2 py-1 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-xs font-bold"
-                  placeholder={`${unit.label} - Knowledge`} />
+                  className="flex-1 px-2 py-1 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-xs font-bold"
+                  placeholder={`${unit.label} Knowledge`} />
               </label>
             </div>
           </div>
@@ -568,10 +585,10 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
               Watch these document-control folders
             </div>
             {browse === null ? (
-              <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-text-faint)]" /></div>
+              <div className="flex justify-center items-center gap-2 py-4 text-[11px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Loading folders…</div>
             ) : foldersByLib.length === 0 ? (
               <div className="text-[11px] text-[var(--color-text-muted)]">
-                No document libraries yet - <Link href="/documents" className="font-bold underline">create them in Documents</Link> first.
+                No document libraries yet. <Link href="/documents" className="font-bold underline">create them in Documents</Link> first.
               </div>
             ) : (
               <div className="space-y-2.5">
@@ -583,9 +600,9 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
                       <input type="checkbox" disabled={libWatched}
                         checked={libWatched || checked.has(`library:${libId}`)}
                         onChange={() => toggle(`library:${libId}`)} />
-                      <FolderOpen className="w-3.5 h-3.5 text-slate-500" /> {g.libraryName}
+                      <FolderOpen className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {g.libraryName}
                       <span className="text-[11px] font-bold text-[var(--color-text-faint)] normal-case">
-                        {libWatched ? "(whole library - already watched)" : "(whole library)"}
+                        {libWatched ? "(whole library, already watched)" : "(whole library)"}
                       </span>
                     </label>
                     <div className="ml-5 mt-1 space-y-0.5">
@@ -611,7 +628,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
                         );
                       })}
                       {g.folders.length === 0 && (
-                        <div className="text-[11px] text-[var(--color-text-faint)]">No folders - link the whole library above.</div>
+                        <div className="text-[11px] text-[var(--color-text-faint)]">No folders. Link the whole library above.</div>
                       )}
                     </div>
                   </div>
@@ -622,9 +639,9 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
           </div>
 
           {error && (
-            <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 dark:bg-rose-950/40 px-2.5 py-2 text-[11px] text-rose-700 dark:text-rose-300">
+            <p role="alert" className="flex items-start gap-2 border-l-2 border-rose-500 pl-2.5 text-[11px] text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
-            </div>
+            </p>
           )}
         </div>
 

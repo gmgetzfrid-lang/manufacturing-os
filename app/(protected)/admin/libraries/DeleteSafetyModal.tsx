@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { AlertTriangle, Loader2, Trash2, X } from "lucide-react";
+import { AlertTriangle, Loader2, Trash2 } from "lucide-react";
+import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 
 interface DeleteModalProps {
   isOpen: boolean;
@@ -13,7 +14,7 @@ interface DeleteModalProps {
 
 export default function DeleteSafetyModal(props: DeleteModalProps) {
   // The body unmounts whenever the modal is closed, so each reopen is already a
-  // fresh mount with reset state — no synthetic remount key needed.
+  // fresh mount with reset state, no synthetic remount key needed.
   if (!props.isOpen) return null;
   return <DeleteSafetyModalBody {...props} />;
 }
@@ -28,70 +29,60 @@ function DeleteSafetyModalBody({
   const isMatch = confirmText === libraryName;
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-[var(--color-surface)] w-full max-w-md rounded-2xl shadow-2xl overflow-hidden border-2 border-red-100">
-        <div className="px-6 py-4 bg-red-50 border-b border-red-100 flex items-center justify-between">
-          <h3 className="text-lg font-bold text-red-900 flex items-center">
-            <AlertTriangle className="w-5 h-5 mr-2 text-red-600" />
-            Delete Library?
-          </h3>
-          <button
-            onClick={onClose}
-            className="p-1 rounded-full hover:bg-red-100 text-red-400 hover:text-red-700 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+    <Modal onClose={onClose} size="sm" zIndex={60} dismissable={!isLoading}>
+      <ModalHeader
+        icon={AlertTriangle}
+        iconClassName="bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-400"
+        title="Delete Library?"
+        onClose={isLoading ? undefined : onClose}
+      />
+      <ModalBody className="space-y-4">
+        <p className="text-sm text-[var(--color-text-muted)] leading-relaxed">
+          This <span className="font-bold text-red-700 dark:text-red-400">can&apos;t be undone</span>. It
+          permanently deletes the <strong className="text-[var(--color-text)]">{libraryName}</strong> library setup.
+          Documents inside it may be left without a library if they aren&apos;t moved first.
+        </p>
 
-        <div className="p-6 space-y-4">
-          <p className="text-sm text-[var(--color-text-muted)] leading-relaxed">
-            This action is <span className="font-bold text-red-600">irreversible</span>. This
-            will permanently delete the <strong>{libraryName}</strong> library configuration.
-            Documents inside this library may become orphaned or inaccessible if not migrated
-            first.
-          </p>
-
-          <div className="space-y-2">
-            <label className="text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider">
-              Type{" "}
-              <span className="select-all font-mono text-[var(--color-text)] bg-[var(--color-surface-2)] px-1 py-0.5 rounded border border-[var(--color-border)]">
-                {libraryName}
-              </span>{" "}
-              to confirm:
-            </label>
-            <input
-              type="text"
-              value={confirmText}
-              onChange={(e) => setConfirmText(e.target.value)}
-              className="w-full p-3 border border-[var(--color-border-strong)] rounded-lg text-sm font-bold focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-all placeholder:font-normal"
-              placeholder="Type library name here..."
-              autoFocus
-            />
-          </div>
+        <div className="space-y-2">
+          <label className="text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider">
+            Type{" "}
+            <span className="select-all font-mono text-[var(--color-text)] bg-[var(--color-surface-2)] px-1 py-0.5 rounded border border-[var(--color-border)] normal-case">
+              {libraryName}
+            </span>{" "}
+            to confirm:
+          </label>
+          <input
+            type="text"
+            value={confirmText}
+            onChange={(e) => setConfirmText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && isMatch && !isLoading) void onConfirm(); }}
+            className="w-full p-3 border border-[var(--color-border-strong)] rounded-lg text-sm font-bold bg-[var(--color-surface)] text-[var(--color-text)] focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-all placeholder:font-normal"
+            placeholder="Type the library name…"
+            autoFocus
+          />
         </div>
-
-        <div className="px-6 py-4 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex justify-end space-x-3">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-sm font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)] border border-transparent hover:border-[var(--color-border)] rounded-lg transition-all"
-            disabled={isLoading}
-          >
-            Cancel
-          </button>
-          <button
-            onClick={onConfirm}
-            disabled={!isMatch || isLoading}
-            className="px-4 py-2 bg-red-600 text-white text-sm font-bold rounded-lg shadow-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center"
-          >
-            {isLoading ? (
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-            ) : (
-              <Trash2 className="w-4 h-4 mr-2" />
-            )}
-            I understand, delete this library
-          </button>
-        </div>
-      </div>
-    </div>
+      </ModalBody>
+      <ModalFooter>
+        <button
+          onClick={onClose}
+          className="px-4 py-2 text-sm font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)] border border-transparent hover:border-[var(--color-border)] rounded-lg transition-all"
+          disabled={isLoading}
+        >
+          Cancel
+        </button>
+        <button
+          onClick={onConfirm}
+          disabled={!isMatch || isLoading}
+          className="px-4 py-2 bg-red-600 text-white text-sm font-bold rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center"
+        >
+          {isLoading ? (
+            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+          ) : (
+            <Trash2 className="w-4 h-4 mr-2" />
+          )}
+          Delete this library
+        </button>
+      </ModalFooter>
+    </Modal>
   );
 }

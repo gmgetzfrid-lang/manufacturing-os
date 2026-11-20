@@ -45,14 +45,24 @@ export default function CodebookLearn({ orgId, uid, book, canWrite, onChanged, o
   orgId: string; uid: string; book: Codebook; canWrite: boolean; onChanged: () => void; onError: (m: string | null) => void;
 }) {
   const [found, setFound] = useState<Found | null>(null);
+  const [readFailed, setReadFailed] = useState(false);
   const [busy, setBusy] = useState<"numbering" | "letters" | null>(null);
   useEffect(() => {
     let live = true;
-    void readSite(orgId, book).then((f) => { if (live) setFound(f); }).catch(() => { if (live) setFound({ numbering: [], letters: [] }); });
+    void readSite(orgId, book).then((f) => { if (live) { setFound(f); setReadFailed(false); } }).catch(() => { if (live) { setFound({ numbering: [], letters: [] }); setReadFailed(true); } });
     return () => { live = false; };
   }, [orgId, book]);
 
-  if (!found) return null;
+  if (!found) {
+    return (
+      <p className="mb-4 text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
+        <Loader2 className="w-3 h-3 animate-spin" /> Reading your drawing numbers and tags…
+      </p>
+    );
+  }
+  if (readFailed) {
+    return <p className="mb-4 text-[11px] text-[var(--color-text-muted)]">Couldn&apos;t read your drawing numbers and tags for suggestions.</p>;
+  }
   // The library whose numbers fit best speaks for the site.
   const best = [...found.numbering].sort((a, b) => b.learned.fit - a.learned.fit)[0] ?? null;
   const newTypes = best ? best.learned.types.filter((t) => t.label && !t.known) : [];
@@ -83,14 +93,15 @@ export default function CodebookLearn({ orgId, uid, book, canWrite, onChanged, o
     finally { setBusy(null); }
   };
 
-  const card = "rounded-2xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 p-4";
-  const btn = "inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-black disabled:opacity-50";
+  // Suggestions, not warnings: plain cards with a quiet button each.
+  const card = "rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4";
+  const btn = "inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[12.5px] font-black disabled:opacity-50";
   return (
     <div className="mb-4 space-y-3" data-codebook-learn>
       {numberingNew && best && (
         <div className={card}>
           <div className="flex items-start gap-2 flex-wrap">
-            <Lightbulb className="w-4 h-4 mt-0.5 shrink-0 text-amber-700 dark:text-amber-300" />
+            <Lightbulb className="w-4 h-4 mt-0.5 shrink-0 text-[var(--color-text-muted)]" />
             <div className="min-w-0 flex-1 basis-64 text-[12.5px] text-[var(--color-text)]">
               <div className="font-black">Your drawing numbers already follow a pattern</div>
               <p className="mt-1 text-[var(--color-text-muted)]">
@@ -121,7 +132,7 @@ export default function CodebookLearn({ orgId, uid, book, canWrite, onChanged, o
       {found.letters.length > 0 && (
         <div className={card}>
           <div className="flex items-start gap-2 flex-wrap">
-            <Lightbulb className="w-4 h-4 mt-0.5 shrink-0 text-amber-700 dark:text-amber-300" />
+            <Lightbulb className="w-4 h-4 mt-0.5 shrink-0 text-[var(--color-text-muted)]" />
             <div className="min-w-0 flex-1 basis-64 text-[12.5px] text-[var(--color-text)]">
               <div className="font-black">Tag letters, from your equipment list</div>
               <p className="mt-1 text-[var(--color-text-muted)]">Each ID says the type (5530.29 is type 30) and each tag says the letter (E-22). A letter is listed only when it belongs to one type.</p>

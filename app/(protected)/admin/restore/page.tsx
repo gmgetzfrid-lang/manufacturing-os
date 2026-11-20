@@ -21,6 +21,10 @@ import {
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { appConfirm } from "@/components/providers/DialogProvider";
+import { useFileDrag } from "@/hooks/useFileDrag";
+import FileThumb from "@/components/ui/FileThumb";
+import StepPath from "@/components/ui/StepPath";
+import { tryUpload } from "@/lib/uploadRetry";
 import {
   planRestore, orderTablesForRestore, remapOrgPath,
   type RestorePlan, type RestoreEnvelopeLike,
@@ -58,17 +62,17 @@ const contentTypeFor = (key: string) =>
   CONTENT_TYPES[(key.toLowerCase().split(".").pop() || "")] || "application/octet-stream";
 
 function fmtNum(n: number) { return n >= 1000 ? n.toLocaleString() : String(n); }
+const formatBytes = (n: number) => n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
 
 export default function RestorePage() {
   const { activeOrgId, activeRole } = useRole();
   const isAdmin = activeRole === "Admin";
 
-  const [fileName, setFileName] = useState<string | null>(null);
+  const [picked, setPicked] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [plan, setPlan] = useState<RestorePlan | null>(null);
   const [keepName, setKeepName] = useState<"backup" | "current">("current");
-  const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // The parsed backup. Held in refs — these can be tens of MB and never need
@@ -82,6 +86,8 @@ export default function RestorePage() {
   const idRemapRef = useRef<RestorePlan["idRemap"] | null>(null);
 
   const [filesProgress, setFilesProgress] = useState<FilesProgress>({ running: false, done: 0, total: 0, uploaded: 0, skipped: 0, offline: 0, failed: 0 });
+  // Files that didn't go back, each with its own reason and Try again.
+  const [failedFiles, setFailedFiles] = useState<Array<{ entry: string; key: string; error: string; retrying?: boolean }>>([]);
 
   const authToken = useCallback(async () => {
     const { data } = await supabase.auth.getSession();
@@ -91,7 +97,7 @@ export default function RestorePage() {
   // ── 1. Read + plan (all local — nothing is written) ───────────────────────
   const handleFile = useCallback(async (file: File) => {
     if (!activeOrgId) return;
-    setError(null); setPlan(null); setFileName(file.name); setApplyResult(null);
+    setError(null); setPlan(null); setPicked(file); setApplyResult(null); setFailedFiles([]);
     setApplyProgress({ phase: "idle", rowsDone: 0, rowsTotal: 0, tablesDone: 0, tablesTotal: 0 });
     setFilesProgress({ running: false, done: 0, total: 0, uploaded: 0, skipped: 0, offline: 0, failed: 0 });
     envelopeRef.current = null; zipRef.current = null; setFileEntryCount(0);
@@ -111,7 +117,7 @@ export default function RestorePage() {
         const zip = await JSZip.loadAsync(file) as unknown as ZipLike;
         const entryNames = Object.keys(zip.files);
         const manifestPath = entryNames.find((p) => /(^|\/)manifest\.json$/i.test(p));
-        if (!manifestPath) throw new Error("No manifest.json - this doesn't look like a manufacturing-os backup ZIP.");
+        if (!manifestPath) throw new Error("No manifest.json. This doesn't look like a Manufacturing OS backup ZIP.");
         const manifest = JSON.parse(await zip.file(manifestPath)!.async("string"));
         const tables: Record<string, unknown[]> = {};
         const tablePaths = entryNames.filter((p) => /(^|\/)tables\/[^/]+\.json$/i.test(p) && !zip.files[p].dir);
@@ -132,10 +138,11 @@ export default function RestorePage() {
       }
 
       // Current workspace context for the local plan.
-      const [{ data: orgRow }, { data: memberRows }] = await Promise.all([
+      const [{ data: orgRow, error: orgErr }, { data: memberRows, error: memErr }] = await Promise.all([
         supabase.from("orgs").select("name").eq("id", activeOrgId).maybeSingle(),
         supabase.from("org_members").select("uid, email").eq("org_id", activeOrgId).eq("status", "active"),
       ]);
+      if (orgErr || memErr) throw new Error(`Couldn't read this workspace's members: ${(orgErr ?? memErr)?.message}`);
       const members = ((memberRows ?? []) as Array<{ uid: string; email: string | null }>)
         .filter((m) => m.email).map((m) => ({ uid: m.uid, email: m.email as string }));
       const p = planRestore(envelope, {
@@ -159,7 +166,7 @@ export default function RestorePage() {
     if (!activeOrgId || !envelope || !plan) return;
     const ok = await appConfirm({
       title: "Apply restore",
-      message: `Write ${fmtNum(plan.counts.totalRows)} record(s) into this workspace? ${plan.counts.newUsers} restored placeholder user(s) will be created (inactive, no seat). Existing data is kept - this is additive and can't be auto-undone.`,
+      message: `Write ${fmtNum(plan.counts.totalRows)} record(s) into this workspace? ${plan.counts.newUsers} restored placeholder user(s) will be created (inactive, no seat). Existing data is kept. This adds records and can't be undone automatically.`,
       tone: "danger",
       confirmLabel: "Apply restore",
     });
@@ -221,54 +228,62 @@ export default function RestorePage() {
   };
 
   // ── 4. Put files back (ZIP only) ───────────────────────────────────────────
-  const putFilesBack = async () => {
+  // One file: skip what's already live, leave space-archived ones offline,
+  // else upload it to its (org-remapped) key. Safe to repeat: a second try
+  // writes the same key.
+  const sendFile = useCallback(async (zip: ZipLike, entryPath: string, key: string, token: string): Promise<"uploaded" | "skipped" | "offline"> => {
+    const check = await fetch(`/api/storage/resolve?path=${encodeURIComponent(key)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const state = await check.json().catch(() => null) as { archived?: boolean; archiveId?: string | null } | null;
+    if (check.ok && state?.archived === false) return "skipped";
+    if (check.ok && state?.archived === true && state?.archiveId) return "offline";
+
+    const blob = await zip.file(entryPath)!.async("blob");
+    const up = await fetch(`/api/storage/upload-url`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ path: key, contentType: contentTypeFor(key) }),
+    });
+    const upBody = await up.json().catch(() => null);
+    if (!up.ok || !upBody?.url) throw new Error(upBody?.error || `HTTP ${up.status}`);
+    const put = await fetch(upBody.url as string, { method: "PUT", body: blob, headers: { "Content-Type": contentTypeFor(key) } });
+    if (!put.ok) throw new Error(`Storage said ${put.status}`);
+    return "uploaded";
+  }, []);
+
+  const putFilesBack = async (only?: string[]) => {
     const zip = zipRef.current;
     if (!activeOrgId || !zip) return;
     const orgPairs = Object.entries(idRemapRef.current?.orgId ?? {}).filter(([o, n]) => o && n && o !== n) as Array<[string, string]>;
-    const entries = Object.keys(zip.files).filter((p) => /^\/?files\//i.test(p) && !zip.files[p].dir);
+    const entries = only ?? Object.keys(zip.files).filter((p) => /^\/?files\//i.test(p) && !zip.files[p].dir);
     if (entries.length === 0) return;
     setFilesProgress({ running: true, done: 0, total: entries.length, uploaded: 0, skipped: 0, offline: 0, failed: 0 });
+    if (only) setFailedFiles((prev) => prev.filter((f) => !only.includes(f.entry)));
+    else setFailedFiles([]);
     const token = await authToken();
 
     const counters = { done: 0, uploaded: 0, skipped: 0, offline: 0, failed: 0 };
     const bump = () => setFilesProgress({ running: true, total: entries.length, ...counters, error: null });
+    const failures: Array<{ entry: string; key: string; error: string }> = [];
 
     const uploadOne = async (entryPath: string) => {
+      // Zip entries live under files/<storage-key>; the key must follow the
+      // org remap so it lands under THIS workspace's prefix.
+      const key = remapOrgPath(entryPath.replace(/^\/?files\//i, ""), orgPairs);
       try {
-        // Zip entries live under files/<storage-key>; the key must follow the
-        // org remap so it lands under THIS workspace's prefix.
-        const rawKey = entryPath.replace(/^\/?files\//i, "");
-        const key = remapOrgPath(rawKey, orgPairs);
-
-        // Skip what's already live; never resurrect space-archived binaries —
-        // those intentionally live in their own offline zips.
-        const check = await fetch(`/api/storage/resolve?path=${encodeURIComponent(key)}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const state = await check.json().catch(() => null) as { archived?: boolean; archiveId?: string | null } | null;
-        if (check.ok && state?.archived === false) { counters.skipped++; return; }
-        if (check.ok && state?.archived === true && state?.archiveId) { counters.offline++; return; }
-
-        const blob = await zip.file(entryPath)!.async("blob");
-        const up = await fetch(`/api/storage/upload-url`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ path: key, contentType: contentTypeFor(key) }),
-        });
-        const upBody = await up.json().catch(() => null);
-        if (!up.ok || !upBody?.url) throw new Error(upBody?.error || `HTTP ${up.status}`);
-        const put = await fetch(upBody.url as string, { method: "PUT", body: blob, headers: { "Content-Type": contentTypeFor(key) } });
-        if (!put.ok) throw new Error(`PUT ${put.status}`);
-        counters.uploaded++;
-      } catch {
+        counters[await sendFile(zip, entryPath, key, token)]++;
+      } catch (e) {
         counters.failed++;
+        failures.push({ entry: entryPath, key, error: (e as Error).message || "It didn't go through." });
       } finally {
         counters.done++;
         bump();
       }
     };
 
-    // Bounded concurrency — steady progress without hammering the presigner.
+    // Bounded concurrency: steady progress without hammering the presigner.
+    // One file failing never stops the others.
     const CONCURRENCY = 3;
     let idx = 0;
     await Promise.all(
@@ -280,20 +295,33 @@ export default function RestorePage() {
       }),
     );
     setFilesProgress({ running: false, total: entries.length, ...counters });
+    setFailedFiles((prev) => [...prev, ...failures]);
   };
 
-  const onDrop = (e: React.DragEvent) => {
-    e.preventDefault(); setDragging(false);
-    const f = e.dataTransfer.files?.[0];
-    if (f) void handleFile(f);
+  // Try one file again. Wrapped so the corner card can offer Try again too.
+  const retryFile = async (entry: string, key: string) => {
+    const zip = zipRef.current;
+    if (!zip) return;
+    setFailedFiles((prev) => prev.map((f) => f.entry === entry ? { ...f, retrying: true } : f));
+    const name = key.split("/").pop() || key;
+    const drop = () => setFailedFiles((prev) => prev.filter((f) => f.entry !== entry));
+    try {
+      const token = await authToken();
+      await tryUpload(name, () => sendFile(zip, entry, key, token), { onRetried: drop });
+      drop();
+    } catch (e) {
+      setFailedFiles((prev) => prev.map((f) => f.entry === entry ? { ...f, retrying: false, error: (e as Error).message || f.error } : f));
+    }
   };
+
+  const drag = useFileDrag((files) => { if (files[0]) void handleFile(files[0]); }, busy);
 
   if (!isAdmin) {
     return (
       <div className="max-w-3xl mx-auto p-6">
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 flex items-center gap-2">
-          <ShieldAlert className="w-4 h-4 shrink-0" /> Restore is Admin-only - it can reshape the entire workspace.
-        </div>
+        <p className="text-sm text-[var(--color-text-muted)] flex items-center gap-2">
+          <ShieldAlert className="w-4 h-4 shrink-0" /> Restore is for Admins only, since it can change the whole workspace.
+        </p>
       </div>
     );
   }
@@ -301,11 +329,17 @@ export default function RestorePage() {
   const applying = applyProgress.phase === "begin" || applyProgress.phase === "tables";
   const pct = applyProgress.rowsTotal > 0 ? Math.round((applyProgress.rowsDone / applyProgress.rowsTotal) * 100) : 0;
   const filePct = filesProgress.total > 0 ? Math.round((filesProgress.done / filesProgress.total) * 100) : 0;
+  const hasFiles = fileEntryCount > 0;
+  const steps = hasFiles
+    ? ["Pick the backup", "Check the plan", "Restore records", "Put files back"]
+    : ["Pick the backup", "Check the plan", "Restore records"];
+  const filesDone = !filesProgress.running && filesProgress.done > 0 && filesProgress.done === filesProgress.total && failedFiles.length === 0;
+  const step = !plan ? 0 : !applyResult ? (applying ? 2 : 1) : hasFiles ? (filesDone ? 4 : 3) : 3;
 
   return (
     <div className="max-w-3xl mx-auto p-4 sm:p-6">
       <div className="flex items-start gap-3 mb-5">
-        <Link href="/admin/storage" className="p-2 mt-1 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] transition-colors">
+        <Link href="/admin/storage" aria-label="Back to Storage" className="p-2 mt-1 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] transition-colors">
           <ArrowLeft className="w-5 h-5" />
         </Link>
         <div className="flex-1 min-w-0">
@@ -313,49 +347,69 @@ export default function RestorePage() {
             <UploadCloud className="w-5 h-5 text-[var(--color-text-muted)]" /> Restore from backup
           </h1>
           <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-            Drop the Full ZIP (records + files) or the JSON export. Everything is planned in your browser - nothing is written until you approve.
+            The Full ZIP (records and files) or the JSON export. Nothing is written until you approve.
           </p>
         </div>
       </div>
 
+      <StepPath steps={steps} current={step} className="mb-5"
+        onPick={step === 1 ? (i) => { if (i === 0) { setPlan(null); setPicked(null); setError(null); } } : undefined} />
+
       {/* Dropzone */}
-      <div
-        onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={onDrop}
-        onClick={() => inputRef.current?.click()}
-        className={`rounded-2xl border-2 border-dashed p-8 text-center cursor-pointer transition-colors ${
-          dragging ? "border-[var(--color-accent)] bg-[var(--color-accent)]/5" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"
-        }`}
-      >
-        <input ref={inputRef} type="file" accept=".json,.zip,application/json,application/zip" className="hidden"
-          onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); }} />
-        {busy ? (
-          <div className="inline-flex items-center gap-2 text-sm text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Reading backup &amp; planning…</div>
-        ) : (
-          <>
-            <UploadCloud className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-2" />
-            <div className="text-sm font-bold text-[var(--color-text)]">{fileName ?? "Drop a backup .zip or .json here, or click to choose"}</div>
-            <div className="text-[11px] text-[var(--color-text-muted)] mt-1">The Full ZIP restores records <b>and</b> can put the files back. Read locally in your browser.</div>
-          </>
-        )}
-      </div>
+      {picked && !drag.over ? (
+        <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 flex items-center gap-3" {...drag.bind}>
+          <FileThumb file={picked} />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-bold text-[var(--color-text)] truncate">{picked.name}</div>
+            <div className="text-[11px] text-[var(--color-text-muted)]">
+              {formatBytes(picked.size)}
+              {busy && <span className="inline-flex items-center gap-1 ml-2"><Loader2 className="w-3 h-3 animate-spin" /> Reading the backup and planning…</span>}
+            </div>
+          </div>
+          {!busy && !applying && !applyResult && (
+            <button type="button" onClick={() => inputRef.current?.click()}
+              className="shrink-0 px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+              Pick another
+            </button>
+          )}
+          <input ref={inputRef} type="file" accept=".json,.zip,application/json,application/zip" className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); e.target.value = ""; }} />
+        </div>
+      ) : (
+        <div
+          {...drag.bind}
+          onClick={() => inputRef.current?.click()}
+          className={`rounded-2xl border-2 border-dashed p-8 text-center cursor-pointer transition-colors border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] ${drag.ring}`}
+        >
+          <input ref={inputRef} type="file" accept=".json,.zip,application/json,application/zip" className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); e.target.value = ""; }} />
+          {drag.over ? (
+            <div className="text-sm font-bold text-[var(--color-text)]">{drag.say}</div>
+          ) : (
+            <>
+              <UploadCloud className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-2" />
+              <div className="text-sm font-bold text-[var(--color-text)]">Drop a backup .zip or .json here, or click to choose</div>
+              <div className="text-[11px] text-[var(--color-text-muted)] mt-1">Read in your browser. The Full ZIP can also put the files back.</div>
+            </>
+          )}
+        </div>
+      )}
 
       {error && (
-        <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800 flex items-start gap-2">
+        <p role="alert" className="mt-4 border-l-2 border-red-500 pl-3 text-xs text-red-700 dark:text-red-400 flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
-        </div>
+        </p>
       )}
 
       {plan && (
         <div className="mt-5 space-y-4">
           {/* Warnings */}
           {plan.warnings.length > 0 && (
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-              <div className="text-xs font-black text-amber-900 uppercase tracking-widest mb-2 flex items-center gap-1.5"><FileWarning className="w-3.5 h-3.5" /> Review before applying</div>
-              <ul className="space-y-1.5">
+            <div className="border-l-2 border-amber-500 pl-3">
+              <div className="text-xs font-black text-amber-800 dark:text-amber-300 mb-1 flex items-center gap-1.5"><FileWarning className="w-3.5 h-3.5" /> Check before restoring</div>
+              <ul className="space-y-1 list-disc ml-4">
                 {plan.warnings.map((w, i) => (
-                  <li key={i} className="text-[11px] text-amber-900 flex items-start gap-1.5"><span className="mt-1 w-1 h-1 rounded-full bg-amber-500 shrink-0" /> {w}</li>
+                  <li key={i} className="text-[11px] text-amber-800 dark:text-amber-300">{w}</li>
                 ))}
               </ul>
             </div>
@@ -365,7 +419,7 @@ export default function RestorePage() {
           {plan.orgNameCollision && (
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
               <div className="text-sm font-black text-[var(--color-text)] flex items-center gap-2 mb-1"><Building2 className="w-4 h-4 text-[var(--color-text-muted)]" /> Which organization name should win?</div>
-              <p className="text-[11px] text-[var(--color-text-muted)] mb-3">The backup and this workspace disagree. Pick the name to keep - applied at restore.</p>
+              <p className="text-[11px] text-[var(--color-text-muted)] mb-3">The backup and this workspace have different names. Pick the one to keep.</p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {([["current", plan.orgNameCollision.currentName, "Keep this workspace’s name"], ["backup", plan.orgNameCollision.backupName, "Use the backup’s name"]] as const).map(([val, name, hint]) => (
                   <button key={val} onClick={() => setKeepName(val)}
@@ -381,13 +435,10 @@ export default function RestorePage() {
             </div>
           )}
 
-          {/* Summary counts */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <Stat icon={UserCheck} tint="text-emerald-600" value={plan.counts.matchedUsers} label="users re-linked" />
-            <Stat icon={UserPlus} tint="text-[var(--color-text-muted)]" value={plan.counts.newUsers} label="restored placeholders" />
-            <Stat icon={Database} tint="text-[var(--color-text-muted)]" value={plan.counts.totalRows} label="records to import" />
-            <Stat icon={FolderArchive} tint="text-[var(--color-text-muted)]" value={fileEntryCount || plan.counts.files} label={fileEntryCount ? "files in this ZIP" : "files referenced"} />
-          </div>
+          {/* What matters, in one line. */}
+          <p className="text-sm text-[var(--color-text)]">
+            <b>{fmtNum(plan.counts.totalRows)}</b> records to import · <b>{fmtNum(plan.counts.matchedUsers)}</b> users re-linked · <b>{fmtNum(plan.counts.newUsers)}</b> restored placeholders · <b>{fmtNum(fileEntryCount || plan.counts.files)}</b> {fileEntryCount ? "files in this ZIP" : "files referenced"}
+          </p>
 
           {/* Users */}
           {plan.users.length > 0 && (
@@ -401,9 +452,9 @@ export default function RestorePage() {
                       <div className="text-[11px] text-[var(--color-text-muted)] truncate">{u.email}{u.role ? ` · ${u.role}` : ""}</div>
                     </div>
                     {u.disposition === "linked" ? (
-                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded"><UserCheck className="w-3 h-3" /> re-link</span>
+                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-400"><UserCheck className="w-3 h-3" /> re-link</span>
                     ) : (
-                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded"><UserPlus className="w-3 h-3" /> restore + re-invite</span>
+                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-muted)]"><UserPlus className="w-3 h-3" /> restore and re-invite</span>
                     )}
                   </div>
                 ))}
@@ -432,10 +483,10 @@ export default function RestorePage() {
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
               <div className="flex items-center gap-2 text-sm font-bold text-[var(--color-text)] mb-2">
                 <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)]" />
-                {applyProgress.phase === "begin" ? "Reconciling users…" : <>Restoring <span className="font-mono">{applyProgress.currentTable}</span> - table {Math.min(applyProgress.tablesDone + 1, applyProgress.tablesTotal)} of {applyProgress.tablesTotal}</>}
+                {applyProgress.phase === "begin" ? "Matching users…" : <>Restoring <span className="font-mono">{applyProgress.currentTable}</span>: table {Math.min(applyProgress.tablesDone + 1, applyProgress.tablesTotal)} of {applyProgress.tablesTotal}</>}
               </div>
               <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-                <div className="h-full bg-[var(--color-surface-2)] transition-all" style={{ width: `${pct}%` }} />
+                <div className="h-full bg-[var(--color-text)] transition-all" style={{ width: `${pct}%` }} />
               </div>
               <div className="text-[11px] text-[var(--color-text-muted)] mt-1">{fmtNum(applyProgress.rowsDone)} / {fmtNum(applyProgress.rowsTotal)} records ({pct}%)</div>
             </div>
@@ -443,25 +494,29 @@ export default function RestorePage() {
 
           {/* Apply / result */}
           {applyResult ? (
-            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
-              <div className="flex items-center gap-2 text-sm font-black text-emerald-900 mb-1"><CheckCircle2 className="w-4 h-4" /> Records restored</div>
-              <div className="text-[11px] text-emerald-900 leading-relaxed">
+            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+              <div className="flex items-center gap-2 text-sm font-black text-emerald-700 dark:text-emerald-400 mb-1"><CheckCircle2 className="w-4 h-4" /> Records restored</div>
+              <div className="text-[11px] text-[var(--color-text)] leading-relaxed">
                 Imported <b>{fmtNum(applyResult.totalInserted)}</b> record(s) · re-linked <b>{applyResult.linkedUsers}</b> user(s) · created <b>{applyResult.createdUsers}</b> restored placeholder(s).
-                {applyResult.failedTables.length > 0 && <> Some tables reported issues: <span className="font-mono">{applyResult.failedTables.join(", ")}</span> - re-run the restore (it&apos;s additive and safe) or check the audit log.</>}
-                {" "}Restored users are inactive - re-invite them to grant access.
+                {" "}Restored users are inactive. <Link href="/admin/users" className="font-bold text-[var(--color-accent)] hover:underline">Re-invite them in Users</Link> to give access.
               </div>
+              {applyResult.failedTables.length > 0 && (
+                <p role="alert" className="mt-2 border-l-2 border-red-500 pl-2.5 text-[11px] text-red-700 dark:text-red-400">
+                  These tables didn&apos;t fully import: <span className="font-mono">{applyResult.failedTables.join(", ")}</span>. Run the restore again (it only adds, so it&apos;s safe) or check the audit log.
+                </p>
+              )}
             </div>
           ) : !applying && (
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
               <div className="flex items-start gap-3">
                 <ShieldAlert className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
                 <div className="flex-1 text-[11px] text-[var(--color-text-muted)] leading-relaxed">
-                  <b className="text-[var(--color-text)]">Applying writes to this live workspace.</b> It&apos;s additive (existing data is kept), re-runnable, and the plan above is exactly what runs. Restored users are created inactive (no seat).{zipRef.current ? " After records import, a second step can put the ZIP's files back into storage." : " Binaries aren't in a JSON backup - use the Full ZIP to also restore files."}
+                  <b className="text-[var(--color-text)]">This writes to the live workspace.</b> It only adds (existing data is kept), can be run again, and does exactly the plan above. Restored users are inactive (no seat).{zipRef.current ? " After the records, the next step can put the ZIP's files back." : " A JSON backup has no files. Use the Full ZIP to restore files too."}
                 </div>
               </div>
               <div className="mt-3 flex items-center justify-end">
                 <button onClick={() => void applyRestore()} disabled={plan.counts.totalRows === 0}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-bold text-white bg-[var(--color-accent)] hover:opacity-90 disabled:opacity-40">
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40">
                   <Database className="w-4 h-4" /> Restore {fmtNum(plan.counts.totalRows)} records
                 </button>
               </div>
@@ -475,7 +530,7 @@ export default function RestorePage() {
                 <FolderArchive className="w-4 h-4 text-[var(--color-text-muted)]" /> Put the files back
               </div>
               <p className="text-[11px] text-[var(--color-text-muted)] mb-3 max-w-2xl">
-                Re-uploads this ZIP&apos;s <b>{fmtNum(fileEntryCount)}</b> embedded file(s) to live storage under their original keys, so drawings open normally instead of prompting for an archive. Files already in storage are skipped; files that belong to offline space archives stay offline by design.
+                Uploads this ZIP&apos;s <b>{fmtNum(fileEntryCount)}</b> file(s) back to storage under their original names, so drawings open normally. Files already there are skipped. Files in offline space archives stay offline.
               </p>
               {filesProgress.total > 0 && (
                 <div className="mb-3">
@@ -485,16 +540,44 @@ export default function RestorePage() {
                   <div className="text-[11px] text-[var(--color-text-muted)] mt-1">
                     {fmtNum(filesProgress.done)} / {fmtNum(filesProgress.total)} · {fmtNum(filesProgress.uploaded)} uploaded · {fmtNum(filesProgress.skipped)} already present
                     {filesProgress.offline > 0 && <> · {fmtNum(filesProgress.offline)} left to space archives</>}
-                    {filesProgress.failed > 0 && <span className="text-red-600 font-bold"> · {fmtNum(filesProgress.failed)} failed - run again to retry</span>}
+                    {filesProgress.failed > 0 && <span className="text-red-700 dark:text-red-400 font-bold"> · {fmtNum(filesProgress.failed)} didn&apos;t upload</span>}
                   </div>
                 </div>
               )}
-              <div className="flex items-center justify-end">
-                <button onClick={() => void putFilesBack()} disabled={filesProgress.running}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40">
-                  {filesProgress.running ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}
-                  {filesProgress.running ? "Uploading…" : filesProgress.done > 0 ? "Run again (retries failures)" : `Put ${fmtNum(fileEntryCount)} files back`}
-                </button>
+              {failedFiles.length > 0 && !filesProgress.running && (
+                <ul className="mb-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)] max-h-64 overflow-y-auto">
+                  {failedFiles.slice(0, 50).map((f) => (
+                    <li key={f.entry} className="px-3 py-2 flex items-center gap-2">
+                      <AlertTriangle className="w-3.5 h-3.5 text-red-600 shrink-0" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-[11px] font-mono font-bold text-[var(--color-text)] truncate" title={f.key}>{f.key.split("/").pop()}</span>
+                        <span className="block text-[11px] text-red-700 dark:text-red-400 truncate" title={f.error}>{f.error}</span>
+                      </span>
+                      <button type="button" onClick={() => void retryFile(f.entry, f.key)} disabled={!!f.retrying}
+                        className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+                        {f.retrying ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Try again
+                      </button>
+                    </li>
+                  ))}
+                  {failedFiles.length > 50 && <li className="px-3 py-2 text-[11px] text-[var(--color-text-muted)]">and {fmtNum(failedFiles.length - 50)} more</li>}
+                </ul>
+              )}
+              <div className="flex items-center justify-end gap-3">
+                {filesDone && (
+                  <Link href="/documents" className="text-sm font-bold text-[var(--color-accent)] hover:underline">Open Documents</Link>
+                )}
+                {failedFiles.length > 0 && !filesProgress.running ? (
+                  <button onClick={() => void putFilesBack(failedFiles.map((f) => f.entry))}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]">
+                    <UploadCloud className="w-4 h-4" /> Try again for {fmtNum(failedFiles.length)}
+                  </button>
+                ) : !filesDone && (
+                  <button onClick={() => void putFilesBack()} disabled={filesProgress.running}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40">
+                    {filesProgress.running ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}
+                    {filesProgress.running ? "Uploading…" : `Put ${fmtNum(fileEntryCount)} files back`}
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -504,12 +587,3 @@ export default function RestorePage() {
   );
 }
 
-function Stat({ icon: Icon, tint, value, label }: { icon: React.ComponentType<{ className?: string }>; tint: string; value: number; label: string }) {
-  return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
-      <Icon className={`w-4 h-4 ${tint} mb-1`} />
-      <div className="text-xl font-black text-[var(--color-text)]">{fmtNum(value)}</div>
-      <div className="text-[11px] text-[var(--color-text-muted)] leading-tight">{label}</div>
-    </div>
-  );
-}

@@ -32,13 +32,19 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
 
+  const [loadError, setLoadError] = useState<string | null>(null);
   const load = useCallback(async () => {
     if (!activeOrgId) return;
-    const stored = await loadCapabilityPolicy(activeOrgId);
-    const merged = { ...defaultCapabilityPolicy(), ...(stored.caps ?? {}) };
-    setPolicy(merged);
-    setBaseline(merged);
-    setDirty(false);
+    try {
+      const stored = await loadCapabilityPolicy(activeOrgId);
+      const merged = { ...defaultCapabilityPolicy(), ...(stored.caps ?? {}) };
+      setPolicy(merged);
+      setBaseline(merged);
+      setDirty(false);
+      setLoadError(null);
+    } catch (e) {
+      setLoadError((e as Error).message || "Couldn't load the action permissions.");
+    }
   }, [activeOrgId]);
   useEffect(() => { void load(); }, [load]);
 
@@ -84,7 +90,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
       await saveCapabilityPolicy({ orgId: activeOrgId, policy: { caps: policy, grants: stored.grants ?? [] }, actorUserId: uid, actorEmail: userEmail });
       __resetCapabilityPolicyCache();
       setDirty(false);
-      setMsg({ tone: "ok", text: "Saved - enforced server-side on the next action. Change audited with before/after." });
+      setMsg({ tone: "ok", text: "Saved. It applies from the next action, and the change is in the audit log." });
     } catch (e) {
       setMsg({ tone: "err", text: (e as Error).message });
     } finally { setSaving(false); }
@@ -96,14 +102,25 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
     setMsg(null);
   };
 
-  if (!policy) return null;
+  if (!policy) {
+    return (
+      <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] mb-5 px-4 py-3 text-xs text-[var(--color-text-muted)] inline-flex items-center gap-2 w-full">
+        {loadError ? (
+          <span role="alert" className="text-rose-700 dark:text-rose-400">
+            Couldn&apos;t load the action permissions: {loadError}{" "}
+            <button type="button" onClick={() => void load()} className="font-bold underline">Try again</button>
+          </span>
+        ) : <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading action permissions…</>}
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] mb-5 overflow-hidden">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <SlidersHorizontal className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-base font-bold text-[var(--color-text)]">Action permissions</span>
-        <span className="text-xs text-[var(--color-text-muted)]">who may perform each workflow action - enforced on the server, audited on save</span>
+        <span className="text-xs text-[var(--color-text-muted)]">Who may do each workflow action. Checked on the server, logged on save.</span>
         {canEdit && (
           <div className="ml-auto flex items-center gap-2">
             <button onClick={resetDefaults} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
@@ -117,7 +134,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
         )}
       </div>
       {msg && (
-        <div className={`mx-4 mt-3 rounded-xl border p-2.5 text-xs flex items-start gap-2 ${msg.tone === "ok" ? "border-emerald-500/30 bg-emerald-500/[0.06] text-emerald-700 dark:text-emerald-300" : "border-rose-500/30 bg-rose-500/[0.06] text-rose-700 dark:text-rose-300"}`}>
+        <div role={msg.tone === "ok" ? "status" : "alert"} className={`mx-4 mt-3 border-l-2 pl-2.5 text-xs flex items-start gap-2 ${msg.tone === "ok" ? "border-emerald-500 text-emerald-700 dark:text-emerald-300" : "border-rose-500 text-rose-700 dark:text-rose-300"}`}>
           <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {msg.text}
         </div>
       )}
@@ -151,7 +168,9 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
                             onClick={() => !locked && toggle(d.id, t)}
                             disabled={locked}
                             title={locked && on ? "Admin is locked on critical capabilities" : undefined}
-                            className={`w-5 h-5 rounded border inline-flex items-center justify-center transition-colors ${on ? "bg-emerald-500 border-emerald-500 text-white" : "border-[var(--color-border-strong)] hover:border-[var(--color-accent-ring)]"} ${locked ? "opacity-70 cursor-not-allowed" : ""}`}
+                            aria-pressed={on}
+                            aria-label={`${d.label}: ${TOKEN_LABEL[t] ?? t}`}
+                            className={`w-5 h-5 rounded border inline-flex items-center justify-center transition-colors ${on ? "bg-[var(--color-text)] border-transparent text-[var(--color-surface)]" : "border-[var(--color-border-strong)] hover:border-[var(--color-text-muted)]"} ${locked ? "opacity-70 cursor-not-allowed" : ""}`}
                           >
                             {on && <Check className="w-3 h-3" />}
                           </button>

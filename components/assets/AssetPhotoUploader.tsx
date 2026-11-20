@@ -4,22 +4,24 @@
 // Auto-detects capture date from filename (e.g., IMG_20240815_*.jpg).
 // Each photo can have an optional caption + manual date override.
 
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { createPortal } from "react-dom";
 import {
   Upload, X, Camera, Calendar, Loader2, CheckCircle2,
-  AlertTriangle,
+  AlertTriangle, RotateCcw,
 } from "lucide-react";
 import {
   createPhotoRecord, parseCapturedAtFromFilename, invalidateAssetCache,
   type Asset,
 } from "@/lib/assets";
 import { uploadToPath } from "@/lib/storage";
+import { tryUpload } from "@/lib/uploadRetry";
+import { useFileDrag } from "@/hooks/useFileDrag";
+import FileThumb from "@/components/ui/FileThumb";
 
 interface PendingPhoto {
   id: string;
   file: File;
-  previewUrl: string;
   caption: string;
   capturedAt: string;     // ISO date input value (YYYY-MM-DD)
   status: "pending" | "uploading" | "done" | "error";
@@ -31,14 +33,14 @@ interface AssetPhotoUploaderProps {
   asset: Asset;
   userId: string;
   onClose: () => void;
-  onUploaded: () => void;
+  /** Called after photos land. `allDone` is true when none are left to send. */
+  onUploaded: (allDone?: boolean) => void;
 }
 
 export default function AssetPhotoUploader({
   isOpen, asset, userId, onClose, onUploaded,
 }: AssetPhotoUploaderProps) {
   const [pending, setPending] = useState<PendingPhoto[]>([]);
-  const [isDragOver, setIsDragOver] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,7 +48,7 @@ export default function AssetPhotoUploader({
     if (!files) return;
     const fileArr = Array.from(files).filter((f) => f.type.startsWith("image/"));
     if (fileArr.length === 0) {
-      setError("Please drop image files.");
+      setError("Only photos can go here. Pick image files.");
       return;
     }
     setError(null);
@@ -55,7 +57,6 @@ export default function AssetPhotoUploader({
       return {
         id: `pending-${Date.now()}-${i}`,
         file: f,
-        previewUrl: URL.createObjectURL(f),
         caption: "",
         capturedAt: dateIso.slice(0, 10),    // YYYY-MM-DD for date input
         status: "pending",
@@ -63,17 +64,66 @@ export default function AssetPhotoUploader({
     });
     setPending((prev) => [...prev, ...staged]);
   }, []);
+  const drag = useFileDrag((files) => stagePendingFiles(files), submitting);
+
+  // Escape closes, unless photos are on their way up.
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !submitting) onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isOpen, submitting, onClose]);
 
   const removePending = (id: string) => {
-    setPending((prev) => {
-      const target = prev.find((p) => p.id === id);
-      if (target) URL.revokeObjectURL(target.previewUrl);
-      return prev.filter((p) => p.id !== id);
-    });
+    setPending((prev) => prev.filter((p) => p.id !== id));
   };
 
   const updatePending = (id: string, patch: Partial<PendingPhoto>) => {
     setPending((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+  };
+
+  // One photo: the transfer, then its record. Safe to repeat: each try
+  // goes to a new path and the record is made only after the file lands.
+  const sendOne = (p: PendingPhoto) => async () => {
+    const storagePath = `orgs/${asset.org_id}/assets/${asset.id}/photos/${Date.now()}-${p.file.name}`;
+    const result = await uploadToPath(p.file, storagePath, {
+      contentType: p.file.type || "image/jpeg",
+    });
+    await createPhotoRecord({
+      orgId: asset.org_id,
+      assetId: asset.id,
+      fileUrl: result.url,
+      fileSize: result.size ?? p.file.size,
+      contentType: p.file.type || "image/jpeg",
+      capturedAt: p.capturedAt ? new Date(p.capturedAt).toISOString() : undefined,
+      caption: p.caption.trim() || undefined,
+      uploadedBy: userId,
+    });
+  };
+
+  const uploadOne = async (p: PendingPhoto): Promise<boolean> => {
+    updatePending(p.id, { status: "uploading", error: undefined });
+    try {
+      await tryUpload(p.file.name, sendOne(p), {
+        onRetried: () => {
+          updatePending(p.id, { status: "done", error: undefined });
+          invalidateAssetCache();
+          onUploaded(false);
+        },
+      }, `asset-photo-${p.id}`);
+      updatePending(p.id, { status: "done" });
+      return true;
+    } catch (e) {
+      updatePending(p.id, { status: "error", error: (e as Error).message || "It didn't go through." });
+      return false;
+    }
+  };
+
+  // Try one failed photo again, with whatever caption and date it has now.
+  const retryOne = async (id: string) => {
+    const p = pending.find((x) => x.id === id);
+    if (!p || p.status === "uploading") return;
+    if (await uploadOne(p)) { invalidateAssetCache(); onUploaded(false); }
   };
 
   const uploadAll = async () => {
@@ -82,49 +132,22 @@ export default function AssetPhotoUploader({
     setError(null);
     const PHOTO_CONCURRENCY = 4;
     try {
-      const todo = pending.filter((p) => p.status !== "done");
-      const failed = new Set<string>();
+      const todo = pending.filter((p) => p.status !== "done" && p.status !== "uploading");
+      let failed = 0;
 
-      const uploadOne = async (p: PendingPhoto) => {
-        updatePending(p.id, { status: "uploading" });
-        try {
-          const storagePath = `orgs/${asset.org_id}/assets/${asset.id}/photos/${Date.now()}-${p.file.name}`;
-          const result = await uploadToPath(p.file, storagePath, {
-            contentType: p.file.type || "image/jpeg",
-          });
-          await createPhotoRecord({
-            orgId: asset.org_id,
-            assetId: asset.id,
-            fileUrl: result.url,
-            fileSize: result.size ?? p.file.size,
-            contentType: p.file.type || "image/jpeg",
-            capturedAt: p.capturedAt ? new Date(p.capturedAt).toISOString() : undefined,
-            caption: p.caption.trim() || undefined,
-            uploadedBy: userId,
-          });
-          updatePending(p.id, { status: "done" });
-        } catch (e) {
-          failed.add(p.id);
-          updatePending(p.id, { status: "error", error: (e as Error).message });
-        }
-      };
-
-      // Run in capped-concurrency chunks so 10+ photos don't take 10×
-      // the time of one.
+      // Run in capped-concurrency chunks so 10+ photos don't take 10x
+      // the time of one. One failure never stops the others.
       for (let i = 0; i < todo.length; i += PHOTO_CONCURRENCY) {
         const chunk = todo.slice(i, i + PHOTO_CONCURRENCY);
-        await Promise.all(chunk.map(uploadOne));
+        const ok = await Promise.all(chunk.map(uploadOne));
+        failed += ok.filter((x) => !x).length;
       }
 
       invalidateAssetCache();
-      // If everything succeeded, close + notify parent. (Counted as the
-      // uploads finish: `pending` here is the list from before they ran.)
-      const anyFailed = failed.size > 0;
-      if (anyFailed) onUploaded();
+      if (failed > 0) onUploaded(false);
       else {
-        pending.forEach((p) => URL.revokeObjectURL(p.previewUrl));
         setPending([]);
-        onUploaded();
+        onUploaded(true);
         onClose();
       }
     } finally {
@@ -136,13 +159,16 @@ export default function AssetPhotoUploader({
 
   const doneCount = pending.filter((p) => p.status === "done").length;
   const errorCount = pending.filter((p) => p.status === "error").length;
+  const toSend = pending.filter((p) => p.status === "pending" || p.status === "error").length;
 
   // Portal so the uploader overlay escapes any transformed ancestor.
   if (typeof document === "undefined") return null;
   return createPortal(
     <div
-      className="fixed inset-0 z-[510] bg-slate-900/80 backdrop-blur-md flex items-start sm:items-center justify-center overflow-y-auto p-4"
-      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      className="fixed inset-0 z-[510] bg-slate-900/50 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4"
+      onClick={() => { if (!submitting) onClose(); }}
       onMouseDown={(e) => e.stopPropagation()}
     >
       <div
@@ -152,17 +178,17 @@ export default function AssetPhotoUploader({
         {/* Header */}
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-start justify-between gap-3 shrink-0">
           <div className="flex items-start gap-2.5 min-w-0">
-            <div className="p-2 bg-emerald-100 rounded-lg shrink-0"><Camera className="w-4 h-4 text-emerald-700" /></div>
+            <div className="p-2 bg-[var(--color-surface-2)] rounded-lg shrink-0"><Camera className="w-4 h-4 text-[var(--color-text)]" /></div>
             <div className="min-w-0">
               <div className="text-sm font-black text-[var(--color-text)] truncate">
                 Photos for <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)] text-[11px] font-bold align-middle ml-0.5">{asset.tag}</span>
               </div>
               <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 leading-snug">
-                These photos attach <b>directly to this equipment asset</b> - they do NOT become documents and won&apos;t appear in your library folders. Visible everywhere this tag appears.
+                These go on the equipment, not in a library folder. They show wherever this tag appears.
               </div>
             </div>
           </div>
-          <button onClick={onClose} disabled={submitting} className="p-1.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+          <button onClick={onClose} disabled={submitting} aria-label="Close" className="p-1.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -170,33 +196,24 @@ export default function AssetPhotoUploader({
         {/* Drop zone */}
         <div className="px-5 pt-4 shrink-0">
           <div
-            onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
-            onDragLeave={() => setIsDragOver(false)}
-            onDrop={(e) => {
-              e.preventDefault(); setIsDragOver(false);
-              stagePendingFiles(e.dataTransfer.files);
-            }}
-            className={`relative rounded-xl border-2 border-dashed p-6 text-center transition-all ${
-              isDragOver
-                ? "border-emerald-400 bg-emerald-50"
-                : "border-[var(--color-border-strong)] bg-slate-50/50 hover:border-slate-400"
-            }`}
+            {...drag.bind}
+            className={`relative rounded-xl border-2 border-dashed p-6 text-center transition-all border-[var(--color-border-strong)] bg-[var(--color-surface-2)] hover:border-[var(--color-text-faint)] ${drag.ring}`}
           >
             <input
               type="file"
               multiple
               accept="image/*"
-              onChange={(e) => stagePendingFiles(e.target.files)}
+              onChange={(e) => { stagePendingFiles(e.target.files); e.target.value = ""; }}
               className="absolute inset-0 opacity-0 cursor-pointer"
             />
             <div className="p-3 bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] w-fit mx-auto mb-3 shadow-sm">
-              <Upload className="w-5 h-5 text-emerald-600" />
+              <Upload className="w-5 h-5 text-[var(--color-text-muted)]" />
             </div>
             <p className="text-sm font-bold text-[var(--color-text)]">
-              {isDragOver ? "Drop photos here" : "Drag photos in or click to select"}
+              {drag.over ? drag.say : "Drag photos in or click to select"}
             </p>
             <p className="text-[11px] text-[var(--color-text-muted)] mt-1">
-              Capture date auto-detected from filename. JPEG, PNG, HEIC, or any image format.
+              The date comes from the file name when it has one. Any image type.
             </p>
           </div>
 
@@ -204,23 +221,23 @@ export default function AssetPhotoUploader({
               distinct affordance so field users go straight to the camera
               instead of the file picker. Renders everywhere; on desktop with
               no camera the browser falls back to a file dialog. */}
-          <label className="mt-2 inline-flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-3 sm:py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold cursor-pointer transition-colors shadow-sm">
+          <label className="mt-2 inline-flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-3 sm:py-2 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-sm font-bold cursor-pointer transition-colors">
             <Camera className="w-4 h-4" />
             Take photo
             <input
               type="file"
               accept="image/*"
               capture="environment"
-              onChange={(e) => stagePendingFiles(e.target.files)}
+              onChange={(e) => { stagePendingFiles(e.target.files); e.target.value = ""; }}
               className="sr-only"
             />
           </label>
         </div>
 
         {error && (
-          <div className="mx-5 mt-3 p-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-start gap-2">
+          <p role="alert" className="mx-5 mt-3 border-l-2 border-red-500 pl-3 text-xs text-red-700 dark:text-red-400 flex items-start gap-2">
             <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
-          </div>
+          </p>
         )}
 
         {/* Pending photos list */}
@@ -232,8 +249,7 @@ export default function AssetPhotoUploader({
             <div className="space-y-2">
               {pending.map((p) => (
                 <div key={p.id} className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl p-2.5 flex items-start gap-3">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={p.previewUrl} alt="" className="w-16 h-16 object-cover rounded-lg shrink-0 border border-[var(--color-border-strong)]" />
+                  <FileThumb file={p.file} size={64} />
                   <div className="flex-1 min-w-0 space-y-1.5">
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-bold text-[var(--color-text)] truncate flex-1">{p.file.name}</span>
@@ -245,8 +261,8 @@ export default function AssetPhotoUploader({
                           value={p.caption}
                           onChange={(e) => updatePending(p.id, { caption: e.target.value })}
                           disabled={p.status === "uploading" || p.status === "done"}
-                          placeholder="Caption (optional) - e.g., 'inlet side, north face'"
-                          className="w-full text-[11px] border border-[var(--color-border)] rounded px-2 py-1 bg-[var(--color-surface)]"
+                          placeholder="Caption (optional), e.g. inlet side, north face"
+                          className="w-full text-xs border border-[var(--color-border)] rounded px-2 py-1 bg-[var(--color-surface)] text-[var(--color-text)]"
                         />
                       </div>
                       <div className="shrink-0 inline-flex items-center gap-1 text-[11px] text-[var(--color-text-muted)]">
@@ -256,24 +272,29 @@ export default function AssetPhotoUploader({
                           value={p.capturedAt}
                           onChange={(e) => updatePending(p.id, { capturedAt: e.target.value })}
                           disabled={p.status === "uploading" || p.status === "done"}
-                          className="text-[11px] border border-[var(--color-border)] rounded px-1.5 py-1 bg-[var(--color-surface)]"
+                          className="text-xs border border-[var(--color-border)] rounded px-1.5 py-1 bg-[var(--color-surface)] text-[var(--color-text)]"
                         />
                       </div>
                     </div>
+                    {p.status === "error" && (
+                      <div className="flex items-center gap-2 text-[11px] text-red-700 dark:text-red-400">
+                        <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                        <span className="truncate flex-1" title={p.error}>Didn&apos;t upload: {p.error}</span>
+                        <button type="button" onClick={() => void retryOne(p.id)} disabled={submitting}
+                          className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] font-bold hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+                          <RotateCcw className="w-3 h-3" /> Try again
+                        </button>
+                      </div>
+                    )}
                   </div>
                   <div className="shrink-0">
-                    {p.status === "pending" && (
-                      <button onClick={() => removePending(p.id)} className="p-1.5 text-[var(--color-text-faint)] hover:text-red-600 hover:bg-red-50 rounded">
+                    {(p.status === "pending" || p.status === "error") && (
+                      <button onClick={() => removePending(p.id)} aria-label={`Remove ${p.file.name}`} className="p-1.5 text-[var(--color-text-faint)] hover:text-red-600 hover:bg-[var(--color-surface)] rounded">
                         <X className="w-3.5 h-3.5" />
                       </button>
                     )}
-                    {p.status === "uploading" && <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />}
-                    {p.status === "done" && <CheckCircle2 className="w-4 h-4 text-emerald-600" />}
-                    {p.status === "error" && (
-                      <div title={p.error} className="p-1 text-red-600">
-                        <AlertTriangle className="w-4 h-4" />
-                      </div>
-                    )}
+                    {p.status === "uploading" && <span className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Sending</span>}
+                    {p.status === "done" && <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-400"><CheckCircle2 className="w-4 h-4" /> Added</span>}
                   </div>
                 </div>
               ))}
@@ -289,8 +310,8 @@ export default function AssetPhotoUploader({
             ) : (
               <>
                 {pending.length} photo{pending.length === 1 ? "" : "s"} staged
-                {doneCount > 0 && <span className="text-emerald-700 font-bold"> · {doneCount} uploaded</span>}
-                {errorCount > 0 && <span className="text-red-700 font-bold"> · {errorCount} failed</span>}
+                {doneCount > 0 && <span className="text-emerald-700 dark:text-emerald-400 font-bold"> · {doneCount} uploaded</span>}
+                {errorCount > 0 && <span className="text-red-700 dark:text-red-400 font-bold"> · {errorCount} didn&apos;t upload</span>}
               </>
             )}
           </div>
@@ -300,11 +321,11 @@ export default function AssetPhotoUploader({
             </button>
             <button
               onClick={uploadAll}
-              disabled={pending.length === 0 || submitting || pending.every((p) => p.status === "done")}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 shadow"
+              disabled={toSend === 0 || submitting}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
             >
               {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
-              {submitting ? "Uploading…" : `Upload ${pending.filter((p) => p.status !== "done").length} photo${pending.length === 1 ? "" : "s"}`}
+              {submitting ? "Uploading…" : toSend > 0 && toSend === errorCount ? `Try again (${toSend})` : `Upload ${toSend} photo${toSend === 1 ? "" : "s"}`}
             </button>
           </div>
         </div>

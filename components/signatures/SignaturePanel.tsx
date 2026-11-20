@@ -23,9 +23,10 @@ export default function SignaturePanel({
   className?: string;
 }) {
   const [sigs, setSigs] = React.useState<ESignature[] | null>(null);
+  const [failed, setFailed] = React.useState(false);
 
   const load = React.useCallback(async () => {
-    try { setSigs(await listSignatures(resourceType, resourceId)); } catch { setSigs([]); }
+    try { setSigs(await listSignatures(resourceType, resourceId)); setFailed(false); } catch { setFailed(true); setSigs([]); }
   }, [resourceType, resourceId]);
 
   React.useEffect(() => { void load(); }, [load]);
@@ -47,7 +48,7 @@ export default function SignaturePanel({
         {canSign && (
           <button
             onClick={() => requestSignature({ resourceType, resourceId, resourceLabel })}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[var(--color-accent)] text-white text-xs font-bold hover:bg-[var(--color-accent-hover)]"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-bold hover:bg-[var(--color-accent-hover)]"
           >
             <PenLine className="w-3.5 h-3.5" /> Sign
           </button>
@@ -55,7 +56,11 @@ export default function SignaturePanel({
       </div>
       <div className="p-3">
         {!sigs ? (
-          <div className="text-xs text-[var(--color-text-muted)] italic py-2 text-center">Loading…</div>
+          <div className="text-xs text-[var(--color-text-muted)] py-2 text-center">Loading signatures…</div>
+        ) : failed ? (
+          <div className="text-xs text-rose-700 dark:text-rose-400 py-3 text-center">
+            Couldn&apos;t load signatures. <button type="button" onClick={() => void load()} className="font-bold underline">Try again</button>
+          </div>
         ) : sigs.length === 0 ? (
           <div className="text-xs text-[var(--color-text-muted)] italic py-3 text-center">No signatures yet.</div>
         ) : (

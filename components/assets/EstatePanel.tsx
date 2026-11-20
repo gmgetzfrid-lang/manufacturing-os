@@ -36,7 +36,7 @@ export default function EstatePanel({ orgId, assetId, tag }: { orgId: string; as
         <Link href={`/documents/graph?q=${encodeURIComponent(tag)}`} className="text-xs font-bold text-[var(--color-accent)] hover:underline">Explore on the map →</Link>
       </div>
       <div className="p-4 space-y-4">
-        {error && <div className="text-xs text-red-700">{error}</div>}
+        {error && <div role="alert" className="text-xs text-red-700 dark:text-red-400">Couldn&apos;t look across the estate: {error}</div>}
         {!res && !error && <div className="text-xs text-[var(--color-text-muted)] inline-flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Looking across drawings, text, folders and work in flight…</div>}
         {res && (
           <>

@@ -18,7 +18,7 @@ import {
 import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Field';
-import { Spinner } from '@/components/ui/Spinner';
+import LoadingBlock from '@/components/ui/LoadingBlock';
 import { appAlert, appConfirm } from '@/components/providers/DialogProvider';
 
 const DEFAULT_SETTINGS: OrgDraftingSettings = {
@@ -45,11 +45,11 @@ const DEFAULT_SETTINGS: OrgDraftingSettings = {
     label: "Priority / Urgency",
     enabled: true,
     options: [
-      { label: "1 - Urgent (1-2 Days)", value: 1, color: "red" },
-      { label: "2 - High (1 Week)", value: 2, color: "orange" },
-      { label: "3 - Normal (2 Weeks)", value: 3, color: "blue" },
-      { label: "4 - Low (3 Weeks)", value: 4, color: "slate" },
-      { label: "5 - Planned (1 Month)", value: 5, color: "slate" }
+      { label: "1: Urgent (1-2 days)", value: 1, color: "red" },
+      { label: "2: High (1 week)", value: 2, color: "orange" },
+      { label: "3: Normal (2 weeks)", value: 3, color: "blue" },
+      { label: "4: Low (3 weeks)", value: 4, color: "slate" },
+      { label: "5: Planned (1 month)", value: 5, color: "slate" }
     ]
   }
 };
@@ -60,6 +60,8 @@ export default function DraftingConfigPage() {
   const [settings, setSettings] = useState<OrgDraftingSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadTick, setReloadTick] = useState(0);
 
   // --- ACCESS GUARD ---
   useEffect(() => {
@@ -73,22 +75,27 @@ export default function DraftingConfigPage() {
     if (!activeOrgId) return;
     const loadSettings = async () => {
       setLoading(true);
+      setLoadError(null);
       try {
-        const { data } = await supabase
+        // A failed read must not fall back to the defaults: saving those
+        // would overwrite the real form.
+        const { data, error } = await supabase
           .from('org_configurations')
           .select('data')
           .eq('org_id', activeOrgId)
           .eq('key', 'drafting')
-          .single();
+          .maybeSingle();
+        if (error) throw error;
         setSettings(data ? (data.data as OrgDraftingSettings) : DEFAULT_SETTINGS);
       } catch (e) {
         console.error("Failed to load settings:", e);
+        setLoadError(e instanceof Error ? e.message : String((e as { message?: string })?.message ?? "Couldn't load the form settings."));
       } finally {
         setLoading(false);
       }
     };
     loadSettings();
-  }, [activeOrgId]);
+  }, [activeOrgId, reloadTick]);
 
   const handleSave = async () => {
     if (!activeOrgId || !settings) return;
@@ -101,7 +108,7 @@ export default function DraftingConfigPage() {
       await appAlert("Configuration saved successfully.");
     } catch (e) {
       console.error("Save failed:", e);
-      await appAlert({ message: "Failed to save configuration.", tone: "danger" });
+      await appAlert({ title: "Couldn't save the form settings", message: e instanceof Error ? e.message : String((e as { message?: string })?.message ?? "Try again."), tone: "danger" });
     } finally {
       setSaving(false);
     }
@@ -147,14 +154,19 @@ export default function DraftingConfigPage() {
   };
 
   if (loading) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <Spinner size="lg" />
-      </div>
-    );
+    return <PageShell width="work"><LoadingBlock what="the request form settings" /></PageShell>;
   }
 
-  if (!settings) return null;
+  if (!settings) {
+    return (
+      <PageShell width="work">
+        <p role="alert" className="border-l-2 border-red-500 pl-3 py-1 text-sm text-red-700 dark:text-red-400">
+          Couldn&apos;t load the request form settings{loadError ? `: ${loadError}` : "."}{" "}
+          <button type="button" onClick={() => setReloadTick((n) => n + 1)} className="font-bold underline">Try again</button>
+        </p>
+      </PageShell>
+    );
+  }
 
   return (
     <PageShell width="work">
@@ -333,11 +345,11 @@ function ConfigSection({
         <div className="space-y-2">
           {config.options.map((opt, i) => (
             <div key={i} className="flex items-center gap-2 group">
-              <GripVertical className="w-4 h-4 text-slate-300 cursor-move" />
+              <GripVertical className="w-4 h-4 text-[var(--color-text-faint)] cursor-move" />
               {renderOption(opt, i)}
               <button 
                 onClick={() => onRemoveOption(i)}
-                className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                className="p-2 text-[var(--color-text-faint)] hover:text-red-500 hover:bg-[var(--color-surface-2)] rounded transition-colors"
               >
                 <Trash2 className="w-4 h-4" />
               </button>
@@ -460,9 +472,9 @@ function CategoryCard({
           <input type="checkbox" checked={cat.enabled} onChange={(e) => onChange({ enabled: e.target.checked })} className="accent-[var(--color-accent)]" />
           Enabled
         </label>
-        <button onClick={onMoveUp} disabled={!canMoveUp} className="p-1.5 rounded hover:bg-slate-200 disabled:opacity-30 transition-colors"><ArrowUp className="w-3.5 h-3.5" /></button>
-        <button onClick={onMoveDown} disabled={!canMoveDown} className="p-1.5 rounded hover:bg-slate-200 disabled:opacity-30 transition-colors"><ArrowDown className="w-3.5 h-3.5" /></button>
-        <button onClick={onRemove} className="p-1.5 rounded text-[var(--color-text-faint)] hover:text-red-600 hover:bg-red-50 transition-colors">
+        <button onClick={onMoveUp} disabled={!canMoveUp} className="p-1.5 rounded hover:bg-[var(--color-surface-2)] disabled:opacity-30 transition-colors"><ArrowUp className="w-3.5 h-3.5" /></button>
+        <button onClick={onMoveDown} disabled={!canMoveDown} className="p-1.5 rounded hover:bg-[var(--color-surface-2)] disabled:opacity-30 transition-colors"><ArrowDown className="w-3.5 h-3.5" /></button>
+        <button onClick={onRemove} className="p-1.5 rounded text-[var(--color-text-faint)] hover:text-red-600 hover:bg-[var(--color-surface-2)] transition-colors">
           <Trash2 className="w-3.5 h-3.5" />
         </button>
       </div>
@@ -474,7 +486,7 @@ function CategoryCard({
           className="w-full px-2 py-1 border border-[var(--color-border)] rounded text-xs text-[var(--color-text)]"
         />
         <div className="space-y-2 mt-2">
-          {cat.fields.length === 0 && <div className="text-[11px] italic text-[var(--color-text-faint)]">No fields yet - add one below.</div>}
+          {cat.fields.length === 0 && <div className="text-[11px] italic text-[var(--color-text-faint)]">No fields yet. Add one below.</div>}
           {cat.fields.map((f, i) => (
             <FieldEditor key={f.key} field={f} onChange={(patch) => updateField(i, patch)} onRemove={() => removeField(i)} />
           ))}
@@ -525,7 +537,7 @@ function FieldEditor({
           <input type="checkbox" checked={!!field.required} onChange={(e) => onChange({ required: e.target.checked })} className="accent-[var(--color-accent)]" />
           Required
         </label>
-        <button onClick={onRemove} className="p-1 rounded text-[var(--color-text-faint)] hover:text-red-600 hover:bg-red-50 transition-colors">
+        <button onClick={onRemove} className="p-1 rounded text-[var(--color-text-faint)] hover:text-red-600 hover:bg-[var(--color-surface-2)] transition-colors">
           <Trash2 className="w-3.5 h-3.5" />
         </button>
       </div>

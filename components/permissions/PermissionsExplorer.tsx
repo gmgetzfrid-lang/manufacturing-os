@@ -155,7 +155,7 @@ export default function PermissionsExplorer() {
           </tbody>
         </table>
       </div>
-      <div className="px-4 py-2 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-faint)]">{STAFF_NOTE} · Beyond roles, ownership (document → folder → library → owning team&apos;s supervisor) and per-library grants add ◐ authority - see hover notes.</div>
+      <div className="px-4 py-2 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-faint)]">{STAFF_NOTE} · Beyond roles, ownership (document → folder → library → owning team&apos;s supervisor) and per-library grants add ◐ authority. Hover for notes.</div>
     </div>
   );
 }

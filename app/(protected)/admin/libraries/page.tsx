@@ -4,8 +4,12 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
-import { Settings } from "lucide-react";
-import LibraryWizard from "./LibraryWizard";
+import Link from "next/link";
+import { Settings, Trash2 } from "lucide-react";
+import LoadingBlock from "@/components/ui/LoadingBlock";
+import MoreMenu from "@/components/ui/MoreMenu";
+import LibraryWizard, { newLibraryDraftKey } from "./LibraryWizard";
+import { clearDraft } from "@/hooks/useDraft";
 import DeleteSafetyModal from "./DeleteSafetyModal";
 import LibraryAiSwitch from "@/components/documents/LibraryAiSwitch";
 import { LibraryConfig } from "@/types/schema";
@@ -17,6 +21,8 @@ export default function LibraryAdminPage() {
   const canManageAi = activeRole === "Admin" || activeRole === "DocCtrl";
 
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadTick, setReloadTick] = useState(0);
   const [libraries, setLibraries] = useState<LibraryConfig[]>([]);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -66,17 +72,19 @@ export default function LibraryAdminPage() {
           defaultNewAcl: r.default_new_acl, acl: r.acl,
         } as LibraryConfig));
         setLibraries(libs);
+        setLoadError(null);
         setNeverAi(new Set(((data || []) as Array<{ id: string; ai_excluded?: boolean }>).filter((r) => r.ai_excluded).map((r) => r.id)));
       } catch (err) {
         console.error("Error fetching libraries:", err);
         setLibraries([]);
+        setLoadError(err instanceof Error ? err.message : "Couldn't load libraries.");
       } finally {
         setLoading(false);
       }
     };
 
     run();
-  }, [activeOrgId]);
+  }, [activeOrgId, reloadTick]);
 
   const handleSaveLibrary = async (config: Omit<LibraryConfig, "id">) => {
     if (!activeOrgId) {
@@ -131,13 +139,20 @@ export default function LibraryAdminPage() {
         if (error || !newLib) throw error ?? new Error("Failed to create library");
 
         setLibraries((prev) => [{ id: newLib.id, ...config, orgId: activeOrgId } as LibraryConfig, ...prev]);
+        clearDraft(newLibraryDraftKey(activeOrgId));
+        setIsModalOpen(false);
+        setEditingLib(null);
+        // Straight into the new library.
+        router.push(`/documents/${newLib.id}`);
+        return;
       }
 
       setIsModalOpen(false);
       setEditingLib(null);
     } catch (err) {
       console.error("Failed to save library", err);
-      await appAlert({ message: "Error saving library. Please check your permissions.", tone: "danger" });
+      const msg = err && typeof err === "object" && "message" in err ? String((err as { message: unknown }).message) : "";
+      await appAlert({ title: "Couldn't save the library", message: msg || "Check that you have permission to change libraries.", tone: "danger" });
     } finally {
       setSaving(false);
     }
@@ -159,7 +174,8 @@ export default function LibraryAdminPage() {
       setLibraryToDelete(null);
     } catch (e) {
       console.error(e);
-      await appAlert({ message: "Failed to delete library.", tone: "danger" });
+      const msg = e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : "";
+      await appAlert({ title: "Couldn't delete the library", message: msg || "Try again.", tone: "danger" });
     } finally {
       setDeleting(false);
     }
@@ -188,20 +204,22 @@ export default function LibraryAdminPage() {
     return filtered;
   }, [libraries, searchTerm, sortOrder]);
 
-  if (!isController) return null;
+  if (!isController) {
+    return <div className="p-8 text-sm text-[var(--color-text-muted)]">{activeRole ? "Only Admin and Doc Control manage libraries." : "Loading…"}</div>;
+  }
 
   if (!activeOrgId) {
     return (
       <div className="p-8">
         <div className="max-w-3xl mx-auto bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-6 shadow-sm">
           <div className="flex items-center gap-3">
-            <div className="p-3 bg-slate-900 rounded-xl shadow-lg shadow-slate-900/20">
-              <Settings className="w-6 h-6 text-white" />
+            <div className="p-3 bg-[var(--color-surface-2)] rounded-xl">
+              <Settings className="w-6 h-6 text-[var(--color-text)]" />
             </div>
             <div>
               <h1 className="text-xl font-black text-[var(--color-text)]">Library Administration</h1>
               <p className="text-sm text-[var(--color-text-muted)] mt-1">
-                No active org selected. Set a default orgId in your user profile or in the app flow.
+                No workspace is selected. Pick one from your profile.
               </p>
             </div>
           </div>
@@ -213,7 +231,7 @@ export default function LibraryAdminPage() {
   if (loading) {
     return (
       <div className="p-8">
-        <div className="max-w-3xl mx-auto text-[var(--color-text-muted)]">Loading libraries...</div>
+        <LoadingBlock what="libraries" className="max-w-3xl mx-auto" />
       </div>
     );
   }
@@ -221,14 +239,17 @@ export default function LibraryAdminPage() {
   return (
     <div className="p-4 sm:p-8 pb-20">
       {/* MODALS */}
-      <LibraryWizard
-        orgId={activeOrgId}
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        onSave={handleSaveLibrary}
-        isLoading={saving}
-        initialData={editingLib}
-      />
+      {/* Mounted only while open, so each open starts fresh (and its draft comes back). */}
+      {isModalOpen && (
+        <LibraryWizard
+          orgId={activeOrgId}
+          isOpen={isModalOpen}
+          onClose={() => setIsModalOpen(false)}
+          onSave={handleSaveLibrary}
+          isLoading={saving}
+          initialData={editingLib}
+        />
+      )}
 
       {libraryToDelete && (
         <DeleteSafetyModal
@@ -245,16 +266,14 @@ export default function LibraryAdminPage() {
         <div className="flex flex-col lg:flex-row justify-between lg:items-end mb-10 gap-4">
           <div>
             <div className="flex items-center space-x-3 mb-2">
-              <div className="p-3 bg-slate-900 rounded-xl shadow-lg shadow-slate-900/20">
-                <Settings className="w-6 h-6 text-white" />
+              <div className="p-3 bg-[var(--color-surface-2)] rounded-xl">
+                <Settings className="w-6 h-6 text-[var(--color-text)]" />
               </div>
               <h1 className="text-3xl font-black text-[var(--color-text)] tracking-tight">Library Administration</h1>
             </div>
-            <p className="text-[var(--color-text-muted)] font-medium max-w-xl text-sm leading-relaxed">
-              Configure document repositories, define dynamic metadata schemas, and control role-based access per org.
-            </p>
-            <p className="text-[11px] text-[var(--color-text-faint)] mt-2 font-mono">
-              orgId: <span className="text-[var(--color-text-muted)]">{activeOrgId}</span>
+            <p className="text-[var(--color-text-muted)] font-medium max-w-xl text-sm leading-relaxed" title={`Workspace ${activeOrgId}`}>
+              {libraries.length} librar{libraries.length === 1 ? "y" : "ies"}
+              {neverAi.size > 0 ? ` · ${neverAi.size} kept from the AI` : ""}
             </p>
           </div>
 
@@ -262,25 +281,32 @@ export default function LibraryAdminPage() {
             <input
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Search libraries..."
-              className="w-full lg:w-72 px-4 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+              placeholder="Search libraries…"
+              className="w-full lg:w-72 px-4 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]"
             />
             <select
               value={sortOrder}
               onChange={(e) => setSortOrder(e.target.value as "name" | "recent")}
-              className="px-3 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm"
+              className="px-3 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm"
             >
               <option value="recent">Recent</option>
               <option value="name">Name</option>
             </select>
             <button
               onClick={openCreate}
-              className="px-4 py-2 rounded-xl bg-slate-900 text-white font-bold shadow hover:bg-slate-800"
+              className="px-4 py-2 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] font-bold"
             >
               New Library
             </button>
           </div>
         </div>
+
+        {loadError && (
+          <p role="alert" className="mb-4 border-l-2 border-red-500 pl-3 py-1 text-sm text-red-700 dark:text-red-400">
+            Couldn&apos;t load libraries: {loadError}{" "}
+            <button type="button" onClick={() => setReloadTick((n) => n + 1)} className="font-bold underline">Try again</button>
+          </p>
+        )}
 
         {/* LIST */}
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -291,7 +317,7 @@ export default function LibraryAdminPage() {
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="text-lg font-black text-[var(--color-text)] truncate">{lib.name}</div>
+                  <Link href={`/documents/${lib.id}`} title={`Open ${lib.name} (id ${lib.id})`} className="block text-lg font-black text-[var(--color-text)] truncate hover:underline">{lib.name}</Link>
                   <div className="text-sm text-[var(--color-text-muted)] mt-1 line-clamp-2">{lib.description}</div>
                   <div className="mt-3">
                     {activeOrgId && (
@@ -299,30 +325,19 @@ export default function LibraryAdminPage() {
                         onChanged={(x) => setNeverAi((s) => { const n = new Set(s); if (x) n.add(lib.id!); else n.delete(lib.id!); return n; })} />
                     )}
                   </div>
-                  <div className="text-[11px] text-[var(--color-text-faint)] mt-2 font-mono truncate">
-                    libraryId: {lib.id}
-                  </div>
                 </div>
 
-                <div className="flex flex-col gap-2 shrink-0">
-                  <button
-                    onClick={() => router.push(`/documents/${lib.id}`)}
-                    className="px-3 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-sm font-bold"
-                  >
-                    Open
-                  </button>
+                {/* Repeated on every card, so quiet: Edit, and Delete folded into More. */}
+                <div className="flex items-center gap-1.5 shrink-0">
                   <button
                     onClick={() => openEdit(lib)}
-                    className="px-3 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800 text-sm font-bold"
+                    className="px-3 py-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-sm font-bold"
                   >
                     Edit
                   </button>
-                  <button
-                    onClick={() => initiateDelete(lib)}
-                    className="px-3 py-2 rounded-xl bg-red-50 border border-red-200 text-red-700 hover:bg-red-100 text-sm font-bold"
-                  >
-                    Delete
-                  </button>
+                  <MoreMenu iconOnly label={`More for ${lib.name}`} items={[
+                    { icon: <Trash2 className="w-4 h-4" />, label: "Delete library", tone: "bad", onClick: () => initiateDelete(lib) },
+                  ]} />
                 </div>
               </div>
             </div>
@@ -330,7 +345,7 @@ export default function LibraryAdminPage() {
 
           {filteredLibraries.length === 0 && (
             <div className="col-span-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-10 text-center text-[var(--color-text-muted)]">
-              No libraries found for this org.
+              {loadError ? "The libraries didn't load." : searchTerm ? "No libraries match that search." : "No libraries yet."}
             </div>
           )}
         </div>

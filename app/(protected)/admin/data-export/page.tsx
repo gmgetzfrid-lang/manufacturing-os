@@ -97,8 +97,10 @@ export default function DataExportPage() {
         fetch(`/api/data-export/destinations?orgId=${activeOrgId}`, { headers: { Authorization: `Bearer ${token}` } }),
         fetch(`/api/data-export/runs?orgId=${activeOrgId}&limit=50`, { headers: { Authorization: `Bearer ${token}` } }),
       ]);
-      if (destRes.ok) setDestinations((await destRes.json()).destinations || []);
-      if (runRes.ok) setRuns((await runRes.json()).runs || []);
+      if (!destRes.ok) throw new Error(`Couldn't load destinations: ${(await destRes.text().catch(() => "")) || `HTTP ${destRes.status}`}`);
+      if (!runRes.ok) throw new Error(`Couldn't load export history: ${(await runRes.text().catch(() => "")) || `HTTP ${runRes.status}`}`);
+      setDestinations((await destRes.json()).destinations || []);
+      setRuns((await runRes.json()).runs || []);
     } catch (e) {
       setError((e as Error).message);
     } finally { setLoading(false); }
@@ -139,6 +141,8 @@ export default function DataExportPage() {
     try {
       await startGlobalBackup(activeOrgId);
       void refresh();
+    } catch (e) {
+      setError(`The backup didn't finish: ${(e as Error).message}`);
     } finally { setBusyZip(false); }
   };
 
@@ -175,11 +179,18 @@ export default function DataExportPage() {
   const deleteDestination = async (id: string) => {
     if (!activeOrgId) return;
     if (!(await appConfirm({ message: "Delete this destination? Scheduled exports for it will stop. This cannot be undone.", tone: "danger" }))) return;
-    const { data: { session } } = await supabase.auth.getSession();
-    const token = session?.access_token;
-    await fetch(`/api/data-export/destinations/${id}?orgId=${activeOrgId}`, {
-      method: "DELETE", headers: { Authorization: `Bearer ${token}` },
-    });
+    setError(null);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const res = await fetch(`/api/data-export/destinations/${id}?orgId=${activeOrgId}`, {
+        method: "DELETE", headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error((await res.text().catch(() => "")) || `HTTP ${res.status}`);
+    } catch (e) {
+      setError(`Couldn't delete the destination: ${(e as Error).message}`);
+      return;
+    }
     void refresh();
   };
 
@@ -188,14 +199,23 @@ export default function DataExportPage() {
         <PageHeaderBar
           icon={Database}
           title="Data Export & Backup"
-          subtitle="Your data, available to you any time. Direct download, ZIP with files inline, or scheduled push to your own storage."
+          subtitle={isAuthorized && !loading
+            ? `${runs.length > 0 ? `Last export ${new Date(runs[0].completed_at || runs[0].started_at).toLocaleString()}` : "No exports yet"} · ${destinations.length} scheduled destination${destinations.length === 1 ? "" : "s"}.`
+            : "Your data, yours to take any time."}
         />
 
         {!isAuthorized && (
-          <div className="mb-6 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-start gap-2">
+          <p className="mb-6 text-xs text-[var(--color-text-muted)] flex items-start gap-2">
             <Lock className="w-4 h-4 mt-0.5 shrink-0" />
-            <span>Only <b>Admin</b>, <b>Manager</b>, or <b>DocCtrl</b> roles can manage data exports. Your role: <b>{activeRole}</b>.</span>
-          </div>
+            <span>Only <b>Admin</b>, <b>Manager</b> or <b>DocCtrl</b> roles manage data exports.</span>
+          </p>
+        )}
+
+        {error && (
+          <p role="alert" className="mb-4 border-l-2 border-red-500 pl-3 text-xs text-red-700 dark:text-red-400 flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+            <span>{error} <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button></span>
+          </p>
         )}
 
         {/* ──── DIRECT DOWNLOAD ──── */}
@@ -206,12 +226,12 @@ export default function DataExportPage() {
                 <div className="p-2.5 bg-[var(--color-surface-2)] rounded-xl"><FileJson className="w-5 h-5 text-[var(--color-text-muted)]" /></div>
                 <div className="flex-1">
                   <div className="text-sm font-black text-[var(--color-text)]">JSON only</div>
-                  <div className="text-xs text-[var(--color-text-muted)] mt-0.5">Structured records + a file manifest with 24h presigned URLs.</div>
+                  <div className="text-xs text-[var(--color-text-muted)] mt-0.5">Records, plus a list of files with links that work for 24 hours.</div>
                 </div>
               </div>
               <button
                 onClick={downloadJson} disabled={busyJson || !activeOrgId}
-                className="w-full inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors"
+                className="w-full inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
               >
                 {busyJson ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
                 Download JSON
@@ -219,15 +239,15 @@ export default function DataExportPage() {
             </div>
             <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5">
               <div className="flex items-start gap-3 mb-3">
-                <div className="p-2.5 bg-emerald-100 rounded-xl"><FileArchive className="w-5 h-5 text-emerald-700" /></div>
+                <div className="p-2.5 bg-[var(--color-surface-2)] rounded-xl"><FileArchive className="w-5 h-5 text-[var(--color-text-muted)]" /></div>
                 <div className="flex-1">
-                  <div className="text-sm font-black text-[var(--color-text)]">Full ZIP with binaries</div>
-                  <div className="text-xs text-[var(--color-text-muted)] mt-0.5">JSON + every PDF/DWG, built in your browser: files download straight from storage into ~300MB zip parts with live progress. Allow multiple downloads when the browser asks.</div>
+                  <div className="text-sm font-black text-[var(--color-text)]">Full ZIP with files</div>
+                  <div className="text-xs text-[var(--color-text-muted)] mt-0.5">Records and every PDF and DWG, in zip parts of about 300 MB. Allow several downloads when the browser asks.</div>
                 </div>
               </div>
               <button
                 onClick={downloadZip} disabled={busyZip || !activeOrgId}
-                className="w-full inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50"
+                className="w-full inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
               >
                 {busyZip ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
                 {busyZip ? "Building backup…" : "Download Full ZIP"}
@@ -235,7 +255,7 @@ export default function DataExportPage() {
               {backupProgress && busyZip && (
                 <div className="mt-3 space-y-1.5">
                   <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-                    <div className="h-full bg-emerald-600 transition-all duration-300"
+                    <div className="h-full bg-[var(--color-text)] transition-all duration-300"
                       style={{ width: `${backupProgress.filesTotal > 0 ? Math.round((backupProgress.filesDone / backupProgress.filesTotal) * 100) : 5}%` }} />
                   </div>
                   <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
@@ -243,22 +263,22 @@ export default function DataExportPage() {
                       {backupProgress.phase === "envelope" && "Reading every table…"}
                       {backupProgress.phase === "files" &&
                         `File ${backupProgress.filesDone + 1} of ${backupProgress.filesTotal} · ${(backupProgress.bytesDone / 1048576).toFixed(0)} MB · part ${backupProgress.part}` +
-                        (backupProgress.currentPath ? ` - ${backupProgress.currentPath.split("/").pop()}` : "")}
+                        (backupProgress.currentPath ? ` · ${backupProgress.currentPath.split("/").pop()}` : "")}
                       {backupProgress.phase === "finalizing" && `Packing part ${backupProgress.part}…`}
                     </span>
                     <button onClick={cancelBackup} className="font-bold text-rose-600 hover:underline shrink-0">Cancel</button>
                   </div>
                   <div className="text-[11px] text-[var(--color-text-faint)]">
-                    You can leave this page and keep working - the floating card tracks it anywhere in the app. Just don&apos;t close the tab.
+                    You can leave this page and keep working. The corner card follows it anywhere in the app. Don&apos;t close the tab.
                   </div>
                   {backupProgress.errors.length > 0 && (
-                    <div className="text-[11px] text-amber-700">{backupProgress.errors.length} file(s) failed so far - they&apos;ll be listed in backup-report.json.</div>
+                    <div className="text-[11px] text-amber-700 dark:text-amber-400">{backupProgress.errors.length} file(s) didn&apos;t make it so far. They&apos;ll be listed in backup-report.json.</div>
                   )}
                 </div>
               )}
               {backupProgress?.phase === "done" && !busyZip && (
-                <div className="mt-2 text-[11px] font-bold text-emerald-700">
-                  Backup complete - {backupProgress.part} zip part(s), every file SHA-256 verified in files-manifest.json.
+                <div role="status" className="mt-2 text-[11px] font-bold text-emerald-700 dark:text-emerald-400">
+                  Backup complete: {backupProgress.part} zip part(s), every file checked (SHA-256) in files-manifest.json.
                 </div>
               )}
             </div>
@@ -272,23 +292,25 @@ export default function DataExportPage() {
               <h2 className="text-base font-black text-[var(--color-text)] flex items-center gap-2">
                 <Server className="w-4 h-4 text-[var(--color-text-muted)]" /> Scheduled Push Destinations
               </h2>
-              <button
-                onClick={() => setCreating(true)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow"
-              ><Plus className="w-3.5 h-3.5" /> New Destination</button>
+              {destinations.length > 0 && (
+                <button
+                  onClick={() => setCreating(true)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-xs font-bold"
+                ><Plus className="w-3.5 h-3.5" /> New Destination</button>
+              )}
             </div>
             <p className="text-xs text-[var(--color-text-muted)] mb-3 max-w-3xl">
-              Configure your own S3 / R2 bucket or webhook URL. We push a fresh export on your schedule. We never see the
-              destination credentials in plaintext - they&apos;re encrypted at rest with AES-256-GCM and decrypted only at push time.
+              Your own S3 or R2 bucket, or a webhook. A fresh export goes there on your schedule. Its keys are stored
+              encrypted (AES-256-GCM) and only opened at push time.
             </p>
 
             {loading ? (
-              <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)] p-4"><Spinner size="sm" /> Loading…</div>
+              <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)] p-4"><Spinner size="sm" /> Loading destinations…</div>
             ) : destinations.length === 0 ? (
               <div className="bg-[var(--color-surface)] border border-dashed border-[var(--color-border-strong)] rounded-2xl p-8 text-center">
-                <Server className="w-10 h-10 mx-auto text-slate-300 mb-2" />
-                <div className="text-sm text-[var(--color-text-muted)] mb-3">No destinations configured yet.</div>
-                <button onClick={() => setCreating(true)} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold">
+                <Server className="w-10 h-10 mx-auto text-[var(--color-text-faint)] mb-2" />
+                <div className="text-sm text-[var(--color-text-muted)] mb-3">No destinations yet.</div>
+                <button onClick={() => setCreating(true)} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-xs font-bold">
                   <Plus className="w-3.5 h-3.5" /> Add your first destination
                 </button>
               </div>
@@ -321,7 +343,7 @@ export default function DataExportPage() {
                 <RefreshCw className="w-3.5 h-3.5" /> Refresh
               </button>
             </div>
-            <p className="text-xs text-[var(--color-text-muted)] mb-3">Chain-of-custody for every export. Auditable, immutable.</p>
+            <p className="text-xs text-[var(--color-text-muted)] mb-3">Every export, who ran it and where it went. Kept for the record.</p>
             {runs.length === 0 ? (
               <div className="bg-[var(--color-surface)] border border-dashed border-[var(--color-border-strong)] rounded-2xl p-6 text-center text-xs text-[var(--color-text-muted)]">
                 No exports run yet.
@@ -336,18 +358,12 @@ export default function DataExportPage() {
           </div>
         )}
 
-        {error && (
-          <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-start gap-2">
-            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
-          </div>
-        )}
-
         {/* Trust footer */}
         <div className="mt-8 p-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text-muted)] flex items-center gap-3">
-          <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0" />
+          <ShieldCheck className="w-5 h-5 text-[var(--color-text-muted)] shrink-0" />
           <span>
-            Every export is recorded in <b>audit_logs</b> and visible above. Credentials use AES-256-GCM at rest.
-            Public commitment: <Link href="/data-portability" target="_blank" className="text-emerald-700 font-bold hover:underline inline-flex items-center gap-1">data-portability page <ExternalLink className="w-3 h-3" /></Link>.
+            Every export is recorded in the audit log and listed above.
+            Our promise: <Link href="/data-portability" target="_blank" className="text-[var(--color-accent)] font-bold hover:underline inline-flex items-center gap-1">data portability <ExternalLink className="w-3 h-3" /></Link>.
           </span>
         </div>
 
@@ -383,11 +399,12 @@ function DestinationCard({
     setTesting(true);
     setTestResult(null);
     try { setTestResult(await onTest()); }
+    catch (e) { setTestResult({ ok: false, error: (e as Error).message }); }
     finally { setTesting(false); }
   };
 
   const icon = dest.destination_type === "webhook" ? <Webhook className="w-4 h-4 text-[var(--color-text-muted)]" />
-    : dest.destination_type === "r2" ? <HardDrive className="w-4 h-4 text-amber-700" />
+    : dest.destination_type === "r2" ? <HardDrive className="w-4 h-4 text-[var(--color-text-muted)]" />
     : <ArchiveIcon className="w-4 h-4 text-[var(--color-text-muted)]" />;
 
   return (
@@ -415,39 +432,39 @@ function DestinationCard({
           </div>
           <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[var(--color-text-muted)]">
             {dest.last_run_at && (
-              <span className={`inline-flex items-center gap-1 ${dest.last_run_status === "failed" ? "text-red-600" : "text-emerald-700"}`}>
+              <span className={`inline-flex items-center gap-1 ${dest.last_run_status === "failed" ? "text-red-600" : "text-emerald-700 dark:text-emerald-400"}`}>
                 {dest.last_run_status === "succeeded" ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
                 last: {new Date(dest.last_run_at).toLocaleString()}
               </span>
             )}
             {dest.next_run_at && <span className="inline-flex items-center gap-1"><Clock className="w-3 h-3" /> next: {new Date(dest.next_run_at).toLocaleString()}</span>}
             {dest.retention_days && <span>retention: {dest.retention_days}d</span>}
-            {!dest.include_files && <span className="text-amber-700">JSON only (no binaries)</span>}
+            {!dest.include_files && <span className="text-amber-700 dark:text-amber-400">Records only (no files)</span>}
           </div>
           {dest.last_run_error && (
-            <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded text-[11px] text-red-700 font-mono">{dest.last_run_error}</div>
+            <p className="mt-2 border-l-2 border-red-500 pl-2 text-[11px] text-red-700 dark:text-red-400 font-mono">{dest.last_run_error}</p>
           )}
           {testResult && (
-            <div className={`mt-2 p-2 border rounded text-[11px] ${testResult.ok ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-red-50 border-red-200 text-red-700"}`}>
-              {testResult.ok ? "Connection test passed - credentials work." : `Test failed: ${testResult.error}`}
-            </div>
+            <p role="status" className={`mt-2 border-l-2 pl-2 text-[11px] ${testResult.ok ? "border-emerald-500 text-emerald-700 dark:text-emerald-400" : "border-red-500 text-red-700 dark:text-red-400"}`}>
+              {testResult.ok ? "Connection works." : `Test failed: ${testResult.error}`}
+            </p>
           )}
         </div>
         <div className="flex flex-col items-end gap-1.5">
           <div className="flex items-center gap-1">
-            <button onClick={() => void doTest()} disabled={testing} title="Test connection" className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-accent-hover)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 transition-colors">
+            <button onClick={() => void doTest()} disabled={testing} title="Test connection" aria-label="Test connection" className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-accent-hover)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 transition-colors">
               {testing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <TestTube className="w-3.5 h-3.5" />}
             </button>
-            <button onClick={onEdit} title="Edit" className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+            <button onClick={onEdit} title="Edit" aria-label={`Edit ${dest.name}`} className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
               <Edit3 className="w-3.5 h-3.5" />
             </button>
-            <button onClick={onDelete} title="Delete" className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-red-600 hover:bg-red-50 transition-colors">
+            <button onClick={onDelete} title="Delete" aria-label={`Delete ${dest.name}`} className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-red-600 hover:bg-[var(--color-surface-2)] transition-colors">
               <Trash2 className="w-3.5 h-3.5" />
             </button>
           </div>
           <button
             onClick={onRun} disabled={busy}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-xs font-bold disabled:opacity-50"
           >
             {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Cpu className="w-3 h-3" />} Run Now
           </button>
@@ -465,8 +482,8 @@ function RunRow({ run }: { run: Run }) {
   return (
     <div className="px-4 py-3 flex items-start gap-3">
       <div className={`p-1.5 rounded-md shrink-0 ${
-        run.status === "succeeded" ? "bg-emerald-100" :
-        run.status === "failed" ? "bg-red-100" :
+        run.status === "succeeded" ? "bg-emerald-100 dark:bg-emerald-950/40" :
+        run.status === "failed" ? "bg-red-100 dark:bg-red-950/40" :
         run.status === "running" ? "bg-[var(--color-surface-2)]" : "bg-[var(--color-surface-2)]"
       }`}>
         {run.status === "succeeded" ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" /> :
@@ -489,7 +506,7 @@ function RunRow({ run }: { run: Run }) {
           {run.destination_path && <span className="font-mono truncate max-w-[40ch]" title={run.destination_path}>→ {run.destination_path}</span>}
         </div>
         {run.error_message && (
-          <div className="mt-1 p-2 bg-red-50 border border-red-200 rounded text-[11px] text-red-700 font-mono">{run.error_message}</div>
+          <p className="mt-1 border-l-2 border-red-500 pl-2 text-[11px] text-red-700 dark:text-red-400 font-mono">{run.error_message}</p>
         )}
       </div>
     </div>
@@ -526,6 +543,13 @@ function DestinationModal({
   const [enabled, setEnabled] = useState(existing?.enabled ?? true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (busy) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy, onClose]);
 
   const save = async () => {
     setBusy(true); setError(null);
@@ -567,14 +591,14 @@ function DestinationModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
+    <div role="dialog" aria-modal="true" aria-label={`${mode === "create" ? "New" : "Edit"} backup destination`} className="fixed inset-0 z-[200] bg-slate-900/50 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
       <div className="w-full max-w-xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
           <div>
             <div className="text-sm font-black text-[var(--color-text)]">{mode === "create" ? "New" : "Edit"} Backup Destination</div>
-            <div className="text-xs text-[var(--color-text-muted)]">Credentials are encrypted with AES-256-GCM and only decrypted at push time.</div>
+            <div className="text-xs text-[var(--color-text-muted)]">Keys are stored encrypted and only opened at push time.</div>
           </div>
-          <button onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] transition-colors"><X className="w-4 h-4" /></button>
+          <button onClick={onClose} disabled={busy} aria-label="Close" className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] transition-colors"><X className="w-4 h-4" /></button>
         </div>
 
         <div className="px-6 py-5 space-y-4 max-h-[70vh] overflow-y-auto">
@@ -640,7 +664,7 @@ function DestinationModal({
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <Field label="Due from (UTC hour)">
                 <Input type="number" min={0} max={23} value={hourUtc} onChange={(e) => setHourUtc(Number(e.target.value))} />
-                <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">Delivery happens at the daily sweep (~05:00 UTC) once due.</p>
+                <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">It goes out at the daily run (about 5:00 AM UTC) once due.</p>
               </Field>
               {schedule === "weekly" && (
                 <Field label="Day of week">
@@ -669,15 +693,15 @@ function DestinationModal({
           <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Enabled</label>
 
           {error && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-start gap-2">
+            <p role="alert" className="border-l-2 border-red-500 pl-3 text-xs text-red-700 dark:text-red-400 flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
-            </div>
+            </p>
           )}
         </div>
 
         <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
-          <button onClick={save} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50">
+          <button onClick={save} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
             {mode === "create" ? "Create Destination" : "Save Changes"}
           </button>

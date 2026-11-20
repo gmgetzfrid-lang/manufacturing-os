@@ -14,7 +14,8 @@ import {
 } from "@/lib/teams";
 import { setLibraryOwnerTeam } from "@/lib/ownership";
 import { UsersRound, Plus, Trash2, Loader2, Check, Search, ShieldAlert } from "lucide-react";
-import { appConfirm } from "@/components/providers/DialogProvider";
+import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
+import LoadingBlock from "@/components/ui/LoadingBlock";
 
 interface OrgMember { uid: string; display_name: string | null; email: string | null; role: string }
 
@@ -35,6 +36,7 @@ export default function AdminTeamsPage() {
   const [newName, setNewName] = useState("");
   const [newColor, setNewColor] = useState(TEAM_COLORS[0]);
   const [busy, setBusy] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
@@ -45,30 +47,46 @@ export default function AdminTeamsPage() {
         supabase.from("org_members").select("uid, display_name, email, role").eq("org_id", activeOrgId).eq("status", "active"),
         supabase.from("libraries").select("id, name, owner_team_id").eq("org_id", activeOrgId).order("name", { ascending: true }),
       ]);
+      if (m.error || libs.error) throw new Error((m.error ?? libs.error)?.message);
       setTeams(t);
       setMembers((m.data ?? []) as OrgMember[]);
       setLibraries((libs.data ?? []) as Array<{ id: string; name: string; owner_team_id: string | null }>);
+      setLoadError(null);
+    } catch (e) {
+      setLoadError((e as Error).message || "Couldn't load teams.");
     } finally { setLoading(false); }
   }, [activeOrgId]);
 
   const setSupervisor = async (sup: string | null) => {
     if (!selected) return;
+    const before = selected.supervisorUserId ?? null;
     setSelected({ ...selected, supervisorUserId: sup });
     setTeams((prev) => prev.map((t) => (t.id === selected.id ? { ...t, supervisorUserId: sup } : t)));
-    try { await updateTeam(selected.id, { supervisorUserId: sup }); } catch { void refresh(); }
+    try { await updateTeam(selected.id, { supervisorUserId: sup }); }
+    catch (e) {
+      setSelected((cur) => (cur && cur.id === selected.id ? { ...cur, supervisorUserId: before } : cur));
+      void refresh();
+      await appAlert({ title: "Couldn't change the supervisor", message: (e as Error).message, tone: "danger" });
+    }
   };
   const toggleLibrary = async (libId: string, owned: boolean) => {
     if (!selected || !uid) return;
     const teamId = owned ? null : selected.id;
     setLibraries((prev) => prev.map((l) => (l.id === libId ? { ...l, owner_team_id: teamId } : l)));
-    try { await setLibraryOwnerTeam({ libraryId: libId, orgId: activeOrgId, teamId, actorId: uid }); } catch { void refresh(); }
+    try { await setLibraryOwnerTeam({ libraryId: libId, orgId: activeOrgId, teamId, actorId: uid }); }
+    catch (e) {
+      void refresh();
+      await appAlert({ title: "Couldn't change who owns the library", message: (e as Error).message, tone: "danger" });
+    }
   };
 
   useEffect(() => { void refresh(); }, [refresh]);
 
   const openTeam = async (team: Team) => {
     setSelected(team);
-    setTeamMemberIds(await listTeamMembers(team.id));
+    setTeamMemberIds([]);
+    try { setTeamMemberIds(await listTeamMembers(team.id)); }
+    catch (e) { await appAlert({ title: "Couldn't load the team's members", message: (e as Error).message, tone: "danger" }); }
   };
 
   const handleCreate = async () => {
@@ -78,7 +96,10 @@ export default function AdminTeamsPage() {
       const t = await createTeam({ orgId: activeOrgId, name: newName.trim(), color: newColor, createdBy: uid });
       setNewName(""); setCreating(false);
       await refresh();
+      // Straight into the new team, to add its people.
       await openTeam(t);
+    } catch (e) {
+      await appAlert({ title: "Couldn't create the team", message: (e as Error).message, tone: "danger" });
     } finally { setBusy(false); }
   };
 
@@ -90,25 +111,31 @@ export default function AdminTeamsPage() {
       if (has) await removeTeamMember(selected.id, memberUid);
       else await addTeamMember({ teamId: selected.id, uid: memberUid, orgId: activeOrgId, addedBy: uid });
       void refresh();
-    } catch {
-      setTeamMemberIds(await listTeamMembers(selected.id)); // revert on error
+    } catch (e) {
+      setTeamMemberIds((prev) => has ? [...prev, memberUid] : prev.filter((x) => x !== memberUid)); // roll back
+      await appAlert({ title: has ? "Couldn't remove them from the team" : "Couldn't add them to the team", message: (e as Error).message, tone: "danger" });
     }
   };
 
   const handleDelete = async (team: Team) => {
     if (!(await appConfirm({ message: `Delete team "${team.name}"? Members keep their accounts; only this grouping is removed.`, tone: "danger" }))) return;
-    await deleteTeam(team.id);
+    try { await deleteTeam(team.id); }
+    catch (e) { await appAlert({ title: "Couldn't delete the team", message: (e as Error).message, tone: "danger" }); return; }
     if (selected?.id === team.id) setSelected(null);
     void refresh();
+  };
+  const rename = async (team: Team, name: string) => {
+    try { await updateTeam(team.id, { name }); void refresh(); }
+    catch (e) { await appAlert({ title: "Couldn't rename the team", message: (e as Error).message, tone: "danger" }); }
   };
 
   if (!isAdmin) {
     return (
       <div className="p-8 max-w-2xl">
-        <div className="flex items-center gap-3 p-4 rounded-xl bg-[var(--color-surface-2)] text-[var(--color-text)]">
+        <p className="flex items-center gap-3 text-sm text-[var(--color-text-muted)]">
           <ShieldAlert className="w-5 h-5" />
           <span>Only Admins and Managers can manage teams.</span>
-        </div>
+        </p>
       </div>
     );
   }
@@ -122,21 +149,28 @@ export default function AdminTeamsPage() {
     <div className="p-6 lg:p-8 max-w-6xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl grid place-items-center text-white" style={{ background: "var(--brand-gradient)" }}>
+          <div className="w-11 h-11 rounded-2xl grid place-items-center bg-[var(--color-surface-2)] text-[var(--color-text)]">
             <UsersRound className="w-5 h-5" />
           </div>
           <div>
             <h1 className="text-xl font-black text-[var(--color-text)]">Teams &amp; departments</h1>
-            <p className="text-sm text-[var(--color-text-muted)]">Group users, grant a whole team access, set a supervisor, and let a department own a library (its supervisor becomes the owner).</p>
+            <p className="text-sm text-[var(--color-text-muted)]">
+              {loading ? "Group people, give a whole team access, and let a department own a library." : `${teams.length} team${teams.length === 1 ? "" : "s"} · ${members.length} people`}
+            </p>
           </div>
         </div>
-        <button onClick={() => setCreating(true)} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold text-[var(--color-accent-fg)] shadow-sm hover:opacity-90" style={{ background: "var(--color-accent)" }}>
+        <button onClick={() => setCreating(true)} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]">
           <Plus className="w-4 h-4" /> New team
         </button>
       </div>
 
-      {loading ? (
-        <div className="flex items-center gap-2 text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>
+      {loading && teams.length === 0 ? (
+        <LoadingBlock what="teams" />
+      ) : loadError ? (
+        <p role="alert" className="border-l-2 border-red-500 pl-3 py-1 text-sm text-red-700 dark:text-red-400">
+          Couldn&apos;t load teams: {loadError}{" "}
+          <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
+        </p>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-5">
           {/* team list */}
@@ -148,11 +182,11 @@ export default function AdminTeamsPage() {
                   className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-sm text-[var(--color-text)] mb-2" />
                 <div className="flex items-center gap-1.5 mb-2">
                   {TEAM_COLORS.map((c) => (
-                    <button key={c} onClick={() => setNewColor(c)} className={`w-5 h-5 rounded-full ${newColor === c ? "ring-2 ring-offset-1 ring-[var(--color-text-muted)]" : ""}`} style={{ backgroundColor: c }} />
+                    <button key={c} onClick={() => setNewColor(c)} aria-label={`Team color ${c}`} aria-pressed={newColor === c} className={`w-5 h-5 rounded-full ${newColor === c ? "ring-2 ring-offset-1 ring-[var(--color-text-muted)]" : ""}`} style={{ backgroundColor: c }} />
                   ))}
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={handleCreate} disabled={busy || !newName.trim()} className="flex-1 px-3 py-1.5 rounded-lg text-xs font-bold text-white disabled:opacity-50" style={{ background: "var(--color-accent)" }}>Create</button>
+                  <button onClick={handleCreate} disabled={busy || !newName.trim()} className="flex-1 inline-flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">{busy && <Loader2 className="w-3 h-3 animate-spin" />} Create</button>
                   <button onClick={() => { setCreating(false); setNewName(""); }} className="px-3 py-1.5 rounded-lg text-xs font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Cancel</button>
                 </div>
               </div>
@@ -170,7 +204,7 @@ export default function AdminTeamsPage() {
                   <div className="font-bold text-sm text-[var(--color-text)] truncate">{t.name}</div>
                   <div className="text-xs text-[var(--color-text-muted)]">{t.memberCount ?? 0} member{(t.memberCount ?? 0) === 1 ? "" : "s"}</div>
                 </div>
-                <Trash2 onClick={(e) => { e.stopPropagation(); handleDelete(t); }} className="w-4 h-4 text-[var(--color-text-faint)] opacity-60 sm:opacity-0 group-hover:opacity-100 hover:text-[var(--color-accent)]" />
+                <Trash2 aria-label={`Delete ${t.name}`} onClick={(e) => { e.stopPropagation(); void handleDelete(t); }} className="w-4 h-4 text-[var(--color-text-faint)] opacity-60 group-hover:opacity-100 hover:text-rose-600" />
               </button>
             ))}
           </div>
@@ -186,7 +220,7 @@ export default function AdminTeamsPage() {
               <>
                 <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
                   <span className="w-8 h-8 rounded-lg grid place-items-center text-white shrink-0" style={{ backgroundColor: selected.color ?? "#4f46e5" }}><UsersRound className="w-4 h-4" /></span>
-                  <input defaultValue={selected.name} onBlur={(e) => { if (e.target.value.trim() && e.target.value !== selected.name) { void updateTeam(selected.id, { name: e.target.value.trim() }).then(refresh); } }}
+                  <input key={selected.id} defaultValue={selected.name} aria-label="Team name" onBlur={(e) => { if (e.target.value.trim() && e.target.value !== selected.name) { void rename(selected, e.target.value.trim()); } }}
                     className="font-black text-[var(--color-text)] bg-transparent flex-1 outline-none" />
                   <span className="text-xs text-[var(--color-text-muted)]">{teamMemberIds.length} in team</span>
                 </div>
@@ -196,12 +230,12 @@ export default function AdminTeamsPage() {
                   <div className="flex items-center gap-2">
                     <span className="text-[11px] font-bold text-[var(--color-text-muted)] w-24 shrink-0">Supervisor</span>
                     <select value={selected.supervisorUserId ?? ""} onChange={(e) => void setSupervisor(e.target.value || null)}
-                      className="flex-1 text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 outline-none">
-                      <option value="">- none -</option>
+                      className="flex-1 text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] px-2 py-1.5 outline-none">
+                      <option value="">None</option>
                       {members.map((m) => <option key={m.uid} value={m.uid}>{m.display_name || m.email || m.uid}</option>)}
                     </select>
                   </div>
-                  <div className="text-[11px] text-[var(--color-text-muted)]">The supervisor becomes the effective owner of any library this department owns (unless a more specific owner is set).</div>
+                  <div className="text-[11px] text-[var(--color-text-muted)]">The supervisor owns any library this department owns, unless that library names its own owner.</div>
                   <div>
                     <div className="text-[11px] font-bold text-[var(--color-text-muted)] mb-1">Owns libraries</div>
                     <div className="flex flex-wrap gap-1.5">
@@ -232,8 +266,8 @@ export default function AdminTeamsPage() {
                   {filteredMembers.map((m) => {
                     const inTeam = teamMemberIds.includes(m.uid);
                     return (
-                      <button key={m.uid} onClick={() => toggleMember(m.uid)} className="w-full flex items-center gap-3 px-5 py-2.5 hover:bg-[var(--color-surface-2)] text-left">
-                        <span className={`w-5 h-5 rounded-md grid place-items-center shrink-0 ${inTeam ? "text-white" : "border border-[var(--color-border-strong)]"}`} style={inTeam ? { background: "var(--color-accent)" } : undefined}>
+                      <button key={m.uid} onClick={() => toggleMember(m.uid)} aria-pressed={inTeam} className="w-full flex items-center gap-3 px-5 py-2.5 hover:bg-[var(--color-surface-2)] text-left">
+                        <span aria-hidden className={`w-5 h-5 rounded-md grid place-items-center shrink-0 ${inTeam ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "border border-[var(--color-border-strong)]"}`}>
                           {inTeam && <Check className="w-3.5 h-3.5" />}
                         </span>
                         <div className="min-w-0 flex-1">

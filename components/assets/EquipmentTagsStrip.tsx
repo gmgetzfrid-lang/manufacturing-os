@@ -74,11 +74,11 @@ export default function EquipmentTagsStrip({
           Equipment & Asset Tags
         </span>
         <span className="text-[11px] text-[var(--color-text-faint)] ml-auto inline-flex items-center gap-1">
-          <Info className="w-2.5 h-2.5" /> Click any tag for photos
+          <Info className="w-3 h-3" /> Tap a tag for photos
         </span>
       </div>
       {groups.map((g) => (
-        <div key={g.key} className="bg-slate-50/60 border border-[var(--color-border)] rounded-lg p-2">
+        <div key={g.key} className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-2">
           <div className="text-[11px] font-bold uppercase tracking-widest text-[var(--color-text-muted)] mb-1">
             {g.label} <span className="text-[var(--color-text-faint)] font-normal normal-case">· {g.tags.length}</span>
           </div>

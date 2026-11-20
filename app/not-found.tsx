@@ -17,7 +17,7 @@ export default function NotFound() {
                 Page not found
               </h1>
               <p className="mt-2 text-sm text-[var(--color-text-muted)]">
-                The page you’re looking for doesn’t exist or may have been moved.
+                This link doesn’t open anything. The page may have moved.
               </p>
 
               <div className="mt-6 flex flex-wrap gap-3">
@@ -47,9 +47,6 @@ export default function NotFound() {
           </div>
         </div>
 
-        <p className="mt-8 text-xs text-[var(--color-text-faint)]">
-          Tip: double-check the URL, or navigate from the homepage.
-        </p>
       </div>
     </main>
   );

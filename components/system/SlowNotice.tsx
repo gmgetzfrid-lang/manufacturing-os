@@ -3,7 +3,7 @@
 // Never a silent spinner. Past a few seconds a waiting screen says what's
 // happening and that nothing is wrong with the account; past half a minute
 // it offers a way out. A slow sign-in or start-up almost always means the
-// server is under heavy load (a big upload or indexing job) — the person
+// server is under heavy load (a big upload or indexing job). The person
 // should hear that, not stare at a spinner.
 
 import React, { useEffect, useState } from "react";
@@ -25,13 +25,13 @@ export function SlowNotice({ secs, onStartOver, dark = false, what = "The server
 }) {
   if (secs < 8) return null;
   return (
-    <div role="status" className={`mt-3 rounded-xl px-3 py-2 text-xs text-left ${dark
-      ? "bg-slate-900 text-slate-300 border border-slate-800"
-      : "bg-amber-50 text-amber-900 border border-amber-200 dark:bg-amber-950/30 dark:text-amber-200 dark:border-amber-900"}`}>
-      <b>Taking longer than usual ({secs}s).</b> {what} is slow to answer - usually because it&rsquo;s under heavy
-      load (a big upload or indexing job). Your account and data are fine; it&rsquo;s still trying.
+    <div role="status" className={`mt-3 border-l-2 border-amber-500 pl-3 py-0.5 text-xs text-left ${dark
+      ? "text-amber-200"
+      : "text-amber-800 dark:text-amber-300"}`}>
+      <b>Taking longer than usual ({secs}s).</b> {what} is slow to answer, usually because it&rsquo;s busy with a
+      big upload or indexing job. Your account and data are fine. It&rsquo;s still trying.
       {secs >= 25 && onStartOver && (
-        <button type="button" onClick={onStartOver} className={`block mt-1.5 font-bold underline ${dark ? "text-[var(--color-accent)]" : ""}`}>
+        <button type="button" onClick={onStartOver} className="block mt-1.5 font-bold underline text-[var(--color-accent)]">
           Start over
         </button>
       )}

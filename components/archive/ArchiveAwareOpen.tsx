@@ -12,10 +12,9 @@
 // instead of a broken link, for any user.
 
 import React, { useCallback, useState } from "react";
-import { createPortal } from "react-dom";
-import { X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import BackupViewer, { type ArchiveTarget } from "@/components/archive/BackupViewer";
+import { Modal, ModalHeader, ModalBody } from "@/components/ui/Modal";
 
 export function useArchiveAwareOpen() {
   const [target, setTarget] = useState<ArchiveTarget | null>(null);
@@ -51,20 +50,13 @@ export function useArchiveAwareOpen() {
     }
   }, []);
 
-  const modal = target && typeof document !== "undefined"
-    ? createPortal(
-        <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-4xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 max-h-[90vh] flex flex-col">
-            <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
-              <div className="text-sm font-black text-[var(--color-text)]">Archived file</div>
-              <button onClick={() => setTarget(null)} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] transition-colors"><X className="w-4 h-4" /></button>
-            </div>
-            <div className="p-4 overflow-y-auto"><BackupViewer target={target} /></div>
-          </div>
-        </div>,
-        document.body,
-      )
-    : null;
+  const close = useCallback(() => setTarget(null), []);
+  const modal = target ? (
+    <Modal onClose={close} size="xl" zIndex={200}>
+      <ModalHeader title="Archived file" subtitle={target.fileName} onClose={close} />
+      <ModalBody><BackupViewer target={target} /></ModalBody>
+    </Modal>
+  ) : null;
 
   return { open, modal, busyPath };
 }

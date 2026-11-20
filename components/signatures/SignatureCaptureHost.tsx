@@ -44,7 +44,10 @@ export default function SignatureCaptureHost() {
   const signerName = (userEmail?.split("@")[0] ?? "").trim() || "user";
 
   const sign = async (intent: SignatureIntent, statement: string, signatureImage?: string | null) => {
-    if (!activeOrgId || !uid) return;
+    if (!activeOrgId || !uid) {
+      showToast({ type: "error", title: "Couldn't record signature", message: "Your sign-in is still loading. Try again in a moment." });
+      return;
+    }
     setBusy(true);
     try {
       await recordSignature({
@@ -62,7 +65,7 @@ export default function SignatureCaptureHost() {
         signatureImage: signatureImage ?? undefined,
       });
       window.dispatchEvent(new CustomEvent("signature-recorded", { detail: { resourceType: req.resourceType, resourceId: req.resourceId } }));
-      showToast({ type: "success", title: "Signed", message: `${intent} - recorded with your name and timestamp.` });
+      showToast({ type: "success", title: "Signed", message: `${intent}. Recorded with your name and the time.` });
       setReq(null);
     } catch (e) {
       showToast({ type: "error", title: "Couldn't record signature", message: (e as Error).message });

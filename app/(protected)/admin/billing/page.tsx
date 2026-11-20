@@ -88,42 +88,42 @@ export default function BillingPage() {
       />
 
       {checkoutResult === "success" && (
-          <div className="mb-6 p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-sm text-emerald-800 flex items-start gap-2">
+          <p role="status" className="mb-6 border-l-2 border-emerald-500 pl-3 text-sm text-emerald-800 dark:text-emerald-300 flex items-start gap-2">
             <CheckCircle2 className="w-5 h-5 mt-0.5 shrink-0" />
-            <div>
-              <b>Subscription started.</b> It may take a few seconds for your status to update -
-              <button onClick={() => void refresh()} className="ml-1 underline font-bold">refresh now</button>.
-            </div>
-          </div>
+            <span>
+              <b>Subscription started.</b> Your status can take a few seconds to update.
+              <button onClick={() => void refresh()} className="ml-1 underline font-bold">Refresh now</button>
+            </span>
+          </p>
         )}
         {checkoutResult === "canceled" && (
-          <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-800">
-            Checkout canceled. No payment was taken. Pick a plan below when you&apos;re ready.
-          </div>
+          <p className="mb-6 text-sm text-[var(--color-text-muted)]">
+            Checkout canceled. No payment was taken.
+          </p>
         )}
         {error && (
-          <div className="mb-6 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-start gap-2">
+          <p role="alert" className="mb-6 border-l-2 border-red-500 pl-3 text-xs text-red-700 dark:text-red-400 flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
-          </div>
+          </p>
         )}
 
         {!isAuthorized && (
-          <div className="mb-6 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-start gap-2">
+          <p className="mb-6 text-xs text-[var(--color-text-muted)] flex items-start gap-2">
             <Lock className="w-4 h-4 mt-0.5 shrink-0" />
-            <span>Only Admin and Manager roles can manage billing. Your role: <b>{activeRole}</b>.</span>
-          </div>
+            <span>Only Admin and Manager roles manage billing.</span>
+          </p>
         )}
 
         {/* Current status card */}
         <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-6 mb-6">
           {loading ? (
-            <div className="text-sm text-[var(--color-text-muted)] flex items-center gap-2"><Spinner size="sm" /> Loading subscription state...</div>
+            <div className="text-sm text-[var(--color-text-muted)] flex items-center gap-2"><Spinner size="sm" /> Loading your subscription…</div>
           ) : !info ? (
-            <div className="text-sm text-[var(--color-text-muted)]">No subscription information available.</div>
+            <div className="text-sm text-[var(--color-text-muted)]">Couldn&apos;t load your subscription. <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button></div>
           ) : info.status === "trialing" && !expired ? (
             <div>
               <div className="flex items-center gap-3 mb-3">
-                <div className="p-2 bg-emerald-100 rounded-xl"><Clock className="w-5 h-5 text-emerald-700" /></div>
+                <div className="p-2 bg-[var(--color-surface-2)] rounded-xl"><Clock className="w-5 h-5 text-[var(--color-text-muted)]" /></div>
                 <div>
                   <div className="text-base font-black text-[var(--color-text)]">Free Trial</div>
                   <div className="text-xs text-[var(--color-text-muted)]">No payment required during trial</div>
@@ -139,7 +139,7 @@ export default function BillingPage() {
           ) : info.status === "active" || info.status === "past_due" ? (
             <div>
               <div className="flex items-center gap-3 mb-3">
-                <div className={`p-2 rounded-xl ${info.status === "past_due" ? "bg-amber-100" : "bg-emerald-100"}`}>
+                <div className={`p-2 rounded-xl ${info.status === "past_due" ? "bg-amber-100 dark:bg-amber-950/40" : "bg-emerald-100 dark:bg-emerald-950/40"}`}>
                   {info.status === "past_due" ? <AlertTriangle className="w-5 h-5 text-amber-700" /> : <CheckCircle2 className="w-5 h-5 text-emerald-700" />}
                 </div>
                 <div>
@@ -162,7 +162,7 @@ export default function BillingPage() {
             </div>
           ) : (
             <div className="flex items-start gap-3">
-              <div className="p-2 bg-red-100 rounded-xl"><AlertTriangle className="w-5 h-5 text-red-700" /></div>
+              <div className="p-2 bg-red-100 dark:bg-red-950/40 rounded-xl"><AlertTriangle className="w-5 h-5 text-red-700 dark:text-red-400" /></div>
               <div>
                 <div className="text-base font-black text-[var(--color-text)]">
                   {info.status === "canceled" ? "Subscription Canceled" :
@@ -214,17 +214,17 @@ function Plan({
   featured?: boolean; onSubscribe?: () => void; busy?: boolean; contactMode?: boolean;
 }) {
   return (
-    <div className={`hover-lift rounded-2xl border p-5 flex flex-col ${featured ? "bg-slate-900 text-white border-slate-700" : "bg-[var(--color-surface)] border-[var(--color-border)]"}`}>
+    <div className={`rounded-2xl border p-5 flex flex-col bg-[var(--color-surface)] ${featured ? "border-[var(--color-border-strong)] border-2" : "border-[var(--color-border)]"}`}>
       <div className="flex items-center justify-between mb-1">
-        <div className={`text-sm font-black ${featured ? "text-white" : "text-[var(--color-text)]"}`}>{name}</div>
-        {featured && <span className="text-[11px] font-black uppercase tracking-widest bg-[var(--color-surface-2)] text-[var(--color-text)] px-1.5 py-0.5 rounded">Popular</span>}
+        <div className="text-sm font-black text-[var(--color-text)]">{name}</div>
+        {featured && <span className="text-[11px] font-bold text-[var(--color-text-muted)]">Most picked</span>}
       </div>
-      <div className={`text-xs ${featured ? "text-slate-300" : "text-[var(--color-text-muted)]"} mb-3`}>{tagline}</div>
-      <div className={`text-3xl font-black ${featured ? "text-white" : "text-[var(--color-text)]"} mb-1`}>{price}{price !== "Contact" && <span className="text-sm font-bold text-[var(--color-text-faint)]">/mo</span>}</div>
-      <ul className={`mt-3 space-y-1.5 text-xs flex-1 ${featured ? "text-slate-300" : "text-[var(--color-text-muted)]"}`}>
+      <div className="text-xs text-[var(--color-text-muted)] mb-3">{tagline}</div>
+      <div className="text-3xl font-black text-[var(--color-text)] mb-1">{price}{price !== "Contact" && <span className="text-sm font-bold text-[var(--color-text-faint)]">/mo</span>}</div>
+      <ul className="mt-3 space-y-1.5 text-xs flex-1 text-[var(--color-text-muted)]">
         {features.map((f) => (
           <li key={f} className="flex items-start gap-1.5">
-            <CheckCircle2 className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${featured ? "text-emerald-400" : "text-emerald-600"}`} />
+            <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-0.5 text-[var(--color-text-faint)]" />
             <span>{f}</span>
           </li>
         ))}
@@ -232,7 +232,7 @@ function Plan({
       {contactMode ? (
         <a
           href="mailto:sales@manufacturing-os.app?subject=Enterprise%20inquiry"
-          className={`mt-4 inline-flex items-center justify-center gap-1 w-full py-2 rounded-lg text-xs font-black ${featured ? "bg-[var(--color-surface)] text-[var(--color-text)]" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)]"} hover:opacity-90 transition-opacity`}
+          className={`mt-4 inline-flex items-center justify-center gap-1 w-full py-2 rounded-lg text-xs font-black border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-opacity`}
         >
           Contact sales <ArrowRight className="w-3.5 h-3.5" />
         </a>
@@ -240,11 +240,11 @@ function Plan({
         <button
           onClick={onSubscribe} disabled={busy}
           className={`mt-4 inline-flex items-center justify-center gap-1 w-full py-2 rounded-lg text-xs font-black transition-colors disabled:opacity-50 ${
-            featured ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)]"
+            featured ? "bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)]" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)]"
           }`}
         >
           {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-          {busy ? "Redirecting..." : "Subscribe"}
+          {busy ? "Opening checkout…" : "Subscribe"}
         </button>
       )}
     </div>

@@ -25,7 +25,7 @@ import { supabase } from "@/lib/supabase";
 import type { AccessControl } from "@/types/schema";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
-import { Spinner } from "@/components/ui/Spinner";
+import LoadingBlock from "@/components/ui/LoadingBlock";
 import RoleModelTree from "@/components/permissions/RoleModelTree";
 import PermissionsExplorer from "@/components/permissions/PermissionsExplorer";
 import PermissionsDrawer, { type NodeType } from "@/components/permissions/PermissionDrawer";
@@ -62,6 +62,8 @@ export default function PermissionsConsolePage() {
   const [docsByFolder, setDocsByFolder] = useState<Map<string, DocRow[]>>(new Map());
   const [loadingDocsFor, setLoadingDocsFor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [docsFailed, setDocsFailed] = useState<Set<string>>(new Set());
 
   const [drawer, setDrawer] = useState<{
     nodeType: NodeType; nodeId: string; title: string;
@@ -77,6 +79,8 @@ export default function PermissionsConsolePage() {
         supabase.from("libraries").select("id, name, acl, visibility").eq("org_id", activeOrgId).order("name"),
         supabase.from("collections").select("id, name, library_id, acl, visibility").eq("org_id", activeOrgId).order("name"),
       ]);
+      if (l.error || c.error) throw new Error((l.error ?? c.error)?.message);
+      setLoadError(null);
       setLibs((((l.data ?? []) as Array<Record<string, unknown>>)).map((r) => ({
         id: String(r.id), name: String(r.name),
         acl: (r.acl as AccessControl | null) ?? null,
@@ -88,6 +92,9 @@ export default function PermissionsConsolePage() {
         visibility: ((r.visibility as string) || "normal") as NodeRow["visibility"],
       })));
       setDocsByFolder(new Map());
+      setDocsFailed(new Set());
+    } catch (e) {
+      setLoadError((e as Error).message || "Couldn't load libraries and folders.");
     } finally { setLoading(false); }
   }, [activeOrgId]);
   useEffect(() => { void refresh(); }, [refresh]);
@@ -96,11 +103,13 @@ export default function PermissionsConsolePage() {
     if (!activeOrgId || docsByFolder.has(folderId)) return;
     setLoadingDocsFor(folderId);
     try {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("documents")
         .select("id, document_number, title, name, acl, visibility, collection_id")
         .eq("org_id", activeOrgId).eq("library_id", libraryId).eq("collection_id", folderId)
         .order("document_number").limit(200);
+      if (error) { setDocsFailed((s) => new Set(s).add(folderId)); return; }
+      setDocsFailed((s) => { if (!s.has(folderId)) return s; const n = new Set(s); n.delete(folderId); return n; });
       const rows: DocRow[] = (((data ?? []) as Array<Record<string, unknown>>)).map((r) => ({
         id: String(r.id),
         name: String(r.document_number || r.title || r.name || "Document"),
@@ -137,7 +146,7 @@ export default function PermissionsConsolePage() {
       <PageHeaderBar
         icon={Shield}
         title="Permissions"
-        subtitle={<>The enforced model: per-node visibility + allow/deny rules (user, team, role) with inheritance and expiry - grant one person one nested folder without exposing anything else.</>}
+        subtitle={loading ? "Who can see and change each library, folder and document." : `${libs.length} librar${libs.length === 1 ? "y" : "ies"} · ${folders.length} folder${folders.length === 1 ? "" : "s"}. Deny beats allow, and a folder can stop inheriting.`}
         actions={
           <Button variant="secondary" size="sm" onClick={() => void refresh()} disabled={loading}>
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
@@ -152,10 +161,15 @@ export default function PermissionsConsolePage() {
         <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
           <KeyRound className="w-4 h-4 text-[var(--color-text-muted)]" />
           <span className="text-base font-bold text-[var(--color-text)]">Content permissions</span>
-          <span className="text-xs text-[var(--color-text-muted)]">every library → folder → document; deny beats allow; child rules can cut inheritance</span>
+          <span className="text-xs text-[var(--color-text-muted)]">Library, then folder, then document.</span>
         </div>
-        {loading ? (
-          <div className="py-10 flex justify-center"><Spinner /></div>
+        {loading && libs.length === 0 ? (
+          <LoadingBlock what="libraries and folders" className="border-0 rounded-none" />
+        ) : loadError ? (
+          <p role="alert" className="m-4 border-l-2 border-red-500 pl-3 text-sm text-red-700 dark:text-red-400">
+            Couldn&apos;t load libraries and folders: {loadError}{" "}
+            <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
+          </p>
         ) : libs.length === 0 ? (
           <div className="p-8 text-center text-sm italic text-[var(--color-text-muted)]">No libraries yet.</div>
         ) : (
@@ -180,7 +194,7 @@ export default function PermissionsConsolePage() {
                     <details key={f.id} className="group/fold" onToggle={(e) => { if ((e.target as HTMLDetailsElement).open) void loadDocs(f.id, lib.id); }}>
                       <summary className="cursor-pointer list-none flex items-center gap-2 py-1.5 select-none border-t border-[var(--color-border)]">
                         <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-faint)] transition-transform group-open/fold:rotate-90" />
-                        <FolderOpen className="w-3.5 h-3.5 text-amber-500" />
+                        <FolderOpen className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                         <span className="text-sm font-medium text-[var(--color-text)]">{f.name}</span>
                         <VisBadge v={f.visibility} />
                         {ruleCount(f.acl) > 0 && <span className="text-[11px] font-bold text-[var(--color-text-muted)]">{ruleCount(f.acl)} rules</span>}
@@ -196,6 +210,9 @@ export default function PermissionsConsolePage() {
                         {(docsByFolder.get(f.id) ?? []).map((d) =>
                           nodeRow(d, "document", [lib.acl ?? undefined, f.acl ?? undefined],
                             <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />, ""),
+                        )}
+                        {docsFailed.has(f.id) && (
+                          <div role="alert" className="py-1.5 text-[11px] text-red-700 dark:text-red-400">Couldn&apos;t load this folder&apos;s documents. Close and open it again.</div>
                         )}
                         {docsByFolder.has(f.id) && (docsByFolder.get(f.id) ?? []).length === 0 && (
                           <div className="py-1.5 text-[11px] italic text-[var(--color-text-faint)]">No documents directly in this folder.</div>

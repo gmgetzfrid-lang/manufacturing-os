@@ -15,7 +15,7 @@
 import React, { useCallback, useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import {
-  GraduationCap, Plus, Loader2, AlertTriangle, Pencil, Trash2, X, Save,
+  GraduationCap, Plus, Loader2, AlertTriangle, Pencil, Trash2, Save,
   Power, Sparkles,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
@@ -25,12 +25,15 @@ import {
 } from "@/lib/aiInstructions";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { appConfirm } from "@/components/providers/DialogProvider";
+import LoadingBlock from "@/components/ui/LoadingBlock";
+import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
+import { useDraft } from "@/hooks/useDraft";
 
 const SCOPES: AiInstructionScope[] = ["global", "knowledge", "codebook", "equipment"];
 
 export default function AiInstructionsPage() {
   return (
-    <Suspense fallback={null}>
+    <Suspense fallback={<PageShell width="work"><LoadingBlock what="AI instructions" /></PageShell>}>
       <AiInstructionsInner />
     </Suspense>
   );
@@ -45,11 +48,17 @@ function AiInstructionsInner() {
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Partial<AiInstruction> | null>(null);
   const [busy, setBusy] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // A rule sent here by a link arrives prefilled; only a fresh one is a draft.
+  const [fromLink, setFromLink] = useState(false);
+  const draftKey = editing && !editing.id && !fromLink && activeOrgId ? `ai-instruction:${activeOrgId}` : null;
+  const draft = useDraft<string>(draftKey, String(editing?.body ?? ""),
+    (v) => setEditing((e) => (e ? { ...e, body: v } : e)), (v) => !v.trim());
 
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
-    try { setRows(await listAiInstructions(activeOrgId)); }
-    catch (e) { setError((e as Error).message); }
+    try { setRows(await listAiInstructions(activeOrgId)); setLoadError(null); }
+    catch (e) { setLoadError((e as Error).message || "Couldn't load the instructions."); }
   }, [activeOrgId]);
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -60,6 +69,7 @@ function AiInstructionsInner() {
     if (!add) return;
     const scope = (searchParams.get("scope") ?? "global") as AiInstructionScope;
     const t = setTimeout(() => {
+      setFromLink(true);
       setEditing({ scope: SCOPES.includes(scope) ? scope : "global", title: "", body: add, enabled: true });
     }, 0);
     return () => clearTimeout(t);
@@ -80,7 +90,9 @@ function AiInstructionsInner() {
         body: String(editing.body),
         enabled: editing.enabled ?? true,
       }, uid, userEmail ?? undefined);
+      draft.clear();
       setEditing(null);
+      setFromLink(false);
       await refresh();
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
@@ -100,46 +112,52 @@ function AiInstructionsInner() {
     catch (e) { setError((e as Error).message); }
   };
 
-  if (!activeOrgId) return null;
+  if (!activeOrgId) return <PageShell width="work"><LoadingBlock what="AI instructions" /></PageShell>;
+  const closeEditor = () => { if (!busy) { setEditing(null); setFromLink(false); } };
+  const openNew = () => { setFromLink(false); setEditing({ scope: "global", title: "", body: "", enabled: true }); };
 
   return (
     <PageShell width="work">
       <PageHeaderBar
         icon={GraduationCap}
         title="AI Instructions"
-        subtitle="Teach the AI your site's conventions once - every extraction, import, and answer follows them from then on. Plain language; the AI reads these before every call."
+        subtitle={rows
+          ? `${rows.filter((r) => r.enabled).length} rule${rows.filter((r) => r.enabled).length === 1 ? "" : "s"} the AI follows on every call${rows.some((r) => !r.enabled) ? ` · ${rows.filter((r) => !r.enabled).length} turned off` : ""}.`
+          : "Your site's conventions, written once. The AI follows them on every call."}
         actions={canWrite ? (
-          <button onClick={() => setEditing({ scope: "global", title: "", body: "", enabled: true })}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-black shadow">
+          <button onClick={openNew}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-black">
             <Plus className="w-4 h-4" /> New instruction
           </button>
         ) : undefined}
       />
 
       {!canWrite && (
-        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-          Read-only - only Admins and Document Controllers teach the AI.
-        </div>
+        <p className="mb-3 text-xs text-[var(--color-text-muted)]">
+          Read only. Admins and Document Controllers write these.
+        </p>
       )}
 
-      {error && (
-        <div className="mb-3 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800 flex items-start gap-2">
+      {error && !editing && (
+        <p role="alert" className="mb-3 border-l-2 border-red-500 pl-3 text-xs text-red-700 dark:text-red-400 flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {error}
-        </div>
+        </p>
       )}
 
-      {rows === null ? (
-        <div className="py-12 text-center text-sm text-[var(--color-text-muted)]">
-          <Loader2 className="w-5 h-5 animate-spin inline" /> Loading…
-        </div>
+      {rows === null && loadError ? (
+        <p role="alert" className="border-l-2 border-red-500 pl-3 py-1 text-sm text-red-700 dark:text-red-400">
+          Couldn&apos;t load the instructions: {loadError}{" "}
+          <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
+        </p>
+      ) : rows === null ? (
+        <LoadingBlock what="AI instructions" />
       ) : rows.length === 0 ? (
         <div className="rounded-2xl border-2 border-dashed border-[var(--color-border)] bg-[var(--color-surface-2)] p-8 text-center">
           <Sparkles className="w-8 h-8 text-[var(--color-text-muted)] mx-auto mb-2" />
           <div className="text-sm font-black text-[var(--color-text)]">Nothing taught yet</div>
           <p className="text-xs text-[var(--color-text-muted)] mt-1 max-w-md mx-auto">
-            Every site has conventions a generic AI can&apos;t guess. Write them here in plain
-            language - &ldquo;equipment descriptions use the P&amp;ID service name, not the vendor
-            model&rdquo; - and every AI feature obeys, starting with the very next call.
+            For example: &ldquo;equipment descriptions use the P&amp;ID service name, not the vendor
+            model.&rdquo;
           </p>
         </div>
       ) : (
@@ -164,16 +182,17 @@ function AiInstructionsInner() {
                       </div>
                       {canWrite && (
                         <div className="flex items-center gap-1 shrink-0">
-                          <button onClick={() => void toggle(r)} title={r.enabled ? "Disable (AI stops following it)" : "Enable"}
-                            className={`p-1.5 rounded-lg ${r.enabled ? "text-emerald-600 hover:bg-emerald-50" : "text-[var(--color-text-faint)] hover:bg-[var(--color-surface-2)]"}`}>
+                          <button onClick={() => void toggle(r)} title={r.enabled ? "Turn off (AI stops following it)" : "Turn on"}
+                            aria-label={r.enabled ? `Turn off ${r.title}` : `Turn on ${r.title}`} aria-pressed={r.enabled}
+                            className={`p-1.5 rounded-lg ${r.enabled ? "text-emerald-600 hover:bg-[var(--color-surface-2)]" : "text-[var(--color-text-faint)] hover:bg-[var(--color-surface-2)]"}`}>
                             <Power className="w-3.5 h-3.5" />
                           </button>
-                          <button onClick={() => setEditing(r)} title="Edit"
+                          <button onClick={() => { setFromLink(false); setEditing(r); }} title="Edit" aria-label={`Edit ${r.title}`}
                             className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-accent-hover)] hover:bg-[var(--color-surface-2)]">
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
-                          <button onClick={() => void remove(r)} title="Delete"
-                            className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-rose-600 hover:bg-rose-50">
+                          <button onClick={() => void remove(r)} title="Delete" aria-label={`Delete ${r.title}`}
+                            className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-rose-600 hover:bg-[var(--color-surface-2)]">
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
@@ -188,51 +207,48 @@ function AiInstructionsInner() {
       )}
 
       {editing && (
-        <div className="fixed inset-0 z-[400] bg-slate-900/60 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4" onClick={() => setEditing(null)}>
-          <div onClick={(e) => e.stopPropagation()} className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl max-h-[90vh] flex flex-col">
-            <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2.5">
-              <GraduationCap className="w-4 h-4 text-[var(--color-text-muted)]" />
-              <div className="text-sm font-black text-[var(--color-text)] flex-1">
-                {editing.id ? "Edit instruction" : "Teach the AI"}
-              </div>
-              <button onClick={() => setEditing(null)} className="p-1.5 rounded hover:bg-[var(--color-surface-2)]">
-                <X className="w-4 h-4 text-[var(--color-text-muted)]" />
-              </button>
+        <Modal onClose={closeEditor} size="md" dismissable={!busy}>
+          <ModalHeader icon={GraduationCap} title={editing.id ? "Edit instruction" : "Teach the AI"}
+            subtitle={draft.restored ? "Brought back what you were writing." : undefined}
+            onClose={busy ? undefined : closeEditor} />
+          <ModalBody className="space-y-3">
+            <div>
+              <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Applies to</label>
+              <select value={editing.scope ?? "global"}
+                onChange={(e) => setEditing({ ...editing, scope: e.target.value as AiInstructionScope })}
+                className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]">
+                {SCOPES.map((s) => <option key={s} value={s}>{SCOPE_LABELS[s]}</option>)}
+              </select>
             </div>
-            <div className="p-5 space-y-3 overflow-y-auto">
-              <div>
-                <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Applies to</label>
-                <select value={editing.scope ?? "global"}
-                  onChange={(e) => setEditing({ ...editing, scope: e.target.value as AiInstructionScope })}
-                  className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]">
-                  {SCOPES.map((s) => <option key={s} value={s}>{SCOPE_LABELS[s]}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Short title</label>
-                <input value={editing.title ?? ""} onChange={(e) => setEditing({ ...editing, title: e.target.value })}
-                  placeholder='e.g. "Transmittal numbering"' maxLength={80}
-                  className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
-              </div>
-              <div>
-                <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">The rule, in plain language</label>
-                <textarea value={editing.body ?? ""} onChange={(e) => setEditing({ ...editing, body: e.target.value })}
-                  rows={5} maxLength={1500}
-                  placeholder={'e.g. "Our equipment descriptions always use the P&ID service name, never the vendor model name."'}
-                  className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y" />
-              </div>
+            <div>
+              <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">Short title</label>
+              <input value={editing.title ?? ""} onChange={(e) => setEditing({ ...editing, title: e.target.value })}
+                placeholder='e.g. "Transmittal numbering"' maxLength={80} autoFocus
+                className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
             </div>
-            <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] rounded-b-2xl flex items-center justify-end gap-2">
-              <button onClick={() => setEditing(null)} disabled={busy}
-                className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
-              <button onClick={() => void save()} disabled={busy}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 shadow">
-                {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-                {editing.id ? "Save" : "Teach it"}
-              </button>
+            <div>
+              <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">The rule, in plain language</label>
+              <textarea value={editing.body ?? ""} onChange={(e) => setEditing({ ...editing, body: e.target.value })}
+                rows={5} maxLength={1500}
+                placeholder={'e.g. "Our equipment descriptions always use the P&ID service name, never the vendor model name."'}
+                className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y bg-[var(--color-surface)] text-[var(--color-text)]" />
             </div>
-          </div>
-        </div>
+            {error && (
+              <p role="alert" className="border-l-2 border-red-500 pl-3 text-xs text-red-700 dark:text-red-400 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {error}
+              </p>
+            )}
+          </ModalBody>
+          <ModalFooter>
+            <button onClick={closeEditor} disabled={busy}
+              className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
+            <button onClick={() => void save()} disabled={busy}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+              {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+              {editing.id ? "Save" : "Teach it"}
+            </button>
+          </ModalFooter>
+        </Modal>
       )}
     </PageShell>
   );

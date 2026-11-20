@@ -15,7 +15,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
-  X, Maximize2, ChevronLeft, ChevronRight, Camera, Calendar,
+  X, ChevronLeft, ChevronRight, Camera, Calendar,
   Loader2, Upload, Tag, MapPin,
 } from "lucide-react";
 import {
@@ -46,6 +46,7 @@ export default function AssetPhotoPopover({
   });
   const [photos, setPhotos] = useState<AssetPhoto[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [activeIdx, setActiveIdx] = useState(0);
   const popoverRef = useRef<HTMLDivElement>(null);
 
@@ -115,12 +116,13 @@ export default function AssetPhotoPopover({
     let alive = true;
     void (async () => {
       setLoading(true);
+      setLoadFailed(false);
       setActiveIdx(0);
       try {
         const ph = await listAssetPhotos(asset.id);
         if (alive) setPhotos(ph);
       } catch {
-        if (alive) setPhotos([]);
+        if (alive) { setPhotos([]); setLoadFailed(true); }
       } finally {
         if (alive) setLoading(false);
       }
@@ -201,19 +203,11 @@ export default function AssetPhotoPopover({
             </div>
           )}
         </div>
-        {photos.length > 0 && (
-          <button
-            onClick={onExpandFull}
-            title="Open full-screen viewer"
-            className="p-1.5 rounded-md text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] shrink-0"
-          >
-            <Maximize2 className="w-3.5 h-3.5" />
-          </button>
-        )}
         <button
           onClick={onClose}
           title="Close (Esc)"
-          className="p-1.5 rounded-md text-[var(--color-text-faint)] hover:text-red-600 hover:bg-red-50 shrink-0"
+          aria-label="Close"
+          className="p-1.5 rounded-md text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] shrink-0"
         >
           <X className="w-3.5 h-3.5" />
         </button>
@@ -223,8 +217,10 @@ export default function AssetPhotoPopover({
       <div className="relative bg-[var(--color-surface-2)] aspect-[4/3] flex items-center justify-center">
         {loading ? (
           <div className="text-[var(--color-text-faint)] flex items-center gap-2 text-xs">
-            <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+            <Loader2 className="w-4 h-4 animate-spin" /> Loading photos…
           </div>
+        ) : loadFailed ? (
+          <div role="alert" className="text-xs text-rose-700 dark:text-rose-400 p-3 text-center">Couldn&apos;t load the photos. Close and open the tag again.</div>
         ) : photos.length === 0 ? (
           <EmptyState canUpload={canManage && !!onUploadClick} onUpload={onUploadClick} />
         ) : (
@@ -238,43 +234,41 @@ export default function AssetPhotoPopover({
               <>
                 <button
                   onClick={() => setActiveIdx((i) => (i - 1 + photos.length) % photos.length)}
-                  className="absolute left-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-white/90 hover:bg-[var(--color-surface)] shadow text-[var(--color-text)]"
+                  className="absolute left-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-[var(--color-surface)]/90 hover:bg-[var(--color-surface)] shadow text-[var(--color-text)]"
                   title="Previous"
+                  aria-label="Previous photo"
                 >
                   <ChevronLeft className="w-3.5 h-3.5" />
                 </button>
                 <button
                   onClick={() => setActiveIdx((i) => (i + 1) % photos.length)}
-                  className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-white/90 hover:bg-[var(--color-surface)] shadow text-[var(--color-text)]"
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-[var(--color-surface)]/90 hover:bg-[var(--color-surface)] shadow text-[var(--color-text)]"
                   title="Next"
+                  aria-label="Next photo"
                 >
                   <ChevronRight className="w-3.5 h-3.5" />
                 </button>
               </>
             )}
-            {age && (
-              <div className="absolute bottom-2 right-2 inline-flex items-center gap-1 px-2 py-1 rounded-md bg-slate-900/75 backdrop-blur-sm text-white text-[11px] font-mono shadow">
-                <Calendar className="w-2.5 h-2.5" />
-                {active.captured_at ? new Date(active.captured_at).toLocaleDateString() : "no date"}
-                <span className={`w-1.5 h-1.5 rounded-full ${
-                  age.category === "fresh" ? "bg-emerald-400" :
-                  age.category === "aging" ? "bg-amber-400" :
-                  age.category === "stale" ? "bg-red-400" : "bg-slate-400"
-                }`} />
-              </div>
-            )}
-            {active.status !== "current" && (
-              <div className={`absolute top-2 left-2 px-1.5 py-0.5 rounded text-[11px] font-black uppercase tracking-wide shadow ${
-                active.status === "needs_verification"
-                  ? "bg-amber-500 text-white"
-                  : "bg-red-500 text-white"
-              }`}>
-                {active.status === "needs_verification" ? "Verify" : "Old"}
-              </div>
-            )}
           </>
         )}
       </div>
+
+      {/* Date, age and status: a plain line under the photo, not a badge on it. */}
+      {active && age && (
+        <div className="px-3 py-1.5 border-t border-[var(--color-border)] flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
+          <Calendar className="w-3 h-3 shrink-0" />
+          <span className="font-mono">{active.captured_at ? new Date(active.captured_at).toLocaleDateString() : "No date"}</span>
+          {age.category !== "unknown" && (
+            <span className={age.category === "stale" ? "text-red-700 dark:text-red-400 font-bold" : age.category === "aging" ? "text-amber-700 dark:text-amber-400 font-bold" : ""}>· {age.label}</span>
+          )}
+          {active.status !== "current" && (
+            <span className={`ml-auto font-bold ${active.status === "needs_verification" ? "text-amber-700 dark:text-amber-400" : "text-red-700 dark:text-red-400"}`}>
+              {active.status === "needs_verification" ? "Needs checking" : "Out of date"}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Caption */}
       {active?.caption && (
@@ -286,25 +280,19 @@ export default function AssetPhotoPopover({
       {/* Thumbnail strip */}
       {photos.length > 1 && (
         <div className="px-2 py-2 border-t border-[var(--color-border)] flex gap-1 overflow-x-auto">
-          {photos.map((p, i) => {
-            const pAge = photoAgeCategory(p.captured_at);
-            return (
-              <button
-                key={p.id}
-                onClick={() => setActiveIdx(i)}
-                className={`shrink-0 w-12 h-12 rounded overflow-hidden border-2 transition-all relative ${
-                  i === activeIdx ? "border-[var(--color-border-strong)] ring-1 ring-[var(--color-border-strong)]" : "border-[var(--color-border)] opacity-70 hover:opacity-100"
-                }`}
-              >
-                <SignedImg path={p.file_url} alt="" className="w-full h-full object-cover" />
-                <span className={`absolute bottom-0 left-0.5 w-1 h-1 rounded-full ${
-                  pAge.category === "fresh" ? "bg-emerald-400" :
-                  pAge.category === "aging" ? "bg-amber-400" :
-                  pAge.category === "stale" ? "bg-red-400" : "bg-slate-400"
-                }`} />
-              </button>
-            );
-          })}
+          {photos.map((p, i) => (
+            <button
+              key={p.id}
+              onClick={() => setActiveIdx(i)}
+              aria-label={`Photo ${i + 1}`}
+              aria-current={i === activeIdx ? "true" : undefined}
+              className={`shrink-0 w-12 h-12 rounded overflow-hidden border-2 transition-all relative ${
+                i === activeIdx ? "border-[var(--color-text)]" : "border-[var(--color-border)] opacity-70 hover:opacity-100"
+              }`}
+            >
+              <SignedImg path={p.file_url} alt="" className="w-full h-full object-cover" />
+            </button>
+          ))}
         </div>
       )}
 
@@ -314,10 +302,10 @@ export default function AssetPhotoPopover({
           {photos.length > 0 ? `${activeIdx + 1} of ${photos.length}` : "No photos"}
           {photos.length > 0 && <> · <button onClick={onExpandFull} className="font-bold text-[var(--color-accent)] hover:underline">Open full view</button></>}
         </span>
-        {canManage && onUploadClick && (
+        {canManage && onUploadClick && photos.length > 0 && (
           <button
             onClick={onUploadClick}
-            className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100"
+            className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
           >
             <Upload className="w-3 h-3" /> Add photos
           </button>
@@ -331,12 +319,12 @@ export default function AssetPhotoPopover({
 function EmptyState({ canUpload, onUpload }: { canUpload: boolean; onUpload?: () => void }) {
   return (
     <div className="flex flex-col items-center text-center text-[var(--color-text-muted)] p-3">
-      <Camera className="w-8 h-8 text-slate-300 mb-1" />
+      <Camera className="w-8 h-8 text-[var(--color-text-faint)] mb-1" />
       <div className="text-[11px] font-bold text-[var(--color-text)]">No photos yet</div>
       {canUpload && onUpload && (
         <button
           onClick={onUpload}
-          className="mt-2 inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold text-white bg-emerald-600 hover:bg-emerald-500 shadow"
+          className="mt-2 inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]"
         >
           <Upload className="w-3 h-3" /> Upload first photo
         </button>
