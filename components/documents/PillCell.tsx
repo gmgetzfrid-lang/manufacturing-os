@@ -20,11 +20,13 @@ interface PillCellProps {
   orgId?: string;
   userId?: string;
   canManageAssets?: boolean;
+  /** The folder filter: a tag it names comes first, ringed, so it's plain why the row is here. */
+  highlight?: string;
 }
 
 export default function PillCell({
   values, label, canEdit, onSave,
-  orgId, userId, canManageAssets,
+  orgId, userId, canManageAssets, highlight = "",
 }: PillCellProps) {
   const [editing, setEditing] = useState(false);
   const [pills, setPills] = useState<string[]>(values);
@@ -113,9 +115,17 @@ export default function PillCell({
     window.addEventListener("pointercancel", restore, true);
   };
 
+  const q = highlight.trim().toLowerCase();
+  const plain = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const isHit = (tag: string) => q.length > 0 && (plain(tag) === plain(q) || plain(tag.split(/[\s(]/)[0] ?? "") === plain(q) || (q.length >= 3 && !/\d/.test(q) && tag.toLowerCase().includes(q)));
+  // A tag listed twice, with and without its site ID ("X-31 (2030.31)" and
+  // "X-31"), shows once. What's saved stays as it is.
+  const once = pills.filter((t) => !pills.some((o) => o !== t && o.toLowerCase().startsWith(`${t.toLowerCase()} (`)));
+  const shown = q ? [...once.filter(isHit), ...once.filter((t) => !isHit(t))] : once;
   const chip = (tag: string) => (
     <AssetTagChip
       key={tag}
+      hit={isHit(tag)}
       tag={tag}
       type={label}
       orgId={orgId}
@@ -153,7 +163,7 @@ export default function PillCell({
             style={{ maxHeight: BOX_MAX_H, ...(mask ? { maskImage: mask, WebkitMaskImage: mask } : {}) }}
           >
             <div ref={listRef} className="flex flex-wrap items-center content-start gap-1 py-px pr-1">
-              {pills.map(chip)}
+              {shown.map(chip)}
             </div>
           </div>
         )}

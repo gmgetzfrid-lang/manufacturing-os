@@ -262,6 +262,13 @@ function escapeLikeLiteral(s: string): string {
   return s.replace(/[\\%_]/g, (m) => `\\${m}`);
 }
 
+/** A filter that looks like one equipment tag or site ID: "x-31", "P11B", "2030.31". */
+const isTagQuery = (q: string) => /^[a-z]{1,5}-?\d{1,5}[a-z]?$/i.test(q.trim()) || /^\d{2,6}\.\w{1,6}$/.test(q.trim());
+/** A tag in its plain form: "X-31" and "x31" are one. */
+const tagKey = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, "");
+/** Every tag-like word in a row's text, in its plain form. */
+const tagTokens = (hay: string) => new Set(hay.split(/[\s,;:"'()[\]{}/]+/).filter(Boolean).map(tagKey));
+
 export default function LibraryExplorerPage() {
   const params = useParams();
   const router = useRouter();
@@ -2026,6 +2033,9 @@ export default function LibraryExplorerPage() {
             .join(" ")
         : "";
       const hay = `${safeString(docRecord.documentNumber)} ${safeString(docRecord.title)} ${safeString(docRecord.name)} ${docRecord.sheetNumber ?? ""} ${safeString(docRecord.rev)} ${safeString(docRecord.status)} ${metaValues}`.toLowerCase();
+      // An equipment tag ("x-31", "X31", "2030.31") finds that equipment
+      // only: X-31, not X-310 or X-31A.
+      if (isTagQuery(q)) return tagTokens(hay).has(tagKey(q));
       if (hay.includes(q)) return true;
       // Identity-tolerant pass: "e22" should find "E-22" (and "203022" find
       // "2030.22") — compare token-by-token with punctuation squashed out of
@@ -4882,6 +4892,7 @@ export default function LibraryExplorerPage() {
                                       <td key={colKey} className={`px-3 ${rowPad} align-middle`}>
                                         <PillCell
                                           values={list}
+                                          highlight={deferredSearch}
                                           label={def.pillGroupLabel || def.label || "Equipment"}
                                           canEdit={isController || (activeRole !== "Viewer" && activeRole !== "Auditor")}
                                           orgId={activeOrgId ?? undefined}

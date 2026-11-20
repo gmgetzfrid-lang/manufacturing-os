@@ -31,6 +31,8 @@ interface AssetTagChipProps {
   size?: "compact" | "card";
   /** "photos" (default — gallery) or "files" (linked drawings → FileReferenceModal). */
   referenceKind?: "photos" | "files";
+  /** It's the tag a search or filter asked for: ringed so it stands out. */
+  hit?: boolean;
 }
 
 /** The equipment type's icon. The column's type word decides it when it
@@ -51,17 +53,17 @@ function getIconByType(type: string, tag = "") {
 }
 
 export default function AssetTagChip({
-  tag, type = "Equipment", orgId, userId, canManage = false, size = "compact", referenceKind = "photos",
+  tag, type = "Equipment", orgId, userId, canManage = false, size = "compact", referenceKind = "photos", hit = false,
 }: AssetTagChipProps) {
   // File-reference tags open linked drawings, not the photo gallery.
   if (referenceKind === "files") {
     return <FileTagChip tag={tag} type={type} orgId={orgId} userId={userId} canManage={canManage} />;
   }
-  return <PhotoTagChip tag={tag} type={type} orgId={orgId} userId={userId} canManage={canManage} size={size} />;
+  return <PhotoTagChip tag={tag} type={type} orgId={orgId} userId={userId} canManage={canManage} size={size} hit={hit} />;
 }
 
 function PhotoTagChip({
-  tag, type = "Equipment", orgId, userId, canManage = false, size = "compact",
+  tag, type = "Equipment", orgId, userId, canManage = false, size = "compact", hit = false,
 }: AssetTagChipProps) {
   const { showToast } = useToast();
   const [popoverOpen, setPopoverOpen] = useState(false);
@@ -176,7 +178,7 @@ function PhotoTagChip({
 
     if (!interactive) {
       return (
-        <span className="ui-tag tabular-nums">
+        <span className={`ui-tag tabular-nums ${hit ? "ring-2 ring-[var(--color-accent)]" : ""}`} data-hit={hit || undefined}>
           <span className="text-[var(--color-main)]" aria-hidden>{getIconByType(type, tag)}</span>
           {tag}
         </span>
@@ -186,7 +188,7 @@ function PhotoTagChip({
     return (
       <>
         {/* The pill's clicks are its own: never the row's select or open. */}
-        <span className="ui-tag tabular-nums shrink-0 !p-0 !gap-0 overflow-hidden"
+        <span className={`ui-tag tabular-nums shrink-0 !p-0 !gap-0 overflow-hidden ${hit ? "ring-2 ring-[var(--color-accent)]" : ""}`} data-hit={hit || undefined}
           onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
           <button
             ref={buttonRef}
