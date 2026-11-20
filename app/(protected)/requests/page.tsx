@@ -15,7 +15,6 @@ import {
   Plus,
   Clock,
   AlertCircle,
-  CheckCircle2,
   ArrowRight,
   LayoutGrid,
   List as ListIcon,
@@ -27,7 +26,6 @@ import {
   X,
   Eye,
   ArrowUpDown,
-  Briefcase,
   Layers,
   Flag,
   TrendingUp,
@@ -727,88 +725,43 @@ export default function RequestPortal() {
           born at 1920px; a narrower wrap strands it in dead margins. */}
       <div className="bg-[var(--color-surface)] border-b border-[var(--color-border)] sticky top-0 z-20 shadow-sm">
         <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-            <div>
-              <h1 className="text-2xl font-black text-[var(--color-text)] tracking-tight flex items-center">
-                <Layers className="w-6 h-6 mr-3 text-[var(--color-accent)]" />
-                Drafting Request Portal
-              </h1>
-              <p className="text-sm text-[var(--color-text-muted)] mt-1">
-                {activeRole} Console • {metrics.totalVolume} Total Records
+          {/* What's waiting on you, said once; one main button. */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h1 className="text-xl font-black text-[var(--color-text)] tracking-tight">Drafting requests</h1>
+              <p className="text-[14px] mt-0.5">
+                {metrics.myActionItems > 0
+                  ? <><b className="text-[var(--color-text)]">{metrics.myActionItems} request{metrics.myActionItems === 1 ? "" : "s"} waiting on you.</b>{" "}<button type="button" onClick={() => setFilters({ ...filters, assignedTo: 'me', status: 'ALL' })} className="font-bold text-[var(--color-accent)] hover:underline cursor-pointer">Show {metrics.myActionItems === 1 ? "it" : "them"}</button></>
+                  : <span className="text-[var(--color-text-muted)]">Nothing waiting on you. {metrics.totalVolume} request{metrics.totalVolume === 1 ? "" : "s"} in all.</span>}
               </p>
             </div>
-            
-            <div className="flex items-center space-x-3">
-              <button onClick={handleRefresh} className={`p-2 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-orange-600 transition-all ${refreshing ? 'animate-spin' : ''}`} title="Refresh Data">
-                <RefreshCw className="w-5 h-5" />
+            <div className="flex items-center gap-2">
+              <button onClick={handleRefresh} aria-label="Refresh" title="Refresh" className={`h-10 w-10 inline-flex items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] ${refreshing ? 'animate-spin' : ''}`}>
+                <RefreshCw className="w-4 h-4" />
               </button>
-              <button onClick={handleExportCSV} className="flex items-center px-4 py-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg text-sm font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all">
-                <Download className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" />
-                Export CSV
+              <button onClick={handleExportCSV} className="h-10 inline-flex items-center gap-1.5 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                <Download className="w-4 h-4 text-[var(--color-text-faint)]" /> Export
               </button>
-              <Link href="/requests/new">
-                <button className="flex items-center px-5 py-2 bg-orange-600 text-white rounded-lg text-sm font-bold shadow-lg shadow-orange-600/20 hover:bg-orange-700 hover:scale-105 transition-all">
-                  <Plus className="w-5 h-5 mr-2" />
-                  New Request
-                </button>
+              <Link href="/requests/new" className="h-10 inline-flex items-center gap-1.5 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-bold hover:bg-[var(--color-accent-hover)]">
+                <Plus className="w-4 h-4" /> New request
               </Link>
             </div>
           </div>
-
-          <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
-            
-            {/* SLOT 1: MY ACTION ITEMS */}
-            <div 
-              className={`border p-3 rounded-xl flex flex-col justify-between cursor-pointer transition-colors group relative overflow-hidden ${metrics.myActionItems > 0 ? 'bg-orange-50 border-orange-300 ring-2 ring-orange-500/20' : 'bg-[var(--color-surface-2)] border-[var(--color-border)]'}`}
-              onClick={() => setFilters({ ...filters, assignedTo: 'me' })}
-            >
-              <div className="flex justify-between items-start z-10">
-                <span className={`text-[10px] font-bold uppercase ${metrics.myActionItems > 0 ? 'text-orange-600' : 'text-[var(--color-text-faint)]'}`}>Action Required</span>
-                <Zap className={`w-4 h-4 ${metrics.myActionItems > 0 ? 'text-orange-500 fill-orange-500 animate-pulse' : 'text-slate-300'}`} />
-              </div>
-              <div className="flex items-end justify-between mt-1 z-10">
-                <div className={`text-2xl font-black ${metrics.myActionItems > 0 ? 'text-orange-700' : 'text-[var(--color-text)]'}`}>{metrics.myActionItems}</div>
-              </div>
-            </div>
-
-            {/* SLOT 2: DYNAMIC CONTEXT */}
-            <div className="bg-blue-50/50 border border-blue-100 p-3 rounded-xl flex flex-col justify-between cursor-pointer hover:border-blue-300 transition-colors group">
-              <div className="flex justify-between items-start">
-                <span className="text-[10px] font-bold text-blue-400 uppercase">{cardLabels.slot2}</span>
-                <Inbox className="w-4 h-4 text-blue-300 group-hover:text-blue-500" />
-              </div>
-              <div className="text-2xl font-black text-blue-700 mt-1">{metrics.slot2Count}</div>
-            </div>
-
-            {/* SLOT 3: DYNAMIC CONTEXT */}
-            <div className="bg-purple-50/50 border border-purple-100 p-3 rounded-xl flex flex-col justify-between cursor-pointer hover:border-purple-300 transition-colors group">
-              <div className="flex justify-between items-start">
-                <span className="text-[10px] font-bold text-purple-400 uppercase">{cardLabels.slot3}</span>
-                <User className="w-4 h-4 text-purple-300 group-hover:text-purple-500" />
-              </div>
-              <div className="text-2xl font-black text-purple-700 mt-1">{metrics.slot3Count}</div>
-            </div>
-
-            {/* SLOT 4: DYNAMIC CONTEXT */}
-            <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] p-3 rounded-xl flex flex-col justify-between cursor-pointer hover:border-blue-300 transition-colors group">
-              <div className="flex justify-between items-start"><span className="text-[10px] font-bold text-[var(--color-text-faint)] uppercase">{cardLabels.slot4}</span><Briefcase className="w-4 h-4 text-slate-300 group-hover:text-blue-500" /></div>
-              <div className="text-2xl font-black text-[var(--color-text)] mt-1">{metrics.slot4Count}</div>
-            </div>
-
-            {/* SLOT 5: IFC READY */}
-            <div className="bg-teal-50/50 border border-teal-100 p-3 rounded-xl flex flex-col justify-between cursor-pointer hover:border-teal-300 transition-colors group" onClick={() => setFilters({ ...filters, status: 'PENDING_IFC' })}>
-              <div className="flex justify-between items-start"><span className="text-[10px] font-bold text-teal-400 uppercase">IFC Ready</span><CheckCircle2 className="w-4 h-4 text-teal-300 group-hover:text-teal-500" /></div>
-              <div className="text-2xl font-black text-teal-700 mt-1">{metrics.readyForIFC}</div>
-            </div>
-
-            {/* SLOT 6: STALE / ALERT */}
-            <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] p-3 rounded-xl flex flex-col justify-between cursor-default">
-              <div className="flex justify-between items-start">
-                <span className="text-[10px] font-bold text-[var(--color-text-faint)] uppercase">Stale (&gt; 7 Days)</span>
-                <Clock className="w-4 h-4 text-slate-300" />
-              </div>
-              <div className="text-2xl font-black text-[var(--color-text-muted)] mt-1">{metrics.staleTickets}</div>
-            </div>
+          {/* The counts, each a filter. */}
+          <div className="mt-3 flex flex-wrap gap-2 text-[13px]">
+            {([
+              { label: "Waiting on you", n: metrics.myActionItems, on: () => setFilters({ ...filters, assignedTo: 'me', status: 'ALL' }), strong: metrics.myActionItems > 0 },
+              { label: cardLabels.slot2, n: metrics.slot2Count },
+              { label: cardLabels.slot3, n: metrics.slot3Count },
+              { label: cardLabels.slot4, n: metrics.slot4Count },
+              { label: "IFC ready", n: metrics.readyForIFC, on: () => setFilters({ ...filters, status: 'PENDING_IFC' }) },
+              { label: "No activity in 7 days", n: metrics.staleTickets },
+            ] as Array<{ label: string; n: number; on?: () => void; strong?: boolean }>).map((c) => {
+              const body = <><span className={c.strong ? "font-black text-[var(--color-text)]" : "font-bold text-[var(--color-text)]"}>{c.n}</span> <span className="text-[var(--color-text-muted)]">{c.label}</span></>;
+              return c.on
+                ? <button key={c.label} type="button" onClick={c.on} className={`h-9 px-3 rounded-full border ${c.strong ? "border-[var(--color-text)]" : "border-[var(--color-border)]"} bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] cursor-pointer`}>{body}</button>
+                : <span key={c.label} className="h-9 px-3 inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface-2)]">{body}</span>;
+            })}
           </div>
         </div>
       </div>
@@ -816,28 +769,7 @@ export default function RequestPortal() {
       {/* 2. ADVANCED FILTER BAR */}
       <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-4">
         
-        {/* URGENT ACTION BANNER */}
-        {metrics.myActionItems > 0 && (
-          <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 shadow-sm flex items-center justify-between text-orange-900 animate-in slide-in-from-top-4 mb-6">
-            <div className="flex items-center space-x-4">
-              <div className="p-2 bg-orange-100 rounded-lg">
-                <AlertCircle className="w-6 h-6 text-orange-600 animate-pulse" />
-              </div>
-              <div>
-                <h3 className="text-sm font-black tracking-tight uppercase text-orange-700">Action Required</h3>
-                <p className="text-sm font-medium text-orange-800">
-                  You have <span className="font-bold underline">{metrics.myActionItems} ticket{metrics.myActionItems > 1 ? 's' : ''}</span> waiting for your review or approval.
-                </p>
-              </div>
-            </div>
-            <button 
-              onClick={() => setFilters({ ...filters, assignedTo: 'me', status: 'ALL' })}
-              className="px-5 py-2 bg-[var(--color-surface)] border border-orange-200 text-orange-700 text-xs font-bold rounded-lg hover:bg-orange-100 transition-colors shadow-sm"
-            >
-              View My Tasks
-            </button>
-          </div>
-        )}
+
 
         {/* BULK ACTIONS HEADER */}
         {selectedTicketIds.size > 0 && (

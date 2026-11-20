@@ -174,6 +174,7 @@ import {
   FileText,
   FolderPlus,
   LayoutGrid,
+  FolderKanban,
   Layers,
   Loader2,
   MoreHorizontal,
@@ -353,8 +354,12 @@ export default function LibraryExplorerPage() {
   const [find, setFind] = useState(() => searchParams.get("find") ?? "");
   // A document opened over the page from somewhere it is not listed.
   const [peekDocId, setPeekDocId] = useState<string | null>(null);
-  const [mapOpen, setMapOpenRaw] = useState(true);
-  useEffect(() => { try { if (window.localStorage.getItem("docs:mapOpen") === "0") setMapOpenRaw(false); } catch { /* default open */ } }, []);
+  // The map starts folded (the documents come first); opened once, it stays open.
+  const [mapOpen, setMapOpenRaw] = useState(false);
+  useEffect(() => { try { if (window.localStorage.getItem("docs:mapOpen") === "1") setMapOpenRaw(true); } catch { /* default folded */ } }, []);
+  // "New collection" and "Custom home", asked for from the library's menu.
+  const [newCollection, setNewCollection] = useState(0);
+  const [homeAsk, setHomeAsk] = useState(0);
   const setMapOpen = (fn: (v: boolean) => boolean) => setMapOpenRaw((v) => {
     const next = fn(v);
     try { window.localStorage.setItem("docs:mapOpen", next ? "1" : "0"); } catch { /* per-viewer only */ }
@@ -3792,6 +3797,22 @@ export default function LibraryExplorerPage() {
                     <FolderPlus className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> New folder
                   </button>
                 )}
+                <button
+                  onClick={() => { setActionsMenuOpen(false); setNewCollection((n) => n + 1); }}
+                  className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
+                  title="Combine related documents into one named book you can read end to end"
+                >
+                  <FolderKanban className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> New collection
+                </button>
+                {isController && (
+                  <button
+                    onClick={() => { setActionsMenuOpen(false); setHomeAsk((n) => n + 1); }}
+                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
+                    title="An about panel, quick folders, recent documents and notices at the top of this library or folder"
+                  >
+                    <LayoutGrid className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Custom home
+                  </button>
+                )}
                 {isController && (
                   <button
                     onClick={() => { setActionsMenuOpen(false); setShowColumnManager(true); }}
@@ -3987,7 +4008,7 @@ export default function LibraryExplorerPage() {
 
             {/* Phase 2 + 3: Curated Collections + Favorites */}
             {library && activeOrgId && uid && (
-              <div className="mb-3 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-sm overflow-hidden">
+              <div className="mb-3 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-sm overflow-hidden empty:hidden">
                 <FavoritesStrip
                   orgId={activeOrgId}
                   userId={uid}
@@ -4005,6 +4026,7 @@ export default function LibraryExplorerPage() {
                   }}
                 />
                 <CollectionsStrip
+                  createSignal={newCollection}
                   orgId={activeOrgId}
                   libraryId={libraryId}
                   userId={uid}
@@ -4056,6 +4078,7 @@ export default function LibraryExplorerPage() {
             {/* CUSTOMIZABLE HOME — library root OR folder; opt-in, default off */}
             {!currentFolderId && library && (
               <LibraryHomeBoard
+                openSignal={homeAsk}
                 node={{ name: library.name, description: library.description, icon: library.icon, homeConfig: library.homeConfig }}
                 folders={folders.filter((f) => !f.parentId)}
                 documents={documents}
@@ -4071,6 +4094,7 @@ export default function LibraryExplorerPage() {
             {currentFolderId && currentFolder && (
               <LibraryHomeBoard
                 key={currentFolderId}
+                openSignal={homeAsk}
                 node={{ name: currentFolder.name, description: currentFolder.description, icon: currentFolder.icon, homeConfig: currentFolder.homeConfig }}
                 folders={folders.filter((f) => f.parentId === currentFolderId)}
                 documents={documents.filter((d) => d.collectionId === currentFolderId)}

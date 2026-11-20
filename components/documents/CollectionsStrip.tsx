@@ -32,6 +32,9 @@ interface CollectionsStripProps {
   folderName?: string | null;
   /** All folders in the library — for the "lives in" picker when editing. */
   folders?: Array<{ id?: string; name?: string; pathNames?: string[] }>;
+  /** Bump to open "New collection" from elsewhere (the library's menu):
+   *  with no collections yet the strip shows nothing at all. */
+  createSignal?: number;
   /** Document records in the current library — passed in so we can
    *  show counts / pick from them when editing a collection. */
   libraryDocs: Array<{ id: string; documentNumber: string; title: string; rev?: string; status?: string; sheetNumber?: number | null }>;
@@ -52,7 +55,7 @@ function bookCover(color?: string | null): string {
 }
 
 export default function CollectionsStrip({
-  orgId, libraryId, userId, userRole, folderId, folderName, folders, libraryDocs, onOpenAsBook,
+  orgId, libraryId, userId, userRole, folderId, folderName, folders, libraryDocs, onOpenAsBook, createSignal,
 }: CollectionsStripProps) {
   const [collections, setCollections] = useState<CuratedCollection[]>([]);
   const [itemsMap, setItemsMap] = useState<Record<string, string[]>>({});
@@ -61,6 +64,7 @@ export default function CollectionsStrip({
 
   const [openCollectionId, setOpenCollectionId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  useEffect(() => { if (createSignal) setCreating(true); }, [createSignal]);
 
   const isAdmin = ADMIN_ROLES.includes(userRole);
 
@@ -89,13 +93,9 @@ export default function CollectionsStrip({
     else setOpenCollectionId(c.id);
   };
 
-  if (loading && collections.length === 0) {
-    return (
-      <div className="px-4 py-3 text-xs text-[var(--color-text-muted)] flex items-center gap-2">
-        <Loader2 className="w-3 h-3 animate-spin" /> Loading books…
-      </div>
-    );
-  }
+  // No books here: nothing in the way of the documents (New collection is
+  // in the library's menu); only the create dialog when asked for.
+  if (collections.length === 0 && !openCollectionId && !creating) return null;
 
   return (
     <div className="px-4 py-3 border-b border-[var(--color-border)] bg-gradient-to-b from-purple-50/40 to-white">

@@ -64,7 +64,7 @@ const TOOL_ALIASES: Record<string, string[]> = {
   '/documents':    viewHrefs(DOCUMENT_VIEWS, '/documents'),
   '/admin/assets': viewHrefs(EQUIPMENT_VIEWS, '/admin/assets'),
   '/activity':     viewHrefs(ACTIVITY_VIEWS, '/activity'),
-  '/intelligence': viewHrefs(INTELLIGENCE_VIEWS, '/intelligence'),
+  '/assistant':    viewHrefs(INTELLIGENCE_VIEWS, '/assistant'),
 };
 
 const COLLAPSED_KEY  = 'mfg-os.sidebar.collapsed';
@@ -234,7 +234,7 @@ export default function Sidebar({
         label: 'Drafting Requests', hint: 'Drafting & design request portal', href: '/requests', icon: MailPlus, tone: 'orange',
         ...badgeOf(sectionCounts.requests),
       },
-      { label: 'Intelligence', hint: 'AI in one place - ask, knowledge, graph, link review, setup', href: '/intelligence', icon: Bot, tone: 'violet' },
+      { label: 'Intelligence', hint: 'Ask the AI: your documents, the system, the web', href: '/assistant', icon: Bot, tone: 'violet' },
       { label: 'Output Docs', hint: 'Generate scopes & letters from templates + data', href: '/output-templates', icon: FileOutput, tone: 'orange' },
       { label: 'Activity',    hint: 'History + audit log',                             href: '/activity',     icon: Activity, tone: 'emerald' },
     ];

@@ -16,7 +16,8 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { PanelLeftOpen, Square } from "lucide-react";
+import { PanelLeftOpen, Square, BookOpen, Waypoints, GitPullRequest, Puzzle, Gauge, Settings2 } from "lucide-react";
+import MoreMenu from "@/components/ui/MoreMenu";
 import { useRole } from "@/components/providers/RoleContext";
 import { useToast } from "@/components/providers/ToastProvider";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -662,6 +663,16 @@ export default function ChatShell() {
             </button>
           )}
           <StatusChip orgId={orgId} bump={statusBump} />
+          {/* The rest of Intelligence, one tap away (the chat is its front door). */}
+          <MoreMenu iconOnly label="Knowledge, graph, review, skills, status, setup" triggerClass="h-8 w-8 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
+            items={[
+              { icon: <BookOpen className="w-4 h-4" />, label: "Knowledge", onClick: () => router.push("/knowledge") },
+              { icon: <Waypoints className="w-4 h-4" />, label: "Graph", onClick: () => router.push("/graph") },
+              { icon: <GitPullRequest className="w-4 h-4" />, label: "Review links", onClick: () => router.push("/admin/proposed-links") },
+              { icon: <Puzzle className="w-4 h-4" />, label: "Skills", onClick: () => router.push("/intelligence/skills") },
+              { icon: <Gauge className="w-4 h-4" />, label: "Status", onClick: () => router.push("/intelligence"), line: true },
+              { icon: <Settings2 className="w-4 h-4" />, label: "Setup", onClick: () => router.push("/intelligence/setup") },
+            ]} />
         </div>
 
         <MessageStream

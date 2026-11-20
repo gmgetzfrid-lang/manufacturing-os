@@ -10,8 +10,8 @@
 // flips an in-place editor (drag to reorder, resize, retitle, add/remove
 // parts) and a Save that persists via the parent's onSave.
 
-import React, { useMemo, useState } from "react";
-import { Plus, Pencil, Check, X, Trash2, GripVertical, FileText, FolderOpen, Clock, Info, Type, BarChart3, Loader2, Zap, Maximize2, ChevronRight, ChevronUp, ChevronDown } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { Plus, Pencil, Check, X, Trash2, GripVertical, FileText, FolderOpen, Clock, Info, Type, BarChart3, Loader2, Maximize2, ChevronRight, ChevronUp, ChevronDown } from "lucide-react";
 import type {
   LibraryCollection, DocumentRecord, LibraryHomeConfig, WebPart, WebPartType,
 } from "@/types/schema";
@@ -61,8 +61,10 @@ export interface HomeNode {
 }
 
 export default function LibraryHomeBoard({
-  node, folders, documents, canEdit, onOpenFolder, onOpenDoc, onSave,
+  node, folders, documents, canEdit, onOpenFolder, onOpenDoc, onSave, openSignal,
 }: {
+  /** Bump to start setting up (or editing) the home from the library's menu. */
+  openSignal?: number;
   /** The library or folder this home belongs to. */
   node: HomeNode;
   folders: LibraryCollection[];
@@ -75,6 +77,8 @@ export default function LibraryHomeBoard({
   const config = node.homeConfig;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<LibraryHomeConfig>({ enabled: true, parts: [] });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- only when asked from the menu
+  useEffect(() => { if (openSignal && canEdit) startEditing(); }, [openSignal]);
   const [saving, setSaving] = useState(false);
   const [dragId, setDragId] = useState<string | null>(null);
 
@@ -98,21 +102,9 @@ export default function LibraryHomeBoard({
   // ── Not editing ──────────────────────────────────────────────────
   if (!editing) {
     if (!config?.enabled || !config.parts?.length) {
-      if (!canEdit) return null;
-      return (
-        <button
-          onClick={startEditing}
-          className="w-full mb-4 flex items-center gap-3 px-4 py-3 rounded-2xl border border-dashed border-[var(--color-border-strong)] text-left hover:bg-[var(--color-surface-2)] transition-colors group"
-        >
-          <span className="w-9 h-9 rounded-xl grid place-items-center text-white shrink-0" style={{ background: "var(--brand-gradient)" }}>
-            <Zap className="w-4 h-4" />
-          </span>
-          <span className="min-w-0">
-            <span className="block text-sm font-bold text-[var(--color-text)]">Set up a custom home</span>
-            <span className="block text-xs text-[var(--color-text-muted)]">Add an about panel, quick folders, recent documents and notices - optional, your library works without it.</span>
-          </span>
-        </button>
-      );
+      // Not set up: nothing in the way of the documents. "Custom home" is in
+      // the library's menu (it bumps openSignal).
+      return null;
     }
     return (
       <div className="mb-5">

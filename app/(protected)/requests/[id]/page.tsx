@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import dynamic from 'next/dynamic';
+import MoreMenu from '@/components/ui/MoreMenu';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { uploadTicketAttachment, getSignedUrlForPath } from '@/lib/storage';
@@ -1519,35 +1520,17 @@ export default function TicketDetailView() {
                 {ticket.requestType === 'RFI' && <span className="px-2 py-0.5 bg-pink-100 text-pink-700 text-[10px] font-bold rounded border border-pink-200 flex items-center"><Flag className="w-3 h-3 mr-1" /> RFI</span>}
               </div>
               <p className="text-sm text-[var(--color-text-muted)] mt-1 font-medium">{ticket.title}</p>
+              {hasStagedFiles && (availableActions.some((a) => a.action === 'submit_draft')
+                ? <p className="text-[13px] font-bold text-[var(--color-text)] mt-1">Your drafts aren&apos;t sent to the requester yet: Submit draft for review sends them.</p>
+                : <p className="text-[13px] text-[var(--color-text-muted)] mt-1">Drafts are added but not sent to the requester yet.</p>)}
             </div>
           </div>
-          <div className="flex flex-wrap gap-2 justify-end">
-            {/* Traveler: the one-pager that rides the paper folder. Its QR
-                shows live status — paper goes stale, the QR doesn't. */}
-            <button
-              onClick={async () => {
-                const { printTicketTraveler } = await import("@/lib/physicalBridge");
-                await printTicketTraveler({
-                  ticketRowId: ticketId,
-                  ticketNumber: ticket.ticketId ?? null,
-                  title: ticket.title,
-                  status: ticket.status,
-                  requesterName: ticket.requesterName ?? null,
-                  drafterName: ticket.assignedDrafterName ?? null,
-                  createdAt: ticket.createdAt ? String(ticket.createdAt) : null,
-                  deliverableRev: ticket.deliverableRev ?? null,
-                });
-              }}
-              title="Print a traveler sheet for the paper folder - anyone can scan its QR (no login) to check the deliverable is still the latest revision"
-              className="px-3 py-2.5 rounded-lg text-sm font-bold shadow-sm transition-all flex items-center gap-1.5 bg-[var(--color-surface)] border-2 border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]"
-            >
-              <QrCode className="w-4 h-4" /> <span className="hidden sm:inline">Traveler</span>
-            </button>
+          <div className="flex flex-wrap items-center gap-2 justify-end">
             {(activeRole === 'Drafter' || activeRole === 'Requester' || activeRole === 'Admin' || uid === ticket.requesterId) && (
               <>
-                <label className={`cursor-pointer px-5 py-2.5 rounded-lg text-sm font-bold shadow-sm transition-all flex items-center bg-[var(--color-surface)] border-2 border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] ${isUploading ? 'opacity-50 pointer-events-none' : ''}`}>
+                <label className={`cursor-pointer h-10 px-3 rounded-lg text-sm font-bold transition-all flex items-center bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] ${isUploading ? 'opacity-50 pointer-events-none' : ''}`}>
                   {isUploading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <UploadCloud className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" />} 
-                  {isUploading ? `Uploading ${uploadProgress.toFixed(0)}%` : 'Add New File'}
+                  {isUploading ? `Uploading ${uploadProgress.toFixed(0)}%` : 'Add a file'}
                   <input 
                     type="file" 
                     className="hidden" 
@@ -1593,64 +1576,57 @@ export default function TicketDetailView() {
               </>
             )}
 
-            {isAdmin && ticket.assignedDrafterId && ticket.status !== 'CLOSED' && (
-              <button 
-                onClick={handleReassignClick}
-                className="px-5 py-2.5 rounded-lg text-sm font-bold shadow-sm transition-all flex items-center bg-[var(--color-surface)] border-2 border-orange-200 text-orange-700 hover:bg-orange-50 hover:border-orange-300"
-              >
-                <UserPlus className="w-4 h-4 mr-2" /> Reassign
-              </button>
+            {availableActions.length === 0 && (
+              <div className="flex items-center h-10 px-3 bg-[var(--color-surface-2)] rounded-lg border border-[var(--color-border)] text-xs font-medium text-[var(--color-text-muted)]"><ShieldAlert className="w-3.5 h-3.5 mr-1.5" /> Nothing for you to do on this request</div>
             )}
-            {availableActions.length === 0 ? (
-               <div className="flex items-center px-4 py-2 bg-[var(--color-surface-2)] rounded-lg border border-[var(--color-border)] text-xs font-medium text-[var(--color-text-faint)] italic"><ShieldAlert className="w-4 h-4 mr-2" /> View Only - No Actions Available</div>
-            ) : (
-              availableActions.map((action, idx) => (
-                <button 
-                  key={idx} 
-                  onClick={() => initiateWorkflowAction(action)} 
-                  disabled={!!actionLoading} 
-                  className={`
-                    px-5 py-2.5 rounded-lg text-sm font-bold shadow-sm transition-all flex items-center relative overflow-hidden group disabled:opacity-50 disabled:cursor-not-allowed
-                    ${action.variant === 'success' ? 'bg-green-600 text-white hover:bg-green-700' : 
-                      action.variant === 'destructive' ? 'bg-red-600 text-white hover:bg-red-700' : 
-                      action.variant === 'outline' ? 'bg-[var(--color-surface)] border-2 border-[var(--color-border-strong)] text-[var(--color-text)] hover:border-slate-400 hover:bg-[var(--color-surface-2)]' : 
-                      action.variant === 'warning' ? 'bg-amber-500 text-white hover:bg-amber-600' : 
-                      'bg-slate-900 text-white hover:bg-slate-800'}
-                    
-                  `}
-                >
-                  {actionLoading === action.action ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : action.action === 'save_progress' ? <Save className="w-4 h-4 mr-2" /> : action.action === 'submit_draft' ? <Send className="w-4 h-4 mr-2" /> : action.action === 'assign' ? <UserPlus className="w-4 h-4 mr-2" /> : action.action === 'submit_final' ? <FileCheck className="w-4 h-4 mr-2" /> : null}
-                  {action.label}
-                  {action.action === 'submit_draft' && hasStagedFiles && (
-                    <span className="absolute top-0 right-0 w-3 h-3 bg-orange-500 rounded-full border-2 border-white translate-x-1 -translate-y-1"></span>
+            {(() => {
+              // One main step (drafts waiting to go out come first); the rest quiet; closing it in the menu.
+              // An override (Force close) or a destructive step is never the main one.
+              const isDanger = (a: typeof availableActions[number]) => a.variant === 'destructive' || /force/i.test(a.label);
+              const mainAct = (hasStagedFiles ? availableActions.find((a) => a.action === 'submit_draft') : undefined)
+                ?? availableActions.find((a) => !isDanger(a) && a.variant !== 'outline' && a.variant !== 'ghost') ?? null;
+              const rest = availableActions.filter((a) => a !== mainAct);
+              const quietActs = rest.filter((a) => !isDanger(a));
+              const dangerActs = rest.filter(isDanger);
+              const iconOf = (a: typeof availableActions[number]) => actionLoading === a.action ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : a.action === 'save_progress' ? <Save className="w-4 h-4 mr-1.5" /> : null;
+              const menu = [
+                { icon: <QrCode className="w-4 h-4" />, label: "Print the traveler", onClick: async () => {
+                const { printTicketTraveler } = await import("@/lib/physicalBridge");
+                await printTicketTraveler({
+                  ticketRowId: ticketId,
+                  ticketNumber: ticket.ticketId ?? null,
+                  title: ticket.title,
+                  status: ticket.status,
+                  requesterName: ticket.requesterName ?? null,
+                  drafterName: ticket.assignedDrafterName ?? null,
+                  createdAt: ticket.createdAt ? String(ticket.createdAt) : null,
+                  deliverableRev: ticket.deliverableRev ?? null,
+                });
+              } },
+                ...(isAdmin && ticket.assignedDrafterId && ticket.status !== 'CLOSED' ? [{ icon: <UserPlus className="w-4 h-4" />, label: "Reassign", onClick: () => handleReassignClick() }] : []),
+                ...dangerActs.map((a, i) => ({ icon: <ShieldAlert className="w-4 h-4" />, label: a.label, onClick: () => initiateWorkflowAction(a), tone: "bad" as const, line: i === 0 })),
+              ];
+              return (
+                <>
+                  {quietActs.map((a) => (
+                    <button key={a.action + a.label} onClick={() => initiateWorkflowAction(a)} disabled={!!actionLoading}
+                      className="h-10 px-3 rounded-lg text-sm font-bold flex items-center border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 disabled:cursor-not-allowed">
+                      {iconOf(a)}{a.label}
+                    </button>
+                  ))}
+                  <MoreMenu items={menu} iconOnly label="More: traveler, reassign, close" triggerClass="h-10 w-10 inline-flex items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]" />
+                  {mainAct && (
+                    <button onClick={() => initiateWorkflowAction(mainAct)} disabled={!!actionLoading}
+                      className="h-11 px-5 rounded-lg text-sm font-black flex items-center bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">
+                      {iconOf(mainAct)}{mainAct.label}
+                    </button>
                   )}
-                </button>
-              ))
-            )}
+                </>
+              );
+            })()}
           </div>
         </div>
       </div>
-
-      {/* NOTIFICATION: Staged Files Warning */}
-      {hasStagedFiles && (
-        <div className="bg-orange-600 text-white px-4 py-3 shadow-md relative z-10 animate-in slide-in-from-top-2">
-          <div className="max-w-[1920px] mx-auto flex items-center justify-between px-4 sm:px-6 lg:px-8">
-             <div className="flex items-center">
-               <AlertTriangle className="w-5 h-5 mr-3 " />
-               <p className="text-sm font-bold">You have unsubmitted drafts. Please click &ldquo;Submit Draft for Review&rdquo; to notify the requester.</p>
-             </div>
-             <button 
-               onClick={() => {
-                 const submitAction = availableActions.find(a => a.action === 'submit_draft');
-                 if (submitAction) initiateWorkflowAction(submitAction);
-               }}
-               className="px-4 py-1 bg-[var(--color-surface)] text-orange-600 text-xs font-bold rounded hover:bg-orange-50 transition-colors shadow-sm"
-             >
-               Submit Now
-             </button>
-          </div>
-        </div>
-      )}
 
       {ticket.status === 'REVISION_REQ' && latestRevision && (
         <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6">

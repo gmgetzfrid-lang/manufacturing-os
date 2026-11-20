@@ -68,13 +68,13 @@ export default function AddToPackageButton({ doc, orgId, userId, userName }: {
     <div className="relative">
       <button
         onClick={() => { setOpen((v) => !v); if (!open) void loadPackages(); }}
-        className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-teal-200 bg-teal-50 text-xs font-bold text-teal-800 hover:bg-teal-100 transition-all"
+        className="inline-flex items-center justify-center gap-1.5 h-10 px-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-all"
         title="Pin this drawing (at its current revision) into a job's work package"
       >
-        <Package className="w-3.5 h-3.5" /> Add to work package
+        <Package className="w-3.5 h-3.5" /> Work package
       </button>
       {open && (
-        <div className="absolute z-30 mt-1 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl p-1.5 space-y-0.5">
+        <div className="absolute z-30 mt-1 w-64 left-0 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl p-1.5 space-y-0.5">
           {addedTo ? (
             <div className="px-2 py-2 text-xs font-bold text-emerald-700 inline-flex items-center gap-1.5">
               <Check className="w-3.5 h-3.5" /> Added to {addedTo}

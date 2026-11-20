@@ -116,14 +116,14 @@ export const ACTIVITY_VIEWS: ViewTab[] = [
   { label: "Audit log", href: "/admin/audit", icon: ScrollText },
 ];
 
-// One tool, six lenses: everything AI lives here. The sidebar shows a single
-// "Intelligence" entry; these tabs are the whole map of it.
+// Everything AI lives here. The sidebar's "Intelligence" opens the chat
+// itself (Ask); these tabs are the rest of it, the status board last.
 export const INTELLIGENCE_VIEWS: ViewTab[] = [
-  { label: "Overview", href: "/intelligence", icon: Gauge, exact: true },
   { label: "Ask", href: "/assistant", icon: Bot },
   { label: "Knowledge", href: "/knowledge", icon: BookOpen },
   { label: "Graph", href: "/graph", icon: Waypoints },
   { label: "Review", href: "/admin/proposed-links", icon: GitPullRequest },
   { label: "Skills", href: "/intelligence/skills", icon: Puzzle },
+  { label: "Status", href: "/intelligence", icon: Gauge, exact: true },
   { label: "Setup", href: "/intelligence/setup", icon: Settings2 },
 ];

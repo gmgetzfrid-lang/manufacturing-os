@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, Send, GitBranch, GitCompare, ShieldCheck, Wrench, StickyNote } from "lucide-react";
+import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, Send, GitBranch, GitCompare, ShieldCheck, Wrench, StickyNote, Check } from "lucide-react";
 import NextLink from "next/link";
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
@@ -440,7 +440,7 @@ export default function InspectorPanel({
 
       {/* PREVIEW ────────────────────────────────────────────────────── */}
       {selectedVersion?.fileUrl ? (
-        <div className="relative group rounded-xl border border-[var(--color-border)] overflow-hidden h-96 bg-[var(--color-surface-2)]">
+        <div className="relative group rounded-xl border border-[var(--color-border)] overflow-hidden h-[60vh] min-h-96 bg-[var(--color-surface-2)]">
           <SecureDocViewer
             url={selectedVersion.fileUrl}
             title={title}
@@ -467,93 +467,56 @@ export default function InspectorPanel({
         </div>
       )}
 
-      {/* PRIMARY ACTIONS ────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        <button
-          onClick={onFullScreen}
-          disabled={!selectedVersion?.fileUrl}
-          className="flex items-center justify-center gap-1.5 px-2 py-2.5 rounded-xl bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm"
-        >
-          <Maximize2 className="w-3.5 h-3.5" /> Open
-        </button>
-        {onToggleStage && (
-          <button
-            onClick={() => onToggleStage(selectedDoc)}
-            className={`flex items-center justify-center gap-1.5 px-2 py-2.5 rounded-xl text-xs font-bold transition-all shadow-sm border ${
-              isStaged
-                ? "bg-orange-500 text-white border-orange-500 hover:bg-orange-600"
-                : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)] hover:bg-orange-50 hover:border-orange-300 hover:text-orange-700"
-            }`}
-            title={isStaged ? "Remove from staging" : "Add to staging"}
-          >
-            <Layers className="w-3.5 h-3.5" /> {isStaged ? "Staged" : "Stage"}
+      {/* ACTIONS: one main button (Open; Publish once you have it checked
+          out), the rest quiet in one row. ──────────────────────────────── */}
+      {(() => {
+        const canPub = !!(canPublishEff && onRevUp);
+        const pubLocked = selectedDoc.status === "Archived" || (isCheckedOut && !checkedOutByMe);
+        const publishMain = canPub && checkedOutByMe && !pubLocked;
+        const main = "inline-flex items-center justify-center gap-1.5 h-10 px-4 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm";
+        const quiet = "inline-flex items-center justify-center gap-1.5 h-10 px-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-all";
+        const publish = (cls: string) => (
+          <button onClick={onRevUp} disabled={pubLocked} className={cls}
+            title={isCheckedOut && !checkedOutByMe ? `Locked: ${selectedDoc.checkedOutByName || "another user"} has this checked out. Publishing over their work is blocked - coordinate or ask them to check in.` : "Publish a new revision"}>
+            {isCheckedOut && !checkedOutByMe ? <><Lock className="w-3.5 h-3.5" /> Locked by {selectedDoc.checkedOutByName || "another user"}</> : <><ArrowUpFromLine className="w-3.5 h-3.5" /> Publish new revision</>}
           </button>
-        )}
-        <button
-          onClick={() => onCheckout(selectedDoc)}
-          className={`flex items-center justify-center gap-1.5 px-2 py-2.5 rounded-xl text-xs font-bold transition-all shadow-sm border ${
-            checkedOutByMe
-              ? "bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100"
-              : isCheckedOut
-              ? "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100"
-              : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
-          }`}
-          title={checkedOutByMe ? "You have it checked out" : isCheckedOut ? "Currently checked out" : "Check out"}
-        >
-          {checkedOutByMe ? <LogOut className="w-3.5 h-3.5" /> : <LogIn className="w-3.5 h-3.5" />}
-          {checkedOutByMe ? "Check in" : "Checkout"}
-        </button>
-        <button onClick={onMetadata} className="flex items-center justify-center gap-1.5 px-2 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all">
-          <Pencil className="w-3.5 h-3.5" /> Metadata
-        </button>
-      </div>
-
-
-      {/* PUBLISH — rev-up. Gated on per-library publish authority (Admin/DocCtrl,
-          or a role/user granted "publish" on this library, or the accountable
-          owner), and on the checkout lock: publishing over someone else's
-          active checkout is blocked. */}
-      {canPublishEff && onRevUp && (
-        <button
-          onClick={onRevUp}
-          disabled={selectedDoc.status === "Archived" || (isCheckedOut && !checkedOutByMe)}
-          title={isCheckedOut && !checkedOutByMe
-            ? `Locked: ${selectedDoc.checkedOutByName || "another user"} has this checked out. Publishing over their work is blocked - coordinate or ask them to check in.`
-            : "Publish a new revision"}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-xs font-black shadow transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          {isCheckedOut && !checkedOutByMe
-            ? <><Lock className="w-3.5 h-3.5" /> Locked by {selectedDoc.checkedOutByName || "another user"}</>
-            : <><ArrowUpFromLine className="w-3.5 h-3.5" /> Publish New Revision</>}
-        </button>
-      )}
-
-      {/* SOURCE CUSTODY: pull the authoritative CAD file from the vault
-          instead of a desktop folder. Records an edit intent pinned to the
-          current revision — so the publish contract knows your base, and
-          overlap advisories can see you're working. */}
-      {selectedVersion?.sourceFileKey && selectedDoc.id && selectedDoc.orgId && uid && (
-        <button
-          onClick={() => void handleGetSource()}
-          disabled={sourceBusy}
-          title="Download the native CAD source (DWG/zip) stored with the current revision. Marks you as working on this document from this revision."
-          className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-sky-200 bg-sky-50 text-xs font-black text-sky-800 hover:bg-sky-100 transition-all disabled:opacity-50"
-        >
-          <FileText className="w-3.5 h-3.5" />
-          {sourceBusy ? "Fetching source…" : `Get CAD source (${selectedVersion.sourceFileName || "DWG"})`}
-        </button>
-      )}
-
-      {/* WORK PACKAGE — pin this drawing into a job bundle from where the
-          drawing lives, not only from /packages. */}
-      {selectedDoc.id && selectedDoc.orgId && uid && (
-        <AddToPackageButton
-          doc={selectedDoc}
-          orgId={selectedDoc.orgId}
-          userId={uid}
-          userName={userEmail?.split("@")[0] ?? null}
-        />
-      )}
+        );
+        return (
+          <div className="flex flex-wrap items-center gap-2">
+            {publishMain ? publish(main) : (
+              <button onClick={onFullScreen} disabled={!selectedVersion?.fileUrl} className={main}>
+                <Maximize2 className="w-3.5 h-3.5" /> Open
+              </button>
+            )}
+            {publishMain && (
+              <button onClick={onFullScreen} disabled={!selectedVersion?.fileUrl} className={quiet}><Maximize2 className="w-3.5 h-3.5" /> Open</button>
+            )}
+            <button onClick={() => onCheckout(selectedDoc)} className={quiet}
+              title={checkedOutByMe ? "You have it checked out" : isCheckedOut ? `Checked out by ${selectedDoc.checkedOutByName || "someone else"}` : "Check out"}>
+              {checkedOutByMe ? <LogOut className="w-3.5 h-3.5" /> : <LogIn className="w-3.5 h-3.5" />}
+              {checkedOutByMe ? "Check in" : isCheckedOut ? "Checked out" : "Check out"}
+            </button>
+            {canPub && !publishMain && publish(quiet)}
+            {onToggleStage && (
+              <button onClick={() => onToggleStage(selectedDoc)} className={quiet} aria-pressed={isStaged} title={isStaged ? "Remove from staging" : "Add to staging"}>
+                {isStaged ? <Check className="w-3.5 h-3.5" /> : <Layers className="w-3.5 h-3.5" />} {isStaged ? "Staged" : "Stage"}
+              </button>
+            )}
+            <button onClick={onMetadata} className={quiet}><Pencil className="w-3.5 h-3.5" /> Metadata</button>
+            {/* Source custody: the CAD file from the vault (records an edit intent at this revision). */}
+            {selectedVersion?.sourceFileKey && selectedDoc.id && selectedDoc.orgId && uid && (
+              <button onClick={() => void handleGetSource()} disabled={sourceBusy} className={quiet}
+                title="Download the native CAD source (DWG/zip) stored with the current revision. Marks you as working on this document from this revision.">
+                <FileText className="w-3.5 h-3.5" /> {sourceBusy ? "Fetching source…" : "CAD source"}
+              </button>
+            )}
+            {/* Pin this drawing into a job's work package, from where it lives. */}
+            {selectedDoc.id && selectedDoc.orgId && uid && (
+              <AddToPackageButton doc={selectedDoc} orgId={selectedDoc.orgId} userId={uid} userName={userEmail?.split("@")[0] ?? null} />
+            )}
+          </div>
+        );
+      })()}
 
       {/* DISTRIBUTION & SHARING — one drawer for the whole "who has this
           document" story: share links, transmittals (and their trail),
@@ -800,7 +763,7 @@ export default function InspectorPanel({
       </CollapsibleSection>
 
       {/* HISTORY & ACTIVITY — the revision record plus the audit tail. */}
-      <CollapsibleSection id="history" title="History & activity" icon={History} defaultOpen>
+      <CollapsibleSection id="history" title="History & activity" icon={History}>
         {/* The deep views live HERE, nested — not as a duplicate top-level
             button showing the same list through a second door. */}
         <div className="grid grid-cols-2 gap-2">
