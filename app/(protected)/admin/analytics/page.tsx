@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
 import { 
-  BarChart3, 
   TrendingUp, 
   AlertTriangle, 
   CheckCircle2, 
@@ -22,7 +21,9 @@ import {
   MousePointerClick
 } from 'lucide-react';
 import { Ticket, DocumentRecord } from '@/types/schema';
-import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
+import { PageShell } from '@/components/ui/PageShell';
+import { PageHero, PageBody, Card } from '@/components/ui/PageHero';
+import { plural } from '@/components/admin/band';
 import UserAvatar from '@/components/ui/UserAvatar';
 import LoadingBlock from '@/components/ui/LoadingBlock';
 import { Modal, ModalHeader, ModalBody, ModalFooter } from '@/components/ui/Modal';
@@ -350,14 +351,25 @@ export default function AnalyticsPage() {
 
 
   if (allowed === false) {
-    return <div className="p-8 text-center text-sm text-[var(--color-text-muted)]">Analytics is limited to management and document control. An Admin can change this under Admin → Permissions → Action permissions.</div>;
+    return (
+      <PageShell width="work">
+        <PageHero kicker="Admin · Analytics" title="Management and document control only." overlap={false}
+          sub="An Admin can change this under Admin, Permissions, Action permissions." />
+      </PageShell>
+    );
   }
   if (loading) {
-    return <PageShell width="work"><LoadingBlock what="analytics" rows={6} /></PageShell>;
+    return <PageShell width="work"><PageHero kicker="Admin · Analytics" title="Analytics" overlap={false} /><LoadingBlock what="analytics" rows={6} /></PageShell>;
   }
 
+  // The answer: how many requests, and how many have stalled.
+  const answer = metrics.staleTickets > 0
+    ? `${plural(metrics.staleTickets, "request")} untouched for a week.`
+    : metrics.totalTickets === 0 ? "No requests yet."
+    : `${plural(metrics.totalTickets, "request")}, none stalled.`;
+
   return (
-    <PageShell width="work" className="space-y-8">
+    <PageShell width="work">
       
       {/* --------------------------------------------------------------------------- */}
       {/* MODAL 1: ROOT CAUSE DRILL DOWN */}
@@ -410,11 +422,11 @@ export default function AnalyticsPage() {
         <Modal onClose={() => setSelectedUser(null)} size="2xl" zIndex={50}>
 
             {/* HEADER */}
-            <div className="relative px-8 py-6 pr-16 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] rounded-t-2xl flex justify-between items-start shrink-0">
+            <div className="relative px-6 sm:px-8 py-6 pr-16 border-b border-[var(--color-border)] rounded-t-2xl flex justify-between items-start gap-4 flex-wrap shrink-0">
               <div className="flex items-center">
                 <UserAvatar uid={userProfile.metric.uid} name={userProfile.metric.name} size={48} rounded="full" className="shadow-lg mr-4" />
                 <div>
-                  <h2 className="text-2xl font-bold text-[var(--color-text)]">{userProfile.metric.name}</h2>
+                  <h2 className="text-[28px] leading-none font-black tracking-[-0.02em] text-[var(--color-text)]">{userProfile.metric.name}</h2>
                   <p className="text-sm text-[var(--color-text-muted)] font-medium uppercase tracking-wide">{viewMode === 'drafter' ? 'Drafter Profile' : 'Requester Profile'}</p>
                 </div>
               </div>
@@ -422,12 +434,12 @@ export default function AnalyticsPage() {
                  <div className="flex items-center space-x-4">
                     <div className="text-right">
                       <p className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase tracking-wider">Avg Revisions</p>
-                      <p className={`text-xl font-black ${userProfile.metric.avgRevisions > 1.5 ? 'text-[var(--color-text)]' : 'text-[var(--color-text)]'}`}>{userProfile.metric.avgRevisions.toFixed(2)}</p>
+                      <p className="text-[15px] font-bold text-[var(--color-text)]">{userProfile.metric.avgRevisions.toFixed(2)}</p>
                     </div>
                     <div className="w-px h-8 bg-[var(--color-border-strong)] mx-2" />
                     <div className="text-right">
                       <p className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase tracking-wider">Revision Rate</p>
-                      <p className={`text-xl font-black ${userProfile.metric.revisionRate > 0.3 ? 'text-red-600' : 'text-emerald-600'}`}>{formatPercent(userProfile.metric.revisionRate)}</p>
+                      <p className={`text-[15px] font-bold ${userProfile.metric.revisionRate > 0.3 ? 'text-red-600' : 'text-emerald-600'}`}>{formatPercent(userProfile.metric.revisionRate)}</p>
                     </div>
                  </div>
               </div>
@@ -437,7 +449,7 @@ export default function AnalyticsPage() {
             </div>
 
             <div className="flex-1 overflow-y-auto p-8 custom-scrollbar bg-[var(--color-surface-2)]">
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                 
                 {/* COLUMN 1: ROOT CAUSE BREAKDOWN */}
                 <div className="lg:col-span-1">
@@ -496,7 +508,7 @@ export default function AnalyticsPage() {
                               <div className="flex items-center space-x-4 shrink-0">
                                 <div className="text-right">
                                   <p className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase">Revisions</p>
-                                  <p className="text-lg font-black text-[var(--color-text)]">{t.revisionCount}</p>
+                                  <p className="text-[15px] font-bold text-[var(--color-text)]">{t.revisionCount}</p>
                                 </div>
                                 <Link href={`/requests/${t.id}`} target="_blank">
                                   <button className="p-2 bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-faint)] hover:text-[var(--color-accent)] hover:border-[var(--color-accent-ring)] rounded-lg shadow-sm transition-all">
@@ -519,70 +531,57 @@ export default function AnalyticsPage() {
 
 
       {/* HEADER */}
-      <PageHeaderBar
-        icon={BarChart3}
-        title="System Analytics"
-        subtitle={`${metrics.totalTickets} requests · ${metrics.totalDocs} documents${metrics.staleTickets > 0 ? ` · ${metrics.staleTickets} untouched for over a week` : ""}.`}
+      <PageHero
+        kicker="Admin · Analytics"
+        title={answer}
+        sub={`${plural(metrics.totalTickets, "request")} · ${plural(metrics.totalDocs, "document")}. First-time quality ${formatPercent(1 - metrics.globalRevisionRate)}.`}
       />
 
-      {loadError && (
-        <p role="alert" className="border-l-2 border-red-500 pl-3 text-sm text-red-700 dark:text-red-400">
-          Couldn&apos;t load the numbers, so these may be empty: {loadError}
-        </p>
-      )}
-
-      {/* KPI GRID */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {/* Total Requests */}
-        <div className="bg-[var(--color-surface)] p-6 rounded-xl border border-[var(--color-border)] shadow-sm relative overflow-hidden">
-          <div className="flex justify-between items-start mb-4">
-            <div><p className="text-xs font-bold text-[var(--color-text-faint)] uppercase tracking-wider">Total Requests</p><h3 className="text-3xl font-black text-[var(--color-text)] mt-1">{metrics.totalTickets}</h3></div>
-            <div className="p-2 bg-[var(--color-surface-2)] text-[var(--color-text)] rounded-lg"><FileText className="w-5 h-5" /></div>
+      <PageBody>
+      {/* At a glance: one compact row instead of big-number tiles. */}
+      <Card label="At a glance">
+        {loadError && (
+          <p role="alert" className="mb-3 text-[13px] text-red-700 dark:text-red-400">
+            Couldn&apos;t load the numbers, so these may be empty: {loadError}
+          </p>
+        )}
+        <dl className="grid grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-4">
+          <div>
+            <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)] flex items-center gap-1.5"><FileText className="w-3.5 h-3.5" /> Requests</dt>
+            <dd className="mt-1 text-[15px] font-bold text-[var(--color-text)]">{metrics.totalTickets.toLocaleString()}</dd>
+            <dd className="text-[12px] text-[var(--color-text-muted)] flex items-center"><ArrowUpRight className="w-3 h-3 mr-0.5 text-emerald-600" /> {metrics.volumeData[metrics.volumeData.length - 1]?.count || 0} in the latest period</dd>
           </div>
-          <div className="flex items-center text-xs font-medium text-[var(--color-text-muted)]">
-            <span className="text-green-600 flex items-center mr-2"><ArrowUpRight className="w-3 h-3 mr-1" /> +{metrics.volumeData[metrics.volumeData.length-1]?.count || 0}</span> recent
+          <div>
+            <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)] flex items-center gap-1.5"><Server className="w-3.5 h-3.5" /> Documents</dt>
+            <dd className="mt-1 text-[15px] font-bold text-[var(--color-text)]">{metrics.totalDocs.toLocaleString()}</dd>
+            <dd className="text-[12px] text-[var(--color-text-muted)]">{metrics.issuedDocs} issued · {metrics.supersededDocs} superseded</dd>
           </div>
-        </div>
-
-        {/* Managed Docs */}
-        <div className="bg-[var(--color-surface)] p-6 rounded-xl border border-[var(--color-border)] shadow-sm relative overflow-hidden">
-          <div className="flex justify-between items-start mb-4">
-            <div><p className="text-xs font-bold text-[var(--color-text-faint)] uppercase tracking-wider">Managed Documents</p><h3 className="text-3xl font-black text-[var(--color-text)] mt-1">{metrics.totalDocs}</h3></div>
-            <div className="p-2 bg-[var(--color-surface-2)] text-[var(--color-text)] rounded-lg"><Server className="w-5 h-5" /></div>
+          <div>
+            <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)] flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5" /> First-time quality</dt>
+            <dd className={`mt-1 text-[15px] font-bold ${metrics.globalRevisionRate > 0.3 ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text)]"}`}>{formatPercent(1 - metrics.globalRevisionRate)}</dd>
+            <dd className="mt-1.5 w-full max-w-[10rem] bg-[var(--color-surface-2)] h-1.5 rounded-full overflow-hidden"><div className={`h-full rounded-full ${metrics.globalRevisionRate > 0.3 ? 'bg-amber-500' : 'bg-green-500'}`} style={{ width: `${(1 - metrics.globalRevisionRate) * 100}%` }} /></dd>
           </div>
-          <div className="flex items-center text-xs font-medium text-[var(--color-text-muted)]"><span className="text-[var(--color-text)] font-bold mr-1">{metrics.issuedDocs}</span> Issued • <span className="text-[var(--color-text)] font-bold mx-1">{metrics.supersededDocs}</span> Superseded</div>
-        </div>
-
-        {/* First Time Quality */}
-        <div className="bg-[var(--color-surface)] p-6 rounded-xl border border-[var(--color-border)] shadow-sm relative overflow-hidden">
-          <div className="flex justify-between items-start mb-4">
-            <div><p className="text-xs font-bold text-[var(--color-text-faint)] uppercase tracking-wider">First-Time Quality</p><h3 className="text-3xl font-black text-[var(--color-text)] mt-1">{formatPercent(1 - metrics.globalRevisionRate)}</h3></div>
-            <div className={`p-2 rounded-lg ${metrics.globalRevisionRate > 0.3 ? 'bg-amber-50 text-amber-600 dark:bg-amber-950/40' : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40'}`}><CheckCircle2 className="w-5 h-5" /></div>
+          <div>
+            <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)] flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" /> Stalled</dt>
+            <dd className={`mt-1 text-[15px] font-bold ${metrics.staleTickets > 0 ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text)]"}`}>{metrics.staleTickets}</dd>
+            <dd className="text-[12px] text-[var(--color-text-muted)]">Active, untouched for over 7 days</dd>
           </div>
-          <div className="w-full bg-[var(--color-surface-2)] h-1.5 rounded-full mt-2 overflow-hidden"><div className={`h-full rounded-full ${metrics.globalRevisionRate > 0.3 ? 'bg-amber-500' : 'bg-green-500'}`} style={{ width: `${(1 - metrics.globalRevisionRate) * 100}%` }} /></div>
-        </div>
-
-        {/* Stale Tickets */}
-        <div className="bg-[var(--color-surface)] p-6 rounded-xl border border-[var(--color-border)] shadow-sm relative overflow-hidden">
-          <div className="flex justify-between items-start mb-4">
-            <div><p className="text-xs font-bold text-[var(--color-text-faint)] uppercase tracking-wider">Stale Tickets</p><h3 className="text-3xl font-black text-[var(--color-text)] mt-1">{metrics.staleTickets}</h3></div>
-            <div className={`p-2 rounded-lg ${metrics.staleTickets > 0 ? 'bg-amber-50 text-amber-600 dark:bg-amber-950/40' : 'bg-[var(--color-surface-2)] text-[var(--color-text-muted)]'}`}><Clock className="w-5 h-5" /></div>
-          </div>
-          <p className="text-xs text-[var(--color-text-muted)]">Active tickets untouched for &gt;7 days.</p>
-        </div>
-      </div>
+        </dl>
+      </Card>
 
       {/* SECTION 2: CHARTS & LISTS */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         
         {/* CHART: DYNAMIC VOLUME */}
-        <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm p-6 lg:col-span-2">
+        <div className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] p-5 lg:col-span-2">
           <div className="flex items-center justify-between mb-6">
-            <h3 className="font-bold text-[var(--color-text)] flex items-center"><TrendingUp className="w-5 h-5 mr-2 text-[var(--color-text-faint)]" /> Request Volume</h3>
+            <h3 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] flex items-center"><TrendingUp className="w-3.5 h-3.5 mr-2" /> Request volume</h3>
             <div className="flex bg-[var(--color-surface-2)] rounded-lg p-1 space-x-1">
               {(['1M', '3M', '6M', '1Y'] as TimeRange[]).map(r => (
                 <button 
                   key={r} 
+                  type="button"
+                  aria-pressed={timeRange === r}
                   onClick={() => setTimeRange(r)}
                   className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${timeRange === r ? 'bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}`}
                 >
@@ -613,12 +612,12 @@ export default function AnalyticsPage() {
         </div>
 
         {/* WIDGET: ROOT CAUSE ANALYSIS */}
-        <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm p-6 flex flex-col">
+        <div className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] p-5 flex flex-col">
           <div className="mb-6">
             <div className="flex justify-between items-start">
               <div>
-                <h3 className="font-bold text-[var(--color-text)] flex items-center"><HelpCircle className="w-5 h-5 mr-2 text-[var(--color-text-faint)]" /> Root Cause Analysis</h3>
-                <p className="text-xs text-[var(--color-text-muted)] mt-1">Tap a reason to see its tickets.</p>
+                <h3 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] flex items-center"><HelpCircle className="w-3.5 h-3.5 mr-2" /> Why work came back</h3>
+                <p className="text-[13px] text-[var(--color-text-muted)] mt-1">Tap a reason to see its tickets.</p>
               </div>
             </div>
           </div>
@@ -669,20 +668,20 @@ export default function AnalyticsPage() {
       </div>
 
       {/* SECTION 3: PERFORMANCE TABLE */}
-      <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm overflow-hidden">
-        <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex justify-between items-center">
+      <div className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden">
+        <div className="px-5 py-4 border-b border-[var(--color-border)] flex justify-between items-center gap-3 flex-wrap">
           <div>
-            <h3 className="font-bold text-[var(--color-text)] flex items-center"><Users className="w-5 h-5 mr-2 text-[var(--color-text-faint)]" /> {viewMode === 'drafter' ? 'Drafter Performance' : 'Requester Quality'}</h3>
-            <p className="text-xs text-[var(--color-text-muted)] mt-1 flex items-center"><MousePointerClick className="w-3 h-3 mr-1" /> Tap a person to see why their work came back.</p>
+            <h3 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] flex items-center"><Users className="w-3.5 h-3.5 mr-2" /> {viewMode === 'drafter' ? 'Drafter performance' : 'Requester quality'}</h3>
+            <p className="text-[13px] text-[var(--color-text-muted)] mt-1 flex items-center"><MousePointerClick className="w-3 h-3 mr-1" /> Tap a person to see why their work came back.</p>
           </div>
           <div className="flex bg-[var(--color-border)] rounded-lg p-1 space-x-1">
-             <button onClick={() => setViewMode('drafter')} className={`px-3 py-1.5 text-xs font-bold rounded transition-all ${viewMode === 'drafter' ? 'bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm' : 'text-[var(--color-text-muted)]'}`}>Drafters</button>
-             <button onClick={() => setViewMode('requester')} className={`px-3 py-1.5 text-xs font-bold rounded transition-all ${viewMode === 'requester' ? 'bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm' : 'text-[var(--color-text-muted)]'}`}>Requesters</button>
+             <button type="button" aria-pressed={viewMode === 'drafter'} onClick={() => setViewMode('drafter')} className={`px-3 py-1.5 text-xs font-bold rounded transition-all ${viewMode === 'drafter' ? 'bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm' : 'text-[var(--color-text-muted)]'}`}>Drafters</button>
+             <button type="button" aria-pressed={viewMode === 'requester'} onClick={() => setViewMode('requester')} className={`px-3 py-1.5 text-xs font-bold rounded transition-all ${viewMode === 'requester' ? 'bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm' : 'text-[var(--color-text-muted)]'}`}>Requesters</button>
           </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left">
-            <thead className="bg-[var(--color-surface-2)] text-[var(--color-text-muted)] uppercase font-bold text-xs">
+            <thead className="text-[var(--color-text-muted)] uppercase font-bold text-[11px] tracking-[0.12em]">
               <tr>
                 <th className="px-6 py-3">{viewMode === 'drafter' ? 'Drafter' : 'Requester'}</th>
                 <th className="px-6 py-3">Assigned Load</th>
@@ -725,7 +724,7 @@ export default function AnalyticsPage() {
                        </span>
                     </td>
                     <td className="px-6 py-4 text-right">
-                       <span className="font-black text-[var(--color-text)] text-lg group-hover:text-[var(--color-text)] transition-colors">{score.toFixed(0)}</span>
+                       <span className="font-bold text-[var(--color-text)] text-[15px]">{score.toFixed(0)}</span>
                        <span className="text-xs text-[var(--color-text-faint)] ml-1">/ 100</span>
                     </td>
                   </tr>
@@ -735,6 +734,7 @@ export default function AnalyticsPage() {
           </table>
         </div>
       </div>
+      </PageBody>
 
     </PageShell>
   );

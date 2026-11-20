@@ -16,13 +16,15 @@ import Link from "next/link";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  BookMarked, Plus, Trash2, Loader2, Sparkles, Check, X, FileText,
+  Plus, Trash2, Loader2, Sparkles, Check, X, FileText,
   Boxes, Factory, FileDigit, ScanLine, BookOpen, AlertTriangle, Save,
   GraduationCap,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
-import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card, StepLine, heroPrimary } from "@/components/ui/PageHero";
+import { bandSeg, bandSegItem, plural } from "@/components/admin/band";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Field";
 import LoadingBlock from "@/components/ui/LoadingBlock";
@@ -77,8 +79,9 @@ export default function CodebookPage() {
   if (!book) {
     return (
       <PageShell width="work">
+        <PageHero kicker="Admin · Site codebook" title={loadError ? "Couldn't load the codebook." : "Site codebook"} overlap={false} />
         {loadError ? (
-          <p role="alert" className="border-l-2 border-red-500 pl-3 py-1 text-sm text-red-700 dark:text-red-400">
+          <p role="alert" className="px-1 text-[14px] text-red-700 dark:text-red-400">
             Couldn&apos;t load the Site Codebook: {loadError}{" "}
             <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
           </p>
@@ -101,82 +104,68 @@ export default function CodebookPage() {
   const nextStep = setup.find((x) => !x.done) ?? null;
   const doneCount = setup.filter((x) => x.done).length;
 
+  // The answer: how far the setup is, or (once set up) what it knows.
+  const answer = nextStep
+    ? `${doneCount} of ${setup.length} setup steps done.`
+    : `${plural(book.units.length, "unit")}, ${plural(book.equipmentTypes.length, "equipment type")}.`;
+
   return (
     <PageShell width="work">
-      <PageHeaderBar
-        icon={BookMarked}
-        title="Site Codebook"
-        subtitle={`${book.units.length} unit${book.units.length === 1 ? "" : "s"} · ${book.equipmentTypes.length} equipment type${book.equipmentTypes.length === 1 ? "" : "s"} · ${book.drawingTypes.length} drawing type${book.drawingTypes.length === 1 ? "" : "s"}. Taught once, used everywhere.`}
-        actions={canWrite ? (
-          <Button variant="secondary" size="sm" onClick={() => setImportOpen(true)}>
-            <Sparkles className="w-3.5 h-3.5" /> Build from a document
-          </Button>
-        ) : undefined}
-      />
-
-      {!canWrite && (
-        <p className="mb-3 text-xs text-[var(--color-text-muted)]">
-          Read only. Admins and Document Controllers edit the codebook.
-        </p>
-      )}
-
-      {/* What the site's own numbers already show, for a person to accept. */}
-      <CodebookLearn orgId={activeOrgId!} uid={uid!} book={book} canWrite={canWrite} onChanged={refresh} onError={setError} />
-
-      {/* Getting started: the next step in one line; the whole path folds away.
-          This page is steps 1-4; step 5 happens on the P&ID library. */}
-      {canWrite && (
-        <div className="mb-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-          <div className="flex items-start gap-3 flex-wrap">
-            <div className="flex-1 min-w-[14rem] text-xs text-[var(--color-text)]">
-              <div className="font-black mb-0.5">Setup: {doneCount} of {setup.length} done</div>
-              {nextStep ? (
-                <span>{nextStep.say}{nextStep.optional && <span className="text-[var(--color-text-faint)]"> (optional)</span>}</span>
-              ) : (
-                <span className="text-[var(--color-text-muted)]">
-                  Last step: open your P&amp;ID <b>document library</b>, then <b>Equipment</b>, pick your equipment column, Sweep, Apply. After that it runs on every newly indexed drawing.
-                </span>
-              )}
-            </div>
-            {nextStep && tab !== nextStep.tab && (
-              <button onClick={() => setTab(nextStep.tab)} className="shrink-0 text-[12px] font-bold text-[var(--color-accent)] hover:underline">
-                Go to {nextStep.label} →
-              </button>
+      <PageHero
+        kicker="Admin · Site codebook"
+        title={answer}
+        sub={
+          <>
+            {nextStep ? (
+              <>Next: {nextStep.say}{nextStep.optional && " (optional)"}{" "}
+                {tab !== nextStep.tab && (
+                  <button type="button" onClick={() => setTab(nextStep.tab)} className="font-bold text-white underline underline-offset-2">Go to {nextStep.label}</button>
+                )}
+              </>
+            ) : (
+              <>{plural(book.drawingTypes.length, "drawing type")}. Taught once, used everywhere. Last step: in your P&amp;ID library, open Equipment, pick the equipment column, Sweep, Apply.</>
             )}
-          </div>
-          <details className="mt-2">
-            <summary className="cursor-pointer text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">All setup steps</summary>
-            <ol className="mt-2 space-y-1.5 text-xs">
-              {setup.map((x, i) => (
-                <SetupStep key={x.label} done={x.done} n={i + 1} label={x.say} optional={x.optional} />
-              ))}
-              <li className="flex items-start gap-2 text-[var(--color-text-muted)]">
-                <span className="shrink-0 w-4 h-4 rounded-full border border-[var(--color-border-strong)] text-[11px] font-black flex items-center justify-center mt-0.5">5</span>
-                <span>Then open your P&amp;ID <b>document library</b>, then <b>Equipment</b>, pick your equipment column, Sweep, Apply.</span>
-              </li>
-            </ol>
-            <p className="text-[11px] text-[var(--color-text-faint)] mt-2">
-              Once step 1 has units, Operating areas groups equipment by unit and drafting request unit lists fill in.
-            </p>
-          </details>
-        </div>
-      )}
-      {error && (
-        <p role="alert" className="mb-3 border-l-2 border-red-500 pl-3 text-xs text-red-700 dark:text-red-400 flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 shrink-0" /> {error}
-        </p>
-      )}
-
-      <div className="inline-flex items-center gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-1 mb-4 flex-wrap">
-        {TABS.map((t) => (
-          <button key={t.key} onClick={() => setTab(t.key)}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-              tab === t.key ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
-            }`}>
-            <t.icon className="w-3.5 h-3.5" /> {t.label}
+            {!canWrite && <> Read only: Admins and Document Controllers edit the codebook.</>}
+          </>
+        }
+        primary={canWrite ? (
+          <button type="button" className={heroPrimary} onClick={() => setImportOpen(true)}>
+            <Sparkles className="w-4 h-4" /> Build from a document
           </button>
-        ))}
-      </div>
+        ) : undefined}
+      >
+        {/* Setup, in order, as one path. Step 5 happens in the P&ID library. */}
+        <div className="overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div className="min-w-[560px]">
+            <StepLine onDark steps={[
+              ...setup.map((x) => ({
+                label: x.label,
+                note: x.done ? "Done" : x.optional ? "Optional" : undefined,
+                state: (x.done ? "done" : x === nextStep ? "now" : "next") as "done" | "now" | "next",
+              })),
+              { label: "Sweep drawings", note: "In the P&ID library", state: (nextStep ? "next" : "now") as "done" | "now" | "next" },
+            ]} />
+          </div>
+        </div>
+        {/* The codebook's sections steer the page, so they live in the band. */}
+        <div className={`${bandSeg} mt-5`} role="tablist" aria-label="Codebook sections">
+          {TABS.map((t) => (
+            <button key={t.key} type="button" role="tab" aria-selected={tab === t.key} onClick={() => setTab(t.key)}
+              className={bandSegItem(tab === t.key)}>
+              <t.icon className="w-3.5 h-3.5" /> {t.label}
+            </button>
+          ))}
+        </div>
+      </PageHero>
+
+      <PageBody>
+      {error && (
+        <Card>
+          <p role="alert" className="text-[14px] text-red-700 dark:text-red-400 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 shrink-0" /> {error}
+          </p>
+        </Card>
+      )}
 
       {tab === "units" && (
         <EntryTable kind="unit" title="Operating areas / units" entries={book.units} canWrite={canWrite}
@@ -200,29 +189,16 @@ export default function CodebookPage() {
         <LegendTab book={book} canWrite={canWrite} orgId={activeOrgId!} uid={uid!} onChanged={refresh} onError={setError} />
       )}
 
+      {/* What the site's own numbers already show, for a person to accept. */}
+      <CodebookLearn orgId={activeOrgId!} uid={uid!} book={book} canWrite={canWrite} onChanged={refresh} onError={setError} />
+      </PageBody>
+
       {importOpen && activeOrgId && uid && (
         <ImportModal orgId={activeOrgId} uid={uid} book={book}
           onClose={() => setImportOpen(false)}
           onApplied={() => { setImportOpen(false); void refresh(); }} />
       )}
     </PageShell>
-  );
-}
-
-function SetupStep({ done, n, label, optional }: {
-  done: boolean; n: number; label: React.ReactNode; optional?: boolean;
-}) {
-  return (
-    <li className="flex items-start gap-2">
-      {done ? (
-        <span className="shrink-0 w-4 h-4 rounded-full bg-emerald-500 text-white flex items-center justify-center mt-0.5"><Check className="w-2.5 h-2.5" /></span>
-      ) : (
-        <span className="shrink-0 w-4 h-4 rounded-full border border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text-muted)] flex items-center justify-center mt-0.5">{n}</span>
-      )}
-      <span className={done ? "text-[var(--color-text-muted)] line-through decoration-emerald-500/40" : "text-[var(--color-text)]"}>
-        {label}{optional && !done && <span className="text-[var(--color-text-faint)]"> (optional)</span>}
-      </span>
-    </li>
   );
 }
 
@@ -262,11 +238,10 @@ function EntryTable({ kind, title, entries, canWrite, codeHint, labelHint, withP
   };
 
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-      <div className="px-4 py-2.5 border-b border-[var(--color-border)] text-xs font-black text-[var(--color-text)]">{title} · {entries.length}</div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead className="bg-[var(--color-surface-2)] text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+    <Card pad={false} className="overflow-hidden" label={<>{title} · {entries.length}</>}>
+      <div className="overflow-x-auto border-t border-[var(--color-border)]">
+        <table className="w-full text-[13px]">
+          <thead className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-[var(--color-text-muted)] border-b border-[var(--color-border)]">
             <tr>
               <th className="text-left px-4 py-1.5 w-24">Code</th>
               <th className="text-left px-2 py-1.5">Label</th>
@@ -281,7 +256,7 @@ function EntryTable({ kind, title, entries, canWrite, codeHint, labelHint, withP
                 orgId={orgId} uid={uid} onChanged={onChanged} onError={onError} onRemove={() => void remove(e)} />
             ))}
             {entries.length === 0 && (
-              <tr><td colSpan={5} className="px-4 py-4 text-[var(--color-text-muted)] italic">
+              <tr><td colSpan={5} className="px-4 py-4 text-[var(--color-text-muted)]">
                 Nothing here yet. Add rows below, or use “Build from a document”.
               </td></tr>
             )}
@@ -289,18 +264,18 @@ function EntryTable({ kind, title, entries, canWrite, codeHint, labelHint, withP
         </table>
       </div>
       {canWrite && (
-        <div className="px-4 py-2.5 border-t border-[var(--color-border)] flex items-center gap-2 flex-wrap bg-[var(--color-surface-2)]/50">
-          <Input value={draft.code} onChange={(e) => setDraft({ ...draft, code: e.target.value })} placeholder={codeHint} className="w-32 font-mono" />
-          <Input value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} placeholder={labelHint} className="w-56" />
+        <div className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] flex items-center gap-2 flex-wrap">
+          <Input value={draft.code} onChange={(e) => setDraft({ ...draft, code: e.target.value })} placeholder={codeHint} aria-label="Code" className="w-32 font-mono" />
+          <Input value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} placeholder={labelHint} aria-label="Label" className="w-56 max-w-full" />
           {withPrefixes && (
-            <Input value={draft.prefixes} onChange={(e) => setDraft({ ...draft, prefixes: e.target.value })} placeholder="Prefixes, e.g. E or EA, E" className="w-40 font-mono" />
+            <Input value={draft.prefixes} onChange={(e) => setDraft({ ...draft, prefixes: e.target.value })} placeholder="Prefixes, e.g. E or EA, E" aria-label="Tag prefixes" className="w-40 font-mono" />
           )}
-          <Button size="sm" onClick={() => void add()} disabled={busy || !draft.code.trim() || !draft.label.trim()}>
+          <Button size="sm" className="!bg-[var(--color-text)] !text-[var(--color-surface)] hover:!opacity-90" onClick={() => void add()} disabled={busy || !draft.code.trim() || !draft.label.trim()}>
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Add
           </Button>
         </div>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -400,9 +375,9 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
 
   return (
     <div className="space-y-4">
-      <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-        <div className="text-xs font-black text-[var(--color-text)] mb-1">Drawing number segments, in order</div>
-        <p className="text-[11px] text-[var(--color-text-muted)] mb-3">
+      <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
+        <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mb-1">Drawing number segments, in order</h2>
+        <p className="text-[13px] text-[var(--color-text-muted)] mb-3">
           Separators (dashes, dots, “SHT”) are handled for you. Unit (2), Drawing type (2), Paper size (1), Number, Sheet reads <span className="font-mono">2002-D-10001 SHT.4</span>.
         </p>
         <div className="space-y-1.5">
@@ -445,9 +420,9 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
         )}
       </div>
 
-      <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-        <div className="text-xs font-black text-[var(--color-text)] mb-2">Preview: paste one of your real drawing numbers</div>
-        <Input value={sample} onChange={(e) => setSample(e.target.value)} className="font-mono max-w-md" placeholder="2002-D-10001 SHT.4" />
+      <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
+        <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mb-2">Preview: paste one of your real drawing numbers</h2>
+        <Input value={sample} onChange={(e) => setSample(e.target.value)} aria-label="Sample drawing number" className="font-mono max-w-md" placeholder="2002-D-10001 SHT.4" />
         <div className="mt-2.5 flex flex-wrap gap-1.5 text-[11px]">
           {segments.length === 0 ? (
             <span className="text-[var(--color-text-muted)] italic">Add segments above to see the decode.</span>
@@ -465,9 +440,9 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
         </div>
       </div>
 
-      <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 flex items-center gap-4 flex-wrap">
+      <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 flex items-center gap-4 flex-wrap">
         <div>
-          <div className="text-xs font-black text-[var(--color-text)]">The number after the point</div>
+          <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">The number after the point</h2>
           <p className="text-[11px] text-[var(--color-text-muted)]">Is it the tag&apos;s number (E-5 is 2030.05)? If not, equipment IDs are never worked out from the name: they come from the schedule or are typed in.</p>
         </div>
         <label className="text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
@@ -478,7 +453,7 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
             onChange={(e) => setPadTo(Math.max(0, Math.min(6, Number(e.target.value) || 0)))} className="w-14 h-8" /> digits
         </label>
         {canWrite && (
-          <Button size="sm" className="ml-auto" onClick={() => void save()} disabled={saving}>
+          <Button size="sm" className="ml-auto !bg-[var(--color-text)] !text-[var(--color-surface)] hover:!opacity-90" onClick={() => void save()} disabled={saving}>
             {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : saved ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
             {saved ? "Saved" : "Save numbering"}
           </Button>
@@ -532,9 +507,9 @@ function LegendTab({ book, canWrite, orgId, uid, onChanged, onError }: {
   };
 
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 max-w-2xl">
-      <div className="text-xs font-black text-[var(--color-text)] mb-1">Symbols legend / decoder sheets · {book.legendDocIds.length} of 3</div>
-      <p className="text-[11px] text-[var(--color-text-muted)] mb-3">
+    <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
+      <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mb-1">Symbols legend and decoder sheets · {book.legendDocIds.length} of 3</h2>
+      <p className="text-[13px] text-[var(--color-text-muted)] mb-3">
         Attach your P&ID legend sheets (indexed in any knowledge library). Every knowledge library inherits them automatically, so the AI can read your symbols when it answers.
       </p>
       <div className="space-y-1.5 mb-3">
@@ -781,7 +756,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
   const KIND_LABEL: Record<string, string> = { unit: "Unit", equipment_type: "Equipment", drawing_type: "Drawing" };
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="Build the codebook from a document" className="fixed inset-0 z-[200] bg-slate-900/50 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4 animate-in fade-in">
+    <div role="dialog" aria-modal="true" aria-label="Build the codebook from a document" className="fixed inset-0 z-[200] bg-[var(--color-ink)]/60 flex items-start sm:items-center justify-center overflow-y-auto p-4 animate-in fade-in">
       <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl flex flex-col max-h-[88vh] animate-in zoom-in-95">
         <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2.5">
           <Sparkles className="w-4 h-4 text-[var(--color-text-muted)]" />

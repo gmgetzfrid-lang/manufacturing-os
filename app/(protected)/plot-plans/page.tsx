@@ -12,8 +12,9 @@ import { Map as MapIcon, Plus, ImageIcon, Trash2 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { listPlotPlans, createPlotPlan, deletePlotPlan } from "@/lib/plotPlans";
 import { SignedPlotImage } from "@/components/plotPlans/SignedPlotImage";
-import { EmptyState } from "@/components/ui/EmptyState";
-import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card, heroPrimary } from "@/components/ui/PageHero";
+import { plural } from "@/components/admin/band";
 import { Button } from "@/components/ui/Button";
 import { Input, Field } from "@/components/ui/Field";
 import LoadingBlock from "@/components/ui/LoadingBlock";
@@ -56,39 +57,54 @@ export default function PlotPlansPage() {
     catch (e) { showToast({ type: "error", title: "Delete failed", message: (e as Error).message }); }
   };
 
+  const markers = (plans ?? []).reduce((n, p) => n + p.markers.length, 0);
+  const answer = !plans ? (loadError ? "Couldn't load plot plans." : "Plot plans")
+    : plans.length === 0 ? "No plot plans yet."
+    : `${plural(plans.length, "plot plan")}.`;
+  const sub = plans && plans.length > 0
+    ? `${plural(markers, "marker")} on them. Find equipment on the drawing; each marker shows that item's state.`
+    : "Find equipment on the drawing. Each marker shows that item's state.";
+
   return (
     <PageShell width="work">
-        <ViewTabs title="Operating areas" tabs={EQUIPMENT_VIEWS} />
-        <PageHeaderBar
-          icon={MapIcon}
-          title="Plot Plans"
-          subtitle="Find equipment on the drawing. Each marker shows that item's state."
-          actions={isController && plans && plans.length > 0 ? (
-            <Button onClick={() => setShowCreate(true)}>
+        <PageHero
+          kicker="Operating areas · Map"
+          title={answer}
+          sub={sub}
+          primary={isController ? (
+            <button type="button" onClick={() => setShowCreate(true)} className={heroPrimary}>
               <Plus className="w-4 h-4" /> New plot plan
-            </Button>
+            </button>
           ) : undefined}
-        />
+        >
+          <div className="[&>div]:mb-0">
+            <ViewTabs tabs={EQUIPMENT_VIEWS} variant="dark" />
+          </div>
+        </PageHero>
 
+        <PageBody>
         {loadError && !plans ? (
-          <p role="alert" className="border-l-2 border-red-500 pl-3 py-1 text-sm text-red-700 dark:text-red-400">
-            Couldn&apos;t load plot plans: {loadError}{" "}
-            <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
-          </p>
+          <Card>
+            <p role="alert" className="text-[14px] text-red-700 dark:text-red-400">
+              Couldn&apos;t load plot plans: {loadError}{" "}
+              <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
+            </p>
+          </Card>
         ) : !plans ? (
-          <LoadingBlock what="plot plans" />
+          <Card><LoadingBlock what="plot plans" className="border-0 p-0" /></Card>
         ) : plans.length === 0 ? (
-          <EmptyState
-            icon={MapIcon}
-            title="No plot plans yet"
-            description="Upload a plot plan, P&ID or unit layout, then place markers on its equipment."
-            action={isController ? <Button onClick={() => setShowCreate(true)}><Plus className="w-4 h-4" /> New plot plan</Button> : undefined}
-          />
+          <Card className="text-center py-10">
+            <div className="w-12 h-12 rounded-xl bg-[var(--color-surface-2)] mx-auto mb-3 flex items-center justify-center">
+              <MapIcon className="w-6 h-6 text-[var(--color-text-muted)]" />
+            </div>
+            <h3 className="text-[14px] font-bold text-[var(--color-text)]">Start with one drawing</h3>
+            <p className="mt-1 text-[14px] text-[var(--color-text-muted)] max-w-md mx-auto">Upload a plot plan, P&amp;ID or unit layout, then place markers on its equipment.</p>
+          </Card>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {plans.map((p) => (
-              <div key={p.id} className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-hidden transition-shadow hover:shadow-md">
-                <Link href={`/plot-plans/${p.id}`} className="block">
+              <div key={p.id} className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden hover-lift">
+                <Link href={`/plot-plans/${p.id}`} className="block" aria-label={`Open ${p.name}`}>
                   <div className="aspect-video bg-[var(--color-surface-2)] flex items-center justify-center overflow-hidden">
                     {p.imagePath ? (
                       <SignedPlotImage path={p.imagePath} alt={p.name} className="w-full h-full object-cover" />
@@ -97,13 +113,13 @@ export default function PlotPlansPage() {
                     )}
                   </div>
                 </Link>
-                <div className="p-3 flex items-start gap-2">
+                <div className="p-4 flex items-start gap-2">
                   <Link href={`/plot-plans/${p.id}`} className="min-w-0 flex-1">
-                    <div className="font-bold text-[var(--color-text)] truncate">{p.name}</div>
-                    <div className="text-xs text-[var(--color-text-muted)] mt-0.5">{p.markers.length} marker{p.markers.length === 1 ? "" : "s"}</div>
+                    <div className="text-[14px] font-bold text-[var(--color-text)] truncate">{p.name}</div>
+                    <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{p.markers.length} marker{p.markers.length === 1 ? "" : "s"}</div>
                   </Link>
                   {isController && (
-                    <button onClick={() => onDelete(p)} title="Delete" aria-label={`Delete ${p.name}`} className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-red-600 hover:bg-[var(--color-surface-2)] transition-colors">
+                    <button type="button" onClick={() => onDelete(p)} title="Delete" aria-label={`Delete ${p.name}`} className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-red-600 hover:bg-[var(--color-surface-2)] transition-colors">
                       <Trash2 className="w-4 h-4" />
                     </button>
                   )}
@@ -112,6 +128,7 @@ export default function PlotPlansPage() {
             ))}
           </div>
         )}
+        </PageBody>
 
       {showCreate && activeOrgId && uid && (
         <CreatePlotPlanModal
@@ -181,8 +198,8 @@ function CreatePlotPlanModal({
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Unit 200 Plot Plan" />
         </Field>
         <div>
-          <span className="block text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1.5">Background image</span>
-          <label {...drag.bind} className={`flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-6 cursor-pointer hover:border-[var(--color-accent-ring)] transition-colors ${drag.ring}`}>
+          <span className="block text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mb-1.5">Background image</span>
+          <label {...drag.bind} className={`flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-6 cursor-pointer hover:border-[var(--color-text-muted)] transition-colors ${drag.ring}`}>
             {drag.over ? (
               <span className="text-xs font-bold text-[var(--color-text)]">{drag.say}</span>
             ) : file ? (

@@ -68,7 +68,7 @@ export default function LogoUploadModal({ onClose }: { onClose: () => void }) {
 
   return (
     <div role="dialog" aria-modal="true" aria-label="Workspace logo" className="fixed inset-0 z-[200] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-[var(--color-ink)]/60" onClick={onClose} />
       <div className="relative w-full max-w-sm bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
           <h2 className="text-sm font-black text-[var(--color-text)]">Workspace logo</h2>

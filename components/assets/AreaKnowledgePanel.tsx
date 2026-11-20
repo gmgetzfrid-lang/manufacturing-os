@@ -234,15 +234,15 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
   );
 
   return (
-    <div className="mb-4 rounded-2xl border border-[var(--color-border)] dark:border-[var(--color-border)] px-4 py-3 bg-[var(--color-surface-2)]"
+    <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5"
       style={{ animation: "rise 0.4s var(--ease-fluid) both" }}>
       <div className="flex items-center gap-2.5 mb-1">
-        <span className="w-8 h-8 rounded-xl bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] flex items-center justify-center shrink-0">
+        <span className="w-8 h-8 rounded-[10px] bg-[var(--color-surface-2)] flex items-center justify-center shrink-0">
           <BrainCircuit className="w-4 h-4 text-[var(--color-text-muted)]" />
         </span>
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-black text-[var(--color-text)]">This area&apos;s knowledge</div>
-          <div className="text-[11px] text-[var(--color-text-muted)]">
+          <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">This area&apos;s knowledge</h2>
+          <div className="text-[13px] text-[var(--color-text-muted)]">
             {status?.boundLibrary ? (
               <>
                 Backed by <Link href={`/knowledge/${status.boundLibrary.id}`} className="font-black text-[var(--color-accent)] dark:text-[var(--color-text)] hover:underline">{status.boundLibrary.name}</Link>
@@ -325,13 +325,13 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
         <Step n={1} title="File this area's drawings in Documents"
           state={status === null ? "loading" : drawingsDone ? "done" : "todo"}>
           Type-first folders work best: <b>PFDs / {unit.label}</b>, <b>P&amp;IDs / {unit.label}</b>, <b>Plot Plans / {unit.label}</b>.
-          {" "}<Link href="/documents" className="font-bold text-[var(--color-accent)] dark:text-[var(--color-text)] hover:underline">Open Documents <ExternalLink className="w-2.5 h-2.5 inline" /></Link>
+          {" "}<Link href="/documents" className="font-bold text-[var(--color-text)] underline underline-offset-2">Open Documents <ExternalLink className="w-2.5 h-2.5 inline" /></Link>
         </Step>
         <Step n={2} title="Connect the area's knowledge"
           state={status === null ? "loading" : knowledgeDone ? "done" : needsReview ? "review" : "todo"}
           action={status?.canManage ? (
             <button type="button" onClick={() => setWizardOpen(true)}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[11px] font-black shadow">
+              className="inline-flex items-center gap-1 h-8 px-3 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 text-[12px] font-bold">
               {status?.boundLibrary ? "Review links" : "Set up"} <ChevronRight className="w-3 h-3" />
             </button>
           ) : undefined}>
@@ -371,7 +371,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
           onDone={(msg) => { setWizardOpen(false); setNote(msg); void loadStatus(); }}
         />
       )}
-    </div>
+    </section>
   );
 }
 
@@ -515,7 +515,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
   }, [browse]);
 
   const sheet = (
-    <div role="dialog" aria-modal="true" className="fixed inset-0 z-[700] flex items-start justify-center bg-black/50 pt-[6vh] p-4 overscroll-contain" onClick={onClose}>
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-[700] flex items-start justify-center bg-[var(--color-ink)]/60 pt-[6vh] p-4 overscroll-contain" onClick={onClose}>
       <div className="w-full max-w-lg max-h-[86vh] flex flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)] shrink-0">

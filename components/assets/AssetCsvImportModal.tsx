@@ -164,7 +164,7 @@ export default function AssetCsvImportModal({
   };
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="Import equipment from CSV" className="fixed inset-0 z-[400] bg-slate-900/50 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4">
+    <div role="dialog" aria-modal="true" aria-label="Import equipment from CSV" className="fixed inset-0 z-[400] bg-[var(--color-ink)]/60 flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="p-2 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)]"><KeyRound className="w-5 h-5" /></div>

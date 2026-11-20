@@ -16,7 +16,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
-  Waypoints, Loader2, Check, X, RefreshCw, AlertTriangle, FileText,
+  Loader2, Check, X, RefreshCw, AlertTriangle, FileText,
   Sparkles, ShieldCheck, Info,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
@@ -26,7 +26,9 @@ import {
   proposerLabel, TIER_LABELS,
   type LinkProposal, type ProposalTier,
 } from "@/lib/linkProposals";
-import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card, heroPrimary } from "@/components/ui/PageHero";
+import { plural } from "@/components/admin/band";
 import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
 import ConnectionSkillsPanel from "@/components/intelligence/ConnectionSkillsPanel";
 import EstateReviewPanel from "@/components/intelligence/EstateReviewPanel";
@@ -153,112 +155,120 @@ export default function ProposedLinksPage() {
   const docLabel = (d: LinkProposal["doc"]) =>
     d?.document_number || d?.title || "Document";
 
+  const answer = rows === null ? (loadError ? "Couldn't load the proposals." : "Proposed connections")
+    : rows.length === 0 ? "Nothing waiting on you."
+    : `${plural(rows.length, "connection")} to review.`;
+
   return (
     <PageShell>
-      <ViewTabs title="Intelligence" tabs={INTELLIGENCE_VIEWS} />
-      <PageHeaderBar
-        icon={Waypoints}
-        eyebrow="Link discovery"
-        title="Proposed connections"
-        subtitle={rows
-          ? `${rows.length} connection${rows.length === 1 ? "" : "s"} waiting for a decision, each with the reason it was found.`
+      <PageHero
+        kicker="Intelligence · Review"
+        title={answer}
+        sub={rows && rows.length > 0
+          ? "Each one says why it was found. Link the pair or mark it not related."
           : "Connections found in your documents, each with the reason it was found."}
-        actions={canRun ? (
-          <button onClick={() => void runProposers()} disabled={running}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
+        primary={canRun ? (
+          <button type="button" onClick={() => void runProposers()} disabled={running} className={heroPrimary}>
             {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
             {running ? "Scanning…" : "Find connections"}
           </button>
         ) : undefined}
-      />
+      >
+        <div className="[&>div]:mb-0">
+          <ViewTabs tabs={INTELLIGENCE_VIEWS} variant="dark" />
+        </div>
+      </PageHero>
 
-      <EstateReviewPanel />
-
-      <ConnectionSkillsPanel />
-
-      {error && (
-        <p role="alert" className="mb-4 flex items-start gap-2 border-l-2 border-rose-500 pl-3">
-          <AlertTriangle className="w-4 h-4 text-rose-600 mt-0.5 shrink-0" />
-          <span className="text-xs text-rose-700 dark:text-rose-300">{error}</span>
-        </p>
-      )}
-
-      {lastRun && (
-        <div className="mb-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/60 p-3 space-y-1">
-          <div className="text-xs font-bold text-[var(--color-text)]">
-            Scanned {lastRun.scanned} documents · {lastRun.autoApplied} provable connection{lastRun.autoApplied === 1 ? "" : "s"} applied · {lastRun.proposed} queued for review
-          </div>
-          {lastRun.evidenceLost > 0 && (
-            <div className="text-[11px] text-amber-700 dark:text-amber-400">
-              {lastRun.evidenceLost} existing system link{lastRun.evidenceLost === 1 ? "" : "s"} no longer match the reason they were made. Marked, not removed.
-            </div>
+      <PageBody>
+      {(error || lastRun) && (
+        <Card label="Last scan">
+          {error && (
+            <p role="alert" className="mb-2 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-rose-600 mt-0.5 shrink-0" />
+              <span className="text-[13px] text-rose-700 dark:text-rose-300">{error}</span>
+            </p>
           )}
-          {lastRun.notes.map((n) => (
-            <div key={n} className="text-[11px] text-[var(--color-text-muted)] flex items-center gap-1">
-              <Info className="w-3 h-3" /> {n}
-            </div>
-          ))}
-          {/* Zero findings explain themselves — which input was empty and
-              what feeds it. Silence here reads as "broken"; this is the
-              honest answer instead. */}
-          {lastRun.proposed === 0 && lastRun.autoApplied === 0 && lastRun.inputs && (
-            <div className="pt-1.5 mt-1 border-t border-[var(--color-border)] space-y-1">
-              <div className="text-[11px] font-black text-[var(--color-text)]">
-                Why nothing was found
+          {lastRun && (
+            <div className="space-y-1">
+              <div className="text-[14px] font-bold text-[var(--color-text)]">
+                Scanned {lastRun.scanned} documents · {lastRun.autoApplied} provable connection{lastRun.autoApplied === 1 ? "" : "s"} applied · {lastRun.proposed} queued for review
               </div>
-              {diagnose(lastRun.inputs).map((d) => (
-                <div key={d} className="text-[11px] text-[var(--color-text-muted)] flex items-start gap-1.5">
-                  <span aria-hidden className="shrink-0">·</span> {d}
+              {lastRun.evidenceLost > 0 && (
+                <div className="text-[13px] text-amber-700 dark:text-amber-400">
+                  {lastRun.evidenceLost} existing system link{lastRun.evidenceLost === 1 ? "" : "s"} no longer match the reason they were made. Marked, not removed.
+                </div>
+              )}
+              {lastRun.notes.map((n) => (
+                <div key={n} className="text-[13px] text-[var(--color-text-muted)] flex items-center gap-1">
+                  <Info className="w-3.5 h-3.5" /> {n}
                 </div>
               ))}
-              {diagnose(lastRun.inputs).length === 0 && (
-                <div className="text-[11px] text-[var(--color-text-muted)]">
-                  Everything it needs is there. What it can find is likely already linked or was decided before.
+              {/* Zero findings explain themselves: which input was empty and
+                  what feeds it. Silence here reads as "broken"; this is the
+                  honest answer instead. */}
+              {lastRun.proposed === 0 && lastRun.autoApplied === 0 && lastRun.inputs && (
+                <div className="pt-2 mt-2 border-t border-[var(--color-border)] space-y-1">
+                  <div className="text-[13px] font-bold text-[var(--color-text)]">
+                    Why nothing was found
+                  </div>
+                  {diagnose(lastRun.inputs).map((d) => (
+                    <div key={d} className="text-[13px] text-[var(--color-text-muted)] flex items-start gap-1.5">
+                      <span aria-hidden className="shrink-0">·</span> {d}
+                    </div>
+                  ))}
+                  {diagnose(lastRun.inputs).length === 0 && (
+                    <div className="text-[13px] text-[var(--color-text-muted)]">
+                      Everything it needs is there. What it can find is likely already linked or was decided before.
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           )}
-        </div>
+        </Card>
       )}
 
       {rows === null && loadError ? (
-        <p role="alert" className="border-l-2 border-rose-500 pl-3 py-1 text-sm text-rose-700 dark:text-rose-400">
-          Couldn&apos;t load the proposals: {loadError}{" "}
-          <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
-        </p>
+        <Card>
+          <p role="alert" className="text-[14px] text-rose-700 dark:text-rose-400">
+            Couldn&apos;t load the proposals: {loadError}{" "}
+            <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
+          </p>
+        </Card>
       ) : rows === null ? (
-        <LoadingBlock what="proposed connections" />
+        <Card><LoadingBlock what="proposed connections" className="border-0 p-0" /></Card>
       ) : rows.length === 0 ? (
-        <div className="text-center py-16 space-y-2">
-          <Sparkles className="w-8 h-8 mx-auto text-[var(--color-text-faint)]" />
-          <div className="text-sm font-bold text-[var(--color-text)]">Nothing waiting on you</div>
-          <p className="text-xs text-[var(--color-text-muted)] max-w-md mx-auto">
+        <Card className="text-center py-10 space-y-2">
+          <Sparkles className="w-7 h-7 mx-auto text-[var(--color-text-faint)]" />
+          <div className="text-[14px] font-bold text-[var(--color-text)]">All decided</div>
+          <p className="text-[14px] text-[var(--color-text-muted)] max-w-md mx-auto">
             {canRun
               ? "“Find connections” reads your off-page connectors, equipment tags and aliases. Sure links are made for you; anything less sure waits here."
               : "When the system finds connections that need a human decision, they'll appear here."}
           </p>
-        </div>
+        </Card>
       ) : (
-        <div className="space-y-2">
+        <Card label="Waiting for a decision" pad={false} className="overflow-hidden">
+          <div className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
           {rows.map((p) => (
-            <div key={p.id} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
+            <div key={p.id} className="px-4 sm:px-5 py-3.5">
               <div className="flex items-start gap-3 flex-wrap">
                 <div className="flex-1 min-w-[16rem] space-y-1.5">
                   {/* The pair */}
                   <div className="flex items-center gap-2 flex-wrap">
-                    <Link href={docLink(p.doc)} className="inline-flex items-center gap-1.5 text-xs font-black text-[var(--color-text)] hover:text-[var(--color-accent)]">
+                    <Link href={docLink(p.doc)} className="inline-flex items-center gap-1.5 text-[14px] font-bold text-[var(--color-text)] hover:underline">
                       <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {docLabel(p.doc)}
                     </Link>
                     <span className="text-[var(--color-text-faint)] text-xs">↔</span>
-                    <Link href={docLink(p.target)} className="inline-flex items-center gap-1.5 text-xs font-black text-[var(--color-text)] hover:text-[var(--color-accent)]">
+                    <Link href={docLink(p.target)} className="inline-flex items-center gap-1.5 text-[14px] font-bold text-[var(--color-text)] hover:underline">
                       <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {docLabel(p.target)}
                     </Link>
                   </div>
 
                   {/* Why — never a bare confidence number */}
-                  <div className="text-xs text-[var(--color-text)]">{p.evidence?.summary}</div>
+                  <div className="text-[13px] text-[var(--color-text)]">{p.evidence?.summary}</div>
                   {p.evidence?.detail && (
-                    <div className="text-[11px] text-[var(--color-text-muted)]">{p.evidence.detail}</div>
+                    <div className="text-[12px] text-[var(--color-text-muted)]">{p.evidence.detail}</div>
                   )}
 
                   <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
@@ -276,12 +286,12 @@ export default function ProposedLinksPage() {
 
                 {canDecide && (
                   <div className="flex items-center gap-1.5">
-                    <button onClick={() => void decide(p, false)} disabled={busyId === p.id}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-rose-600 disabled:opacity-50">
+                    <button type="button" onClick={() => void decide(p, false)} disabled={busyId === p.id}
+                      className="inline-flex items-center gap-1 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-rose-600 disabled:opacity-50">
                       <X className="w-3.5 h-3.5" /> Not related
                     </button>
-                    <button onClick={() => void decide(p, true)} disabled={busyId === p.id}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[11px] font-black text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+                    <button type="button" onClick={() => void decide(p, true)} disabled={busyId === p.id}
+                      className="inline-flex items-center gap-1 h-9 px-3 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[13px] font-bold hover:opacity-90 disabled:opacity-50">
                       {busyId === p.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Link them
                     </button>
                   </div>
@@ -289,12 +299,18 @@ export default function ProposedLinksPage() {
               </div>
             </div>
           ))}
-          <div className="flex items-center gap-1.5 pt-2 text-[11px] text-[var(--color-text-muted)]">
+          </div>
+          <div className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] flex items-center gap-1.5 text-[12px] text-[var(--color-text-muted)]">
             <ShieldCheck className="w-3.5 h-3.5 text-[var(--color-text-faint)]" />
             Pairs marked “Not related” stay that way unless a new revision gives a new reason.
           </div>
-        </div>
+        </Card>
       )}
+
+      <EstateReviewPanel />
+
+      <ConnectionSkillsPanel />
+      </PageBody>
     </PageShell>
   );
 }

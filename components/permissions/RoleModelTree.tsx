@@ -122,7 +122,7 @@ const GAPS: string[] = [
 function Fold({ label, count, children, tone }: { label: React.ReactNode; count?: number; children: React.ReactNode; tone?: "warn" }) {
   return (
     <details className="group/rm">
-      <summary className={`cursor-pointer list-none flex items-center gap-2 px-1 py-1.5 text-sm font-bold select-none ${tone === "warn" ? "text-amber-700 dark:text-amber-300" : "text-[var(--color-text)]"} hover:text-[var(--color-accent)]`}>
+      <summary className={`cursor-pointer list-none flex items-center gap-2 px-1 py-1.5 text-sm font-bold select-none ${tone === "warn" ? "text-amber-700 dark:text-amber-300" : "text-[var(--color-text)]"} hover:underline`}>
         <ChevronRight className="w-4 h-4 transition-transform group-open/rm:rotate-90 shrink-0" />
         {label}
         {typeof count === "number" && <span className="text-xs font-black tabular-nums text-[var(--color-text-faint)]">{count}</span>}
@@ -177,10 +177,10 @@ export default function RoleModelTree({ orgId }: { orgId: string }) {
   const teamName = (id: string | null) => teams.find((t) => t.id === id) ?? null;
 
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5">
+    <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 mt-3">
       <div className="flex items-center gap-2 mb-1">
         <GitBranch className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-base font-bold text-[var(--color-text)]">Role model: who can do what</span>
+        <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Role model: who can do what</h2>
       </div>
       <p className="text-xs text-[var(--color-text-muted)] mb-3">
         Generated from a code audit of every enforcement point. Two kinds of authority exist: <b>base roles</b> (set in Users) and <b>situational authority</b> (ownership, per-library grants, review rosters) that applies regardless of role.
@@ -246,6 +246,6 @@ export default function RoleModelTree({ orgId }: { orgId: string }) {
         </ul>
         <p className="text-[11px] text-[var(--color-text-muted)] px-1 inline-flex items-center gap-1"><ShieldCheck className="w-3 h-3" /> Known gaps, listed here so the tree stays honest.</p>
       </Fold>
-    </div>
+    </section>
   );
 }

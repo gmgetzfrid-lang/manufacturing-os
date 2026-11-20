@@ -5,8 +5,11 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import Link from "next/link";
-import { Settings, Trash2 } from "lucide-react";
+import { Plus, Search, Trash2 } from "lucide-react";
 import LoadingBlock from "@/components/ui/LoadingBlock";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card, heroPrimary } from "@/components/ui/PageHero";
+import { bandInput, bandInputIcon, bandSelect, plural } from "@/components/admin/band";
 import MoreMenu from "@/components/ui/MoreMenu";
 import LibraryWizard, { newLibraryDraftKey } from "./LibraryWizard";
 import { clearDraft } from "@/hooks/useDraft";
@@ -205,39 +208,38 @@ export default function LibraryAdminPage() {
   }, [libraries, searchTerm, sortOrder]);
 
   if (!isController) {
-    return <div className="p-8 text-sm text-[var(--color-text-muted)]">{activeRole ? "Only Admin and Doc Control manage libraries." : "Loading…"}</div>;
+    return (
+      <PageShell width="work">
+        <PageHero kicker="Admin · Libraries" overlap={false}
+          title={activeRole ? "Admin and Doc Control only." : "Libraries"}
+          sub={activeRole ? "Only Admin and Doc Control manage libraries." : "Loading…"} />
+      </PageShell>
+    );
   }
 
   if (!activeOrgId) {
     return (
-      <div className="p-8">
-        <div className="max-w-3xl mx-auto bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-6 shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-[var(--color-surface-2)] rounded-xl">
-              <Settings className="w-6 h-6 text-[var(--color-text)]" />
-            </div>
-            <div>
-              <h1 className="text-xl font-black text-[var(--color-text)]">Library Administration</h1>
-              <p className="text-sm text-[var(--color-text-muted)] mt-1">
-                No workspace is selected. Pick one from your profile.
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
+      <PageShell width="work">
+        <PageHero kicker="Admin · Libraries" title="No workspace selected." sub="Pick one from your profile." overlap={false} />
+      </PageShell>
     );
   }
 
   if (loading) {
     return (
-      <div className="p-8">
-        <LoadingBlock what="libraries" className="max-w-3xl mx-auto" />
-      </div>
+      <PageShell width="work">
+        <PageHero kicker="Admin · Libraries" title="Libraries" overlap={false} />
+        <LoadingBlock what="libraries" />
+      </PageShell>
     );
   }
 
+  const answer = loadError && libraries.length === 0 ? "Couldn't load libraries."
+    : libraries.length === 0 ? "No libraries yet."
+    : `${plural(libraries.length, "library", "libraries")}.`;
+
   return (
-    <div className="p-4 sm:p-8 pb-20">
+    <PageShell width="work">
       {/* MODALS */}
       {/* Mounted only while open, so each open starts fresh (and its draft comes back). */}
       {isModalOpen && (
@@ -261,51 +263,43 @@ export default function LibraryAdminPage() {
         />
       )}
 
-      <div className="max-w-7xl mx-auto">
-        {/* HEADER */}
-        <div className="flex flex-col lg:flex-row justify-between lg:items-end mb-10 gap-4">
-          <div>
-            <div className="flex items-center space-x-3 mb-2">
-              <div className="p-3 bg-[var(--color-surface-2)] rounded-xl">
-                <Settings className="w-6 h-6 text-[var(--color-text)]" />
-              </div>
-              <h1 className="text-3xl font-black text-[var(--color-text)] tracking-tight">Library Administration</h1>
-            </div>
-            <p className="text-[var(--color-text-muted)] font-medium max-w-xl text-sm leading-relaxed" title={`Workspace ${activeOrgId}`}>
-              {libraries.length} librar{libraries.length === 1 ? "y" : "ies"}
-              {neverAi.size > 0 ? ` · ${neverAi.size} kept from the AI` : ""}
-            </p>
-          </div>
-
-          <div className="flex items-center gap-3 w-full lg:w-auto min-w-0 flex-wrap">
+      <PageHero
+        kicker="Admin · Libraries"
+        title={answer}
+        sub={neverAi.size > 0 ? `${neverAi.size} kept from the AI. Each library sets its own folders, numbering and review steps.` : "Each library sets its own folders, numbering and review steps."}
+        primary={<button type="button" onClick={openCreate} className={heroPrimary}><Plus className="w-4 h-4" /> New library</button>}
+      >
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="relative flex-1 min-w-[220px]">
+            <Search className={bandInputIcon} />
             <input
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Search libraries…"
-              className="w-full lg:w-72 px-4 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]"
+              aria-label="Search libraries"
+              placeholder="Find a library by name or description"
+              className={bandInput}
             />
-            <select
-              value={sortOrder}
-              onChange={(e) => setSortOrder(e.target.value as "name" | "recent")}
-              className="px-3 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm"
-            >
-              <option value="recent">Recent</option>
-              <option value="name">Name</option>
-            </select>
-            <button
-              onClick={openCreate}
-              className="px-4 py-2 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] font-bold"
-            >
-              New Library
-            </button>
           </div>
+          <select
+            value={sortOrder}
+            onChange={(e) => setSortOrder(e.target.value as "name" | "recent")}
+            aria-label="Sort"
+            className={bandSelect}
+          >
+            <option value="recent">Recent</option>
+            <option value="name">Name</option>
+          </select>
         </div>
+      </PageHero>
 
+      <PageBody>
         {loadError && (
-          <p role="alert" className="mb-4 border-l-2 border-red-500 pl-3 py-1 text-sm text-red-700 dark:text-red-400">
-            Couldn&apos;t load libraries: {loadError}{" "}
-            <button type="button" onClick={() => setReloadTick((n) => n + 1)} className="font-bold underline">Try again</button>
-          </p>
+          <Card>
+            <p role="alert" className="text-[14px] text-red-700 dark:text-red-400">
+              Couldn&apos;t load libraries: {loadError}{" "}
+              <button type="button" onClick={() => setReloadTick((n) => n + 1)} className="font-bold underline">Try again</button>
+            </p>
+          </Card>
         )}
 
         {/* LIST */}
@@ -313,12 +307,12 @@ export default function LibraryAdminPage() {
           {filteredLibraries.map((lib) => (
             <div
               key={lib.id}
-              className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm hover:shadow-md transition"
+              className="bg-[var(--color-surface)] rounded-2xl p-5 shadow-[var(--shadow-card)]"
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <Link href={`/documents/${lib.id}`} title={`Open ${lib.name} (id ${lib.id})`} className="block text-lg font-black text-[var(--color-text)] truncate hover:underline">{lib.name}</Link>
-                  <div className="text-sm text-[var(--color-text-muted)] mt-1 line-clamp-2">{lib.description}</div>
+                  <Link href={`/documents/${lib.id}`} title={`Open ${lib.name} (id ${lib.id})`} className="block text-[15px] font-bold text-[var(--color-text)] truncate hover:underline">{lib.name}</Link>
+                  <div className="text-[13px] text-[var(--color-text-muted)] mt-1 line-clamp-2">{lib.description}</div>
                   <div className="mt-3">
                     {activeOrgId && (
                       <LibraryAiSwitch orgId={activeOrgId} libraryId={lib.id!} libraryName={lib.name} excluded={neverAi.has(lib.id!)} canChange={canManageAi}
@@ -330,8 +324,9 @@ export default function LibraryAdminPage() {
                 {/* Repeated on every card, so quiet: Edit, and Delete folded into More. */}
                 <div className="flex items-center gap-1.5 shrink-0">
                   <button
+                    type="button"
                     onClick={() => openEdit(lib)}
-                    className="px-3 py-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-sm font-bold"
+                    className="h-9 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[13px] font-semibold"
                   >
                     Edit
                   </button>
@@ -344,13 +339,13 @@ export default function LibraryAdminPage() {
           ))}
 
           {filteredLibraries.length === 0 && (
-            <div className="col-span-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-10 text-center text-[var(--color-text-muted)]">
-              {loadError ? "The libraries didn't load." : searchTerm ? "No libraries match that search." : "No libraries yet."}
+            <div className="col-span-full bg-[var(--color-surface)] shadow-[var(--shadow-card)] rounded-2xl p-10 text-center text-[14px] text-[var(--color-text-muted)]">
+              {loadError ? "The libraries didn't load." : searchTerm ? "No libraries match that search." : "Make the first library: drawings, procedures, vendor manuals."}
             </div>
           )}
         </div>
-      </div>
-    </div>
+      </PageBody>
+    </PageShell>
   );
 }
 

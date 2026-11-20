@@ -10,7 +10,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
-  Database, Download, FileJson, FileArchive, Loader2, AlertTriangle,
+  Download, FileJson, FileArchive, Loader2, AlertTriangle,
   ShieldCheck, Plus, Server, Trash2, TestTube, RefreshCw, Clock,
   CheckCircle2, XCircle, Lock, ExternalLink, Calendar, Cpu,
   Webhook, HardDrive, Archive as ArchiveIcon, Edit3, X,
@@ -18,7 +18,9 @@ import {
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { startGlobalBackup, subscribeBackup, cancelBackup, backupIsRunning, type BackupProgress } from "@/lib/clientBackup";
-import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card } from "@/components/ui/PageHero";
+import { plural } from "@/components/admin/band";
 import { Input, Select } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -194,39 +196,53 @@ export default function DataExportPage() {
     void refresh();
   };
 
+  // The answer: when the data last left the building.
+  const lastRun = runs[0];
+  const lastAt = lastRun ? new Date(lastRun.completed_at || lastRun.started_at) : null;
+  const answer = !isAuthorized ? "Admin, Manager and Doc Control only."
+    : loading ? "Data export"
+    : lastAt ? `Last export ${lastAt.toLocaleDateString(undefined, { month: "short", day: "numeric" })}, ${lastAt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}.`
+    : "No exports yet.";
+
   return (
     <PageShell width="form">
-        <PageHeaderBar
-          icon={Database}
-          title="Data Export & Backup"
-          subtitle={isAuthorized && !loading
-            ? `${runs.length > 0 ? `Last export ${new Date(runs[0].completed_at || runs[0].started_at).toLocaleString()}` : "No exports yet"} · ${destinations.length} scheduled destination${destinations.length === 1 ? "" : "s"}.`
+        <PageHero
+          kicker="Admin · Data export and backup"
+          title={answer}
+          size="md"
+          sub={isAuthorized && !loading
+            ? `${plural(destinations.length, "scheduled destination")}. Your data, yours to take any time.`
             : "Your data, yours to take any time."}
         />
 
+        <PageBody>
         {!isAuthorized && (
-          <p className="mb-6 text-xs text-[var(--color-text-muted)] flex items-start gap-2">
-            <Lock className="w-4 h-4 mt-0.5 shrink-0" />
-            <span>Only <b>Admin</b>, <b>Manager</b> or <b>DocCtrl</b> roles manage data exports.</span>
-          </p>
+          <Card>
+            <p className="text-[14px] text-[var(--color-text-muted)] flex items-start gap-2">
+              <Lock className="w-4 h-4 mt-0.5 shrink-0" />
+              <span>Only <b>Admin</b>, <b>Manager</b> or <b>DocCtrl</b> roles manage data exports.</span>
+            </p>
+          </Card>
         )}
 
         {error && (
-          <p role="alert" className="mb-4 border-l-2 border-red-500 pl-3 text-xs text-red-700 dark:text-red-400 flex items-start gap-2">
-            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-            <span>{error} <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button></span>
-          </p>
+          <Card>
+            <p role="alert" className="text-[14px] text-red-700 dark:text-red-400 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+              <span>{error} <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button></span>
+            </p>
+          </Card>
         )}
 
         {/* ──── DIRECT DOWNLOAD ──── */}
         {isAuthorized && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-            <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] p-5">
               <div className="flex items-start gap-3 mb-3">
                 <div className="p-2.5 bg-[var(--color-surface-2)] rounded-xl"><FileJson className="w-5 h-5 text-[var(--color-text-muted)]" /></div>
                 <div className="flex-1">
-                  <div className="text-sm font-black text-[var(--color-text)]">JSON only</div>
-                  <div className="text-xs text-[var(--color-text-muted)] mt-0.5">Records, plus a list of files with links that work for 24 hours.</div>
+                  <div className="text-[14px] font-bold text-[var(--color-text)]">JSON only</div>
+                  <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">Records, plus a list of files with links that work for 24 hours.</div>
                 </div>
               </div>
               <button
@@ -237,12 +253,12 @@ export default function DataExportPage() {
                 Download JSON
               </button>
             </div>
-            <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5">
+            <div className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] p-5">
               <div className="flex items-start gap-3 mb-3">
                 <div className="p-2.5 bg-[var(--color-surface-2)] rounded-xl"><FileArchive className="w-5 h-5 text-[var(--color-text-muted)]" /></div>
                 <div className="flex-1">
-                  <div className="text-sm font-black text-[var(--color-text)]">Full ZIP with files</div>
-                  <div className="text-xs text-[var(--color-text-muted)] mt-0.5">Records and every PDF and DWG, in zip parts of about 300 MB. Allow several downloads when the browser asks.</div>
+                  <div className="text-[14px] font-bold text-[var(--color-text)]">Full ZIP with files</div>
+                  <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">Records and every PDF and DWG, in zip parts of about 300 MB. Allow several downloads when the browser asks.</div>
                 </div>
               </div>
               <button
@@ -250,7 +266,7 @@ export default function DataExportPage() {
                 className="w-full inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
               >
                 {busyZip ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                {busyZip ? "Building backup…" : "Download Full ZIP"}
+                {busyZip ? "Building backup…" : "Download full ZIP"}
               </button>
               {backupProgress && busyZip && (
                 <div className="mt-3 space-y-1.5">
@@ -287,35 +303,30 @@ export default function DataExportPage() {
 
         {/* ──── DESTINATIONS ──── */}
         {isAuthorized && (
-          <div className="mb-6">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-base font-black text-[var(--color-text)] flex items-center gap-2">
-                <Server className="w-4 h-4 text-[var(--color-text-muted)]" /> Scheduled Push Destinations
-              </h2>
-              {destinations.length > 0 && (
-                <button
-                  onClick={() => setCreating(true)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-xs font-bold"
-                ><Plus className="w-3.5 h-3.5" /> New Destination</button>
-              )}
-            </div>
-            <p className="text-xs text-[var(--color-text-muted)] mb-3 max-w-3xl">
+          <Card label={<span className="inline-flex items-center gap-2"><Server className="w-3.5 h-3.5" /> Scheduled push destinations</span>}
+            action={destinations.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => setCreating(true)}
+                className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[12px] font-semibold"
+              ><Plus className="w-3.5 h-3.5" /> New destination</button>
+            ) : undefined}>
+            <p className="text-[13px] text-[var(--color-text-muted)] mb-3 max-w-3xl">
               Your own S3 or R2 bucket, or a webhook. A fresh export goes there on your schedule. Its keys are stored
               encrypted (AES-256-GCM) and only opened at push time.
             </p>
 
             {loading ? (
-              <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)] p-4"><Spinner size="sm" /> Loading destinations…</div>
+              <div className="flex items-center gap-2 text-[14px] text-[var(--color-text-muted)] py-2"><Spinner size="sm" /> Loading destinations…</div>
             ) : destinations.length === 0 ? (
-              <div className="bg-[var(--color-surface)] border border-dashed border-[var(--color-border-strong)] rounded-2xl p-8 text-center">
-                <Server className="w-10 h-10 mx-auto text-[var(--color-text-faint)] mb-2" />
-                <div className="text-sm text-[var(--color-text-muted)] mb-3">No destinations yet.</div>
-                <button onClick={() => setCreating(true)} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-xs font-bold">
+              <div className="rounded-xl bg-[var(--color-surface-2)] p-6 text-center">
+                <div className="text-[14px] text-[var(--color-text-muted)] mb-3">No destinations yet.</div>
+                <button type="button" onClick={() => setCreating(true)} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[13px] font-semibold">
                   <Plus className="w-3.5 h-3.5" /> Add your first destination
                 </button>
               </div>
             ) : (
-              <div className="space-y-3">
+              <div className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
                 {destinations.map((d) => (
                   <DestinationCard
                     key={d.id}
@@ -329,43 +340,39 @@ export default function DataExportPage() {
                 ))}
               </div>
             )}
-          </div>
+          </Card>
         )}
 
         {/* ──── RUN HISTORY ──── */}
         {isAuthorized && (
-          <div className="mb-6">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-base font-black text-[var(--color-text)] flex items-center gap-2">
-                <Clock className="w-4 h-4 text-[var(--color-text-muted)]" /> Export History
-              </h2>
-              <button onClick={() => void refresh()} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
+          <Card label={<span className="inline-flex items-center gap-2"><Clock className="w-3.5 h-3.5" /> Export history · {runs.length}</span>}
+            action={
+              <button type="button" onClick={() => void refresh()} className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
                 <RefreshCw className="w-3.5 h-3.5" /> Refresh
               </button>
-            </div>
-            <p className="text-xs text-[var(--color-text-muted)] mb-3">Every export, who ran it and where it went. Kept for the record.</p>
+            }>
+            <p className="text-[13px] text-[var(--color-text-muted)] mb-3">Every export, who ran it and where it went. Kept for the record.</p>
             {runs.length === 0 ? (
-              <div className="bg-[var(--color-surface)] border border-dashed border-[var(--color-border-strong)] rounded-2xl p-6 text-center text-xs text-[var(--color-text-muted)]">
+              <div className="rounded-xl bg-[var(--color-surface-2)] p-6 text-center text-[14px] text-[var(--color-text-muted)]">
                 No exports run yet.
               </div>
             ) : (
-              <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
-                <div className="divide-y divide-[var(--color-border)]">
-                  {runs.map((r) => <RunRow key={r.id} run={r} />)}
-                </div>
+              <div className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)] -mx-4 sm:-mx-5">
+                {runs.map((r) => <RunRow key={r.id} run={r} />)}
               </div>
             )}
-          </div>
+          </Card>
         )}
 
         {/* Trust footer */}
-        <div className="mt-8 p-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text-muted)] flex items-center gap-3">
-          <ShieldCheck className="w-5 h-5 text-[var(--color-text-muted)] shrink-0" />
+        <p className="px-1 text-[13px] text-[var(--color-text-muted)] flex items-center gap-2">
+          <ShieldCheck className="w-4 h-4 shrink-0" />
           <span>
             Every export is recorded in the audit log and listed above.
-            Our promise: <Link href="/data-portability" target="_blank" className="text-[var(--color-accent)] font-bold hover:underline inline-flex items-center gap-1">data portability <ExternalLink className="w-3 h-3" /></Link>.
+            Our promise: <Link href="/data-portability" target="_blank" className="text-[var(--color-text)] font-bold underline underline-offset-2 inline-flex items-center gap-1">data portability <ExternalLink className="w-3 h-3" /></Link>.
           </span>
-        </div>
+        </p>
+        </PageBody>
 
       {(creating || editing) && activeOrgId && (
         <DestinationModal
@@ -408,12 +415,12 @@ function DestinationCard({
     : <ArchiveIcon className="w-4 h-4 text-[var(--color-text-muted)]" />;
 
   return (
-    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-4">
+    <div className="py-3.5">
       <div className="flex items-start gap-3">
         <div className="p-2 bg-[var(--color-surface-2)] rounded-lg">{icon}</div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-black text-[var(--color-text)] truncate">{dest.name}</span>
+            <span className="text-[14px] font-bold text-[var(--color-text)] truncate">{dest.name}</span>
             <span className="text-[11px] font-bold uppercase bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{dest.destination_type}</span>
             {!dest.enabled && <span className="text-[11px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded">DISABLED</span>}
             <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-1.5 py-0.5 rounded border ${
@@ -464,9 +471,10 @@ function DestinationCard({
           </div>
           <button
             onClick={onRun} disabled={busy}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-xs font-bold disabled:opacity-50"
+            type="button"
+            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[12px] font-semibold disabled:opacity-50"
           >
-            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Cpu className="w-3 h-3" />} Run Now
+            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Cpu className="w-3 h-3" />} Run now
           </button>
         </div>
       </div>
@@ -480,7 +488,7 @@ function RunRow({ run }: { run: Run }) {
   const ago = run.completed_at || run.started_at;
   const dur = run.duration_ms ? `${(run.duration_ms / 1000).toFixed(1)}s` : null;
   return (
-    <div className="px-4 py-3 flex items-start gap-3">
+    <div className="px-4 sm:px-5 py-3 flex items-start gap-3">
       <div className={`p-1.5 rounded-md shrink-0 ${
         run.status === "succeeded" ? "bg-emerald-100 dark:bg-emerald-950/40" :
         run.status === "failed" ? "bg-red-100 dark:bg-red-950/40" :
@@ -591,7 +599,7 @@ function DestinationModal({
   };
 
   return (
-    <div role="dialog" aria-modal="true" aria-label={`${mode === "create" ? "New" : "Edit"} backup destination`} className="fixed inset-0 z-[200] bg-slate-900/50 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
+    <div role="dialog" aria-modal="true" aria-label={`${mode === "create" ? "New" : "Edit"} backup destination`} className="fixed inset-0 z-[200] bg-[var(--color-ink)]/60 animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
       <div className="w-full max-w-xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
           <div>

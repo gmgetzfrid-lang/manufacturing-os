@@ -1,52 +1,46 @@
 "use client";
 
 import Link from 'next/link';
-import { SearchX, Home, ArrowLeft } from 'lucide-react';
+import { Home, ArrowLeft } from 'lucide-react';
+import { PageHero, PageBody, Card, heroPrimary } from '@/components/ui/PageHero';
 
 export default function NotFound() {
   return (
-    <main className="min-h-dvh">
-      <div className="mx-auto flex min-h-dvh max-w-2xl flex-col items-center justify-center px-6 py-16">
-        <div className="w-full rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-8 shadow-sm animate-in fade-in zoom-in-95">
-          <div className="flex items-start gap-4">
-            <div className="mt-1 flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-[var(--color-surface-2)] text-[var(--color-text)]">
-              <SearchX className="h-5 w-5" />
+    <main className="min-h-dvh bg-[var(--color-canvas)]">
+      <div className="mx-auto w-full max-w-3xl px-4 sm:px-6 py-6 pb-20">
+        <PageHero
+          kicker="Page not found"
+          title="Nothing here."
+          sub="This link doesn’t open anything. The page may have moved."
+          size="md"
+          primary={
+            <Link href="/" className={heroPrimary}>
+              <Home className="h-4 w-4" /> Go home
+            </Link>
+          }
+        />
+        <PageBody>
+          <Card label="Where to next">
+            <div className="flex flex-wrap items-center gap-3">
+              <Link
+                href="/"
+                onClick={(e) => {
+                  // If JS is enabled, go back. Otherwise fall back to href="/".
+                  e.preventDefault();
+                  if (typeof window !== 'undefined' && window.history.length > 1) {
+                    window.history.back();
+                  } else {
+                    window.location.href = '/';
+                  }
+                }}
+                className="inline-flex items-center justify-center gap-2 h-10 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 text-[14px] font-bold text-[var(--color-text)] transition-colors hover:bg-[var(--color-surface-2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)]"
+              >
+                <ArrowLeft className="h-4 w-4" /> Go back
+              </Link>
+              <span className="text-[14px] text-[var(--color-text-muted)]">or search for it with the search box at the top of any page.</span>
             </div>
-            <div className="min-w-0 flex-1">
-              <h1 className="text-xl font-black tracking-tight text-[var(--color-text)]">
-                Page not found
-              </h1>
-              <p className="mt-2 text-sm text-[var(--color-text-muted)]">
-                This link doesn’t open anything. The page may have moved.
-              </p>
-
-              <div className="mt-6 flex flex-wrap gap-3">
-                <Link
-                  href="/"
-                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-[var(--color-accent)] px-4 py-2 text-sm font-bold text-[var(--color-accent-fg)] transition-colors hover:bg-[var(--color-accent-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)]"
-                >
-                  <Home className="h-3.5 w-3.5" /> Go home
-                </Link>
-                <Link
-                  href="/"
-                  onClick={(e) => {
-                    // If JS is enabled, go back. Otherwise fall back to href="/".
-                    e.preventDefault();
-                    if (typeof window !== 'undefined' && window.history.length > 1) {
-                      window.history.back();
-                    } else {
-                      window.location.href = '/';
-                    }
-                  }}
-                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2 text-sm font-bold text-[var(--color-text)] transition-colors hover:bg-[var(--color-surface-2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)]"
-                >
-                  <ArrowLeft className="h-3.5 w-3.5" /> Go back
-                </Link>
-              </div>
-            </div>
-          </div>
-        </div>
-
+          </Card>
+        </PageBody>
       </div>
     </main>
   );

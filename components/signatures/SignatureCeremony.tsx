@@ -101,7 +101,7 @@ export default function SignatureCeremony({
   );
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="Electronic signature" className="fixed inset-0 z-[500] bg-slate-900/50 backdrop-blur-sm flex items-start sm:items-center justify-center p-4 overflow-y-auto" onClick={() => !busy && onCancel()}>
+    <div role="dialog" aria-modal="true" aria-label="Electronic signature" className="fixed inset-0 z-[500] bg-[var(--color-ink)]/60 flex items-start sm:items-center justify-center p-4 overflow-y-auto" onClick={() => !busy && onCancel()}>
       <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl my-4" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-5 py-4 border-b border-[var(--color-border)]">
           <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" />

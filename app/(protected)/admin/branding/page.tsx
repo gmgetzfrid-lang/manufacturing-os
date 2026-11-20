@@ -15,6 +15,8 @@ import { appAlert } from "@/components/providers/DialogProvider";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import FileThumb from "@/components/ui/FileThumb";
 import { tryUpload } from "@/lib/uploadRetry";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card, heroPrimary } from "@/components/ui/PageHero";
 
 const formatBytes = (n: number) => n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
 
@@ -48,11 +50,10 @@ export default function AdminBrandingPage() {
 
   if (!isAdmin) {
     return (
-      <div className="p-8 max-w-2xl">
-        <p className="flex items-center gap-3 text-sm text-[var(--color-text-muted)]">
-          <ShieldAlert className="w-5 h-5" /> <span>Only Admins can manage workspace branding.</span>
-        </p>
-      </div>
+      <PageShell width="work">
+        <PageHero kicker="Admin · Branding" title="Admins only." overlap={false}
+          sub={<span className="inline-flex items-center gap-2"><ShieldAlert className="w-4 h-4" /> Only Admins can manage workspace branding.</span>} />
+      </PageShell>
     );
   }
 
@@ -100,21 +101,22 @@ export default function AdminBrandingPage() {
   };
 
   return (
-    <div className="p-6 lg:p-8 max-w-4xl mx-auto">
-      <div className="flex items-center gap-3 mb-6">
-        <div className="w-11 h-11 rounded-2xl grid place-items-center bg-[var(--color-surface-2)] text-[var(--color-text)]">
-          <PaletteIcon className="w-5 h-5" />
-        </div>
-        <div>
-          <h1 className="text-xl font-black text-[var(--color-text)]">Workspace branding</h1>
-          <p className="text-sm text-[var(--color-text-muted)]">Your logo and colors, applied for everyone in this workspace. Members keep their own light/dark preference.</p>
-        </div>
-      </div>
+    <PageShell width="work">
+      <PageHero
+        kicker="Admin · Branding"
+        title={savedAt ? "Saved for everyone." : logoPreview ? "Your logo is set." : "No logo yet."}
+        sub={savedAt ? "Everyone in the workspace sees it now." : `${palette.name} colors. Your logo and colors apply to everyone in this workspace; members keep their own light or dark preference.`}
+        primary={
+          <button type="button" onClick={handleSave} disabled={saving || uploading} className={heroPrimary}>
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save branding
+          </button>
+        }
+      />
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      <PageBody>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* LOGO */}
-        <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-          <h2 className="text-sm font-black text-[var(--color-text)] mb-3">Logo</h2>
+        <Card label="Logo">
           <div {...drag.bind} className={`rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface-2)] h-28 flex items-center justify-center mb-3 overflow-hidden ${drag.ring}`}>
             {drag.over ? (
               <span className="text-sm font-bold text-[var(--color-text)]">{drag.say}</span>
@@ -143,8 +145,8 @@ export default function AdminBrandingPage() {
           <div className="flex items-center gap-2">
             <input ref={fileRef} type="file" accept="image/*" className="hidden"
               onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleLogo(f); e.target.value = ""; }} />
-            <button onClick={() => fileRef.current?.click()} disabled={uploading}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+            <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading}
+              className="inline-flex items-center gap-2 h-9 px-3 rounded-lg text-[13px] font-semibold border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
               {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />} Upload logo
             </button>
             {logoPreview && (
@@ -155,7 +157,7 @@ export default function AdminBrandingPage() {
             )}
           </div>
           <div className="mt-4">
-            <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mb-1.5">Logo shape</div>
+            <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)] mb-1.5">Logo shape</div>
             <div className="flex gap-1.5">
               {(["full", "mark"] as const).map((s) => (
                 <button key={s} onClick={() => setLogoShape(s)}
@@ -166,17 +168,16 @@ export default function AdminBrandingPage() {
               ))}
             </div>
           </div>
-          <p className="text-[11px] text-[var(--color-text-muted)] mt-3">Uploading a logo also suggests a palette from its colors.</p>
-        </section>
+          <p className="text-[12px] text-[var(--color-text-muted)] mt-3">Uploading a logo also suggests a palette from its colors.</p>
+        </Card>
 
         {/* PALETTE */}
-        <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-          <h2 className="text-sm font-black text-[var(--color-text)] mb-3">Color palette</h2>
+        <Card label={<span className="inline-flex items-center gap-1.5"><PaletteIcon className="w-3.5 h-3.5" /> Color palette</span>}>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
             {PALETTE_PRESETS.map((p) => {
               const on = p.primary.toLowerCase() === palette.primary.toLowerCase() && p.secondary.toLowerCase() === palette.secondary.toLowerCase();
               return (
-                <button key={p.id} onClick={() => setPalette(p)} title={p.name}
+                <button key={p.id} type="button" onClick={() => setPalette(p)} title={p.name} aria-label={p.name} aria-pressed={on}
                   className={`h-10 rounded-lg border-2 overflow-hidden ${on ? "border-[var(--color-text)]" : "border-transparent"}`}
                   style={{ background: `linear-gradient(135deg, ${p.primary}, ${p.secondary})` }}>
                   {on && <Check className="w-4 h-4 text-white mx-auto drop-shadow" />}
@@ -199,17 +200,11 @@ export default function AdminBrandingPage() {
             </label>
           </div>
           <div className="mt-4 rounded-lg h-12" style={{ background: `linear-gradient(135deg, ${palette.primary}, ${palette.secondary})` }} />
-          <p className="text-[11px] text-[var(--color-text-muted)] mt-3 flex items-center gap-1.5"><Zap className="w-3 h-3" /> Saving applies these colors across the app for everyone.</p>
-        </section>
+          <p className="text-[12px] text-[var(--color-text-muted)] mt-3 flex items-center gap-1.5"><Zap className="w-3 h-3" /> Saving applies these colors across the app for everyone.</p>
+        </Card>
       </div>
-
-      <div className="mt-6 flex items-center gap-3">
-        <button onClick={handleSave} disabled={saving || uploading}
-          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
-          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save branding
-        </button>
-        {savedAt && <span role="status" className="text-sm text-emerald-700 dark:text-emerald-400 font-semibold">Saved. Everyone in the workspace sees it now.</span>}
-      </div>
-    </div>
+      {savedAt && <p role="status" className="px-1 text-[14px] text-emerald-700 dark:text-emerald-400 font-semibold">Saved. Everyone in the workspace sees it now.</p>}
+      </PageBody>
+    </PageShell>
   );
 }

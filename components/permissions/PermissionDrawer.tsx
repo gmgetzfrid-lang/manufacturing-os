@@ -325,26 +325,20 @@ export default function PermissionsDrawer(props: {
   if (!isOpen) return null;
 
   return (
-    <div role="dialog" aria-modal="true" aria-label={`Permissions for ${nodeLabel}`} className="fixed inset-0 z-[90] flex justify-end bg-slate-900/50 backdrop-blur-sm animate-in fade-in">
-      <div className="h-full w-full max-w-[560px] bg-[var(--color-surface)] text-[var(--color-text)] shadow-2xl border-l border-[var(--color-border)] animate-in slide-in-from-right duration-300 ease-fluid">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]">
-          {/* ... (Header content) */}
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="h-9 w-9 shrink-0 rounded-xl bg-[var(--color-surface-2)] border border-[var(--color-border)] flex items-center justify-center">
-              <Shield className="h-5 w-5" />
+    <div role="dialog" aria-modal="true" aria-label={`Permissions for ${nodeLabel}`} className="fixed inset-0 z-[90] flex justify-end bg-[var(--color-ink)]/60 animate-in fade-in">
+      <div className="h-full w-full max-w-[560px] bg-[var(--color-surface)] text-[var(--color-text)] shadow-2xl sm:rounded-l-[20px] animate-in slide-in-from-right duration-300 ease-fluid flex flex-col">
+        <div className="flex items-start justify-between gap-3 px-5 sm:px-6 pt-5 pb-4 border-b border-[var(--color-border)] shrink-0">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+              <Shield className="h-3.5 w-3.5" /> Permissions · {nodeType === "collection" ? "folder" : nodeType}
             </div>
-            <div className="min-w-0">
-              <div className="text-base font-semibold truncate">{nodeLabel}</div>
-              <div className="text-xs text-[var(--color-text-muted)] truncate">
-                Node: <span className="text-[var(--color-text)]">{nodeType}</span> /{" "}
-                <span className="text-[var(--color-text)]">{nodeId}</span>
-              </div>
-            </div>
+            <h2 className="mt-2 text-[30px] sm:text-[34px] leading-none font-black tracking-[-0.03em] break-words">{nodeLabel}</h2>
+            <div className="mt-2 text-[12px] text-[var(--color-text-muted)] truncate" title={nodeId}>ID {nodeId}</div>
           </div>
 
           <button
             onClick={close}
-            className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] border border-transparent hover:border-[var(--color-border)]"
+            className="w-9 h-9 shrink-0 grid place-items-center rounded-[10px] bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
             title="Close"
             aria-label="Close"
           >
@@ -352,9 +346,9 @@ export default function PermissionsDrawer(props: {
           </button>
         </div>
 
-        <div className="h-[calc(100%-64px)] overflow-y-auto px-5 py-5 space-y-6">
+        <div className="flex-1 min-h-0 overflow-y-auto px-5 sm:px-6 py-5 space-y-6">
           {/* ... (Visibility Section) */}
-          <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">
+          <div className="border-t border-[var(--color-border)] pt-5 first:border-t-0 first:pt-0">
             <div className="flex items-center justify-between">
               <div className="text-sm font-semibold flex items-center gap-2">
                 {visibility === "hidden" || visibility === "private" ? (
@@ -426,7 +420,7 @@ export default function PermissionsDrawer(props: {
           </div>
 
           {/* ... (Rules List Section) */}
-          <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">
+          <div className="border-t border-[var(--color-border)] pt-5 first:border-t-0 first:pt-0">
             <div className="text-sm font-semibold">Rules</div>
             <div className="text-xs text-[var(--color-text-faint)] mt-1">
               Deny rules win, and inheritance can be cut at any node.
@@ -495,7 +489,7 @@ export default function PermissionsDrawer(props: {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">
+          <div className="border-t border-[var(--color-border)] pt-5 first:border-t-0 first:pt-0">
             <div className="flex items-center justify-between mb-4">
               <div className="text-sm font-semibold flex items-center gap-2">
                 <Plus className="h-4 w-4" />

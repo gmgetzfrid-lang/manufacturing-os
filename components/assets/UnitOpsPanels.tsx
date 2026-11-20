@@ -19,7 +19,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import {
-  Wand2, Loader2, AlertTriangle, ArrowRight, Check, X, Waypoints,
+  Wand2, Loader2, AlertTriangle, ArrowRight, Check, X,
   ScanSearch, Trash2, FileText, Search, CheckCircle2, BookOpen,
   FolderOpen, RefreshCw,
 } from "lucide-react";
@@ -60,7 +60,8 @@ export function CategorizeBanner({ orgId, userId, assets, types, book, onDone }:
   };
 
   return (
-    <div className="mb-4 border-l-2 border-amber-500 pl-3.5 py-1">
+    <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
+      <h2 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Sort equipment</h2>
       {result ? (
         <div className="space-y-1">
           <div className="flex items-center gap-2 text-xs font-black text-emerald-700 dark:text-emerald-300">
@@ -78,13 +79,13 @@ export function CategorizeBanner({ orgId, userId, assets, types, book, onDone }:
       ) : (
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex-1 min-w-[14rem]">
-            <div className="text-xs font-black text-[var(--color-text)]">
+            <div className="text-[14px] font-bold text-amber-800 dark:text-amber-300">
               {uncategorized > 0
                 ? `${uncategorized} piece${uncategorized === 1 ? "" : "s"} of equipment uncategorized`
                 : `${plan.unitAssignments.length} piece${plan.unitAssignments.length === 1 ? "" : "s"} not filed to an operating area`}
               {uncategorized > 0 && plan.unitAssignments.length > 0 ? ` · ${plan.unitAssignments.length} unfiled to areas` : ""}
             </div>
-            <div className="text-[11px] text-[var(--color-text-muted)]">
+            <div className="text-[13px] text-[var(--color-text-muted)]">
               {plan.assignments.length > 0
                 ? <>Your Site Codebook&apos;s prefixes sort {plan.assignments.length} of them{plan.typesToCreate.length > 0 ? `, creating ${plan.typesToCreate.slice(0, 4).join(", ")}${plan.typesToCreate.length > 4 ? "…" : ""}` : ""}.</>
                 : <>None of your Site Codebook&apos;s prefixes match these tags. Add the prefixes in the <Link href="/admin/codebook" className="underline font-bold">Site Codebook</Link>.</>}
@@ -93,14 +94,14 @@ export function CategorizeBanner({ orgId, userId, assets, types, book, onDone }:
           </div>
           {(plan.assignments.length > 0 || plan.unitAssignments.length > 0) && (
             <button onClick={() => void run()} disabled={busy}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-[var(--color-text)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] disabled:opacity-60 shrink-0">
+              className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg text-[13px] font-semibold text-[var(--color-text)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] disabled:opacity-60 shrink-0">
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
               Auto-categorize from codebook
             </button>
           )}
         </div>
       )}
-    </div>
+    </section>
   );
 }
 
@@ -168,7 +169,7 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
 
   if (flows === undefined) {
     return (
-      <div id="area-flow-panel" className="mt-6 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3.5 text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-2 w-full">
+      <div id="area-flow-panel" className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 text-[13px] text-[var(--color-text-muted)] flex items-center gap-2 w-full">
         <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading process flows…
       </div>
     );
@@ -178,12 +179,11 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
   const confirmed = (flows ?? []).filter((f) => f.status === "confirmed");
 
   return (
-    <div id="area-flow-panel" className="mt-6 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3.5"
+    <section id="area-flow-panel" className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5"
       style={{ animation: "rise 0.4s var(--ease-fluid) both" }}>
       <div className="flex items-center gap-2 flex-wrap mb-2">
-        <Waypoints className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-        <span className="text-xs font-black text-[var(--color-text)]">Process flows</span>
-        <span className="text-[11px] font-bold text-[var(--color-text-faint)]">
+        <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Process flows</h2>
+        <span className="text-[13px] text-[var(--color-text-muted)]">
           {flows === null ? "" : `${confirmed.length} confirmed${proposed.length > 0 ? ` · ${proposed.length} proposed` : ""}`}
         </span>
         <span className="flex-1" />
@@ -191,8 +191,8 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
           Process lens →
         </Link>
         {isAdmin && flows !== null && (
-          <button onClick={() => setReaderOpen(true)}
-            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]">
+          <button type="button" onClick={() => setReaderOpen(true)}
+            className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
             <ScanSearch className="w-3.5 h-3.5" /> Read flows from a document
           </button>
         )}
@@ -271,7 +271,7 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
           onClose={() => setReaderOpen(false)}
           onDone={(msg) => { setReaderOpen(false); setNote(msg); void refresh(); }} />
       )}
-    </div>
+    </section>
   );
 }
 /** Pick the PFD, run the reader. The picker mirrors DOCUMENT CONTROL's own
@@ -542,7 +542,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
   );
 
   const sheet = (
-    <div role="dialog" aria-modal="true" aria-label="Read flows from a document" className="fixed inset-0 z-[700] flex items-start justify-center bg-black/50 pt-[6vh] p-4 overscroll-contain" onClick={onClose}>
+    <div role="dialog" aria-modal="true" aria-label="Read flows from a document" className="fixed inset-0 z-[700] flex items-start justify-center bg-[var(--color-ink)]/60 pt-[6vh] p-4 overscroll-contain" onClick={onClose}>
       <div className="w-full max-w-lg max-h-[86vh] flex flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)] shrink-0">

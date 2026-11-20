@@ -5,6 +5,8 @@ import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Layout, ArrowRight, Loader2, Building2, User, Mail, Lock, AlertCircle, Users } from 'lucide-react';
+import { PageHero, PageBody, Card } from '@/components/ui/PageHero';
+import { bandSeg, bandSegItem } from '@/components/admin/band';
 
 type Mode = "new-org" | "request-access";
 
@@ -107,202 +109,192 @@ export default function SignupPage() {
     }
   };
 
+  const title = mode === "new-org" ? "Set up your workspace." : requestSent ? "Request sent." : "Ask for access.";
+  const sub = mode === "new-org"
+    ? "A new organization for your site's drawings, equipment and work. You'll be its Admin."
+    : requestSent ? "Your organization's admin creates your account. You'll get an email with sign-in steps."
+    : "Your organization's admin creates your account.";
+
   return (
-    <div className="min-h-dvh bg-slate-950 flex flex-col items-center justify-center p-4 relative overflow-hidden">
-
-      <div className="w-full max-w-lg relative z-20">
-        {/* Header */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl mb-4 ring-1 ring-white/10 bg-white/10">
-            <Layout className="w-7 h-7 text-white" />
+    <div className="min-h-dvh bg-[var(--color-canvas)] px-4 py-6 sm:py-10">
+      <div className="w-full max-w-xl mx-auto">
+        {/* The band: who we are, what this page is for, and the two ways in. */}
+        <PageHero
+          kicker={<span className="inline-flex items-center gap-2"><Layout className="w-3.5 h-3.5" /> Manufacturing OS</span>}
+          title={title}
+          sub={sub}
+          size="md"
+        >
+          <div className={`${bandSeg} w-full`} role="group" aria-label="How to join">
+            <button
+              type="button"
+              onClick={() => { setMode("new-org"); setError(null); }}
+              aria-pressed={mode === "new-org"}
+              className={`${bandSegItem(mode === "new-org")} flex-1 justify-center h-10`}
+            >
+              <Building2 className="w-4 h-4" />
+              New organization
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setMode("request-access"); setError(null);
+                // Carry over what was already typed.
+                setRequestData((r) => ({ ...r, displayName: r.displayName || formData.displayName, email: r.email || formData.email, orgName: r.orgName || formData.companyName }));
+              }}
+              aria-pressed={mode === "request-access"}
+              className={`${bandSegItem(mode === "request-access")} flex-1 justify-center h-10`}
+            >
+              <Users className="w-4 h-4" />
+              Join existing
+            </button>
           </div>
-          <h1 className="text-3xl font-black text-white tracking-tight">ManufacturingOS</h1>
-          <p className="text-slate-400 text-sm mt-2">Enterprise Document Control Platform</p>
-        </div>
+        </PageHero>
 
-        {/* Mode Toggle */}
-        <div className="flex bg-slate-900 rounded-2xl p-1 mb-6 border border-slate-800">
-          <button
-            onClick={() => { setMode("new-org"); setError(null); }}
-            aria-pressed={mode === "new-org"}
-            className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-bold transition-all ${mode === "new-org" ? "bg-[var(--color-text)] text-[var(--color-surface)] shadow-lg" : "text-slate-400 hover:text-white"}`}
-          >
-            <Building2 className="w-4 h-4" />
-            New Organization
-          </button>
-          <button
-            onClick={() => {
-              setMode("request-access"); setError(null);
-              // Carry over what was already typed.
-              setRequestData((r) => ({ ...r, displayName: r.displayName || formData.displayName, email: r.email || formData.email, orgName: r.orgName || formData.companyName }));
-            }}
-            aria-pressed={mode === "request-access"}
-            className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-bold transition-all ${mode === "request-access" ? "bg-[var(--color-text)] text-[var(--color-surface)] shadow-lg" : "text-slate-400 hover:text-white"}`}
-          >
-            <Users className="w-4 h-4" />
-            Request Access
-          </button>
-        </div>
-
-        <div className="bg-white rounded-2xl shadow-2xl overflow-hidden border border-slate-200">
+        <PageBody>
+        <Card className="sm:p-7">
 
           {/* NEW ORG MODE */}
           {mode === "new-org" && (
             <>
-              <div className="bg-slate-900 px-8 py-6 border-b border-slate-800">
-                <h2 className="text-lg font-black text-white">Create Your Workspace</h2>
-                <p className="text-slate-400 text-sm mt-1">Set up a new organization. You&rsquo;ll be its Admin.</p>
-              </div>
-              <div className="p-8">
                 {error && (
-                  <div role="alert" className="mb-6 border-l-2 border-red-500 pl-3 flex items-start">
-                    <AlertCircle className="w-5 h-5 text-red-600 mr-3 shrink-0 mt-0.5" />
-                    <p className="text-sm text-red-700 font-medium">{error}</p>
+                  <div role="alert" className="mb-5 flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                    <p className="text-[14px] text-red-700 dark:text-red-400 font-medium">{error}</p>
                   </div>
                 )}
-                <form onSubmit={handleSignup} className="space-y-5">
+                <form onSubmit={handleSignup} className="space-y-4">
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 ml-1">Company / Organization Name</label>
+                    <label htmlFor="su-company" className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-1.5">Company or organization</label>
                     <div className="relative">
-                      <Building2 className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                      <input type="text" value={formData.companyName} onChange={(e) => setFormData({...formData, companyName: e.target.value})}
-                        className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-bold focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
+                      <Building2 className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)] pointer-events-none" />
+                      <input id="su-company" type="text" value={formData.companyName} onChange={(e) => setFormData({...formData, companyName: e.target.value})}
+                        className="w-full h-12 pl-11 pr-4 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-xl text-[15px] text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:border-transparent outline-none transition-all placeholder:text-[var(--color-text-faint)]"
                         placeholder="Acme Manufacturing Inc." required />
                     </div>
                   </div>
 
-                  <div className="h-px bg-slate-100" />
+                  <div className="h-px bg-[var(--color-border)]" />
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 ml-1">Your Full Name</label>
+                    <label htmlFor="su-name" className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-1.5">Your full name</label>
                     <div className="relative">
-                      <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                      <input type="text" value={formData.displayName} onChange={(e) => setFormData({...formData, displayName: e.target.value})}
-                        className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
-                        placeholder="John Doe" required />
+                      <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)] pointer-events-none" />
+                      <input id="su-name" type="text" value={formData.displayName} onChange={(e) => setFormData({...formData, displayName: e.target.value})}
+                        className="w-full h-12 pl-11 pr-4 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-xl text-[15px] text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:border-transparent outline-none transition-all placeholder:text-[var(--color-text-faint)]"
+                        placeholder="John Doe" autoComplete="name" required />
                     </div>
                   </div>
-
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 ml-1">Work Email</label>
+                    <label htmlFor="su-email" className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-1.5">Work email</label>
                     <div className="relative">
-                      <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                      <input type="email" value={formData.email} onChange={(e) => setFormData({...formData, email: e.target.value})}
-                        className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
-                        placeholder="name@company.com" required />
+                      <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)] pointer-events-none" />
+                      <input id="su-email" type="email" value={formData.email} onChange={(e) => setFormData({...formData, email: e.target.value})}
+                        className="w-full h-12 pl-11 pr-4 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-xl text-[15px] text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:border-transparent outline-none transition-all placeholder:text-[var(--color-text-faint)]"
+                        placeholder="name@company.com" autoComplete="email" required />
                     </div>
                   </div>
-
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 ml-1">Password</label>
+                    <label htmlFor="su-password" className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-1.5">Password</label>
                     <div className="relative">
-                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                      <input type="password" value={formData.password} onChange={(e) => setFormData({...formData, password: e.target.value})}
-                        className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
-                        placeholder="Create a strong password" minLength={6} required />
+                      <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)] pointer-events-none" />
+                      <input id="su-password" type="password" value={formData.password} onChange={(e) => setFormData({...formData, password: e.target.value})}
+                        className="w-full h-12 pl-11 pr-4 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-xl text-[15px] text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:border-transparent outline-none transition-all placeholder:text-[var(--color-text-faint)]"
+                        placeholder="At least 6 characters" autoComplete="new-password" minLength={6} required />
                     </div>
                   </div>
-
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 ml-1">Confirm Password</label>
+                    <label htmlFor="su-confirm" className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-1.5">Confirm password</label>
                     <div className="relative">
-                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                      <input type="password" value={formData.confirmPassword} onChange={(e) => setFormData({...formData, confirmPassword: e.target.value})}
-                        className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
-                        placeholder="Repeat your password" minLength={6} required />
+                      <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)] pointer-events-none" />
+                      <input id="su-confirm" type="password" value={formData.confirmPassword} onChange={(e) => setFormData({...formData, confirmPassword: e.target.value})}
+                        className="w-full h-12 pl-11 pr-4 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-xl text-[15px] text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:border-transparent outline-none transition-all placeholder:text-[var(--color-text-faint)]"
+                        placeholder="Repeat your password" autoComplete="new-password" minLength={6} required />
                     </div>
                   </div>
 
                   <button type="submit" disabled={loading}
-                    className="w-full py-4 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] font-bold rounded-xl shadow-lg transition-all flex items-center justify-center disabled:opacity-70 disabled:cursor-not-allowed mt-2">
+                    className="w-full h-12 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[15px] font-extrabold rounded-xl shadow-[0_12px_24px_-12px_var(--color-accent)] transition-colors flex items-center justify-center disabled:opacity-70 disabled:cursor-not-allowed mt-2">
                     {loading ? (
                       <><Loader2 className="w-5 h-5 animate-spin mr-2" /> Creating workspace…</>
                     ) : (
-                      <span className="flex items-center">Create Organization <ArrowRight className="w-5 h-5 ml-2" /></span>
+                      <span className="flex items-center">Create organization <ArrowRight className="w-5 h-5 ml-2" /></span>
                     )}
                   </button>
                 </form>
-              </div>
             </>
           )}
 
           {/* REQUEST ACCESS MODE */}
           {mode === "request-access" && (
             <>
-              <div className="bg-slate-900 px-8 py-6 border-b border-slate-800">
-                <h2 className="text-lg font-black text-white">Request Access</h2>
-                <p className="text-slate-400 text-sm mt-1">Your organization&rsquo;s admin will create your account</p>
-              </div>
-              <div className="p-8">
                 {requestSent ? (
                   <div className="text-center py-6">
-                    <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                      <svg className="w-8 h-8 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <div className="w-14 h-14 bg-emerald-50 dark:bg-emerald-950/40 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <svg className="w-7 h-7 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                       </svg>
                     </div>
-                    <h3 className="text-lg font-bold text-slate-900 mb-2">Request Sent</h3>
-                    <p className="text-slate-500 text-sm">Your organization&rsquo;s admin will receive your request and create your account. You&rsquo;ll get an email with login instructions.</p>
+                    <h3 className="text-[15px] font-bold text-[var(--color-text)] mb-1">Your request is with your admin</h3>
+                    <p className="text-[14px] text-[var(--color-text-muted)]">Your organization&rsquo;s admin will receive your request and create your account. You&rsquo;ll get an email with login instructions.</p>
                   </div>
                 ) : (
                   <>
                     {error && (
-                      <div role="alert" className="mb-6 border-l-2 border-red-500 pl-3 flex items-start">
-                        <AlertCircle className="w-5 h-5 text-red-600 mr-3 shrink-0 mt-0.5" />
-                        <p className="text-sm text-red-700 font-medium">{error}</p>
+                      <div role="alert" className="mb-5 flex items-start gap-2">
+                        <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                        <p className="text-[14px] text-red-700 dark:text-red-400 font-medium">{error}</p>
                       </div>
                     )}
-                    <p className="mb-6 text-sm text-slate-600 font-medium">This tells your organization&rsquo;s Admin, who creates your account.</p>
-                    <form onSubmit={handleRequestAccess} className="space-y-5">
-                      <div>
-                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 ml-1">Your Full Name</label>
-                        <div className="relative">
-                          <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                          <input type="text" value={requestData.displayName} onChange={(e) => setRequestData({...requestData, displayName: e.target.value})}
-                            className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
-                            placeholder="John Doe" required />
-                        </div>
-                      </div>
-                      <div>
-                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 ml-1">Your Work Email</label>
-                        <div className="relative">
-                          <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                          <input type="email" value={requestData.email} onChange={(e) => setRequestData({...requestData, email: e.target.value})}
-                            className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
-                            placeholder="name@company.com" required />
-                        </div>
-                      </div>
-                      <div>
-                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 ml-1">Organization Name</label>
-                        <div className="relative">
-                          <Building2 className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                          <input type="text" value={requestData.orgName} onChange={(e) => setRequestData({...requestData, orgName: e.target.value})}
-                            className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
-                            placeholder="Acme Manufacturing Inc." required />
-                        </div>
-                      </div>
+                    <p className="mb-5 text-[14px] text-[var(--color-text-muted)]">This tells your organization&rsquo;s Admin, who creates your account.</p>
+                    <form onSubmit={handleRequestAccess} className="space-y-4">
+                  <div>
+                    <label htmlFor="ra-name" className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-1.5">Your full name</label>
+                    <div className="relative">
+                      <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)] pointer-events-none" />
+                      <input id="ra-name" type="text" value={requestData.displayName} onChange={(e) => setRequestData({...requestData, displayName: e.target.value})}
+                        className="w-full h-12 pl-11 pr-4 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-xl text-[15px] text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:border-transparent outline-none transition-all placeholder:text-[var(--color-text-faint)]"
+                        placeholder="John Doe" autoComplete="name" required />
+                    </div>
+                  </div>
+                  <div>
+                    <label htmlFor="ra-email" className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-1.5">Your work email</label>
+                    <div className="relative">
+                      <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)] pointer-events-none" />
+                      <input id="ra-email" type="email" value={requestData.email} onChange={(e) => setRequestData({...requestData, email: e.target.value})}
+                        className="w-full h-12 pl-11 pr-4 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-xl text-[15px] text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:border-transparent outline-none transition-all placeholder:text-[var(--color-text-faint)]"
+                        placeholder="name@company.com" autoComplete="email" required />
+                    </div>
+                  </div>
+                  <div>
+                    <label htmlFor="ra-org" className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-1.5">Organization name</label>
+                    <div className="relative">
+                      <Building2 className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)] pointer-events-none" />
+                      <input id="ra-org" type="text" value={requestData.orgName} onChange={(e) => setRequestData({...requestData, orgName: e.target.value})}
+                        className="w-full h-12 pl-11 pr-4 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-xl text-[15px] text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:border-transparent outline-none transition-all placeholder:text-[var(--color-text-faint)]"
+                        placeholder="Acme Manufacturing Inc." required />
+                    </div>
+                  </div>
                       <button type="submit" disabled={loading}
-                        className="w-full py-4 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] font-bold rounded-xl shadow-lg transition-all flex items-center justify-center disabled:opacity-70 disabled:cursor-not-allowed">
+                        className="w-full h-12 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[15px] font-extrabold rounded-xl shadow-[0_12px_24px_-12px_var(--color-accent)] transition-colors flex items-center justify-center disabled:opacity-70 disabled:cursor-not-allowed">
                         {loading ? (
                           <><Loader2 className="w-5 h-5 animate-spin mr-2" /> Sending request…</>
                         ) : (
-                          <span className="flex items-center">Send Access Request <ArrowRight className="w-5 h-5 ml-2" /></span>
+                          <span className="flex items-center">Send access request <ArrowRight className="w-5 h-5 ml-2" /></span>
                         )}
                       </button>
                     </form>
                   </>
                 )}
-              </div>
             </>
           )}
-        </div>
+        </Card>
 
-        <div className="text-center mt-6">
-          <p className="text-sm text-slate-500">
-            Already have an account?{' '}
-            <Link href="/" className="text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] font-bold">Sign In</Link>
-          </p>
-        </div>
+        <p className="text-center text-[14px] text-[var(--color-text-muted)]">
+          Already have an account?{' '}
+          <Link href="/" className="text-[var(--color-text)] font-bold underline underline-offset-2">Sign in</Link>
+        </p>
+        </PageBody>
       </div>
     </div>
   );

@@ -27,9 +27,9 @@ export default function TrialBanner() {
       : "";
 
   return (
-    <p className="px-4 py-1 text-xs text-center text-[var(--color-text-muted)] bg-[var(--color-surface)] border-b border-[var(--color-border)]">
+    <p className="px-4 py-1.5 text-[12px] text-center text-[var(--color-text-muted)] bg-[var(--color-canvas)]">
       <span className={tone}>{label}</span>{" "}
-      <Link href="/admin/billing" className="font-semibold text-[var(--color-accent)] hover:underline">
+      <Link href="/admin/billing" className="font-bold text-[var(--color-text)] underline underline-offset-2">
         Subscribe
       </Link>
     </p>

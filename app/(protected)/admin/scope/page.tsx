@@ -15,7 +15,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
   Loader2, Plus, ChevronRight, ChevronDown, Archive, Pencil,
-  Factory, Layers, Cpu, AlertTriangle, Lock, Save, X,
+  Factory, Layers, Cpu, AlertTriangle, Save, X,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import {
@@ -27,7 +27,9 @@ import {
 import type { Plant, Unit, PlantSystem } from "@/types/schema";
 import DuplicateAwareInput from "@/components/ui/DuplicateAwareInput";
 import { translatePostgresError } from "@/lib/inputValidation";
-import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
+import { plural } from "@/components/admin/band";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
@@ -130,52 +132,56 @@ export default function ScopePage() {
   // ─── Render ─────────────────────────────────────────────────
 
   if (!activeOrgId) {
-    return <div className="p-6 text-sm text-[var(--color-text-muted)]">No active organization.</div>;
+    return (
+      <PageShell width="form">
+        <PageHero kicker="Admin · Operational scope" title="Operational scope" sub="No active organization." size="md" overlap={false} />
+      </PageShell>
+    );
   }
 
+  const unitTotal = tree.reduce((n, p) => n + p.units.length, 0);
+  const answer = loading ? "Operational scope"
+    : tree.length === 0 ? "No scope defined yet."
+    : `${plural(tree.length, "plant")}, ${plural(unitTotal, "unit")}.`;
+
   return (
-    <PageShell width="form" className="space-y-4">
-      {/* Header */}
-      <PageHeaderBar
-        icon={Factory}
-        title="Operational Scope"
-        subtitle={loading ? "Plants, units and systems that documents and equipment can belong to." : `${tree.length} plant${tree.length === 1 ? "" : "s"} · ${tree.reduce((n, p) => n + p.units.length, 0)} units. Scope is optional on each document and asset.`}
-        actions={
-          <div className="flex items-center gap-2 text-xs">
-            <label className="flex items-center gap-1.5 text-[var(--color-text-muted)]">
-              <input
-                type="checkbox"
-                checked={showArchived}
-                onChange={(e) => setShowArchived(e.target.checked)}
-              />
-              Show archived
-            </label>
-            {canEdit && addingChildOf === null && (
-              <Button size="sm" onClick={() => setAddingChildOf({ kind: "root" })}>
-                <Plus className="w-3.5 h-3.5" /> Add Plant
-              </Button>
-            )}
-          </div>
+    <PageShell width="form">
+      <PageHero
+        kicker="Admin · Operational scope"
+        title={answer}
+        size="md"
+        sub={<>Plants, units and systems that documents and equipment can belong to. Scope is optional on each one.{!canEdit && " Read only: Admin, Manager, Supervisor or DocCtrl edit the scope."}</>}
+        tools={
+          <label className={`${heroQuiet} cursor-pointer`}>
+            <input
+              type="checkbox"
+              checked={showArchived}
+              onChange={(e) => setShowArchived(e.target.checked)}
+              className="accent-[var(--color-ink-fg)]"
+            />
+            Show archived
+          </label>
         }
+        primary={canEdit && addingChildOf === null ? (
+          <button type="button" className={heroPrimary} onClick={() => setAddingChildOf({ kind: "root" })}>
+            <Plus className="w-4 h-4" /> Add plant
+          </button>
+        ) : undefined}
       />
 
-      {!canEdit && (
-        <p className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
-          <Lock className="w-3.5 h-3.5" />
-          Read only. Admin, Manager, Supervisor or DocCtrl edit the scope.
-        </p>
-      )}
-
+      <PageBody>
       {error && (
-        <p role="alert" className="flex items-center gap-2 text-xs text-red-700 dark:text-red-400 border-l-2 border-red-500 pl-3">
-          <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> {error}
-        </p>
+        <Card>
+          <p role="alert" className="flex items-center gap-2 text-[14px] text-red-700 dark:text-red-400">
+            <AlertTriangle className="w-4 h-4 shrink-0" /> {error}
+          </p>
+        </Card>
       )}
 
       {/* New-plant inline form */}
       {addingChildOf?.kind === "root" && (
         <NewScopeRowForm
-          title="New Plant"
+          title="New plant"
           fields={["name", "code", "description", "location"]}
           onCancel={() => setAddingChildOf(null)}
           onSave={(values) => onAddPlant(values as { name: string; code: string; description: string; location: string })}
@@ -185,24 +191,26 @@ export default function ScopePage() {
 
       {/* Tree */}
       {loading ? (
-        <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)] py-8 justify-center">
-          <Spinner size="xs" /> Loading scope tree…
-        </div>
+        <Card>
+          <div className="flex items-center gap-2 text-[13px] text-[var(--color-text-muted)] py-6 justify-center">
+            <Spinner size="xs" /> Loading the scope tree…
+          </div>
+        </Card>
       ) : tree.length === 0 ? (
-        <div className="text-sm text-[var(--color-text-muted)] py-12 text-center border border-dashed border-[var(--color-border-strong)] rounded-xl px-6 space-y-2">
-          <div className="font-bold text-[var(--color-text)]">No operational scope defined yet.</div>
-          <div className="text-xs text-[var(--color-text-muted)] max-w-md mx-auto">
+        <Card className="text-[14px] text-[var(--color-text-muted)] py-10 text-center space-y-2">
+          <div className="font-bold text-[var(--color-text)]">Start with one plant</div>
+          <div className="max-w-md mx-auto">
             Define your <b>plants</b> (sites), <b>units</b> (process units inside each plant), and <b>systems</b> (logical sub-groups like &ldquo;Overhead System&rdquo;).
             Documents and equipment can then be scoped to this tree so searches like &ldquo;all P&IDs in the FCC&rdquo; just work.
-            {canEdit && " Click 'Add Plant' to start."}
+            {canEdit && " Press Add plant to start."}
           </div>
-        </div>
+        </Card>
       ) : (
-        <div className="space-y-1">
+        <Card pad={false} className="overflow-hidden divide-y divide-[var(--color-border)]">
           {tree.map(({ plant, units }) => {
             const plantOpen = expandedPlants.has(plant.id!);
             return (
-              <div key={plant.id} className="border border-[var(--color-border)] rounded-xl bg-[var(--color-surface)] overflow-hidden">
+              <div key={plant.id}>
                 {/* Plant row */}
                 <ScopeRow
                   icon={<Factory className="w-4 h-4 text-[var(--color-text-muted)]" />}
@@ -218,7 +226,7 @@ export default function ScopePage() {
                   archived={!!plant.archived}
                   canEdit={canEdit}
                   onAdd={() => setAddingChildOf({ kind: "plant", parentId: plant.id })}
-                  addLabel="Add Unit"
+                  addLabel="Add unit"
                   onEdit={() => setEditing({ kind: "plant", row: plant })}
                   onArchive={() => onArchive("plant", plant.id!)}
                 />
@@ -261,7 +269,7 @@ export default function ScopePage() {
                               archived={!!unit.archived}
                               canEdit={canEdit}
                               onAdd={() => setAddingChildOf({ kind: "unit", parentId: unit.id })}
-                              addLabel="Add System"
+                              addLabel="Add system"
                               onEdit={() => setEditing({ kind: "unit", row: unit })}
                               onArchive={() => onArchive("unit", unit.id!)}
                             />
@@ -304,8 +312,9 @@ export default function ScopePage() {
               </div>
             );
           })}
-        </div>
+        </Card>
       )}
+      </PageBody>
 
       {/* Edit modal */}
       {editing && (
@@ -354,12 +363,12 @@ function ScopeRow({
       {canEdit && (
         <div className="flex items-center gap-1 shrink-0">
           {onAdd && addLabel && (
-            <button onClick={onAdd} title={addLabel} className="p-1.5 rounded text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] transition-colors">
+            <button onClick={onAdd} title={addLabel} className="p-1.5 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
               <Plus className="w-3.5 h-3.5" />
             </button>
           )}
           {onEdit && (
-            <button onClick={onEdit} title="Edit" className="p-1.5 rounded text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] transition-colors">
+            <button onClick={onEdit} title="Edit" className="p-1.5 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
               <Pencil className="w-3.5 h-3.5" />
             </button>
           )}
@@ -403,9 +412,9 @@ function NewScopeRowForm({
   };
 
   return (
-    <form onSubmit={onSubmit} className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-3 space-y-2">
-      <div className="text-[11px] font-bold text-[var(--color-text)] uppercase tracking-wider">{title}</div>
-      <div className="grid grid-cols-2 gap-2">
+    <form onSubmit={onSubmit} className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] p-4 space-y-2.5">
+      <div className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.14em]">{title}</div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         {fields.map((f) => {
           if (f === "code" && codeCheck) {
             return (
@@ -427,7 +436,8 @@ function NewScopeRowForm({
               placeholder={f === "name" ? "Name (required)" : f[0].toUpperCase() + f.slice(1)}
               value={values[f] ?? ""}
               onChange={(e) => setValues((v) => ({ ...v, [f]: e.target.value }))}
-              className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5 bg-[var(--color-surface)] text-[var(--color-text)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-ring)]"
+              aria-label={f === "name" ? "Name" : f[0].toUpperCase() + f.slice(1)}
+              className="h-9 text-[13px] border border-[var(--color-border-strong)] rounded-lg px-2.5 bg-[var(--color-surface)] text-[var(--color-text)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-ring)]"
             />
           );
         })}
@@ -480,7 +490,7 @@ function EditScopeRowModal({
   const kindLabel = target.kind === "plant" ? "Plant" : target.kind === "unit" ? "Unit" : "System";
 
   return (
-    <div role="dialog" aria-modal="true" className="fixed inset-0 z-[200] bg-slate-900/50 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-[200] bg-[var(--color-ink)]/60 animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <form onSubmit={onSubmit} className="bg-[var(--color-surface)] rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-3 animate-in fade-in zoom-in-95">
         <div className="flex items-center justify-between">
           <h2 className="font-black text-[var(--color-text)]">Edit {kindLabel}</h2>

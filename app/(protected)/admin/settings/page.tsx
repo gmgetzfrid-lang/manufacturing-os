@@ -12,13 +12,15 @@
 // org-wide categories from here directly.
 
 import React, { useEffect, useState } from "react";
-import { Settings, Loader2, AlertTriangle, Zap, Mail, Briefcase, Users, CheckCircle2, XCircle, ExternalLink, RefreshCw, Hash, Save } from "lucide-react";
+import { Loader2, AlertTriangle, Zap, Mail, Briefcase, Users, CheckCircle2, XCircle, ExternalLink, RefreshCw, Hash, Save } from "lucide-react";
 import Link from "next/link";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { kickEmailDrain } from "@/lib/notifications";
 import { formatTicketNumber, getTicketNumberConfig, TICKET_NUMBER_DEFAULTS, type TicketNumberConfig } from "@/lib/ticketNumber";
-import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card } from "@/components/ui/PageHero";
+import { plural } from "@/components/admin/band";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import { appAlert } from "@/components/providers/DialogProvider";
 
@@ -130,120 +132,120 @@ export default function WorkspaceSettingsPage() {
 
   if (!canRead) {
     return (
-      <div className="p-8">
-        <div className="max-w-3xl mx-auto bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-6 shadow-sm flex items-start gap-3">
-          <Settings className="w-6 h-6 text-[var(--color-text-muted)] shrink-0" />
-          <div>
-            <h1 className="text-xl font-black text-[var(--color-text)]">Workspace Settings</h1>
-            <p className="text-sm text-[var(--color-text-muted)] mt-1">Only Admin and Doc Control see workspace settings.</p>
-          </div>
-        </div>
-      </div>
+      <PageShell width="form">
+        <PageHero kicker="Admin · Workspace settings" title="Admin and Doc Control only." sub="Only Admin and Doc Control see workspace settings." size="md" overlap={false} />
+      </PageShell>
     );
   }
 
   if (loading) {
-    return <PageShell width="form"><LoadingBlock what="workspace settings" /></PageShell>;
+    return <PageShell width="form"><PageHero kicker="Admin · Workspace settings" title="Workspace settings" size="md" overlap={false} /><LoadingBlock what="workspace settings" /></PageShell>;
   }
+
+  // The answer: what needs attention here, else what the workspace holds.
+  const answer = loadError && !org ? "Couldn't load the settings."
+    : failedEmails ? `${plural(failedEmails, "email")} didn't send.`
+    : emailQueueStatus === "no-key" ? "Email isn't set up yet."
+    : memberCount == null || libraryCount == null ? "Workspace settings"
+    : `${plural(memberCount, "member")}, ${plural(libraryCount, "library", "libraries")}.`;
 
   return (
     <PageShell width="form">
-      <PageHeaderBar icon={Settings} title="Workspace Settings"
-        subtitle={org ? `${org.name} · ${memberCount ?? 0} members · ${libraryCount ?? 0} libraries${failedEmails ? ` · ${failedEmails} email${failedEmails === 1 ? "" : "s"} not sent` : ""}` : undefined} />
+      <PageHero
+        kicker={<>Admin · Workspace settings{org?.name ? ` · ${org.name}` : ""}</>}
+        title={answer}
+        size="md"
+        sub="Request numbering, email delivery and the database check. Saved changes apply to everyone in the workspace."
+      />
 
-        {loadError && (
-          <p role="alert" className="mb-4 border-l-2 border-red-500 pl-3 text-xs text-red-700 dark:text-red-400">
-            Couldn&apos;t load the workspace settings: {loadError}{" "}
-            <button type="button" onClick={() => setReloadTick((n) => n + 1)} className="font-bold underline">Try again</button>
-          </p>
-        )}
-
+      <PageBody>
         {/* Identity */}
-        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
-          <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3">Workspace</div>
+        <Card label="Workspace">
+          {loadError && (
+            <p role="alert" className="mb-3 text-[13px] text-red-700 dark:text-red-400">
+              Couldn&apos;t load the workspace settings: {loadError}{" "}
+              <button type="button" onClick={() => setReloadTick((n) => n + 1)} className="font-bold underline">Try again</button>
+            </p>
+          )}
           <Row icon={Briefcase} label="Name" value={org?.name ?? "-"} />
           <Row icon={Users} label="Members" value={memberCount?.toString() ?? "-"} />
           <Row icon={Briefcase} label="Libraries" value={libraryCount?.toString() ?? "-"} />
           {org?.subscribed_plan && <Row icon={Briefcase} label="Plan" value={org.subscribed_plan} />}
           {org?.subscription_status && <Row icon={Briefcase} label="Status" value={org.subscription_status} />}
-        </div>
+        </Card>
 
         {/* Request numbering */}
-        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
-          <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3 flex items-center gap-1.5">
-            <Hash className="w-3.5 h-3.5" /> Request Numbering
-          </div>
-          <p className="text-xs text-[var(--color-text-muted)] mb-4">
+        <Card label={<span className="inline-flex items-center gap-1.5"><Hash className="w-3.5 h-3.5" /> Request numbering</span>}>
+          <p className="text-[13px] text-[var(--color-text-muted)] mb-4">
             How new request numbers are built. The count restarts each year and never repeats, even when two are sent at once.
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <label className="block">
-              <span className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Workspace code</span>
+              <span className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em]">Workspace code</span>
               <input
                 value={numbering.prefix}
                 onChange={(e) => { setNumbering((n) => ({ ...n, prefix: e.target.value.toUpperCase() })); setNumSaved(false); }}
                 placeholder="e.g. KE"
                 maxLength={8}
-                className="mt-1 w-full px-3 py-2 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg text-sm font-bold text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+                className="mt-1 w-full h-10 px-3 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-lg text-[14px] font-semibold text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
               />
             </label>
             <label className="block">
-              <span className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Record code</span>
+              <span className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em]">Record code</span>
               <input
                 value={numbering.recordCode}
                 onChange={(e) => { setNumbering((n) => ({ ...n, recordCode: e.target.value.toUpperCase() })); setNumSaved(false); }}
                 placeholder="DDRT"
                 maxLength={10}
-                className="mt-1 w-full px-3 py-2 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg text-sm font-bold text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+                className="mt-1 w-full h-10 px-3 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-lg text-[14px] font-semibold text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
               />
             </label>
             <label className="block">
-              <span className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Number digits</span>
+              <span className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em]">Number digits</span>
               <input
                 type="number" min={1} max={9}
                 value={numbering.pad}
                 onChange={(e) => { setNumbering((n) => ({ ...n, pad: Math.min(9, Math.max(1, parseInt(e.target.value || "4", 10))) })); setNumSaved(false); }}
-                className="mt-1 w-full px-3 py-2 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg text-sm font-bold text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+                className="mt-1 w-full h-10 px-3 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-lg text-[14px] font-semibold text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
               />
             </label>
           </div>
           <div className="mt-4 flex items-center justify-between">
-            <div className="text-xs text-[var(--color-text-muted)]">
+            <div className="text-[13px] text-[var(--color-text-muted)]">
               Preview:{" "}
               <span className="font-mono font-bold text-[var(--color-text)]">{formatTicketNumber(numbering, new Date().getFullYear(), 1)}</span>
             </div>
             <button
               onClick={() => void saveNumbering()}
               disabled={savingNum}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
+              type="button"
+              className="inline-flex items-center gap-1.5 h-10 px-4 rounded-xl text-[14px] font-extrabold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] shadow-[0_12px_24px_-12px_var(--color-accent)] disabled:opacity-50"
             >
               {savingNum ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : numSaved ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
-              {numSaved ? "Saved" : "Save"}
+              {numSaved ? "Saved" : "Save numbering"}
             </button>
           </div>
-        </div>
+        </Card>
 
         {/* AI status */}
-        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
-          <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3">AI Assistance</div>
+        <Card label="AI assistance">
           <div className="flex items-start gap-3">
             <div className="p-2.5 rounded-lg border bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text-muted)]">
               <Zap className="w-4 h-4" />
             </div>
             <div className="flex-1">
-              <span className="text-sm font-bold text-[var(--color-text)]">Per-user keys in Knowledge Libraries</span>
-              <p className="text-xs text-[var(--color-text-muted)] mt-1">
+              <span className="text-[14px] font-bold text-[var(--color-text)]">Per-user keys in Knowledge Libraries</span>
+              <p className="text-[13px] text-[var(--color-text-muted)] mt-1">
                 AI runs only inside Knowledge Libraries, with a key each person connects and only
                 after they accept the data-use agreement. Use is counted per person with a monthly
                 spend limit. Nothing runs over your data on its own. Set providers in Knowledge, AI settings.
               </p>
             </div>
           </div>
-        </div>
+        </Card>
 
         {/* Email delivery */}
-        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
-          <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3">Email Delivery</div>
+        <Card label="Email delivery">
           <div className="flex items-start gap-3">
             <div className={`p-2.5 rounded-lg border ${
               emailQueueStatus === "ok" ? "bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-950/40 dark:border-emerald-900 dark:text-emerald-300"
@@ -253,16 +255,16 @@ export default function WorkspaceSettingsPage() {
               <Mail className="w-4 h-4" />
             </div>
             <div className="flex-1">
-              <div className="text-sm font-bold text-[var(--color-text)] inline-flex items-center gap-2">
+              <div className="text-[14px] font-bold text-[var(--color-text)] inline-flex items-center gap-2 flex-wrap">
                 Outbound email
                 {emailQueueStatus === "ok" && <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-400"><CheckCircle2 className="w-3 h-3" /> Set up</span>}
                 {emailQueueStatus === "no-key" && <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 dark:text-amber-400"><XCircle className="w-3 h-3" /> No RESEND_API_KEY</span>}
               </div>
-              <p className="text-xs text-[var(--color-text-muted)] mt-1">
+              <p className="text-[13px] text-[var(--color-text-muted)] mt-1">
                 Resend sends outbound email. Without RESEND_API_KEY, emails wait as <code className="text-[11px] bg-[var(--color-surface-2)] px-1 rounded">queued</code> and all go out once the key is set.
-                {emailQueueStatus === "no-key" && <> Set <code className="text-[11px] bg-[var(--color-surface-2)] px-1 rounded">RESEND_API_KEY</code> and <code className="text-[11px] bg-[var(--color-surface-2)] px-1 rounded">RESEND_FROM_EMAIL</code> in the server settings.</>}the user&apos;s notification settings page.
+                {emailQueueStatus === "no-key" && <> Set <code className="text-[11px] bg-[var(--color-surface-2)] px-1 rounded">RESEND_API_KEY</code> and <code className="text-[11px] bg-[var(--color-surface-2)] px-1 rounded">RESEND_FROM_EMAIL</code> in the server settings.</>} Each person picks what they get on their own notification settings page.
               </p>
-              <Link href="/settings/notifications" className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] mt-2">
+              <Link href="/settings/notifications" className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-text)] underline underline-offset-2 mt-2">
                 Open my notification preferences <ExternalLink className="w-2.5 h-2.5" />
               </Link>
             </div>
@@ -286,13 +288,13 @@ export default function WorkspaceSettingsPage() {
             </div>
           )}
           {failedEmails === 0 && (
-            <div className="mt-3 text-[11px] text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Nothing failed to send.</div>
+            <div className="mt-3 text-[13px] text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" /> Nothing failed to send.</div>
           )}
-        </div>
+        </Card>
 
-        {/* Database health — are the hand-applied migrations actually applied? */}
+        {/* Database health: are the hand-applied migrations actually applied? */}
         <SchemaHealthCard orgId={activeOrgId} />
-
+      </PageBody>
     </PageShell>
   );
 }
@@ -335,17 +337,16 @@ function SchemaHealthCard({ orgId }: { orgId: string | null }) {
   useEffect(() => { void check(); }, [check]);
 
   return (
-    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
-      <div className="flex items-center justify-between mb-3">
-        <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Database health</div>
+    <Card label="Database health" action={
         <button
+          type="button"
           onClick={() => void check()}
           disabled={state.phase === "loading"}
-          className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] disabled:opacity-50"
+          className="inline-flex items-center gap-1 text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-50"
         >
-          <RefreshCw className={`w-3 h-3 ${state.phase === "loading" ? "animate-spin" : ""}`} /> Re-check
+          <RefreshCw className={`w-3.5 h-3.5 ${state.phase === "loading" ? "animate-spin" : ""}`} /> Re-check
         </button>
-      </div>
+      }>
 
       {state.phase === "loading" || state.phase === "idle" ? (
         <div className="text-xs text-[var(--color-text-muted)] inline-flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking every table the app expects…</div>
@@ -382,7 +383,7 @@ function SchemaHealthCard({ orgId }: { orgId: string | null }) {
           </p>
         </div>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -390,8 +391,8 @@ function Row({ icon: Icon, label, value }: { icon: React.ComponentType<{ classNa
   return (
     <div className="flex items-center gap-3 py-1.5">
       <Icon className="w-4 h-4 text-[var(--color-text-faint)]" />
-      <span className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest w-24">{label}</span>
-      <span className="text-sm text-[var(--color-text)]">{value}</span>
+      <span className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] w-24">{label}</span>
+      <span className="text-[14px] text-[var(--color-text)]">{value}</span>
     </div>
   );
 }

@@ -40,8 +40,9 @@ export default function UpdatePill() {
   return (
     <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[100] animate-pop">
       <button
+        type="button"
         onClick={() => window.location.reload()}
-        className="inline-flex items-center gap-2 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-4 py-2 text-xs font-bold text-[var(--color-text)] shadow-lg hover:bg-[var(--color-surface-2)] transition-colors"
+        className="inline-flex items-center gap-2 rounded-full bg-[var(--color-ink)] px-4 h-10 text-[13px] font-semibold text-[var(--color-ink-fg)] shadow-[var(--shadow-card)] hover:bg-[var(--color-ink-2)] transition-colors"
       >
         <RefreshCw className="w-3.5 h-3.5" />
         A new version is ready. Tap to reload.

@@ -6,7 +6,6 @@ import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
 import { OrgDraftingSettings, FormFieldConfig, SelectOption, CustomCategoryConfig, CustomFieldDef, CustomFieldType } from '@/types/schema';
 import {
-  Settings,
   Loader2,
   Plus,
   Trash2,
@@ -15,8 +14,9 @@ import {
   ArrowUp,
   ArrowDown
 } from 'lucide-react';
-import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
-import { Button } from '@/components/ui/Button';
+import { PageShell } from '@/components/ui/PageShell';
+import { PageHero, PageBody, heroPrimary } from '@/components/ui/PageHero';
+import { plural } from '@/components/admin/band';
 import { Input } from '@/components/ui/Field';
 import LoadingBlock from '@/components/ui/LoadingBlock';
 import { appAlert, appConfirm } from '@/components/providers/DialogProvider';
@@ -154,13 +154,14 @@ export default function DraftingConfigPage() {
   };
 
   if (loading) {
-    return <PageShell width="work"><LoadingBlock what="the request form settings" /></PageShell>;
+    return <PageShell width="work"><PageHero kicker="Admin · Request forms" title="Request forms" overlap={false} /><LoadingBlock what="the request form settings" /></PageShell>;
   }
 
   if (!settings) {
     return (
       <PageShell width="work">
-        <p role="alert" className="border-l-2 border-red-500 pl-3 py-1 text-sm text-red-700 dark:text-red-400">
+        <PageHero kicker="Admin · Request forms" title="Couldn't load the form settings." overlap={false} />
+        <p role="alert" className="px-1 text-[14px] text-red-700 dark:text-red-400">
           Couldn&apos;t load the request form settings{loadError ? `: ${loadError}` : "."}{" "}
           <button type="button" onClick={() => setReloadTick((n) => n + 1)} className="font-bold underline">Try again</button>
         </p>
@@ -168,43 +169,48 @@ export default function DraftingConfigPage() {
     );
   }
 
+  const extra = (settings.customCategories ?? []).length;
+  const answer = `${plural(settings.requestTypes.options.length, "request type")}, ${plural(settings.units.options.length, "unit")}.`;
+
   return (
     <PageShell width="work">
-        <PageHeaderBar
-          icon={Settings}
-          title="Drafting Portal Configuration"
-          subtitle="Customize the request form fields for your organization."
-          actions={
-            <Button onClick={handleSave} disabled={saving}>
+        <PageHero
+          kicker="Admin · Request forms"
+          title={answer}
+          sub={<>{plural(settings.priorities.options.length, "priority level")}{extra > 0 ? `, ${plural(extra, "custom section")}` : ""}. What a drafting request asks for; changes apply to new requests once saved.</>}
+          primary={
+            <button type="button" onClick={handleSave} disabled={saving} className={heroPrimary}>
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-              Save Changes
-            </Button>
+              Save changes
+            </button>
           }
         />
 
-        <div className="space-y-8">
-          
+        <PageBody>
+
           {/* SECTION: REQUEST TYPES */}
           <ConfigSection 
-            title="Request Types"
+            title="Request types"
             desc="Define the categories of work available (e.g. ISO, RFI)."
             config={settings.requestTypes}
             onLabelChange={(val) => updateSection('requestTypes', { label: val })}
             onAddOption={() => addOption('requestTypes')}
             onRemoveOption={(i) => removeOption('requestTypes', i)}
             renderOption={(opt, i) => (
-              <div className="flex gap-2 w-full">
+              <div className="flex gap-2 flex-1 min-w-0">
                 <input 
                   value={opt.label}
                   onChange={(e) => updateOption('requestTypes', i, 'label', e.target.value)}
-                  className="flex-1 p-2 border border-[var(--color-border)] rounded text-sm"
-                  placeholder="Display Label"
+                  className="flex-1 min-w-0 h-10 px-2.5 border border-[var(--color-border)] rounded-lg text-[14px]"
+                  placeholder="Display label"
+                  aria-label="Display label"
                 />
                 <input 
                   value={opt.value}
                   onChange={(e) => updateOption('requestTypes', i, 'value', e.target.value)}
-                  className="w-24 sm:w-32 p-2 border border-[var(--color-border)] rounded text-sm font-mono bg-[var(--color-surface-2)]"
+                  className="w-20 sm:w-32 shrink-0 h-10 px-2.5 border border-[var(--color-border)] rounded-lg text-[13px] font-mono bg-[var(--color-surface-2)]"
                   placeholder="Value (ID)"
+                  aria-label="Value (ID)"
                 />
               </div>
             )}
@@ -212,25 +218,27 @@ export default function DraftingConfigPage() {
 
           {/* SECTION: UNITS */}
           <ConfigSection 
-            title="Units / Areas"
+            title="Units and areas"
             desc="Define the list of selectable plant areas or departments."
             config={settings.units}
             onLabelChange={(val) => updateSection('units', { label: val })}
             onAddOption={() => addOption('units')}
             onRemoveOption={(i) => removeOption('units', i)}
             renderOption={(opt, i) => (
-              <div className="flex gap-2 w-full">
+              <div className="flex gap-2 flex-1 min-w-0">
                 <input 
                   value={opt.label}
                   onChange={(e) => updateOption('units', i, 'label', e.target.value)}
-                  className="flex-1 p-2 border border-[var(--color-border)] rounded text-sm"
-                  placeholder="Unit Name"
+                  className="flex-1 min-w-0 h-10 px-2.5 border border-[var(--color-border)] rounded-lg text-[14px]"
+                  placeholder="Unit name"
+                  aria-label="Unit name"
                 />
                 <input 
                   value={opt.value}
                   onChange={(e) => updateOption('units', i, 'value', e.target.value)}
-                  className="w-24 sm:w-32 p-2 border border-[var(--color-border)] rounded text-sm font-mono bg-[var(--color-surface-2)]"
+                  className="w-20 sm:w-32 shrink-0 h-10 px-2.5 border border-[var(--color-border)] rounded-lg text-[13px] font-mono bg-[var(--color-surface-2)]"
                   placeholder="Code"
+                  aria-label="Code"
                 />
               </div>
             )}
@@ -244,38 +252,40 @@ export default function DraftingConfigPage() {
 
           {/* SECTION: PRIORITIES */}
           <ConfigSection
-            title="Priority Levels"
+            title="Priority levels"
             desc="Define urgency levels. Value must be numeric (1 = Highest)."
             config={settings.priorities}
             onLabelChange={(val) => updateSection('priorities', { label: val })}
             onAddOption={() => addOption('priorities')}
             onRemoveOption={(i) => removeOption('priorities', i)}
             renderOption={(opt, i) => (
-              <div className="flex gap-2 w-full">
+              <div className="flex gap-2 flex-1 min-w-0">
                 <input 
                   value={opt.label}
                   onChange={(e) => updateOption('priorities', i, 'label', e.target.value)}
-                  className="flex-1 p-2 border border-[var(--color-border)] rounded text-sm"
-                  placeholder="Level Description"
+                  className="flex-1 min-w-0 h-10 px-2.5 border border-[var(--color-border)] rounded-lg text-[14px]"
+                  placeholder="Level description"
+                  aria-label="Level description"
                 />
                 <input 
                   type="number"
                   value={opt.value}
                   onChange={(e) => updateOption('priorities', i, 'value', Number(e.target.value))}
-                  className="w-24 p-2 border border-[var(--color-border)] rounded text-sm font-mono bg-[var(--color-surface-2)]"
-                  placeholder="Level #"
+                  className="w-20 shrink-0 h-10 px-2.5 border border-[var(--color-border)] rounded-lg text-[13px] font-mono bg-[var(--color-surface-2)]"
+                  placeholder="Level number"
+                  aria-label="Level number"
                 />
               </div>
             )}
           />
 
           {/* SECTION: REQUEST ROUTING */}
-          <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm overflow-hidden">
-            <div className="px-6 py-4 bg-[var(--color-surface-2)] border-b border-[var(--color-border)]">
-              <h3 className="font-bold text-[var(--color-text)]">Request Routing</h3>
-              <p className="text-xs text-[var(--color-text-muted)]">Who gets notified when a new request needs approval or assignment.</p>
+          <div className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden">
+            <div className="px-5 sm:px-6 pt-5 pb-3 border-b border-[var(--color-border)]">
+              <h3 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Request routing</h3>
+              <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">Who gets notified when a new request needs approval or assignment.</p>
             </div>
-            <div className="p-6">
+            <div className="p-5 sm:p-6">
               <label className="flex items-start gap-3 cursor-pointer">
                 <input
                   type="checkbox"
@@ -286,7 +296,7 @@ export default function DraftingConfigPage() {
                       routing: { ...settings.routing, adminsAlsoReceiveWhenSupervisorSet: e.target.checked },
                     })
                   }
-                  className="mt-0.5 w-4 h-4 accent-slate-900"
+                  className="mt-0.5 w-4 h-4 accent-[var(--color-text)]"
                 />
                 <span className="text-sm text-[var(--color-text)]">
                   <span className="font-bold">Keep Admins notified even when a Drafting Supervisor is set</span>
@@ -301,7 +311,7 @@ export default function DraftingConfigPage() {
             </div>
           </div>
 
-        </div>
+        </PageBody>
     </PageShell>
   );
 }
@@ -324,16 +334,16 @@ function ConfigSection({
   renderOption: (opt: SelectOption, idx: number) => React.ReactNode;
 }) {
   return (
-    <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm overflow-hidden">
-      <div className="px-6 py-4 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] flex justify-between items-center">
+    <div className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden">
+      <div className="px-5 sm:px-6 pt-5 pb-3 border-b border-[var(--color-border)] flex justify-between items-center">
         <div>
-          <h3 className="font-bold text-[var(--color-text)]">{title}</h3>
-          <p className="text-xs text-[var(--color-text-muted)]">{desc}</p>
+          <h3 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{title}</h3>
+          <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">{desc}</p>
         </div>
       </div>
-      <div className="p-6">
+      <div className="p-5 sm:p-6">
         <div className="mb-6">
-          <label className="block text-xs font-bold text-[var(--color-text-muted)] uppercase mb-2">Form Label</label>
+          <label className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-2">Form label</label>
           <Input
             value={config.label}
             onChange={(e) => onLabelChange(e.target.value)}
@@ -341,13 +351,15 @@ function ConfigSection({
           />
         </div>
         
-        <label className="block text-xs font-bold text-[var(--color-text-muted)] uppercase mb-2">Dropdown Options</label>
+        <label className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-2">Dropdown options</label>
         <div className="space-y-2">
           {config.options.map((opt, i) => (
             <div key={i} className="flex items-center gap-2 group">
-              <GripVertical className="w-4 h-4 text-[var(--color-text-faint)] cursor-move" />
+              <GripVertical className="w-4 h-4 text-[var(--color-text-faint)] cursor-move shrink-0 max-sm:hidden" />
               {renderOption(opt, i)}
               <button 
+                type="button"
+                aria-label={`Remove option ${i + 1}`}
                 onClick={() => onRemoveOption(i)}
                 className="p-2 text-[var(--color-text-faint)] hover:text-red-500 hover:bg-[var(--color-surface-2)] rounded transition-colors"
               >
@@ -357,10 +369,11 @@ function ConfigSection({
           ))}
         </div>
         <button
+          type="button"
           onClick={onAddOption}
-          className="mt-4 flex items-center text-xs font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-colors"
+          className="mt-4 flex items-center text-[13px] font-bold text-[var(--color-text)] hover:underline transition-colors"
         >
-          <Plus className="w-4 h-4 mr-1" /> Add Option
+          <Plus className="w-4 h-4 mr-1" /> Add option
         </button>
       </div>
     </div>
@@ -399,24 +412,25 @@ function CustomCategoriesSection({
   };
 
   return (
-    <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm overflow-hidden">
-      <div className="px-6 py-4 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] flex flex-wrap justify-between items-center gap-3">
-        <div>
-          <h3 className="font-bold text-[var(--color-text)]">Custom Categories</h3>
-          <p className="text-xs text-[var(--color-text-muted)]">
+    <div className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden">
+      <div className="px-5 sm:px-6 pt-5 pb-3 border-b border-[var(--color-border)] flex flex-wrap justify-between items-center gap-3">
+        <div className="min-w-0 flex-1 basis-64">
+          <h3 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Custom categories</h3>
+          <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">
             Add sections with your own fields so requesters can capture
             org-specific context (e.g. <i>Inspection Type</i>, <i>Equipment Tag</i>,
             <i> MOC Phase</i>). Each section becomes its own card on the request form.
           </p>
         </div>
         <button
+          type="button"
           onClick={addCategory}
-          className="inline-flex items-center px-3 py-2 rounded-lg text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] transition-colors"
+          className="inline-flex items-center h-9 px-3 rounded-lg text-[13px] font-semibold text-[var(--color-text)] border border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] transition-colors"
         >
-          <Plus className="w-3.5 h-3.5 mr-1" /> Add Category
+          <Plus className="w-3.5 h-3.5 mr-1" /> Add category
         </button>
       </div>
-      <div className="p-6 space-y-6">
+      <div className="p-5 sm:p-6 space-y-6">
         {categories.length === 0 && (
           <div className="text-xs italic text-[var(--color-text-muted)]">No custom categories yet. Click <b>Add Category</b> above.</div>
         )}
@@ -491,7 +505,7 @@ function CategoryCard({
             <FieldEditor key={f.key} field={f} onChange={(patch) => updateField(i, patch)} onRemove={() => removeField(i)} />
           ))}
         </div>
-        <button onClick={addField} className="mt-1 inline-flex items-center text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-colors">
+        <button type="button" onClick={addField} className="mt-1 inline-flex items-center text-[13px] font-bold text-[var(--color-text)] hover:underline transition-colors">
           <Plus className="w-3.5 h-3.5 mr-1" /> Add Field
         </button>
       </div>

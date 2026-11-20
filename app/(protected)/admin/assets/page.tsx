@@ -53,6 +53,9 @@ import MoreMenu from "@/components/ui/MoreMenu";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { useDraft } from "@/hooks/useDraft";
 import { badgeText } from "@/lib/badge";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
+import { bandInput, bandInputIcon, bandSelect, bandSeg, bandSegItem, plural } from "@/components/admin/band";
 
 // DocCtrl belongs here: document controllers own the asset↔document wiring
 // (categories, codebook areas, file links), so gating them out of asset
@@ -63,7 +66,7 @@ const ADMIN_ROLES = ["Admin", "DocCtrl", "Manager", "Supervisor"];
 export default function AssetsPage() {
   // useSearchParams needs a Suspense boundary at build time.
   return (
-    <Suspense fallback={<div className="p-4 sm:p-8"><LoadingBlock what="operating areas" /></div>}>
+    <Suspense fallback={<PageShell><PageHero kicker="Operating areas" title="Operating areas" overlap={false} /><LoadingBlock what="operating areas" /></PageShell>}>
       <AssetsPageInner />
     </Suspense>
   );
@@ -276,7 +279,7 @@ function AssetsPageInner() {
 
   const searchActive = search.trim().length > 0 || typeFilter !== "" || filterMode !== "all";
 
-  if (!activeOrgId) return <div className="p-4 sm:p-8"><LoadingBlock what="operating areas" /></div>;
+  if (!activeOrgId) return <PageShell><PageHero kicker="Operating areas" title="Operating areas" overlap={false} /><LoadingBlock what="operating areas" /></PageShell>;
 
   const printLabels = async () => {
     const list = filtered.slice(0, 200);
@@ -297,107 +300,111 @@ function AssetsPageInner() {
     ...(filtered.length > 0 ? [{ icon: <QrCode className="w-4 h-4" />, label: `QR labels (${Math.min(filtered.length, 200)})`, onClick: () => void printLabels() }] : []),
     ...(canEditEquipment ? [{ icon: <Upload className="w-4 h-4" />, label: "Import CSV", onClick: () => setCsvOpen(true) }] : []),
   ];
-  const withoutPhotos = assets.reduce((n, a) => n + ((photoCounts.get(a.id) || 0) === 0 ? 1 : 0), 0);
+
+  // The answer: how much equipment, and the one gap that matters (photos).
+  const scope = unitFilter
+    ? assets.filter((a) => unitFilter === "__unassigned" ? !a.unit_code : a.unit_code === unitFilter)
+    : assets;
+  const scopeNoPhotos = scope.reduce((n, a) => n + ((photoCounts.get(a.id) || 0) === 0 ? 1 : 0), 0);
+  const answer = loading
+    ? (unitFilter ? (currentUnit?.label ?? (unitFilter === "__unassigned" ? "No unit assigned" : `Unit ${unitFilter}`)) : "Operating areas")
+    : error
+      ? "Couldn't load the equipment."
+      : unitFilter === "__unassigned"
+        ? (scope.length === 0 ? "Everything is filed." : `${plural(scope.length, "piece")} of equipment need an area.`)
+        : scope.length === 0
+          ? (unitFilter ? "No equipment here yet." : "No equipment yet.")
+          : `${plural(scope.length, "piece")} of equipment${scopeNoPhotos > 0 ? `, ${scopeNoPhotos.toLocaleString()} without photos` : ""}.`;
+  const sub = loading || error ? undefined : unitFilter ? (
+    <>
+      {unitFilter === "__unassigned" ? "Equipment with no operating area" : <>Unit {unitFilter}{currentUnit?.label ? ` · ${currentUnit.label}` : " · not in the Site Codebook yet"}</>}
+      {searchActive && <> · {filtered.length.toLocaleString()} match the filters</>}
+    </>
+  ) : (
+    <>
+      {book.units.length > 0 ? plural(book.units.length, "operating area") : "No operating areas yet"}
+      {unitCounts.unassigned > 0 && <> · <span className="font-semibold text-amber-300">{unitCounts.unassigned.toLocaleString()} not in an area</span></>}
+      {searchActive && <> · {filtered.length.toLocaleString()} match the filters</>}
+    </>
+  );
+  const primary = !isAdmin ? undefined : !unitFilter ? (
+    // The root IS the site: the primary act here is defining an operating
+    // area, not dropping a loose asset.
+    <button type="button" onClick={() => setAddUnitOpen(true)} className={heroPrimary}>
+      <Plus className="w-4 h-4" /> New operating area
+    </button>
+  ) : (
+    // CATEGORY leads: it is the next level of the hierarchy. Assets are
+    // added inside their category's section.
+    <button type="button" onClick={() => setAddCategoryOpen(true)} className={heroPrimary}>
+      <Plus className="w-4 h-4" /> New category
+    </button>
+  );
 
   return (
-    <div className="p-4 sm:p-8 pb-20">
-      <div className="max-w-7xl mx-auto">
-        <ViewTabs title="Operating areas" tabs={EQUIPMENT_VIEWS} />
-        {/* Header */}
-        <div className="mb-6 flex items-start justify-between gap-4 flex-wrap">
-          <div>
-            <h1 className="text-2xl font-black text-[var(--color-text)] flex items-center gap-3">
-              <Tag className="w-7 h-7 text-[var(--color-text-muted)]" />
-              Operating Areas
-            </h1>
-            {!loading && !error && !unitFilter && (
-              <p className="text-sm text-[var(--color-text-muted)] mt-1 max-w-2xl">
-                {book.units.length > 0 && <>{book.units.length} operating area{book.units.length === 1 ? "" : "s"} · </>}
-                {assets.length} piece{assets.length === 1 ? "" : "s"} of equipment
-                {unitCounts.unassigned > 0 && <> · <span className="font-bold text-amber-700 dark:text-amber-400">{unitCounts.unassigned} not in an area</span></>}
-                {withoutPhotos > 0 && assets.length > 0 && <> · {withoutPhotos} without photos</>}
-              </p>
+    <PageShell>
+      <PageHero
+        kicker={unitFilter ? <>Operating areas · {unitFilter === "__unassigned" ? "No unit" : `Unit ${unitFilter}`}</> : "Operating areas"}
+        back={unitFilter ? { onClick: () => setUnitFilter(null), label: "All operating areas" } : undefined}
+        title={answer}
+        sub={sub}
+        tools={isAdmin ? (
+          <>
+            {unitFilter && canEditEquipment && (
+              <button type="button" className={heroQuiet}
+                onClick={() => openCreate({ unitCode: unitFilter === "__unassigned" ? undefined : unitFilter })}>
+                <Plus className="w-4 h-4" /> <span className="max-sm:hidden">New asset</span><span className="sm:hidden">Asset</span>
+              </button>
             )}
-          </div>
-          {isAdmin && (
-            <div className="flex items-center gap-2 flex-wrap">
-              {/* Bulk QR labels for whatever the filters currently show:
-                  laminate onto the equipment; every scan lands on that
-                  asset's hub (drawings, holds, doc pack, report-a-problem). */}
-              {moreItems.length > 0 && <MoreMenu items={moreItems} />}
-              {!unitFilter ? (
-                // The root IS the site — the primary act here is defining an
-                // operating area, not dropping a loose asset.
-                <button
-                  onClick={() => setAddUnitOpen(true)}
-                  className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-black shadow-sm"
-                >
-                  <Plus className="w-4 h-4" /> New operating area
-                </button>
-              ) : (
-                <>
-                  {/* CATEGORY leads — it is the next level of the hierarchy.
-                      Assets are added inside their category's section. */}
-                  {canEditEquipment && <button
-                    onClick={() => openCreate({ unitCode: unitFilter === "__unassigned" ? undefined : unitFilter })}
-                    className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-sm font-bold border border-[var(--color-border)]"
-                  >
-                    <Plus className="w-4 h-4" /> New asset
-                  </button>}
-                  <button
-                    onClick={() => setAddCategoryOpen(true)}
-                    className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-black shadow-sm"
-                  >
-                    <Plus className="w-4 h-4" /> New category
-                  </button>
-                </>
-              )}
-            </div>
-          )}
+            {/* Bulk QR labels for whatever the filters currently show, and
+                the CSV import: laminate a label onto the equipment and every
+                scan lands on that asset's page. */}
+            {moreItems.length > 0 && <MoreMenu items={moreItems} triggerClass={heroQuiet} />}
+          </>
+        ) : undefined}
+        primary={primary}
+      >
+        <div className="[&>div]:mb-0">
+          <ViewTabs tabs={EQUIPMENT_VIEWS} variant="dark" />
         </div>
+        {/* Search + filters steer the whole page, so they live in the band. */}
+        <div className="mt-4 flex items-center gap-2 flex-wrap">
+          <div className="relative flex-1 min-w-[220px]">
+            <Search className={bandInputIcon} />
+            <label htmlFor="equipment-search" className="sr-only">Search all equipment</label>
+            <input
+              id="equipment-search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Find by tag (E-22), site code or description"
+              className={bandInput}
+            />
+          </div>
+          <label htmlFor="equipment-type" className="sr-only">Equipment type</label>
+          <select id="equipment-type" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className={bandSelect}>
+            <option value="">All types</option>
+            {types.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+          <div className={bandSeg} role="group" aria-label="Photos">
+            {(["all", "with_photos", "no_photos"] as const).map((m) => (
+              <button key={m} type="button" onClick={() => setFilterMode(m)} aria-pressed={filterMode === m} className={bandSegItem(filterMode === m)}>
+                {m === "all" ? "All" : m === "with_photos" ? "With photos" : "No photos"}
+              </button>
+            ))}
+          </div>
+        </div>
+      </PageHero>
 
-        {!canEditEquipment && (
-          <p className="mb-6 text-xs text-[var(--color-text-muted)] flex items-start gap-2">
-            <Lock className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-            <span>Only admins add or change equipment. You can browse it{isAdmin ? ", print labels and add photos" : " and view photos"}. Ask an admin to add what&apos;s missing.</span>
-          </p>
-        )}
-
-        {/* No codebook units yet → show admins the path instead of a silently
-            flat registry. The unit-first view lights up the moment units exist. */}
-        {book.units.length === 0 && isAdmin && (
-          <p className="mb-3 text-[13px] text-[var(--color-text-muted)] flex items-center gap-1.5 flex-wrap">
-            <BookMarked className="w-4 h-4 shrink-0" />
-            Name your units in the Site Codebook (20 = Crude, 25 = DHT) and this list groups itself by unit, then equipment type.
-            <Link href="/admin/codebook" className="font-bold text-[var(--color-accent)] hover:underline">Set up the codebook</Link>
-          </p>
-        )}
-
-        {/* Inside a unit: identity header + the unit's pinned libraries. */}
-        {unitFilter && (
-          <div className="mb-5">
-            <button onClick={() => setUnitFilter(null)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 mb-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-black text-[var(--color-text)] hover:bg-[var(--color-surface-2)] shadow-sm">
-              <ArrowLeft className="w-3.5 h-3.5" /> All operating areas
-            </button>
-            <div className="flex items-baseline gap-2.5 flex-wrap">
-              {unitFilter !== "__unassigned" && (
-                <span className="font-mono text-3xl font-black text-[var(--color-text)]">{unitFilter}</span>
-              )}
-              <span className="text-2xl font-black text-[var(--color-text)]">
-                {unitFilter === "__unassigned" ? "No unit assigned" : (currentUnit?.label ?? unitFilter)}
-              </span>
-              <span className="text-xs font-bold text-[var(--color-text-muted)]">
-                {filtered.length} asset{filtered.length === 1 ? "" : "s"}
-              </span>
-              {canEditLinks && unitFilter !== "__unassigned" && (
-                <Link href="/admin/codebook"
-                  className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:underline">
-                  <Edit3 className="w-3 h-3" /> {currentUnit ? "Edit unit" : "Add this unit to the codebook"}
-                </Link>
-              )}
-            </div>
-            {currentUnit && (
+      <PageBody>
+        {/* Inside a unit: the unit's pinned libraries come first. */}
+        {unitFilter && (currentUnit || (unitFilter !== "__unassigned" && canEditLinks)) && (
+          <Card label="This unit's libraries"
+            action={canEditLinks && unitFilter !== "__unassigned" ? (
+              <Link href="/admin/codebook" className="inline-flex items-center gap-1 text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+                <Edit3 className="w-3.5 h-3.5" /> {currentUnit ? "Edit unit" : "Add this unit to the codebook"}
+              </Link>
+            ) : undefined}>
+            {currentUnit ? (
               <UnitResources
                 orgId={activeOrgId}
                 unitCode={currentUnit.code}
@@ -405,20 +412,22 @@ function AssetsPageInner() {
                 canEdit={canEditLinks}
                 onChanged={() => { void loadCodebook(activeOrgId).then(setBook); }}
               />
+            ) : (
+              <p className="text-[13px] text-[var(--color-text-muted)]">Unit {unitFilter} is on equipment but not in the Site Codebook yet. Add it there to pin its libraries.</p>
             )}
-            {unitFilter === "__unassigned" && canEditEquipment && book.units.length > 0 && filtered.length > 0 && (
-              <UnassignedAssignPanel
-                assets={filtered}
-                book={book}
-                userId={uid || ""}
-                onAssigned={() => { invalidateAssetCache(); void refresh(); }}
-              />
-            )}
-          </div>
+          </Card>
+        )}
+        {unitFilter === "__unassigned" && canEditEquipment && book.units.length > 0 && filtered.length > 0 && (
+          <UnassignedAssignPanel
+            assets={filtered}
+            book={book}
+            userId={uid || ""}
+            onAssigned={() => { invalidateAssetCache(); void refresh(); }}
+          />
         )}
 
-        {/* This area's knowledge: setup path, live state, and drift review —
-            the order of operations lives ON the unit page. */}
+        {/* This area's knowledge: setup path, live state, and drift review,
+            so the order of operations lives ON the unit page. */}
         {currentUnit && !loading && uid && activeOrgId && (
           <AreaKnowledgePanel
             orgId={activeOrgId}
@@ -429,183 +438,146 @@ function AssetsPageInner() {
           />
         )}
 
-        {/* The Site Codebook already knows the taxonomy — put it to work. */}
-        {canEditEquipment && !loading && uid && activeOrgId && (
-          <CategorizeBanner orgId={activeOrgId} userId={uid} assets={assets} types={types} book={book}
-            onDone={() => { invalidateAssetCache(); void refresh(); }} />
-        )}
-
-        {/* Search + filters */}
-        <div className="mb-4 flex items-center gap-2 flex-wrap">
-          <div className="relative flex-1 min-w-[200px]">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)]" />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search all equipment: tag (E-22), site code (2030.22), description, location…"
-              className="w-full pl-10 pr-3 py-2.5 text-base sm:text-sm border border-[var(--color-border)] rounded-lg bg-[var(--color-surface)] text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:border-transparent outline-none"
-            />
-          </div>
-          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="px-3 py-2.5 text-sm border border-[var(--color-border)] rounded-lg bg-[var(--color-surface)] text-[var(--color-text)] font-medium">
-            <option value="">All types</option>
-            {types.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </select>
-          <div className="flex bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-1">
-            {(["all", "with_photos", "no_photos"] as const).map((m) => (
-              <button key={m} onClick={() => setFilterMode(m)} aria-pressed={filterMode === m} className={`px-2.5 py-1.5 text-xs font-bold rounded-md ${filterMode === m ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
-                {m === "all" ? "All" : m === "with_photos" ? "With photos" : "No photos"}
-              </button>
-            ))}
-          </div>
-        </div>
-
         {/* Grid */}
         {loading ? (
-          <LoadingBlock what="the equipment" rows={6} />
+          <Card><LoadingBlock what="the equipment" rows={6} className="border-0 p-0" /></Card>
         ) : error ? (
-          <p role="alert" className="border-l-2 border-red-500 pl-3 py-1 text-sm text-red-700 dark:text-red-400">
-            Couldn&apos;t load the equipment: {error}{" "}
-            <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
-          </p>
+          <Card>
+            <p role="alert" className="text-[14px] text-red-700 dark:text-red-400">
+              Couldn&apos;t load the equipment: {error}{" "}
+              <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
+            </p>
+          </Card>
         ) : unitFilter ? (
-          // ── The unit hub: equipment by type, then every document that
-          //    references the unit's equipment.
-          <div className="space-y-6">
+          // The unit hub: equipment by type, then every document that
+          // references the unit's equipment.
+          <>
             {filtered.length === 0 ? (
               unitFilter === "__unassigned" ? (
-                <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-8 text-center">
-                  <p className="text-sm font-black text-emerald-700 dark:text-emerald-400">Everything is filed.</p>
-                  <p className="text-xs text-[var(--color-text-muted)] mt-1">No equipment is missing an operating area.</p>
-                  <button onClick={() => setUnitFilter(null)}
-                    className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-sm font-black">
+                <Card className="text-center py-8">
+                  <p className="text-[14px] font-bold text-emerald-700 dark:text-emerald-400">No equipment is missing an operating area.</p>
+                  <button type="button" onClick={() => setUnitFilter(null)}
+                    className="mt-3 inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[13px] font-semibold">
                     <ArrowLeft className="w-4 h-4" /> Back to all areas
                   </button>
-                </div>
+                </Card>
               ) : (
                 <EmptyState onCreate={canEditEquipment ? () => setCreating(true) : undefined} hasAny={assets.length > 0} />
               )
             ) : (
-              groupedByType?.map((g) => {
-                const open = !closedTypes.has(g.typeId);
-                const isUncat = g.typeId === "__none";
-                const cb = isUncat ? undefined : cbTypeByLabel.get(g.name.trim().toLowerCase());
-                return (
-                <div key={g.typeId}>
-                  {/* Category headers are the unit's chapter titles — they
-                      carry the codebook's code + prefixes so the numbering
-                      system you taught is visibly at work. */}
-                  <div className={`flex items-center gap-2.5 mb-2.5 rounded-xl border px-3 py-2 border-[var(--color-border)] bg-[var(--color-surface-2)] ${isUncat ? "border-l-2 border-l-amber-500" : ""}`}>
-                    <button type="button"
-                      onClick={() => setClosedTypes((prev) => {
-                        const next = new Set(prev);
-                        if (next.has(g.typeId)) next.delete(g.typeId); else next.add(g.typeId);
-                        return next;
-                      })}
-                      className="flex items-center gap-2.5 text-left flex-1 min-w-0">
-                      <ChevronDown className={`w-4 h-4 shrink-0 ${isUncat ? "text-amber-500" : "text-[var(--color-text-muted)]"} transition-transform ${open ? "" : "-rotate-90"}`} />
-                      <span className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 bg-[var(--color-surface)]">
-                        {isUncat
-                          ? <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-                          : <Tag className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />}
-                      </span>
-                      <span className="min-w-0">
-                        <span className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm font-black text-[var(--color-text)]">{g.name}</span>
-                          <span className="text-[11px] font-black rounded-full px-2 py-0.5 bg-[var(--color-surface)] text-[var(--color-text)]">
-                            {badgeText(g.list.length)}
+              <Card label="Equipment" pad={false} className="overflow-hidden">
+                {groupedByType?.map((g) => {
+                  const open = !closedTypes.has(g.typeId);
+                  const isUncat = g.typeId === "__none";
+                  const cb = isUncat ? undefined : cbTypeByLabel.get(g.name.trim().toLowerCase());
+                  return (
+                  <div key={g.typeId} className="border-t border-[var(--color-border)]">
+                    {/* Category rows are the unit's chapter titles: they
+                        carry the codebook's code and prefixes so the
+                        numbering you taught is visibly at work. */}
+                    <div className="flex items-center gap-2.5 px-4 sm:px-5 py-2.5">
+                      <button type="button" aria-expanded={open}
+                        onClick={() => setClosedTypes((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(g.typeId)) next.delete(g.typeId); else next.add(g.typeId);
+                          return next;
+                        })}
+                        className="flex items-center gap-2.5 text-left flex-1 min-w-0 min-h-9">
+                        <ChevronDown className={`w-4 h-4 shrink-0 text-[var(--color-text-muted)] transition-transform ${open ? "" : "-rotate-90"}`} />
+                        <span className="min-w-0">
+                          <span className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[14px] font-bold text-[var(--color-text)]">{g.name}</span>
+                            <span className="text-[13px] text-[var(--color-text-muted)]">{badgeText(g.list.length)}</span>
+                            {cb && (
+                              <span className="font-mono text-[11px] font-semibold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded px-1.5 py-0.5"
+                                title={`Site Codebook equipment-type code ${cb.code}`}>
+                                code {cb.code}{cb.prefixes.length > 0 ? ` · ${cb.prefixes.join(" · ")}` : ""}
+                              </span>
+                            )}
                           </span>
-                          {cb && (
-                            <span className="font-mono text-[11px] font-black text-[var(--color-text)] dark:text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] dark:border-[var(--color-border)] rounded px-1.5 py-0.5"
-                              title={`Site Codebook equipment-type code ${cb.code}`}>
-                              code {cb.code}
-                            </span>
-                          )}
-                          {cb && cb.prefixes.length > 0 && (
-                            <span className="font-mono text-[11px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface)] border border-[var(--color-border)] rounded px-1.5 py-0.5"
-                              title="Tag prefixes that auto-categorize into this section">
-                              {cb.prefixes.join(" · ")}
+                          {isUncat && (
+                            <span className="flex items-center gap-1 text-[12px] text-amber-700 dark:text-amber-400 font-semibold mt-0.5">
+                              <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> Sort these: tap Categorize on a card, or Auto-categorize below.
                             </span>
                           )}
                         </span>
-                        {isUncat && (
-                          <span className="block text-[11px] text-amber-700 dark:text-amber-400 font-bold mt-0.5">
-                            Sort these: tap Categorize on a card, or Auto-categorize above.
-                          </span>
-                        )}
-                      </span>
-                    </button>
-                    {canEditEquipment && (
-                      <button type="button"
-                        onClick={() => openCreate({
-                          typeId: g.typeId === "__none" ? undefined : g.typeId,
-                          unitCode: unitFilter === "__unassigned" ? undefined : (unitFilter ?? undefined),
-                        })}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[11px] font-black text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] shrink-0">
-                        <Plus className="w-3 h-3" /> Asset
                       </button>
-                    )}
-                  </div>
-                  {open && (g.list.length === 0 ? (
-                    <button type="button"
-                      onClick={() => canEditEquipment && openCreate({
-                        typeId: g.typeId === "__none" ? undefined : g.typeId,
-                        unitCode: unitFilter === "__unassigned" ? undefined : (unitFilter ?? undefined),
+                      {canEditEquipment && (
+                        <button type="button"
+                          onClick={() => openCreate({
+                            typeId: g.typeId === "__none" ? undefined : g.typeId,
+                            unitCode: unitFilter === "__unassigned" ? undefined : (unitFilter ?? undefined),
+                          })}
+                          aria-label={`Add equipment to ${g.name}`}
+                          className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] shrink-0">
+                          <Plus className="w-3.5 h-3.5" /> Asset
+                        </button>
+                      )}
+                    </div>
+                    {open && (g.list.length === 0 ? (
+                      <div className="px-4 sm:px-5 pb-4">
+                        <button type="button"
+                          onClick={() => canEditEquipment && openCreate({
+                            typeId: g.typeId === "__none" ? undefined : g.typeId,
+                            unitCode: unitFilter === "__unassigned" ? undefined : (unitFilter ?? undefined),
+                          })}
+                          className="w-full rounded-xl bg-[var(--color-surface-2)] py-4 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+                          No {g.name.toLowerCase()} in this area yet{canEditEquipment ? ". Add the first." : "."}
+                        </button>
+                      </div>
+                    ) : (
+                    <div className="px-4 sm:px-5 pb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                      {g.list.map((a) => {
+                        const type = types.find((t) => t.id === a.type_id);
+                        const count = photoCounts.get(a.id) || 0;
+                        return (
+                          <AssetCard key={a.id} asset={a} type={type} photoCount={count} coverUrl={coverUrls.get(a.id)}
+                            onClick={() => count > 0 ? setCarouselOpenFor(a) : setSelectedAsset(a)}
+                            onEdit={canEditEquipment ? () => setSelectedAsset(a) : undefined}
+                            onAddPhotos={isAdmin ? () => setUploaderOpenFor(a) : undefined} />
+                        );
                       })}
-                      className="w-full rounded-xl border-2 border-dashed border-[var(--color-border)] py-5 text-xs font-bold text-[var(--color-text-faint)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-accent-hover)]">
-                      No {g.name.toLowerCase()} in this area yet{canEditEquipment ? ". Add the first." : ""}
-                    </button>
-                  ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                    {g.list.map((a) => {
-                      const type = types.find((t) => t.id === a.type_id);
-                      const count = photoCounts.get(a.id) || 0;
-                      return (
-                        <AssetCard key={a.id} asset={a} type={type} photoCount={count} coverUrl={coverUrls.get(a.id)}
-                          onClick={() => count > 0 ? setCarouselOpenFor(a) : setSelectedAsset(a)}
-                          onEdit={canEditEquipment ? () => setSelectedAsset(a) : undefined}
-                          onAddPhotos={isAdmin ? () => setUploaderOpenFor(a) : undefined} />
-                      );
-                    })}
+                    </div>
+                    ))}
                   </div>
-                  ))}
-                </div>
-                );
-              })
+                  );
+                })}
+              </Card>
             )}
             {unitAssetIds.length > 0 && <UnitDocuments assetIds={unitAssetIds} assets={filtered} />}
             {unitFilter && unitFilter !== "__unassigned" && uid && (
               <FlowPanel orgId={activeOrgId!} userId={uid} userName={userEmail ?? undefined}
                 isAdmin={isAdmin} unitCode={unitFilter} unitAssets={filtered} />
             )}
-          </div>
+          </>
         ) : book.units.length > 0 && !searchActive ? (
-          // ── The landing page IS the site: one card per operating area.
+          // The landing page IS the site: one card per operating area.
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {unitSummaries.map((s) => (
               <UnitCard key={s.unit.code} summary={s} onOpen={() => setUnitFilter(s.unit.code)}
                 onEdit={canEditLinks ? () => router.push("/admin/codebook") : undefined} />
             ))}
             {unknownUnits.map(([code, n]) => (
-              <button key={code} onClick={() => setUnitFilter(code)}
-                className="text-left rounded-2xl border-2 border-dashed border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-border)] p-5 transition-colors">
+              <button key={code} type="button" onClick={() => setUnitFilter(code)}
+                className="text-left rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] hover:bg-[var(--color-surface-2)] p-5 transition-colors">
                 <div className="flex items-baseline gap-2 mb-1">
-                  <span className="font-mono text-lg font-black text-[var(--color-text)]">{code}</span>
-                  <span className="text-sm font-black text-[var(--color-text)]">Unknown unit</span>
+                  <span className="font-mono text-[14px] font-bold text-[var(--color-text)]">{code}</span>
+                  <span className="text-[14px] font-bold text-[var(--color-text)]">Unknown unit</span>
                 </div>
-                <div className="text-xs text-[var(--color-text-muted)]">
-                  {n} asset{n === 1 ? "" : "s"} carry this code, but it isn&apos;t in the Site Codebook yet.
+                <div className="text-[13px] text-[var(--color-text-muted)]">
+                  {plural(n, "asset")} carry this code, but it isn&apos;t in the Site Codebook yet.
                 </div>
               </button>
             ))}
             {unitCounts.unassigned > 0 && (
-              <button onClick={() => setUnitFilter("__unassigned")}
-                className="text-left rounded-2xl border-2 border-dashed border-amber-300 dark:border-amber-800 bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] p-5 transition-colors">
+              <button type="button" onClick={() => setUnitFilter("__unassigned")}
+                className="text-left rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] hover:bg-[var(--color-surface-2)] p-5 transition-colors">
                 <div className="flex items-center gap-2 mb-1">
                   <AlertTriangle className="w-4 h-4 text-amber-600" />
-                  <span className="text-sm font-black text-[var(--color-text)]">No unit assigned</span>
+                  <span className="text-[14px] font-bold text-[var(--color-text)]">No unit assigned</span>
                 </div>
-                <div className="text-xs text-[var(--color-text-muted)]">
-                  {unitCounts.unassigned} asset{unitCounts.unassigned === 1 ? "" : "s"} waiting to be filed under an operating area.
+                <div className="text-[13px] text-amber-700 dark:text-amber-400 font-semibold">
+                  {plural(unitCounts.unassigned, "asset")} waiting to be filed under an operating area.
                 </div>
               </button>
             )}
@@ -614,8 +586,8 @@ function AssetsPageInner() {
           <EmptyState onCreate={canEditEquipment ? () => setCreating(true) : undefined} hasAny={assets.length > 0} />
         ) : (
           // Search results (across every unit) or a no-codebook org's flat registry.
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {filtered.map((a) => {
+          <Card label={searchActive ? `${plural(filtered.length, "match", "matches")}` : "All equipment"}>
+            <ShowMoreGrid items={filtered} render={(a) => {
               const type = types.find((t) => t.id === a.type_id);
               const count = photoCounts.get(a.id) || 0;
               return (
@@ -630,10 +602,37 @@ function AssetsPageInner() {
                   onAddPhotos={isAdmin ? () => setUploaderOpenFor(a) : undefined}
                 />
               );
-            })}
-          </div>
+            }} />
+          </Card>
         )}
-      </div>
+
+        {/* The Site Codebook already knows the taxonomy: put it to work. */}
+        {canEditEquipment && !loading && uid && activeOrgId && (
+          <CategorizeBanner orgId={activeOrgId} userId={uid} assets={assets} types={types} book={book}
+            onDone={() => { invalidateAssetCache(); void refresh(); }} />
+        )}
+
+        {/* No codebook units yet: show admins the path instead of a silently
+            flat registry. The unit-first view lights up the moment units exist. */}
+        {book.units.length === 0 && isAdmin && !loading && (
+          <Card label="Group by unit">
+            <p className="text-[13px] text-[var(--color-text-muted)] flex items-start gap-2">
+              <BookMarked className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>
+                Name your units in the Site Codebook (20 = Crude, 25 = DHT) and this list groups itself by unit, then equipment type.{" "}
+                <Link href="/admin/codebook" className="font-bold text-[var(--color-accent)] hover:underline">Set up the codebook</Link>
+              </span>
+            </p>
+          </Card>
+        )}
+
+        {!canEditEquipment && (
+          <p className="px-1 text-[13px] text-[var(--color-text-muted)] flex items-start gap-2">
+            <Lock className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            <span>Only admins add or change equipment. You can browse it{isAdmin ? ", print labels and add photos" : " and view photos"}. Ask an admin to add what&apos;s missing.</span>
+          </p>
+        )}
+      </PageBody>
 
       {/* Modals */}
       {addUnitOpen && isAdmin && (
@@ -711,7 +710,31 @@ function AssetsPageInner() {
           onImported={() => { invalidateAssetCache(); void refresh(); }}
         />
       )}
-    </div>
+    </PageShell>
+  );
+}
+
+// ─── A grid that shows it keeps going ─────────────────────
+
+/** The first screenful of cards, then "Show N more" so a long registry
+ *  never renders hundreds of photos at once and still says how many are left. */
+function ShowMoreGrid<T>({ items, render, step = 24 }: { items: T[]; render: (item: T) => React.ReactNode; step?: number }) {
+  const [shown, setShown] = useState(step);
+  const rest = items.length - shown;
+  return (
+    <>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+        {items.slice(0, shown).map(render)}
+      </div>
+      {rest > 0 && (
+        <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex items-center justify-between text-[13px]">
+          <span className="text-[var(--color-text-muted)]">{Math.min(shown, items.length).toLocaleString()} of {items.length.toLocaleString()} shown</span>
+          <button type="button" onClick={() => setShown((n) => n + step * 2)} className="font-bold text-[var(--color-accent)] hover:underline">
+            Show {Math.min(rest, step * 2).toLocaleString()} more
+          </button>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -732,17 +755,17 @@ function UnitCard({ summary, onOpen, onEdit }: {
   return (
     <div onClick={onOpen} role="button" tabIndex={0}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); } }}
-      className="text-left rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm hover:shadow-lg hover:border-[var(--color-border)] transition-all p-5 flex flex-col gap-3 group cursor-pointer">
+      className="text-left rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] hover:-translate-y-0.5 transition-transform p-5 flex flex-col gap-3 group cursor-pointer">
       <div className="flex items-start gap-3">
-        <div className="w-11 h-11 rounded-xl bg-[var(--color-surface-2)] border border-[var(--color-border)] flex items-center justify-center shrink-0 group-hover:bg-[var(--color-border)] transition-colors">
-          <Factory className="w-5 h-5 text-[var(--color-text-muted)]" />
+        <div className="w-10 h-10 rounded-[10px] bg-[var(--color-surface-2)] flex items-center justify-center shrink-0">
+          <Factory className="w-4.5 h-4.5 text-[var(--color-text-muted)]" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
-            <span className="font-mono text-lg font-black text-[var(--color-text)]">{unit.code}</span>
-            <span className="text-sm font-black text-[var(--color-text)] truncate">{unit.label}</span>
+            <span className="font-mono text-[14px] font-bold text-[var(--color-text-muted)]">{unit.code}</span>
+            <span className="text-[14px] font-bold text-[var(--color-text)] truncate">{unit.label}</span>
           </div>
-          <div className="text-[11px] text-[var(--color-text-muted)]">
+          <div className="text-[13px] text-[var(--color-text-muted)]">
             {count} asset{count === 1 ? "" : "s"}
             {links.length > 0 && ` · ${links.length} pinned librar${links.length === 1 ? "y" : "ies"}`}
           </div>
@@ -751,6 +774,7 @@ function UnitCard({ summary, onOpen, onEdit }: {
           <button
             onClick={(e) => { e.stopPropagation(); onEdit(); }}
             title="Rename or manage this unit (Site Codebook)"
+            aria-label={`Manage unit ${unit.code} in the Site Codebook`}
             className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-accent-hover)] hover:bg-[var(--color-surface-2)] shrink-0"
           >
             <Edit3 className="w-3.5 h-3.5" />
@@ -761,15 +785,15 @@ function UnitCard({ summary, onOpen, onEdit }: {
       {topTypes.length > 0 && (
         <div className="flex gap-1.5 flex-wrap">
           {topTypes.map(([name, n]) => (
-            <span key={name} className="text-[11px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-full px-2 py-0.5">
+            <span key={name} className="text-[12px] font-semibold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-full px-2 py-0.5">
               {name} <span className="text-[var(--color-text-faint)]">{n}</span>
             </span>
           ))}
         </div>
       )}
       {needPhotos > 0 && (
-        <div className="text-[11px] font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1">
-          <Camera className="w-3 h-3" /> {needPhotos} without photos
+        <div className="text-[12px] font-semibold text-amber-700 dark:text-amber-400 flex items-center gap-1">
+          <Camera className="w-3.5 h-3.5" /> {needPhotos} without photos
         </div>
       )}
     </div>
@@ -796,18 +820,18 @@ function UnitResources({ orgId, unitCode, links, canEdit, onChanged }: {
   };
 
   return (
-    <div className="mt-3">
+    <div>
       <div className="flex gap-2 flex-wrap items-stretch">
         {links.map((l) => (
           <div key={l.id} className="group relative">
             <Link
               href={`/documents/${l.libraryId}${l.folderId ? `?folderId=${l.folderId}` : ""}`}
-              className="flex items-center gap-2.5 pl-3 pr-8 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-border)] hover:shadow-md transition-all h-full"
+              className="flex items-center gap-2.5 pl-3 pr-8 py-2.5 rounded-xl bg-[var(--color-surface-2)] hover:bg-[var(--color-border)] transition-colors h-full"
             >
               <FolderOpen className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
               <div className="min-w-0">
-                <div className="text-xs font-black text-[var(--color-text)] truncate">{l.label}</div>
-                <div className="text-[11px] text-[var(--color-text-muted)] truncate">
+                <div className="text-[14px] font-bold text-[var(--color-text)] truncate">{l.label}</div>
+                <div className="text-[12px] text-[var(--color-text-muted)] truncate">
                   {l.libraryName}{l.folderName ? ` › ${l.folderName}` : ""}
                 </div>
               </div>
@@ -822,17 +846,13 @@ function UnitResources({ orgId, unitCode, links, canEdit, onChanged }: {
         ))}
         {canEdit && (
           <button onClick={() => setAdding(true)}
-            className={`inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl border-2 border-dashed text-xs font-bold transition-colors ${
-              links.length === 0
-                ? "border-[var(--color-text)] text-[var(--color-surface)] bg-[var(--color-text)]"
-                : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:border-[var(--color-border)] hover:text-[var(--color-accent-hover)]"
-            }`}>
+            className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl border border-[var(--color-border)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
             <Link2 className="w-3.5 h-3.5" />
             {links.length === 0 ? "Pin this unit's libraries: P&IDs, manuals, unit data…" : "Pin another"}
           </button>
         )}
         {!canEdit && links.length === 0 && (
-          <div className="text-[11px] text-[var(--color-text-faint)] italic py-2">
+          <div className="text-[13px] text-[var(--color-text-muted)] py-2">
             No libraries pinned to this unit yet.
           </div>
         )}
@@ -1017,30 +1037,30 @@ function UnassignedAssignPanel({ assets, book, userId, onAssigned }: {
   const shown = assets.slice(0, 50);
 
   return (
-    <div className="mt-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">
-      <div className="text-sm font-black text-[var(--color-text)] mb-0.5">File this equipment under its operating area</div>
-      <p className="text-xs text-[var(--color-text-muted)] mb-2.5">
+    <Card label="File this equipment under its operating area">
+      <p className="text-[13px] text-[var(--color-text-muted)] mb-2.5">
         Pick a unit for each one. Where its drawings say which unit, it&apos;s picked already. The site code fills in.
       </p>
-      <div className="space-y-1.5">
+      <div className="divide-y divide-[var(--color-border)]">
         {shown.map((a) => {
           const hint = hints.get(a.id);
           const choice = choices.get(a.id) ?? "";
           return (
-            <div key={a.id} className="flex items-center gap-2.5 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl px-3 py-2 flex-wrap">
-              <span className="font-mono text-xs font-black text-[var(--color-text)] w-20 shrink-0">{a.tag}</span>
+            <div key={a.id} className="flex items-center gap-2.5 py-2 flex-wrap">
+              <span className="font-mono text-[13px] font-bold text-[var(--color-text)] w-20 shrink-0">{a.tag}</span>
               <select
                 value={choice}
                 onChange={(e) => setChoices((prev) => new Map(prev).set(a.id, e.target.value))}
                 disabled={busy}
-                className="px-2 py-1.5 border border-[var(--color-border-strong)] rounded-lg text-xs bg-[var(--color-surface)] text-[var(--color-text)] font-bold"
+                aria-label={`Unit for ${a.tag}`}
+                className="h-9 px-2 border border-[var(--color-border-strong)] rounded-lg text-[13px] bg-[var(--color-surface)] text-[var(--color-text)] font-semibold"
               >
                 <option value="">Pick a unit</option>
                 {book.units.map((u) => (
                   <option key={u.code} value={u.code}>{u.code} · {u.label}</option>
                 ))}
               </select>
-              <span className="text-[11px] text-[var(--color-text-faint)] flex-1 min-w-[120px]">
+              <span className="text-[12px] text-[var(--color-text-muted)] flex-1 min-w-[120px]">
                 {hint
                   ? <>drawings say <b className="text-[var(--color-text)] font-mono">{hint.unitCode}</b> ({hint.drawings} linked drawing{hint.drawings === 1 ? "" : "s"})</>
                   : a.description || ""}
@@ -1048,7 +1068,7 @@ function UnassignedAssignPanel({ assets, book, userId, onAssigned }: {
               <button
                 onClick={() => { if (choice) void assign([{ asset: a, unitCode: choice }]); }}
                 disabled={busy || !choice}
-                className="text-[11px] font-black text-[var(--color-text)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] rounded-lg px-2.5 py-1 disabled:opacity-40"
+                className="h-8 text-[12px] font-semibold text-[var(--color-text)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] rounded-lg px-2.5 disabled:opacity-40"
               >
                 Assign
               </button>
@@ -1056,20 +1076,20 @@ function UnassignedAssignPanel({ assets, book, userId, onAssigned }: {
           );
         })}
         {assets.length > shown.length && (
-          <div className="text-[11px] text-[var(--color-text-faint)]">Showing the first {shown.length} of {assets.length}.</div>
+          <div className="pt-2 text-[12px] text-[var(--color-text-muted)]">Showing the first {shown.length} of {assets.length}. Assign these and the next ones come up.</div>
         )}
       </div>
       {chosen.length > 1 && (
         <button
           onClick={() => void assign(chosen.map((a) => ({ asset: a, unitCode: choices.get(a.id)! })))}
           disabled={busy}
-          className="mt-2 inline-flex items-center gap-1.5 text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] rounded-lg px-3 py-1.5 disabled:opacity-50"
+          className="mt-3 inline-flex items-center gap-1.5 h-9 text-[13px] font-bold text-[var(--color-surface)] bg-[var(--color-text)] hover:opacity-90 rounded-lg px-3.5 disabled:opacity-50"
         >
           {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
           Assign all {chosen.length} selected
         </button>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -1114,33 +1134,30 @@ function UnitDocuments({ assetIds, assets }: { assetIds: string[]; assets: Asset
 
   if (rows === null) {
     return (
-      <div className="text-[11px] text-[var(--color-text-faint)] italic flex items-center gap-1.5">
-        <Loader2 className="w-3 h-3 animate-spin" /> Finding documents that reference this unit&apos;s equipment…
-      </div>
+      <Card label="Documents about this equipment">
+        <div className="text-[13px] text-[var(--color-text-muted)] flex items-center gap-1.5">
+          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Finding documents that reference this unit&apos;s equipment…
+        </div>
+      </Card>
     );
   }
   if (failed) {
-    return <p role="alert" className="text-[11px] text-rose-700 dark:text-rose-400">Couldn&apos;t load the documents that reference this unit&apos;s equipment: {failed}</p>;
+    return <Card label="Documents about this equipment"><p role="alert" className="text-[13px] text-rose-700 dark:text-rose-400">Couldn&apos;t load the documents that reference this unit&apos;s equipment: {failed}</p></Card>;
   }
   if (rows.length === 0) return null;
   const shown = expanded ? rows : rows.slice(0, 12);
 
   return (
-    <div>
-      <div className="flex items-center gap-2 mb-2">
-        <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-        <span className="text-xs font-black text-[var(--color-text)]">Documents referencing this unit&apos;s equipment</span>
-        <span className="text-[11px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-full px-1.5">{badgeText(rows.length)}</span>
-      </div>
-      <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] bg-[var(--color-surface)]">
+    <Card label={<>Documents about this equipment · {badgeText(rows.length)}</>} pad={false} className="overflow-hidden">
+      <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
         {shown.map((d) => (
           <li key={d.documentId}>
             <Link href={`/documents/${d.libraryId}?doc=${d.documentId}`}
-              className="flex items-center gap-3 px-3.5 py-2.5 hover:bg-[var(--color-surface-2)]/70 transition-colors">
+              className="flex items-center gap-3 px-4 sm:px-5 py-2.5 hover:bg-[var(--color-surface-2)]/70 transition-colors">
               <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
-              <div className="flex-1 min-w-0">
-                <span className="text-xs font-bold text-[var(--color-text)]">{d.documentNumber || "(no number)"}</span>
-                {d.title && <span className="text-xs text-[var(--color-text-muted)]"> · {d.title}</span>}
+              <div className="flex-1 min-w-0 text-[14px]">
+                <span className="font-bold text-[var(--color-text)]">{d.documentNumber || "(no number)"}</span>
+                {d.title && <span className="text-[var(--color-text-muted)]"> · {d.title}</span>}
               </div>
               <div className="flex gap-1 flex-wrap justify-end max-w-[45%]">
                 {d.tags.slice(0, 6).map((t) => (
@@ -1153,12 +1170,15 @@ function UnitDocuments({ assetIds, assets }: { assetIds: string[]; assets: Asset
         ))}
       </ul>
       {rows.length > 12 && (
-        <button onClick={() => setExpanded((v) => !v)}
-          className="mt-1.5 text-[11px] font-bold text-[var(--color-accent)] hover:underline">
-          {expanded ? "Show fewer" : `Show all ${rows.length}`}
-        </button>
+        <div className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] flex items-center justify-between text-[13px]">
+          <span className="text-[var(--color-text-muted)]">{shown.length} of {rows.length} shown</span>
+          <button type="button" onClick={() => setExpanded((v) => !v)}
+            className="font-bold text-[var(--color-accent)] hover:underline">
+            {expanded ? "Show fewer" : `Show ${rows.length - shown.length} more`}
+          </button>
+        </div>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -1172,41 +1192,39 @@ function AssetCard({
 }) {
 
   return (
-    <div className="group bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm hover:shadow-lg hover:border-[var(--color-border-strong)] transition-all overflow-hidden flex flex-col">
+    <div className="group bg-[var(--color-surface)] rounded-xl ring-1 ring-[var(--color-border)] hover:shadow-[var(--shadow-card)] transition-shadow overflow-hidden flex flex-col">
       {/* Cover area */}
-      <button onClick={onClick} className="block aspect-[4/3] w-full relative overflow-hidden bg-[var(--color-surface-2)]">
+      <button type="button" onClick={onClick} aria-label={`Open ${asset.tag}`} className="block aspect-[4/3] w-full relative overflow-hidden bg-[var(--color-surface-2)]">
         {coverUrl ? (
           <SignedImg path={coverUrl} alt={asset.tag} className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
         ) : (
           <div className="absolute inset-0 flex items-center justify-center">
-            <div className="p-5 rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)]">
-              <ImageIcon className="w-8 h-8 text-[var(--color-text-faint)]" />
-            </div>
+            <ImageIcon className="w-8 h-8 text-[var(--color-text-faint)]" />
           </div>
         )}
       </button>
       {/* Info */}
       <div className="p-3 flex-1 flex flex-col">
         <div className="flex items-center gap-2 mb-1">
-          <button onClick={onClick} className="text-sm font-black text-[var(--color-text)] hover:text-[var(--color-accent-hover)] truncate flex-1 text-left">
+          <button type="button" onClick={onClick} className="text-[14px] font-bold text-[var(--color-text)] hover:underline truncate flex-1 text-left">
             {asset.tag}
           </button>
           {type && (
-            <span className="text-[11px] font-black uppercase tracking-widest bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded shrink-0">
+            <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)] shrink-0">
               {type.name}
             </span>
           )}
         </div>
         {asset.description && (
-          <div className="text-[11px] text-[var(--color-text-muted)] line-clamp-2 mb-1">{asset.description}</div>
+          <div className="text-[13px] text-[var(--color-text-muted)] line-clamp-2 mb-1">{asset.description}</div>
         )}
         {asset.location && (
-          <div className="text-[11px] text-[var(--color-text-faint)] flex items-center gap-1 truncate">
+          <div className="text-[12px] text-[var(--color-text-muted)] flex items-center gap-1 truncate">
             <MapPin className="w-3 h-3" /> {asset.location}
           </div>
         )}
         <div className="mt-2 pt-2 border-t border-[var(--color-border)] flex items-center justify-between">
-          <div className="text-[11px] font-bold text-[var(--color-text-muted)]">
+          <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">
             {photoCount === 0 ? (
               <span className="text-amber-700 dark:text-amber-400 inline-flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> No photos</span>
             ) : (
@@ -1217,10 +1235,10 @@ function AssetCard({
               touchscreens, and "how do I edit this?" should never be a
               puzzle. An uncategorized asset gets a LABELED door out of
               limbo, not a pencil icon to decode. */}
-          <div className="flex items-center gap-1 opacity-70 group-hover:opacity-100 transition-opacity">
+          <div className="flex items-center gap-1">
             {!type && onEdit && (
-              <button onClick={onEdit}
-                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-300 text-[11px] font-black uppercase tracking-wider hover:bg-amber-200 dark:hover:bg-amber-900">
+              <button type="button" onClick={onEdit}
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-amber-800 dark:text-amber-300 text-[12px] font-bold hover:bg-amber-50 dark:hover:bg-amber-950/40">
                 <Tag className="w-2.5 h-2.5" /> Categorize
               </button>
             )}
@@ -1245,24 +1263,24 @@ function AssetCard({
 
 function EmptyState({ onCreate, hasAny }: { onCreate?: () => void; hasAny: boolean }) {
   return (
-    <div className="bg-[var(--color-surface)] border border-dashed border-[var(--color-border-strong)] rounded-2xl p-12 text-center">
-      <div className="p-5 rounded-2xl bg-[var(--color-surface-2)] w-fit mx-auto mb-4 border border-[var(--color-border)]">
-        <Tag className="w-10 h-10 text-[var(--color-text-muted)]" />
+    <Card className="text-center py-10">
+      <div className="w-12 h-12 rounded-xl bg-[var(--color-surface-2)] mx-auto mb-3 flex items-center justify-center">
+        <Tag className="w-6 h-6 text-[var(--color-text-muted)]" />
       </div>
-      <h3 className="text-base font-black text-[var(--color-text)] mb-1">
-        {hasAny ? "No matches" : "No assets yet"}
+      <h3 className="text-[14px] font-bold text-[var(--color-text)] mb-1">
+        {hasAny ? "No matches" : "Start with one piece of equipment"}
       </h3>
-      <p className="text-sm text-[var(--color-text-muted)] max-w-md mx-auto mb-4">
+      <p className="text-[14px] text-[var(--color-text-muted)] max-w-md mx-auto mb-4">
         {hasAny
           ? "Try a different search or clear the filters."
           : "Add the first piece of equipment: a pump, instrument, valve, anything with a tag."}
       </p>
       {!hasAny && onCreate && (
-        <button onClick={onCreate} className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-sm font-black">
+        <button type="button" onClick={onCreate} className="inline-flex items-center gap-1.5 h-10 px-4 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[14px] font-bold">
           <Plus className="w-4 h-4" /> Add the first piece of equipment
         </button>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -1425,20 +1443,15 @@ function AssetEditDrawer({
   };
 
   return (
-    <div role="dialog" aria-modal="true" className="fixed inset-0 z-[400] flex" onClick={() => { if (!busy) onClose(); }}>
-      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" />
-      <div onClick={(e) => e.stopPropagation()} className="relative ml-auto w-full max-w-xl bg-[var(--color-surface)] shadow-2xl border-l border-[var(--color-border)] flex flex-col h-dvh">
-        <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-2.5">
-            <div className="p-1.5 bg-[var(--color-surface-2)] rounded-lg"><Tag className="w-4 h-4 text-[var(--color-text-muted)]" /></div>
-            <div>
-              <div className="text-sm font-black text-[var(--color-text)]">
-                {isCreate ? "Create asset" : `Edit ${asset?.tag}`}
-              </div>
-              <div className="text-[11px] text-[var(--color-text-muted)]">{isCreate ? "Its tag, type and where it is" : "Its record, photos and documents"}</div>
+    <div role="dialog" aria-modal="true" aria-label={isCreate ? "New asset" : `Asset ${asset?.tag ?? ""}`} className="fixed inset-0 z-[400] flex" onClick={() => { if (!busy) onClose(); }}>
+      <div className="absolute inset-0 bg-[var(--color-ink)]/60" />
+      <div onClick={(e) => e.stopPropagation()} className="relative ml-auto w-full max-w-xl bg-[var(--color-surface)] shadow-2xl sm:rounded-l-[20px] flex flex-col h-dvh">
+        <div className="px-5 sm:px-6 pt-5 pb-4 border-b border-[var(--color-border)] shrink-0">
+          <div className="flex items-center gap-2">
+            <div className="min-w-0 truncate text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+              Operating areas{(asset?.unit_code ?? preset?.unitCode) ? ` · Unit ${asset?.unit_code ?? preset?.unitCode}` : ""}{isCreate ? " · New asset" : ""}
             </div>
-          </div>
-          <div className="flex items-center gap-1">
+            <div className="flex-1" />
             {!isCreate && asset && userId && (
               <WatchButton
                 orgId={orgId}
@@ -1448,10 +1461,16 @@ function AssetEditDrawer({
                 size="sm"
               />
             )}
-            <button onClick={onClose} disabled={busy} aria-label="Close" className="p-1.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
-              <X className="w-3.5 h-3.5" />
+            <button type="button" onClick={onClose} disabled={busy} aria-label="Close" className="w-9 h-9 grid place-items-center rounded-[10px] bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+              <X className="w-4 h-4" />
             </button>
           </div>
+          <h2 className="mt-3 text-[32px] sm:text-[38px] leading-none font-black tracking-[-0.03em] text-[var(--color-text)] break-words">
+            {isCreate ? (tag.trim() || "New asset") : asset?.tag}
+          </h2>
+          <p className="mt-2 text-[14px] text-[var(--color-text-muted)]">
+            {isCreate ? "Its tag, type and where it is." : <>{types.find((t) => t.id === asset?.type_id)?.name ?? "No type"} · {photos.length} photo{photos.length === 1 ? "" : "s"}{linkedDocs ? ` · ${linkedDocs.length} document${linkedDocs.length === 1 ? "" : "s"}` : ""}</>}
+          </p>
         </div>
 
         <div className="flex-1 overflow-auto p-5 space-y-5">
@@ -1522,12 +1541,12 @@ function AssetEditDrawer({
                 </div>
                 <div className="flex items-center gap-1.5">
                   {photos.length > 0 && (
-                    <button onClick={() => onOpenCarousel(asset)} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">
+                    <button type="button" onClick={() => onOpenCarousel(asset)} className="inline-flex items-center gap-1 text-[12px] font-bold text-[var(--color-text)] hover:underline">
                       <ImageIcon className="w-3 h-3" /> Open photos
                     </button>
                   )}
                   {canEdit && (
-                    <button onClick={() => onOpenUploader(asset)} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">
+                    <button type="button" onClick={() => onOpenUploader(asset)} className="inline-flex items-center gap-1 text-[12px] font-bold text-[var(--color-text)] hover:underline">
                       <Camera className="w-3 h-3" /> Add photos
                     </button>
                   )}
@@ -1670,16 +1689,16 @@ function AssetEditDrawer({
           )}
         </div>
 
-        <div className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between shrink-0">
+        <div className="px-5 sm:px-6 py-3 pb-[calc(12px+env(safe-area-inset-bottom))] border-t border-[var(--color-border)] flex items-center justify-between shrink-0">
           {!isCreate && canEdit ? (
-            <button onClick={onDelete} disabled={busy} className="text-xs font-bold text-red-600 hover:text-red-700 inline-flex items-center gap-1">
-              <Trash2 className="w-3 h-3" /> Delete asset
+            <button type="button" onClick={onDelete} disabled={busy} className="text-[13px] font-semibold text-red-600 hover:text-red-700 inline-flex items-center gap-1">
+              <Trash2 className="w-3.5 h-3.5" /> Delete asset
             </button>
           ) : <div />}
           <div className="flex items-center gap-2">
-            <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
+            <button type="button" onClick={onClose} disabled={busy} className="h-10 px-3.5 rounded-xl text-[13px] font-semibold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
             {canEdit && (
-              <button onClick={save} disabled={busy || !tag.trim() || hasTagConflict} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+              <button type="button" onClick={save} disabled={busy || !tag.trim() || hasTagConflict} className={heroPrimary}>
                 {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
                 {isCreate ? "Create & add photos" : "Save"}
               </button>
@@ -1731,24 +1750,24 @@ function AddUnitModal({ orgId, userId, existingCodes, onClose, onCreated }: {
   };
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="New operating area" className="fixed inset-0 z-[700] flex items-start justify-center bg-black/50 pt-[14vh] p-4" onClick={onClose}>
-      <div className="w-full max-w-sm rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl p-4 space-y-3"
+    <div role="dialog" aria-modal="true" aria-label="New operating area" className="fixed inset-0 z-[700] flex items-start justify-center bg-[var(--color-ink)]/60 pt-[14vh] p-4" onClick={onClose}>
+      <div className="w-full max-w-sm rounded-2xl bg-[var(--color-surface)] shadow-2xl p-5 space-y-3"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2">
           <Factory className="w-4 h-4 text-[var(--color-text-muted)]" />
           <div className="flex-1">
-            <div className="text-sm font-black text-[var(--color-text)]">New operating area</div>
-            <div className="text-[11px] text-[var(--color-text-muted)]">
+            <div className="text-[14px] font-bold text-[var(--color-text)]">New operating area</div>
+            <div className="text-[12px] text-[var(--color-text-muted)]">
               Saved in your Site Codebook, where the whole app reads units from.
             </div>
           </div>
           <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
         </div>
         <div className="flex items-center gap-2">
-          <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Code (20)" autoFocus
+          <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Code (20)" aria-label="Unit code" autoFocus
             onKeyDown={(e) => { if (e.key === "Enter") void save(); }}
             className="w-28 px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-sm font-mono" />
-          <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Name (Crude Unit)"
+          <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Name (Crude Unit)" aria-label="Unit name"
             onKeyDown={(e) => { if (e.key === "Enter") void save(); }}
             className="flex-1 px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-sm" />
         </div>
@@ -1831,25 +1850,25 @@ function AddCategoryModal({ orgId, userId, existingTypeCodes, onClose, onCreated
   };
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="New equipment category" className="fixed inset-0 z-[700] flex items-start justify-center bg-black/50 pt-[14vh] p-4" onClick={onClose}>
-      <div className="w-full max-w-sm rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl p-4 space-y-3"
+    <div role="dialog" aria-modal="true" aria-label="New equipment category" className="fixed inset-0 z-[700] flex items-start justify-center bg-[var(--color-ink)]/60 pt-[14vh] p-4" onClick={onClose}>
+      <div className="w-full max-w-sm rounded-2xl bg-[var(--color-surface)] shadow-2xl p-5 space-y-3"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2">
           <Tag className="w-4 h-4 text-[var(--color-text-muted)]" />
           <div className="flex-1">
-            <div className="text-sm font-black text-[var(--color-text)]">New equipment category</div>
-            <div className="text-[11px] text-[var(--color-text-muted)]">
+            <div className="text-[14px] font-bold text-[var(--color-text)]">New equipment category</div>
+            <div className="text-[12px] text-[var(--color-text-muted)]">
               A section in every operating area. Add its tag prefix and new equipment sorts itself.
             </div>
           </div>
           <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
         </div>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (Exchanger)" autoFocus
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (Exchanger)" aria-label="Category name" autoFocus
           className="w-full px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-sm" />
         <div className="flex items-center gap-2">
-          <input value={prefixes} onChange={(e) => setPrefixes(e.target.value)} placeholder="Tag prefixes (E, EA), optional"
+          <input value={prefixes} onChange={(e) => setPrefixes(e.target.value)} placeholder="Tag prefixes (E, EA), optional" aria-label="Tag prefixes"
             className="flex-1 px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-sm font-mono" />
-          <input value={typeCode} onChange={(e) => setTypeCode(e.target.value)} placeholder="Code (02)"
+          <input value={typeCode} onChange={(e) => setTypeCode(e.target.value)} placeholder="Code (02)" aria-label="Equipment-type code"
             className="w-24 px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-sm font-mono" />
         </div>
         <p className="text-[11px] text-[var(--color-text-faint)]">

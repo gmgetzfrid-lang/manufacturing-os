@@ -10,14 +10,13 @@
 
 import React, { useEffect, useState } from "react";
 import {
-  Bell, Mail, Save, Check, AlertTriangle, ArrowLeft,
+  Mail, Save, Check, AlertTriangle, Loader2,
   AtSign, UserPlus, Activity, AlertOctagon, Briefcase,
 } from "lucide-react";
-import Link from "next/link";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
-import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
-import { Button } from "@/components/ui/Button";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card, heroPrimary } from "@/components/ui/PageHero";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 
 interface Prefs {
@@ -101,77 +100,76 @@ export default function NotificationSettingsPage() {
   };
 
   if (loading) {
-    return <PageShell width="form"><LoadingBlock what="your notification settings" /></PageShell>;
+    return <PageShell width="form"><PageHero kicker="Settings · Notifications" title="Notifications" size="md" overlap={false} back={{ href: "/dashboard", label: "Back to Home" }} /><LoadingBlock what="your notification settings" /></PageShell>;
   }
+
+  const onCount = [prefs.email_on_mention, prefs.email_on_assignment, prefs.email_on_status_change, prefs.email_on_watched_activity, prefs.email_on_sla_warning].filter(Boolean).length;
+  const saveButton = (
+    <button type="button" onClick={save} disabled={saving || loadFailed} className={heroPrimary}
+      title={loadFailed ? "Reload the page to load your settings first" : undefined}>
+      {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : saved ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+      {saved ? "Saved" : "Save preferences"}
+    </button>
+  );
 
   return (
     <PageShell width="form">
-        <div className="flex items-start gap-3">
-          <Link href="/dashboard" aria-label="Back to Home" className="p-2 mt-1 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] transition-colors">
-            <ArrowLeft className="w-5 h-5" />
-          </Link>
-          <PageHeaderBar
-            className="flex-1 min-w-0"
-            icon={Bell}
-            title="Notifications"
-            subtitle={prefs.email_enabled
-              ? `Email is on for ${[prefs.email_on_mention, prefs.email_on_assignment, prefs.email_on_status_change, prefs.email_on_watched_activity, prefs.email_on_sla_warning].filter(Boolean).length} of 5 kinds of event. The bell in the app always shows everything.`
-              : "Email is off. The bell in the app always shows everything."}
-          />
-        </div>
+        <PageHero
+          kicker="Settings · Notifications"
+          back={{ href: "/dashboard", label: "Back to Home" }}
+          size="md"
+          title={loadFailed ? "Couldn't load your settings." : prefs.email_enabled ? `Email on for ${onCount} of 5 events.` : "Email is off."}
+          sub="The bell in the app always shows everything."
+          primary={saveButton}
+        />
 
-        {error && (
-          <p role="alert" className="mb-4 border-l-2 border-red-500 pl-3 text-xs text-red-700 dark:text-red-400 flex items-start gap-2">
-            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
-          </p>
-        )}
-
+        <PageBody>
         {/* Master switch */}
-        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
+        <Card label={<span className="inline-flex items-center gap-1.5"><Mail className="w-3.5 h-3.5" /> Email</span>}>
+          {error && (
+            <p role="alert" className="mb-3 text-[13px] text-red-700 dark:text-red-400 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
+            </p>
+          )}
           <div className="flex items-start gap-3">
-            <Mail className="w-5 h-5 text-[var(--color-text-muted)] shrink-0 mt-0.5" />
             <div className="flex-1">
-              <div className="text-sm font-black text-[var(--color-text)]">Email notifications</div>
-              <div className="text-xs text-[var(--color-text-muted)] mt-0.5">Off means no email at all, whatever is set below.</div>
+              <div className="text-[14px] font-bold text-[var(--color-text)]">Email notifications</div>
+              <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">Off means no email at all, whatever is set below.</div>
             </div>
             <Toggle label="Email notifications" on={prefs.email_enabled} onChange={(v) => setPrefs({ ...prefs, email_enabled: v })} />
           </div>
-        </div>
+        </Card>
 
         {/* Per-event */}
-        <div className={`bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm divide-y divide-[var(--color-border)] ${prefs.email_enabled ? "" : "opacity-50 pointer-events-none"}`}>
+        <Card label="Email me when" pad={false} className={`overflow-hidden ${prefs.email_enabled ? "" : "opacity-50 pointer-events-none"}`}>
+        <div className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
           <PrefRow icon={AtSign} title="Mentions" hint="Someone @-mentions you in a comment." on={prefs.email_on_mention} onChange={(v) => setPrefs({ ...prefs, email_on_mention: v })} />
           <PrefRow icon={UserPlus} title="Assignments" hint="You were assigned as drafter or engineer reviewer on a ticket." on={prefs.email_on_assignment} onChange={(v) => setPrefs({ ...prefs, email_on_assignment: v })} />
           <PrefRow icon={Briefcase} title="Status changes" hint="A ticket you're on advanced, was approved, closed, or sent back for revision." on={prefs.email_on_status_change} onChange={(v) => setPrefs({ ...prefs, email_on_status_change: v })} />
           <PrefRow icon={Activity} title="Watched activity" hint="Activity on tickets you're watching (comments, file uploads)." on={prefs.email_on_watched_activity} onChange={(v) => setPrefs({ ...prefs, email_on_watched_activity: v })} />
           <PrefRow icon={AlertOctagon} title="SLA warnings" hint="A ticket you're responsible for is at risk of breaching its target completion date." on={prefs.email_on_sla_warning} onChange={(v) => setPrefs({ ...prefs, email_on_sla_warning: v })} />
         </div>
+        </Card>
 
         {/* Digest cadence */}
-        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mt-4">
-          <div className="text-sm font-black text-[var(--color-text)] mb-1">Delivery cadence</div>
-          <div className="text-xs text-[var(--color-text-muted)] mb-3">Only Immediate and Never work today. Hourly and daily batching isn&apos;t built yet.</div>
+        <Card label="Delivery cadence">
+          <div className="text-[13px] text-[var(--color-text-muted)] mb-3">Only Immediate and Never work today. Hourly and daily batching isn&apos;t built yet.</div>
           <div className="flex flex-wrap gap-2">
             {(["immediate", "hourly", "daily", "never"] as const).map((opt) => (
               <button
                 key={opt}
+                type="button"
                 onClick={() => setPrefs({ ...prefs, digest_frequency: opt })}
                 aria-pressed={prefs.digest_frequency === opt}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${prefs.digest_frequency === opt ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}
+                className={`h-9 px-3.5 rounded-lg text-[13px] font-semibold border transition-colors ${prefs.digest_frequency === opt ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}
               >
                 {opt[0].toUpperCase() + opt.slice(1)}
               </button>
             ))}
           </div>
-        </div>
-
-        <div className="mt-6 flex items-center justify-end gap-3">
-          {saved && <span role="status" className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 dark:text-emerald-400"><Check className="w-3.5 h-3.5" /> Saved</span>}
-          <Button onClick={save} loading={saving} disabled={loadFailed} title={loadFailed ? "Reload the page to load your settings first" : undefined}>
-            {!saving && <Save className="w-4 h-4" />}
-            Save preferences
-          </Button>
-        </div>
+        </Card>
+        {saved && <p role="status" className="px-1 inline-flex items-center gap-1 text-[13px] font-bold text-emerald-700 dark:text-emerald-400"><Check className="w-3.5 h-3.5" /> Saved</p>}
+        </PageBody>
     </PageShell>
   );
 }
@@ -188,8 +186,8 @@ function PrefRow({ icon: Icon, title, hint, on, onChange }: PrefRowProps) {
     <div className="px-5 py-4 flex items-start gap-3">
       <Icon className="w-4 h-4 text-[var(--color-text-faint)] mt-1 shrink-0" />
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-bold text-[var(--color-text)]">{title}</div>
-        <div className="text-xs text-[var(--color-text-muted)] mt-0.5">{hint}</div>
+        <div className="text-[14px] font-bold text-[var(--color-text)]">{title}</div>
+        <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{hint}</div>
       </div>
       <Toggle label={title} on={on} onChange={onChange} />
     </div>

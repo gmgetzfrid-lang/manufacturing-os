@@ -16,7 +16,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
-  ArrowLeft, Database, HardDrive, AlertTriangle, RefreshCw, Loader2, Gauge,
+  Database, HardDrive, AlertTriangle, RefreshCw, Loader2, Gauge,
   Sparkles, Copy, Trash2, ShieldCheck, FileJson, FileArchive,
   Archive, Recycle, Lock, Info, CheckCircle2, ServerCog, UploadCloud, FolderArchive,
 } from "lucide-react";
@@ -27,6 +27,8 @@ import { appConfirm } from "@/components/providers/DialogProvider";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import FileThumb from "@/components/ui/FileThumb";
 import { tryUpload } from "@/lib/uploadRetry";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
 
 interface TableRow {
   name: string; rows: number; bytes: number;
@@ -810,85 +812,80 @@ export default function StorageBackupPage() {
   const ticketRow = tables.find((t) => t.name === "tickets");
 
   return (
-    <div className="max-w-4xl mx-auto p-4 sm:p-6">
-      {/* Header */}
-      <div className="flex items-start gap-3 mb-5">
-        <Link href="/dashboard" aria-label="Back to Home" className="p-2 mt-1 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] transition-colors">
-          <ArrowLeft className="w-5 h-5" />
-        </Link>
-        <div className="flex-1 min-w-0">
-          <h1 className="text-xl font-black text-[var(--color-text)] flex items-center gap-2">
-            <Gauge className="w-5 h-5 text-[var(--color-text-muted)]" /> Storage, Usage &amp; Backup
-          </h1>
-          {/* One line with what matters: how full, and what to do about it. */}
-          <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-            {stats ? (
-              <>
-                Using <b className="text-[var(--color-text)]">{fmtBytes(usedBytes)}</b> of {fmtBytes(budgetBytes)} ({pct}%).{" "}
-                <span className={health === "crit" ? "font-bold text-red-700 dark:text-red-400" : health === "warn" ? "font-bold text-amber-700 dark:text-amber-400" : ""}>
-                  {health === "crit" ? "Act now: take a full backup, then free up space." : health === "warn" ? "Time to take a full backup and free up space." : "Plenty of room. Take a full backup every quarter."}
-                </span>
-              </>
-            ) : "How full storage is, what can be cleared, and backups."}
-          </p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
+    <PageShell width="form">
+      <PageHero
+        kicker="Admin · Storage, usage and backup"
+        back={{ href: "/dashboard", label: "Back to Home" }}
+        size="md"
+        title={stats ? `${pct}% full.` : error ? "Couldn't measure storage." : "Storage and backup"}
+        sub={stats ? (
+          <>
+            Using <b className="text-white">{fmtBytes(usedBytes)}</b> of {fmtBytes(budgetBytes)}.{" "}
+            <span className={health === "crit" ? "font-bold text-rose-300" : health === "warn" ? "font-bold text-amber-300" : ""}>
+              {health === "crit" ? "Act now: take a full backup, then free up space." : health === "warn" ? "Time to take a full backup and free up space." : "Plenty of room. Take a full backup every quarter."}
+            </span>
+          </>
+        ) : "How full storage is, what can be cleared, and backups."}
+        tools={
           <button
+            type="button"
             onClick={() => void load()}
             disabled={loading}
             aria-label="Refresh"
             title="Refresh"
-            className="inline-flex items-center gap-1.5 p-2 rounded-lg text-xs font-bold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-all"
+            className={heroQuiet}
           >
             {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
           </button>
-          {/* The one main action here: a real backup out (records + files). */}
-          <button
-            onClick={() => void downloadZip()} disabled={busyZip || !activeOrgId}
-            className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors"
-          >
+        }
+        // The one main action here: a real backup out (records + files).
+        primary={
+          <button type="button" onClick={() => void downloadZip()} disabled={busyZip || !activeOrgId} className={heroPrimary}>
             {busyZip ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileArchive className="w-4 h-4" />}
             {busyZip ? "Building backup…" : "Full backup (ZIP)"}
           </button>
-        </div>
-      </div>
+        }
+      >
+        {stats && (
+          <div className="h-2.5 rounded-full bg-[var(--color-ink-2)] overflow-hidden" aria-label={`${pct}% of storage used`}>
+            <div className={`h-full rounded-full transition-all ${health === "crit" ? "bg-red-500" : health === "warn" ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${Math.max(2, pct)}%` }} />
+          </div>
+        )}
+      </PageHero>
 
-      {error && (
-        <p role="alert" className="mb-4 border-l-2 border-red-500 pl-3 text-xs text-red-700 dark:text-red-400 flex items-start gap-2">
-          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
-        </p>
-      )}
-      {lastArchiveId && (
-        <p role="status" className="mb-4 border-l-2 border-emerald-500 pl-3 text-[11px] text-emerald-800 dark:text-emerald-300 flex items-start gap-1.5">
-          <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-          <span>Saved as archive <b className="font-mono">{lastArchiveId}</b>. Store it at <span className="font-mono break-all">{archiveRoot ? subfolder(archiveRoot, "full-backups") : "<root>/full-backups/"}{lastArchiveId}.zip</span>. Quote this id if anyone needs a file it holds.</span>
-        </p>
+      <PageBody>
+      {(error || lastArchiveId) && (
+        <Card>
+          {error && (
+            <p role="alert" className="text-[14px] text-red-700 dark:text-red-400 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
+            </p>
+          )}
+          {lastArchiveId && (
+            <p role="status" className={`${error ? "mt-2" : ""} text-[13px] text-emerald-800 dark:text-emerald-300 flex items-start gap-1.5`}>
+              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>Saved as archive <b className="font-mono">{lastArchiveId}</b>. Store it at <span className="font-mono break-all">{archiveRoot ? subfolder(archiveRoot, "full-backups") : "<root>/full-backups/"}{lastArchiveId}.zip</span>. Quote this id if anyone needs a file it holds.</span>
+            </p>
+          )}
+        </Card>
       )}
 
       {loading && !stats ? (
-        <LoadingBlock what="storage use" rows={5} />
+        <Card><LoadingBlock what="storage use" rows={5} className="border-0 p-0" /></Card>
       ) : stats ? (
         <>
           {/* ── Health watermark ─────────────────────────────────────────── */}
-          <div className={`rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5 ${
-            health === "crit" ? "border-l-2 border-l-red-500" : health === "warn" ? "border-l-2 border-l-amber-500" : ""
-          }`}>
-            <div className="flex items-end justify-between gap-3 flex-wrap mb-2">
-              <div>
-                <div className="text-[11px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">Total footprint</div>
-                <div className="text-2xl font-black text-[var(--color-text)]">
-                  {fmtBytes(usedBytes)} <span className="text-sm font-bold text-[var(--color-text-muted)]">/ {fmtBytes(budgetBytes)} {isRealQuota ? "limit" : "soft budget"}</span>
-                </div>
-              </div>
-              <div className={`text-right ${health === "crit" ? "text-red-700 dark:text-red-400" : health === "warn" ? "text-amber-700 dark:text-amber-400" : "text-emerald-700 dark:text-emerald-400"}`}>
-                <div className="text-2xl font-black">{pct}%</div>
-                <div className="text-[11px] font-bold">{health === "crit" ? "Act now" : health === "warn" ? "Plan a backup" : "Healthy"}</div>
+          <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
+            <div className="flex items-baseline justify-between gap-3 flex-wrap mb-1">
+              <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Total footprint</div>
+              <div className={`text-[13px] font-bold ${health === "crit" ? "text-red-700 dark:text-red-400" : health === "warn" ? "text-amber-700 dark:text-amber-400" : "text-emerald-700 dark:text-emerald-400"}`}>
+                {health === "crit" ? "Act now" : health === "warn" ? "Plan a backup" : "Healthy"}
               </div>
             </div>
-            <div className="h-2.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-              <div className={`h-full rounded-full transition-all ${health === "crit" ? "bg-red-500" : health === "warn" ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${Math.max(2, pct)}%` }} />
+            <div className="text-[15px] font-bold text-[var(--color-text)]">
+              {fmtBytes(usedBytes)} <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">of {fmtBytes(budgetBytes)} {isRealQuota ? "limit" : "soft budget"}</span>
             </div>
-            <div className="mt-2 flex items-start gap-1.5 text-[11px] text-[var(--color-text-muted)] leading-relaxed">
+            <div className="mt-2 flex items-start gap-1.5 text-[13px] text-[var(--color-text-muted)] leading-relaxed">
               <Info className="w-3.5 h-3.5 mt-px shrink-0" />
               <span>
                 {health === "ok"
@@ -923,19 +920,19 @@ export default function StorageBackupPage() {
           </div>
 
           {/* ── DB / R2 headline ─────────────────────────────────────────── */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
-            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
               <div className="flex items-center gap-2 text-[var(--color-text-muted)] text-xs font-bold uppercase tracking-widest mb-1">
                 <Database className="w-3.5 h-3.5" /> Database (Postgres)
               </div>
-              <div className="text-2xl font-black text-[var(--color-text)]">{fmtBytes(stats.db.totalBytes)}</div>
+              <div className="text-[15px] font-bold text-[var(--color-text)]">{fmtBytes(stats.db.totalBytes)}</div>
               <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">{tables.length} tables on disk</div>
             </div>
-            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+            <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
               <div className="flex items-center gap-2 text-[var(--color-text-muted)] text-xs font-bold uppercase tracking-widest mb-1">
                 <HardDrive className="w-3.5 h-3.5" /> Files (R2{stats.r2Real ? ", measured" : ", estimated"})
               </div>
-              <div className="text-2xl font-black text-[var(--color-text)]">
+              <div className="text-[15px] font-bold text-[var(--color-text)]">
                 {stats.r2Real ? fmtBytes(stats.r2Real.bytes) : `~${fmtBytes(stats.r2Estimate.totalBytes)}`}
               </div>
               <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
@@ -956,7 +953,7 @@ export default function StorageBackupPage() {
               Silently showing that as "storage used" is worse than showing
               nothing — it never moves no matter how much you upload. */}
           {!stats.r2Real && (
-            <p role="alert" className="mb-5 border-l-2 border-red-500 pl-3 text-xs text-red-700 dark:text-red-400 flex items-start gap-2">
+            <p role="alert" className="px-1 border-l-2 border-red-500 pl-3 text-[13px] text-red-700 dark:text-red-400 flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
               <span>
                 <b>The file total above is an estimate, not a measurement.</b> Measuring the bucket failed, so it
@@ -967,7 +964,7 @@ export default function StorageBackupPage() {
             </p>
           )}
           {stats.r2Real?.truncated && (
-            <p className="mb-5 border-l-2 border-amber-500 pl-3 text-xs text-amber-800 dark:text-amber-300 flex items-start gap-2">
+            <p className="px-1 border-l-2 border-amber-500 pl-3 text-[13px] text-amber-800 dark:text-amber-300 flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
               <span>
                 <b>Measuring stopped early, so the real total is higher.</b> The bucket has more than 500,000
@@ -980,7 +977,7 @@ export default function StorageBackupPage() {
               an itemized breakdown with object counts and a newest-file stamp
               is the receipt that answers it. */}
           {stats.r2Real && (stats.r2Real.segments?.length ?? 0) > 0 && (
-            <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5">
+            <details className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
               <summary className="cursor-pointer text-[11px] font-bold uppercase tracking-widest text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
                 Where the files are
               </summary>
@@ -1014,7 +1011,7 @@ export default function StorageBackupPage() {
 
           {/* ── Plan headroom: REAL usage vs the hosting plan's ceilings ──── */}
           {stats.freeTier && (
-            <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5" open={stats.freeTier.dbBand !== "ok" || stats.r2Real?.band === "warn" || stats.r2Real?.band === "crit"}>
+            <details className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5" open={stats.freeTier.dbBand !== "ok" || stats.r2Real?.band === "warn" || stats.r2Real?.band === "crit"}>
               <summary className="cursor-pointer text-[11px] font-bold uppercase tracking-widest text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
                 Hosting plan limits
               </summary>
@@ -1080,7 +1077,7 @@ export default function StorageBackupPage() {
           )}
 
           {/* ── Orphaned files: bucket objects nothing references ─────────── */}
-          <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5" open={!!orphanScan || !!orphanMsg}>
+          <details className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5" open={!!orphanScan || !!orphanMsg}>
             <summary className="cursor-pointer text-[11px] font-bold uppercase tracking-widest text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Orphaned files</summary>
             <div className="mt-2 flex items-center justify-between gap-2 flex-wrap">
               <div>
@@ -1136,7 +1133,7 @@ export default function StorageBackupPage() {
           </details>
 
           {/* ── Category breakdown: purge vs keep vs reference ───────────── */}
-          <details className="mb-5 group/cat">
+          <details className="group/cat rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
             <summary className="cursor-pointer mb-2 text-[11px] font-bold uppercase tracking-widest text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Database by kind: what can go, what stays</summary>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {(["purge", "archive", "reference"] as DataClass[]).map((cat) => {
@@ -1149,7 +1146,7 @@ export default function StorageBackupPage() {
                   <div className={`flex items-center gap-2 text-xs font-bold mb-1 ${M.tint}`}>
                     <Icon className="w-4 h-4" /> {CATEGORY_LABEL[cat]}
                   </div>
-                  <div className="text-xl font-black text-[var(--color-text)]">{fmtBytes(bytes)}</div>
+                  <div className="text-[15px] font-bold text-[var(--color-text)]">{fmtBytes(bytes)}</div>
                   <div className="h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden my-1.5">
                     <div className={`h-full rounded-full ${M.bar}`} style={{ width: `${Math.max(1, share)}%` }} />
                   </div>
@@ -1162,10 +1159,10 @@ export default function StorageBackupPage() {
 
           {/* ── Free up space (purge) ────────────────────────────────────── */}
           {canPurge ? (
-            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5">
+            <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
               <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
-                <div className="flex items-center gap-2 text-sm font-black text-[var(--color-text)]">
-                  <Recycle className="w-4 h-4 text-[var(--color-text-muted)]" /> Free up space
+                <div className="flex items-center gap-2 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+                  <Recycle className="w-4 h-4" /> Free up space
                   <span className="text-[11px] font-medium text-[var(--color-text-muted)]">· your workspace · byproducts only</span>
                 </div>
                 <div className="flex items-center gap-1.5">
@@ -1220,14 +1217,14 @@ export default function StorageBackupPage() {
               </div>
             </div>
           ) : (
-            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5 text-xs text-[var(--color-text-muted)] flex items-center gap-2">
+            <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 text-xs text-[var(--color-text-muted)] flex items-center gap-2">
               <Lock className="w-4 h-4 shrink-0" /> Only Admin and Doc Control can free up space. You can still see usage and download backups.
             </div>
           )}
 
           {/* ── Archive for space (the shed) ─────────────────────────────── */}
           {canPurge && (
-            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5">
+            <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
               <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
                 <div className="flex items-center gap-2 text-sm font-black text-[var(--color-text)]">
                   <Archive className="w-4 h-4 text-[var(--color-text-muted)]" /> Archive older revision history for space
@@ -1285,7 +1282,7 @@ export default function StorageBackupPage() {
 
           {/* ── Archive closed tickets for space ─────────────────────────── */}
           {canPurge && (
-            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5">
+            <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
               <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
                 <div className="flex items-center gap-2 text-sm font-black text-[var(--color-text)]">
                   <Archive className="w-4 h-4 text-[var(--color-text-muted)]" /> Archive closed tickets for space
@@ -1372,13 +1369,13 @@ export default function StorageBackupPage() {
 
           {/* ── Offline archive catalog ──────────────────────────────────── */}
           {canPurge && readErrors.catalog && (
-            <p role="alert" className="mb-5 border-l-2 border-red-500 pl-3 text-[11px] text-red-700 dark:text-red-400">
+            <p role="alert" className="px-1 border-l-2 border-red-500 pl-3 text-[13px] text-red-700 dark:text-red-400">
               Couldn&apos;t load the offline archive catalog: {readErrors.catalog}{" "}
               <button type="button" onClick={() => void loadCatalog()} className="font-bold underline">Try again</button>
             </p>
           )}
           {canPurge && catalog && catalog.length > 0 && (
-            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5">
+            <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
               <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
                 <div className="flex items-center gap-2 text-sm font-black text-[var(--color-text)]">
                   <FolderArchive className="w-4 h-4 text-[var(--color-text-muted)]" /> Offline archive catalog
@@ -1454,7 +1451,7 @@ export default function StorageBackupPage() {
           )}
 
           {/* ── Backup (records + binaries) ──────────────────────────────── */}
-          <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5">
+          <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
             <div className="flex items-center gap-2 text-sm font-black text-[var(--color-text)] mb-1">
               <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" /> Backup and restore
             </div>
@@ -1542,17 +1539,17 @@ export default function StorageBackupPage() {
 
           {/* ── Dedup opportunity ────────────────────────────────────────── */}
           {stats.dedup && stats.dedup.totalVersions > 0 && (
-            <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5">
+            <details className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
               <summary className="cursor-pointer flex items-center gap-2 text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-xs font-bold uppercase tracking-widest mb-2">
                 <Copy className="w-3.5 h-3.5" /> Duplicate revision files
               </summary>
               <div className="flex items-center gap-6 flex-wrap">
                 <div>
-                  <div className="text-2xl font-black text-[var(--color-text)]">~{fmtBytes(stats.dedup.reclaimableBytes)}</div>
+                  <div className="text-[15px] font-bold text-[var(--color-text)]">~{fmtBytes(stats.dedup.reclaimableBytes)}</div>
                   <div className="text-[11px] text-[var(--color-text-muted)]">stored more than once</div>
                 </div>
                 <div>
-                  <div className="text-lg font-black text-[var(--color-text)]">{fmtNum(stats.dedup.dupGroups)}</div>
+                  <div className="text-[15px] font-bold text-[var(--color-text)]">{fmtNum(stats.dedup.dupGroups)}</div>
                   <div className="text-[11px] text-[var(--color-text-muted)]">files stored 2+ times</div>
                 </div>
                 <div className="flex-1 min-w-[12rem] text-[11px] text-[var(--color-text-faint)] leading-relaxed">
@@ -1563,18 +1560,18 @@ export default function StorageBackupPage() {
           )}
 
           {/* ── AI usage ─────────────────────────────────────────────────── */}
-          <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5">
+          <details className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5">
             <summary className="cursor-pointer flex items-center gap-2 text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-xs font-bold uppercase tracking-widest mb-2">
               <Sparkles className="w-3.5 h-3.5" /> AI usage (shared key)
             </summary>
             {stats.ai ? (
               <div className="flex items-center gap-6 flex-wrap">
                 <div>
-                  <div className="text-2xl font-black text-[var(--color-text)]">{fmtNum(stats.ai.last24h)}</div>
+                  <div className="text-[15px] font-bold text-[var(--color-text)]">{fmtNum(stats.ai.last24h)}</div>
                   <div className="text-[11px] text-[var(--color-text-muted)]">calls · last 24h</div>
                 </div>
                 <div>
-                  <div className="text-2xl font-black text-[var(--color-text)]">{fmtNum(stats.ai.last30d)}</div>
+                  <div className="text-[15px] font-bold text-[var(--color-text)]">{fmtNum(stats.ai.last30d)}</div>
                   <div className="text-[11px] text-[var(--color-text-muted)]">calls · last 30d</div>
                 </div>
                 <div className="flex-1 min-w-[12rem] text-[11px] text-[var(--color-text-faint)] leading-relaxed">
@@ -1590,9 +1587,9 @@ export default function StorageBackupPage() {
 
           {/* ── Ticket design-issue callout ──────────────────────────────── */}
           {/* ── Tables by size ───────────────────────────────────────────── */}
-          <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden mb-4">
-            <summary className="cursor-pointer px-4 py-3 border-b border-[var(--color-border)] text-sm font-bold text-[var(--color-text)] flex items-center justify-between flex-wrap gap-2">
-              <span>Tables by size</span>
+          <details className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden">
+            <summary className="cursor-pointer px-4 sm:px-5 py-3.5 border-b border-[var(--color-border)] flex items-center justify-between flex-wrap gap-2">
+              <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Tables by size</span>
               <span className="text-[11px] font-medium text-[var(--color-text-faint)] inline-flex items-center gap-2">
                 <span className="inline-flex items-center gap-1"><Recycle className="w-3 h-3 text-emerald-500" /> purge</span>
                 <span className="inline-flex items-center gap-1"><Archive className="w-3 h-3 text-amber-500" /> keep</span>
@@ -1630,10 +1627,10 @@ export default function StorageBackupPage() {
             </div>
           </details>
 
-          <p className="text-[11px] text-[var(--color-text-faint)] leading-relaxed">{stats.note}</p>
-          <p className="text-[11px] text-[var(--color-text-faint)] mt-2">Snapshot {new Date(stats.generatedAt).toLocaleString()}</p>
+          <p className="px-1 text-[12px] text-[var(--color-text-muted)] leading-relaxed">{stats.note} Snapshot {new Date(stats.generatedAt).toLocaleString()}.</p>
         </>
       ) : null}
-    </div>
+      </PageBody>
+    </PageShell>
   );
 }

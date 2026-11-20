@@ -323,8 +323,9 @@ function EmptyState({ canUpload, onUpload }: { canUpload: boolean; onUpload?: ()
       <div className="text-[11px] font-bold text-[var(--color-text)]">No photos yet</div>
       {canUpload && onUpload && (
         <button
+          type="button"
           onClick={onUpload}
-          className="mt-2 inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]"
+          className="mt-2 inline-flex items-center gap-1 h-8 px-2.5 rounded-lg text-[12px] font-bold text-[var(--color-surface)] bg-[var(--color-text)] hover:opacity-90"
         >
           <Upload className="w-3 h-3" /> Upload first photo
         </button>

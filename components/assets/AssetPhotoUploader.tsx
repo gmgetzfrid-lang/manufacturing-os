@@ -167,7 +167,7 @@ export default function AssetPhotoUploader({
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-[510] bg-slate-900/50 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4"
+      className="fixed inset-0 z-[510] bg-[var(--color-ink)]/60 flex items-start sm:items-center justify-center overflow-y-auto p-4"
       onClick={() => { if (!submitting) onClose(); }}
       onMouseDown={(e) => e.stopPropagation()}
     >

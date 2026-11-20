@@ -130,12 +130,12 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
   }, [who, policy]);
 
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] mb-5 overflow-hidden">
+    <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <UserSearch className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-base font-bold text-[var(--color-text)]">View as…</span>
-        <span className="text-xs text-[var(--color-text-muted)]">See what any member can do, using the same checks the app enforces.</span>
-        <select value={pick} onChange={(e) => setPick(e.target.value)} className="ml-auto h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs min-w-[180px]">
+        <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">View as</h2>
+        <span className="text-[13px] text-[var(--color-text-muted)]">See what any member can do, using the same checks the app enforces.</span>
+        <select value={pick} aria-label="Member to view as" onChange={(e) => setPick(e.target.value)} className="ml-auto h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs min-w-[180px]">
           <option value="">Pick a member…</option>
           {members.map((m) => <option key={m.uid} value={m.uid}>{m.name} · {m.role}</option>)}
         </select>
@@ -217,7 +217,7 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
                     </select>
                     <input type="date" value={grantUntil} onChange={(e) => setGrantUntil(e.target.value)} min={new Date().toISOString().slice(0, 10)} className="h-7 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[11px] [color-scheme:light] dark:[color-scheme:dark]" title="Expires (optional)" />
                     <input value={grantNote} onChange={(e) => setGrantNote(e.target.value)} placeholder="why (goes on the audit)…" className="flex-1 min-w-[120px] h-7 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[11px]" />
-                    <button onClick={() => void doGrant()} disabled={grantBusy} className="h-7 inline-flex items-center gap-1 px-2.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+                    <button onClick={() => void doGrant()} disabled={grantBusy} className="h-8 inline-flex items-center gap-1 px-2.5 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 text-[12px] font-bold disabled:opacity-50">
                       {grantBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Grant
                     </button>
                   </div>
@@ -244,6 +244,6 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
           </div>
         </div>
       )}
-    </div>
+    </section>
   );
 }

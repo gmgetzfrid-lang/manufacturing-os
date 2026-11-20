@@ -6,7 +6,6 @@ import { useRole } from '@/components/providers/RoleContext';
 import type { Role } from '@/types/schema';
 import { addableRoles, capabilitiesAdded, primaryRole, CAPABILITY_LABELS } from '@/lib/roleCapabilities';
 import {
-  Users,
   UserPlus,
   Trash2,
   AlertCircle,
@@ -15,7 +14,9 @@ import {
   Plus,
   X,
 } from 'lucide-react';
-import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
+import { PageShell } from '@/components/ui/PageShell';
+import { PageHero, PageBody, Card, heroPrimary } from '@/components/ui/PageHero';
+import { plural } from '@/components/admin/band';
 import { Button } from '@/components/ui/Button';
 import { Input, Select } from '@/components/ui/Field';
 import LoadingBlock from '@/components/ui/LoadingBlock';
@@ -91,6 +92,7 @@ export default function AdminUsersPage() {
   });
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [memberLimit, setMemberLimit] = useState(100);
 
   useEffect(() => {
     if (!activeOrgId) return;
@@ -241,64 +243,68 @@ export default function AdminUsersPage() {
   };
 
   if (!['Admin', 'Manager'].includes(activeRole)) {
-    return <div className="p-8 text-sm text-[var(--color-text-muted)]">Only Admins and Managers manage members.</div>;
+    return (
+      <PageShell width="work">
+        <PageHero kicker="Admin · Users" title="Admins and managers only." sub="Only Admins and Managers manage members." overlap={false} />
+      </PageShell>
+    );
   }
+
+  const notActive = members.filter((m) => m.status !== 'active').length;
+  const answer = loading && members.length === 0 ? 'Users'
+    : loadError ? "Couldn't load members."
+    : members.length === 0 ? 'No members yet.'
+    : `${plural(members.length, 'member')}${notActive > 0 ? `, ${notActive} not active` : ''}.`;
+  const shownMembers = members.slice(0, memberLimit);
 
   return (
     <PageShell width="work">
-
-      {/* Header */}
-      <PageHeaderBar
-        icon={Users}
-        title="Team Management"
-        subtitle={
-          <span className="inline-flex items-center gap-2 font-medium">
-            <Building2 className="w-4 h-4" />
-            <span>Organization: <span className="text-[var(--color-text)] font-bold">{orgName || 'Loading…'}</span>{!loading && !loadError && <> · {members.length} member{members.length === 1 ? '' : 's'}</>}</span>
-          </span>
-        }
-        actions={
-          <Button onClick={() => { setFormData((f) => ({ ...f, role: lastRole() })); setError(null); setIsModalOpen(true); }}>
+      <PageHero
+        kicker="Admin · Users"
+        title={answer}
+        sub={<span className="inline-flex items-center gap-2"><Building2 className="w-4 h-4" /> {orgName || 'Loading…'}</span>}
+        primary={
+          <button type="button" className={heroPrimary} onClick={() => { setFormData((f) => ({ ...f, role: lastRole() })); setError(null); setIsModalOpen(true); }}>
             <UserPlus className="w-4 h-4" />
-            Add Team Member
-          </Button>
+            Add a member
+          </button>
         }
       />
 
-      {/* Main Content */}
-        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-hidden">
+      <PageBody>
+        <Card pad={false} className="overflow-hidden">
           {loading && members.length === 0 ? (
-            <LoadingBlock what="members" className="border-0 rounded-none" />
+            <LoadingBlock what="members" className="border-0 rounded-none p-5" />
           ) : loadError ? (
-            <p role="alert" className="m-4 border-l-2 border-red-500 pl-3 text-sm text-red-700 dark:text-red-400">
+            <p role="alert" className="p-5 text-[14px] text-red-700 dark:text-red-400">
               Couldn&apos;t load members: {loadError}{" "}
               <button type="button" onClick={() => void fetchMembers()} className="font-bold underline">Try again</button>
             </p>
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-[var(--color-border)]">
-                <thead className="bg-[var(--color-surface-2)]">
+                <thead>
                   <tr>
-                    <th className="px-6 py-4 text-left text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider">User</th>
-                    <th className="px-6 py-4 text-left text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider">Role</th>
-                    <th className="px-6 py-4 text-left text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider">Status</th>
-                    <th className="px-6 py-4 text-left text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider">Joined</th>
-                    <th className="px-6 py-4 text-right text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider">Actions</th>
+                    <th className="px-5 py-3 text-left text-[11px] font-extrabold text-[var(--color-text-muted)] uppercase tracking-[0.12em]">User</th>
+                    <th className="px-5 py-3 text-left text-[11px] font-extrabold text-[var(--color-text-muted)] uppercase tracking-[0.12em]">Role</th>
+                    <th className="px-5 py-3 text-left text-[11px] font-extrabold text-[var(--color-text-muted)] uppercase tracking-[0.12em]">Status</th>
+                    <th className="px-5 py-3 text-left text-[11px] font-extrabold text-[var(--color-text-muted)] uppercase tracking-[0.12em]">Joined</th>
+                    <th className="px-5 py-3 text-right text-[11px] font-extrabold text-[var(--color-text-muted)] uppercase tracking-[0.12em]"><span className="sr-only">Actions</span></th>
                   </tr>
                 </thead>
-                <tbody className="bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
-                  {members.map((m) => (
+                <tbody className="divide-y divide-[var(--color-border)]">
+                  {shownMembers.map((m) => (
                     <tr key={m.id} className="hover:bg-[var(--color-surface-2)] transition-colors">
-                      <td className="px-6 py-4 whitespace-nowrap">
+                      <td className="px-5 py-3 whitespace-nowrap">
                         <div className="flex items-center">
-                          <UserAvatar uid={m.uid} name={m.display_name} email={m.email} size={40} rounded="full" />
-                          <div className="ml-4">
-                            <div className="text-sm font-bold text-[var(--color-text)]">{m.display_name || 'No Name'}</div>
-                            <div className="text-sm text-[var(--color-text-muted)]">{m.email}</div>
+                          <UserAvatar uid={m.uid} name={m.display_name} email={m.email} size={36} rounded="full" />
+                          <div className="ml-3">
+                            <div className="text-[14px] font-bold text-[var(--color-text)]">{m.display_name || 'No name'}</div>
+                            <div className="text-[13px] text-[var(--color-text-muted)]">{m.email}</div>
                           </div>
                         </div>
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="px-5 py-3">
                         {(() => {
                           const memberRoles = rolesOf(m);
                           const headline = primaryRole(memberRoles);
@@ -337,15 +343,15 @@ export default function AdminUsersPage() {
                           );
                         })()}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`px-2 py-1 inline-flex text-xs leading-5 font-bold rounded-full ${m.status === 'active' ? 'text-[var(--color-text)] bg-[var(--color-surface-2)]' : 'text-[var(--color-text-muted)] bg-[var(--color-surface-2)]'}`}>
-                          {m.status}
+                      <td className="px-5 py-3 whitespace-nowrap">
+                        <span className={`text-[13px] font-semibold ${m.status === 'active' ? 'text-emerald-700 dark:text-emerald-400' : 'text-[var(--color-text-muted)]'}`}>
+                          {m.status === 'active' ? 'Active' : m.status}
                         </span>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-[var(--color-text-muted)] font-medium">
+                      <td className="px-5 py-3 whitespace-nowrap text-[13px] text-[var(--color-text-muted)]">
                         {m.created_at ? new Date(m.created_at).toLocaleDateString() : '-'}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                      <td className="px-5 py-3 whitespace-nowrap text-right text-[13px]">
                         <button
                           onClick={() => handleRemoveMember(m)}
                           disabled={removingId === m.id || (!!uid && m.uid === uid)}
@@ -359,18 +365,27 @@ export default function AdminUsersPage() {
                     </tr>
                   ))}
                   {members.length === 0 && (
-                    <tr><td colSpan={5} className="px-6 py-12 text-center text-[var(--color-text-faint)] italic">No team members found.</td></tr>
+                    <tr><td colSpan={5} className="px-5 py-10 text-center text-[14px] text-[var(--color-text-muted)]">No members yet. Add the first one.</td></tr>
                   )}
                 </tbody>
               </table>
             </div>
           )}
-        </div>
+          {members.length > memberLimit && (
+            <div className="px-5 py-3 border-t border-[var(--color-border)] flex items-center justify-between text-[13px]">
+              <span className="text-[var(--color-text-muted)]">{memberLimit} of {members.length} shown</span>
+              <button type="button" onClick={() => setMemberLimit((n) => n + 100)} className="font-bold text-[var(--color-accent)] hover:underline">
+                Show {Math.min(100, members.length - memberLimit)} more
+              </button>
+            </div>
+          )}
+        </Card>
+      </PageBody>
 
       {/* Add User Modal */}
       {isModalOpen && (
         <Modal onClose={() => { if (!processing) setIsModalOpen(false); }} size="sm" dismissable={!processing}>
-          <ModalHeader icon={UserPlus} title="Add Team Member" onClose={processing ? undefined : () => setIsModalOpen(false)} />
+          <ModalHeader icon={UserPlus} title="Add a member" onClose={processing ? undefined : () => setIsModalOpen(false)} />
           <ModalBody>
             <form onSubmit={handleCreateMember} className="space-y-4">
               {error && (
@@ -382,7 +397,7 @@ export default function AdminUsersPage() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider mb-1">First Name</label>
+                  <label className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-1">First name</label>
                   <Input
                     required type="text" value={formData.firstName}
                     onChange={e => setFormData({...formData, firstName: e.target.value})}
@@ -390,7 +405,7 @@ export default function AdminUsersPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider mb-1">Last Name</label>
+                  <label className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-1">Last name</label>
                   <Input
                     required type="text" value={formData.lastName}
                     onChange={e => setFormData({...formData, lastName: e.target.value})}
@@ -400,7 +415,7 @@ export default function AdminUsersPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider mb-1">Work Email</label>
+                <label className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-1">Work email</label>
                 <Input
                   required type="email" value={formData.email}
                   onChange={e => setFormData({...formData, email: e.target.value})}
@@ -409,7 +424,7 @@ export default function AdminUsersPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider mb-1">Temporary Password</label>
+                <label className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-1">Temporary password</label>
                 <Input
                   required type="text" value={formData.password}
                   onChange={e => setFormData({...formData, password: e.target.value})}
@@ -419,7 +434,7 @@ export default function AdminUsersPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider mb-1">Role</label>
+                <label className="block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-1">Role</label>
                 <Select
                   value={formData.role}
                   onChange={e => setFormData({...formData, role: e.target.value})}
@@ -432,7 +447,7 @@ export default function AdminUsersPage() {
 
               <div className="pt-2">
                 <Button type="submit" loading={processing} className="w-full">
-                  Create Account
+                  Create account
                 </Button>
                 <p className="text-xs text-center text-[var(--color-text-faint)] mt-3">
                   They can sign in right away with these details.

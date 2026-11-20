@@ -14,7 +14,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
-  HardHat, ArrowLeft, Loader2, AlertTriangle, X, Check, Plus, Pencil,
+  Loader2, AlertTriangle, X, Check, Plus, Pencil,
   Phone, Mail, FileText, Search, Sparkles, BookOpenCheck, Trophy,
   GitPullRequestArrow, Briefcase, ShieldAlert,
 } from "lucide-react";
@@ -33,6 +33,8 @@ import { CO_REASON_LABEL, type CoReason } from "@/lib/changeOrders";
 import { ScoreDial, scoreBandColor } from "@/components/ui/ChartKit";
 import { fmtMoney } from "@/lib/costs";
 import { orIlike } from "@/lib/orFilter";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
 
 async function authHeader(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();
@@ -80,79 +82,109 @@ export default function CompanyProfilePage() {
   }, [params.id, reloadKey]);
   const refresh = useCallback(() => setReloadKey((k) => k + 1), []);
 
-  if (loading) return <div className="max-w-5xl mx-auto px-6 py-6"><LoadingBlock what="the company" /></div>;
+  const goBack = () => { if (window.history.length > 1) router.back(); else router.push("/companies"); };
+  if (loading) return (
+    <PageShell width="work">
+      <PageHero kicker="Known companies" title="Company" back={{ onClick: goBack, label: "Back to companies" }} size="md" overlap={false} />
+      <LoadingBlock what="the company" />
+    </PageShell>
+  );
   if (error || !company) return (
-    <div className="min-h-full p-8">
-      <div role="alert" className="max-w-2xl mx-auto border-l-2 border-red-500 pl-3 text-sm text-red-700 dark:text-red-400 flex items-start gap-2">
-        <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-        <div>{error ?? "Company not found."}
-          <div className="mt-2 flex gap-3">
-            {error && error !== "Company not found." && <button type="button" onClick={() => { setLoading(true); refresh(); }} className="font-bold underline">Try again</button>}
-            <Link href="/companies" className="underline">Back to companies</Link>
+    <PageShell width="work">
+      <PageHero kicker="Known companies" back={{ href: "/companies", label: "Back to companies" }} size="md"
+        title={error === "Company not found." || !error ? "Company not found." : "Couldn't load this company."} />
+      <PageBody>
+        <Card>
+          <div role="alert" className="text-[14px] text-red-700 dark:text-red-400 flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+            <div>{error ?? "Company not found."}
+              <div className="mt-2 flex gap-3">
+                {error && error !== "Company not found." && <button type="button" onClick={() => { setLoading(true); refresh(); }} className="font-bold underline">Try again</button>}
+                <Link href="/companies" className="underline">Back to companies</Link>
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
-    </div>
+        </Card>
+      </PageBody>
+    </PageShell>
   );
 
   const sc = profile?.scorecard ?? null;
   const band = scoreBand(sc?.composite ?? null);
+  // The answer: the company's standing, in words.
+  const answer = company.status === "do_not_use" ? `${company.name}: do not use.`
+    : sc?.composite != null ? `${company.name} scores ${Math.round(sc.composite)}.`
+    : !profile && !profileError ? company.name
+    : `${company.name} is not rated yet.`;
+  const events = profile?.events ?? [];
+  const bad = events.filter((e) => e.kind === "recordable" || e.kind === "stop_work").length;
+  const sub = [
+    COMPANY_KIND_LABEL[company.kind],
+    company.trade,
+    company.status === "inactive" ? "Inactive" : null,
+    sc?.composite != null ? band.label : null,
+    profile ? `${profile.projects.length} job${profile.projects.length === 1 ? "" : "s"}` : null,
+    profile && bad > 0 ? `${bad} recordable or stop-work event${bad === 1 ? "" : "s"}` : null,
+  ].filter(Boolean).join(" · ");
 
   return (
-    <div className="pb-20 max-w-5xl mx-auto px-6 py-6 space-y-4">
-      <button onClick={() => { if (window.history.length > 1) router.back(); else router.push("/companies"); }}
-        className="inline-flex items-center gap-1.5 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
-        <ArrowLeft className="w-3.5 h-3.5" /> Back to companies
-      </button>
+    <PageShell width="work">
+      <PageHero
+        kicker={<>Known companies · {COMPANY_KIND_LABEL[company.kind]}</>}
+        back={{ onClick: goBack, label: "Back to companies" }}
+        size="md"
+        title={answer}
+        sub={sub}
+        tools={canManage ? (
+          <button type="button" onClick={() => setShowEdit(true)} className={heroQuiet}>
+            <Pencil className="w-3.5 h-3.5" /> Edit
+          </button>
+        ) : undefined}
+        primary={canManage ? (
+          <button type="button" className={heroPrimary}
+            onClick={() => {
+              const el = document.getElementById("company-event-what");
+              el?.scrollIntoView({ behavior: "smooth", block: "center" });
+              (el as HTMLInputElement | null)?.focus({ preventScroll: true });
+            }}>
+            <Plus className="w-4 h-4" /> Log an event
+          </button>
+        ) : undefined}
+      />
 
-      {actionError && (
-        <p role="alert" className="border-l-2 border-red-500 pl-3 text-xs text-red-700 dark:text-red-400 flex items-start gap-2">
-          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {actionError}
-          <button type="button" onClick={() => setActionError(null)} className="ml-auto font-bold underline">Dismiss</button>
-        </p>
-      )}
-
-      {/* ── Header card ── */}
-      <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-5 shadow-sm">
+      <PageBody>
+      {/* ── Score card ── */}
+      <Card label="Score">
+        {actionError && (
+          <p role="alert" className="mb-3 text-[13px] text-red-700 dark:text-red-400 flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {actionError}
+            <button type="button" onClick={() => setActionError(null)} className="ml-auto font-bold underline">Dismiss</button>
+          </p>
+        )}
         <div className="flex items-start gap-5 flex-wrap">
           <ScoreDial score={sc?.composite ?? null} size={92} label={band.label} />
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-xl font-black text-[var(--color-text)] flex items-center gap-2">
-                <HardHat className="w-5 h-5 text-[var(--color-text-muted)]" /> {company.name}
-              </h1>
-              <span className="text-[11px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)]">{COMPANY_KIND_LABEL[company.kind]}</span>
-              {company.trade && <span className="text-xs text-[var(--color-text-muted)]">{company.trade}</span>}
-              {company.status !== "active" && (
-                <span className={`text-[11px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${company.status === "do_not_use" ? "border-rose-500/50 bg-rose-500/10 text-rose-700 dark:text-rose-300" : "border-[var(--color-border)] text-[var(--color-text-faint)]"}`}>
-                  {company.status === "do_not_use" ? "Do not use" : "Inactive"}
-                </span>
-              )}
-              {canManage && (
-                <button onClick={() => setShowEdit(true)}
-                  className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
-                  <Pencil className="w-3 h-3" /> Edit
-                </button>
-              )}
-            </div>
-            <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--color-text-muted)]">
+            {company.status === "do_not_use" && (
+              <p className="mb-1.5 text-[13px] font-bold text-rose-700 dark:text-rose-300">Marked do not use. The record stays; the company is flagged across the app.</p>
+            )}
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-[var(--color-text-muted)]">
               {company.contactName && <span className="inline-flex items-center gap-1"><Phone className="w-3 h-3" /> {company.contactName}{company.contactPhone ? ` · ${company.contactPhone}` : ""}</span>}
               {company.contactEmail && <span className="inline-flex items-center gap-1"><Mail className="w-3 h-3" /> {company.contactEmail}</span>}
             </div>
-            {company.notes && <p className="mt-2 text-xs text-[var(--color-text-muted)]">{company.notes}</p>}
+            {company.notes && <p className="mt-2 text-[13px] text-[var(--color-text-muted)]">{company.notes}</p>}
 
             {/* Dimensions with their work shown. */}
             <div className="mt-3 space-y-1.5">
               {(sc?.dimensions ?? []).map((d) => (
-                <div key={d.key} className="flex items-center gap-2 text-[11px]">
-                  <span className="w-28 shrink-0 font-bold text-[var(--color-text-muted)]">{d.label}</span>
+                <div key={d.key} className="flex items-center gap-2 text-[13px]">
+                  <span className="w-28 shrink-0 font-semibold text-[var(--color-text-muted)]">{d.label}</span>
                   {d.score != null ? (
                     <>
                       <span className="h-2 w-32 rounded-full bg-[var(--viz-track)] overflow-hidden shrink-0">
                         <span className="block h-full rounded-full" style={{ width: `${d.score}%`, background: scoreBandColor(d.score) }} />
                       </span>
                       <span className="tabular-nums font-black text-[var(--color-text)] w-8 shrink-0">{Math.round(d.score)}</span>
-                      <span className="text-[var(--color-text-muted)]">{d.detail}</span>
+                      <span className="text-[var(--color-text-muted)] min-w-0">{d.detail}</span>
                     </>
                   ) : (
                     <span className="text-[var(--color-text-faint)] italic">{d.detail}</span>
@@ -167,13 +199,13 @@ export default function CompanyProfilePage() {
               {!profile && !profileError && <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-faint)]"><Loader2 className="w-3 h-3 animate-spin" /> Gathering the record…</div>}
             </div>
             {sc && (
-              <div className="mt-2 text-[11px] text-[var(--color-text-faint)]">
+              <div className="mt-2 text-[12px] text-[var(--color-text-muted)]">
                 Scored from {sc.evidenceCount} recorded evidence point{sc.evidenceCount === 1 ? "" : "s"}, never from typed-in ratings. A part with no evidence stays Unrated and doesn&apos;t count.
               </div>
             )}
           </div>
         </div>
-      </div>
+      </Card>
 
       <QualityManualPanel orgId={activeOrgId ?? company.orgId} company={company} canManage={canManage}
         actorId={uid ?? ""} onChanged={() => void refresh()} setErr={setActionError} />
@@ -189,7 +221,8 @@ export default function CompanyProfilePage() {
           onClose={() => setShowEdit(false)}
           onSaved={() => { setShowEdit(false); void refresh(); }} />
       )}
-    </div>
+      </PageBody>
+    </PageShell>
   );
 }
 
@@ -258,26 +291,26 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
   };
 
   return (
-    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
-      <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
+    <Card pad={false} className="overflow-hidden">
+      <div className="px-4 sm:px-5 pt-4 pb-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <BookOpenCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-sm font-bold text-[var(--color-text)]">Quality manual</span>
+        <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Quality manual</h2>
         {company.qualityManualScore != null ? (
-          <span className="text-[11px] font-black tabular-nums" style={{ color: scoreBandColor(company.qualityManualScore) }}>
+          <span className="text-[13px] font-bold tabular-nums" style={{ color: scoreBandColor(company.qualityManualScore) }}>
             {Math.round(company.qualityManualScore)}% coverage
           </span>
         ) : (
-          <span className="text-[11px] text-[var(--color-text-muted)]">Not checked yet. The score shows how much of a real quality program their manual covers.</span>
+          <span className="text-[13px] text-[var(--color-text-muted)]">Not checked yet. The score shows how much of a real quality program their manual covers.</span>
         )}
         {company.qualityManualReviewedAt && (
-          <span className="ml-auto text-[11px] text-[var(--color-text-faint)]">confirmed {new Date(company.qualityManualReviewedAt).toLocaleDateString()}</span>
+          <span className="ml-auto text-[12px] text-[var(--color-text-muted)]">confirmed {new Date(company.qualityManualReviewedAt).toLocaleDateString()}</span>
         )}
       </div>
 
       {(company.qualityManualGaps?.length ?? 0) > 0 && !proposal && (
-        <ul className="px-4 py-2.5 space-y-1 border-b border-[var(--color-border)]">
+        <ul className="px-4 sm:px-5 py-2.5 space-y-1 border-b border-[var(--color-border)]">
           {company.qualityManualGaps!.map((g, i) => (
-            <li key={i} className="text-[11px] text-[var(--color-text-muted)]">
+            <li key={i} className="text-[13px] text-[var(--color-text-muted)]">
               <span className="font-bold text-amber-700 dark:text-amber-300">{areaLabel.get(g.area) ?? g.area}:</span> {g.finding}
             </li>
           ))}
@@ -285,7 +318,7 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
       )}
 
       {canManage && (
-        <div className="px-4 py-3 space-y-2">
+        <div className="px-4 sm:px-5 py-3 space-y-2">
           {!proposal ? (
             <>
               <div className="flex items-center gap-2 flex-wrap">
@@ -298,12 +331,13 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
                   <span className="relative flex-1 min-w-64">
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-faint)]" />
                     <input value={query} onChange={(e) => setQuery(e.target.value)}
+                      aria-label="Find their quality manual"
                       placeholder="Find their quality manual in document control…"
-                      className="w-full h-8 pl-8 pr-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-xs" />
+                      className="w-full h-9 pl-8 pr-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[13px]" />
                   </span>
                 )}
                 <button onClick={() => void evaluate()} disabled={!doc || evaluating}
-                  className="h-8 inline-flex items-center gap-1 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[11px] font-black hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                  className="h-9 inline-flex items-center gap-1 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[13px] font-semibold hover:bg-[var(--color-surface-2)] disabled:opacity-50"
                   title="AI reads the manual against the ISO 9001-shaped rubric (doc control, welding, NDE, calibration, ITPs, materials, NCRs, training, records). You review before anything lands.">
                   {evaluating ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Evaluate
                 </button>
@@ -323,19 +357,19 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
           ) : (
             <>
               <div className="flex items-center gap-2">
-                <span className="text-xs font-black text-[var(--color-text)]">Proposed: {proposal.score}% coverage</span>
-                <span className="text-[11px] text-[var(--color-text-muted)]">Check the findings. Nothing goes on the record until you confirm.</span>
+                <span className="text-[14px] font-bold text-[var(--color-text)]">Proposed: {proposal.score}% coverage</span>
+                <span className="text-[13px] text-[var(--color-text-muted)]">Check the findings. Nothing goes on the record until you confirm.</span>
                 <span className="ml-auto flex items-center gap-2">
                   <button onClick={() => setProposal(null)} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Discard</button>
                   <button onClick={() => void confirm()} disabled={confirming}
-                    className="inline-flex items-center gap-1 px-3 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+                    className="inline-flex items-center gap-1 h-9 px-3 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[13px] font-bold hover:opacity-90 disabled:opacity-50">
                     {confirming ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Confirm to record
                   </button>
                 </span>
               </div>
               <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
                 {proposal.findings.map((f) => (
-                  <li key={f.area} className="px-3 py-1.5 text-[11px] flex items-start gap-2">
+                  <li key={f.area} className="px-3 py-1.5 text-[13px] flex items-start gap-2">
                     <span className={`mt-1 w-2 h-2 rounded-full shrink-0 ${f.covered ? "bg-emerald-500" : "bg-rose-500"}`} />
                     <span><b className="text-[var(--color-text)]">{areaLabel.get(f.area) ?? f.area}:</b> <span className="text-[var(--color-text-muted)]">{f.finding}</span></span>
                   </li>
@@ -345,7 +379,7 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
           )}
         </div>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -374,38 +408,41 @@ function EventsPanel({ orgId, company, events, canManage, actorId, actorName, on
   };
 
   return (
-    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
-      <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
-        <ShieldAlert className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-sm font-bold text-[var(--color-text)]">Safety &amp; performance log</span>
-        <span className="text-[11px] text-[var(--color-text-muted)]">Dated, named facts that feed the safety score. Reporting a near miss costs almost nothing: it&apos;s a healthy habit.</span>
+    <Card pad={false} className="overflow-hidden">
+      <div className="px-4 sm:px-5 pt-4 pb-3 border-b border-[var(--color-border)]">
+        <div className="flex items-center gap-2">
+          <ShieldAlert className="w-4 h-4 text-[var(--color-text-muted)]" />
+          <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Safety and performance log · {events.length}</h2>
+        </div>
+        <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">Dated, named facts that feed the safety score. Reporting a near miss costs almost nothing: it&apos;s a healthy habit.</p>
       </div>
       {canManage && (
-        <div className="px-4 py-2.5 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
-          <select value={kind} onChange={(e) => setKind(e.target.value as CompanyEvent["kind"])}
-            className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] px-2 text-xs">
+        <div className="px-4 sm:px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
+          <select value={kind} aria-label="Kind of event" onChange={(e) => setKind(e.target.value as CompanyEvent["kind"])}
+            className="h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] px-2 text-[13px]">
             {(Object.keys(EVENT_KIND_LABEL) as CompanyEvent["kind"][]).map((k) => (
               <option key={k} value={k}>{EVENT_KIND_LABEL[k]}</option>
             ))}
           </select>
-          <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
-            className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs [color-scheme:light] dark:[color-scheme:dark]" />
-          <input value={desc} onChange={(e) => setDesc(e.target.value)}
+          <input type="date" value={date} aria-label="Date" onChange={(e) => setDate(e.target.value)}
+            className="h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[13px] [color-scheme:light] dark:[color-scheme:dark]" />
+          <input id="company-event-what" value={desc} onChange={(e) => setDesc(e.target.value)}
+            aria-label="What happened"
             onKeyDown={(e) => { if (e.key === "Enter" && desc.trim()) void add(); }}
             placeholder="What happened? (goes on their permanent record)"
-            className="h-8 flex-1 min-w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] px-2 text-xs" />
-          <button onClick={() => void add()} disabled={busy || !desc.trim()}
-            className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+            className="h-9 flex-1 min-w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] px-2.5 text-[13px]" />
+          <button type="button" onClick={() => void add()} disabled={busy || !desc.trim()}
+            className="h-9 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[13px] font-bold hover:opacity-90 disabled:opacity-50">
             {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Log it
           </button>
         </div>
       )}
       {events.length === 0 ? (
-        <div className="px-4 py-4 text-center text-xs text-[var(--color-text-muted)]">No events on record.</div>
+        <div className="px-4 py-4 text-center text-[13px] text-[var(--color-text-muted)]">No events on record.</div>
       ) : (
         <ul className="divide-y divide-[var(--color-border)] max-h-80 overflow-y-auto">
           {events.map((e) => (
-            <li key={e.id} className="px-4 py-2 flex items-start gap-2 text-xs">
+            <li key={e.id} className="px-4 sm:px-5 py-2.5 flex items-start gap-2 text-[13px]">
               <span className={`mt-1 w-2 h-2 rounded-full shrink-0 ${
                 e.kind === "recordable" || e.kind === "stop_work" ? "bg-rose-500"
                 : e.kind === "warning" ? "bg-amber-500"
@@ -420,7 +457,7 @@ function EventsPanel({ orgId, company, events, canManage, actorId, actorName, on
           ))}
         </ul>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -434,30 +471,24 @@ function HistoryPanels({ profile, scorecard }: { profile: CompanyProfileData | n
   return (
     <div className="grid md:grid-cols-2 gap-4">
       {projects.length > 0 && (
-        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
-          <div className="px-4 py-2.5 border-b border-[var(--color-border)] flex items-center gap-2 text-sm font-bold text-[var(--color-text)]">
-            <Briefcase className="w-4 h-4 text-[var(--color-text-muted)]" /> Jobs ({projects.length})
-          </div>
-          <ul className="divide-y divide-[var(--color-border)]">
+        <Card pad={false} className="overflow-hidden" label={<span className="inline-flex items-center gap-2"><Briefcase className="w-4 h-4" /> Jobs · {projects.length}</span>}>
+          <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
             {projects.map((p) => (
-              <li key={p.projectId} className="px-4 py-2 text-xs">
-                <Link href={`/projects/${p.projectId}`} className="font-bold text-[var(--color-text)] hover:text-[var(--color-accent)]">{p.projectName}</Link>
-                <div className="text-[11px] text-[var(--color-text-muted)]">
+              <li key={p.projectId} className="px-4 sm:px-5 py-2.5 text-[14px]">
+                <Link href={`/projects/${p.projectId}`} className="font-bold text-[var(--color-text)] hover:underline">{p.projectName}</Link>
+                <div className="text-[12px] text-[var(--color-text-muted)]">
                   {[p.trade, p.contractValue != null ? `contract ${fmtMoney(p.contractValue)}` : null].filter(Boolean).join(" · ") || "-"}
                 </div>
               </li>
             ))}
           </ul>
-        </div>
+        </Card>
       )}
       {bids.length > 0 && (
-        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
-          <div className="px-4 py-2.5 border-b border-[var(--color-border)] flex items-center gap-2 text-sm font-bold text-[var(--color-text)]">
-            <Trophy className="w-4 h-4 text-[var(--color-text-muted)]" /> Bid history ({bids.filter((b) => b.won).length}/{bids.length} won)
-          </div>
-          <ul className="divide-y divide-[var(--color-border)]">
+        <Card pad={false} className="overflow-hidden" label={<span className="inline-flex items-center gap-2"><Trophy className="w-4 h-4" /> Bid history · {bids.filter((b) => b.won).length} of {bids.length} won</span>}>
+          <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
             {bids.map((b, i) => (
-              <li key={i} className="px-4 py-2 text-xs flex items-center gap-2">
+              <li key={i} className="px-4 sm:px-5 py-2.5 text-[13px] flex items-center gap-2">
                 <span className="text-[var(--color-text)]">{b.rfqGroup ?? "Quote"}</span>
                 {b.total != null && <span className="font-black tabular-nums">{fmtMoney(b.total)}</span>}
                 {b.won
@@ -466,16 +497,13 @@ function HistoryPanels({ profile, scorecard }: { profile: CompanyProfileData | n
               </li>
             ))}
           </ul>
-        </div>
+        </Card>
       )}
       {changeOrders.length > 0 && (
-        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm md:col-span-2">
-          <div className="px-4 py-2.5 border-b border-[var(--color-border)] flex items-center gap-2 text-sm font-bold text-[var(--color-text)]">
-            <GitPullRequestArrow className="w-4 h-4 text-[var(--color-text-muted)]" /> Change orders on their scopes ({changeOrders.length})
-          </div>
-          <ul className="divide-y divide-[var(--color-border)]">
+        <Card pad={false} className="overflow-hidden md:col-span-2" label={<span className="inline-flex items-center gap-2"><GitPullRequestArrow className="w-4 h-4" /> Change orders on their scopes · {changeOrders.length}</span>}>
+          <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
             {changeOrders.map((co, i) => (
-              <li key={i} className="px-4 py-2 text-xs flex items-center gap-2 flex-wrap">
+              <li key={i} className="px-4 sm:px-5 py-2.5 text-[13px] flex items-center gap-2 flex-wrap">
                 <span className="font-mono text-[11px] font-black text-[var(--color-text-muted)]">{co.coNumber}</span>
                 <span className="text-[var(--color-text)]">{co.title}</span>
                 <span className="font-black tabular-nums">{fmtMoney(co.amount)}</span>
@@ -487,7 +515,7 @@ function HistoryPanels({ profile, scorecard }: { profile: CompanyProfileData | n
               </li>
             ))}
           </ul>
-        </div>
+        </Card>
       )}
     </div>
   );
@@ -532,17 +560,17 @@ function EditCompanyModal({ company, actorId, onClose, onSaved }: {
   };
 
   return (
-    <div role="dialog" aria-modal="true" aria-label={`Edit ${company.name}`} className="fixed inset-0 z-[200] bg-slate-900/50 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
+    <div role="dialog" aria-modal="true" aria-label={`Edit ${company.name}`} className="fixed inset-0 z-[200] bg-[var(--color-ink)]/60 animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+      <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
-          <div className="text-sm font-black text-[var(--color-text)] flex-1">Edit {company.name}</div>
+          <div className="text-[14px] font-bold text-[var(--color-text)] flex-1">Edit {company.name}</div>
           <button onClick={onClose} disabled={busy} aria-label="Close" className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"><X className="w-4 h-4" /></button>
         </div>
         <div className="px-6 py-5 space-y-3">
           <div className="grid grid-cols-2 gap-3">
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Company name *"
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Company name *" aria-label="Company name"
               className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
-            <select value={kind} onChange={(e) => setKind(e.target.value as Company["kind"])}
+            <select value={kind} aria-label="Kind" onChange={(e) => setKind(e.target.value as Company["kind"])}
               className="px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]">
               {(Object.keys(COMPANY_KIND_LABEL) as Company["kind"][]).map((k) => (
                 <option key={k} value={k}>{COMPANY_KIND_LABEL[k]}</option>
@@ -550,9 +578,9 @@ function EditCompanyModal({ company, actorId, onClose, onSaved }: {
             </select>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <input value={trade} onChange={(e) => setTrade(e.target.value)} placeholder="Trade"
+            <input value={trade} onChange={(e) => setTrade(e.target.value)} placeholder="Trade" aria-label="Trade"
               className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
-            <select value={status} onChange={(e) => setStatus(e.target.value as Company["status"])}
+            <select value={status} aria-label="Status" onChange={(e) => setStatus(e.target.value as Company["status"])}
               className="px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]"
               title="'Do not use' keeps the record but flags the company across the app.">
               <option value="active">Active</option>
@@ -560,15 +588,15 @@ function EditCompanyModal({ company, actorId, onClose, onSaved }: {
               <option value="do_not_use">Do not use</option>
             </select>
           </div>
-          <div className="grid grid-cols-3 gap-3">
-            <input value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="Contact name"
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <input value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="Contact name" aria-label="Contact name"
               className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
-            <input value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} placeholder="Email"
+            <input value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} placeholder="Email" aria-label="Email"
               className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
-            <input value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} placeholder="Phone"
+            <input value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} placeholder="Phone" aria-label="Phone"
               className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
           </div>
-          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Notes"
+          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Notes" aria-label="Notes"
             className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y bg-[var(--color-surface)] text-[var(--color-text)]" />
           {error && (
             <p role="alert" className="flex items-start gap-2 border-l-2 border-rose-500 pl-3 text-xs font-bold text-rose-700 dark:text-rose-300">
@@ -576,7 +604,7 @@ function EditCompanyModal({ company, actorId, onClose, onSaved }: {
             </p>
           )}
         </div>
-        <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
+        <div className="px-6 py-3 border-t border-[var(--color-border)] flex items-center justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
           <button onClick={() => void submit()} disabled={busy || !name.trim()}
             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">

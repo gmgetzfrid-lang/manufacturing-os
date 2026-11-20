@@ -5,6 +5,7 @@
 // at the actual /admin/data-export feature backs them up with code.
 
 import Link from "next/link";
+import { PageHero, PageBody, Card } from "@/components/ui/PageHero";
 import {
   Download, ShieldCheck, FileJson, Layers, Clock, Inbox, Lock,
   Database, ExternalLink, Server, Key, ArrowRight,
@@ -15,32 +16,37 @@ export const metadata = {
   description: "Your data, exportable any time, in standard formats, with no lock-in.",
 };
 
+// This is a server page, so the band's button styles are spelled out here
+// (the shared class strings live in a client module). Same tokens.
+const bandQuiet = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-[10px] border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] text-[13px] font-semibold text-[var(--color-ink-fg)] hover:bg-[var(--color-ink-line)] transition-colors";
+const bandPrimary = "inline-flex items-center justify-center gap-2 h-11 px-5 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-extrabold hover:bg-[var(--color-accent-hover)] shadow-[0_12px_24px_-12px_var(--color-accent)] transition-colors";
+
 export default function DataPortabilityPage() {
   return (
-    <div className="min-h-dvh bg-[var(--color-surface-2)]">
-      <header className="border-b border-[var(--color-border)] bg-[var(--color-surface)]">
-        <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
-          <Link href="/" className="text-sm font-black text-[var(--color-text)]">Manufacturing OS</Link>
-          <Link href="/" className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Sign in</Link>
-        </div>
-      </header>
+    <div className="min-h-dvh bg-[var(--color-canvas)]">
+      <main className="max-w-3xl mx-auto px-4 sm:px-6 py-6 pb-20">
+        <PageHero
+          kicker={<Link href="/" className="hover:text-white">Manufacturing OS · Data portability</Link>}
+          title="No lock-in, ever."
+          sub="Every organization on this platform owns its data, can export everything at any time, and can walk away cleanly without losing a single record."
+          tools={<Link href="/" className={bandQuiet}>Sign in</Link>}
+          primary={
+            <Link href="/admin/data-export" className={bandPrimary}>
+              <Download className="w-4 h-4" /> Run an export
+            </Link>
+          }
+        />
 
-      <main className="max-w-3xl mx-auto px-6 py-12">
-        <div className="mb-10">
-          <div className="inline-flex items-center gap-2 text-[var(--color-text-muted)] text-xs font-bold mb-4">
-            <ShieldCheck className="w-3.5 h-3.5" /> Your data, your choice
-          </div>
-          <h1 className="text-4xl font-black text-[var(--color-text)] mb-3">No Lock-In, Ever.</h1>
-          <p className="text-base text-[var(--color-text-muted)] leading-relaxed">
+        <PageBody>
+        <Card label={<span className="inline-flex items-center gap-1.5"><ShieldCheck className="w-3.5 h-3.5" /> Why it matters</span>}>
+          <p className="text-[15px] text-[var(--color-text-muted)] leading-relaxed">
             Industrial document control is critical infrastructure. You can&apos;t afford to wonder whether a vendor outage
-            or a contract dispute will cost you years of engineering work. This page is the commitment: every
-            organization on this platform owns its data, can export everything at any time, and can walk away cleanly
-            without losing a single record.
+            or a contract dispute will cost you years of engineering work. This page is the commitment.
           </p>
-        </div>
+        </Card>
 
         <Section title="The promise in one sentence">
-          <p className="text-[var(--color-text)] leading-relaxed">
+          <p className="text-[15px] text-[var(--color-text)] leading-relaxed">
             <b>Any administrator can download the complete dataset for their organization (every document,
             every revision, every ticket, every audit-log entry, every comment, and every file) in standard
             formats, at any time, with one click.</b>
@@ -57,7 +63,7 @@ export default function DataPortabilityPage() {
         </Section>
 
         <Section title="What you can do with it">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 divide-y md:divide-y-0 divide-[var(--color-border)]">
             <UseCase title="Offsite backup" body="Run it monthly, archive to your own S3 / R2 / NAS. Your continuity plan is yours to control." />
             <UseCase title="Compliance archive" body="OSHA PSM 1910.119 requires document and change history retention. Every revision + audit row is included." />
             <UseCase title="Migration to a different system" body="Standard JSON + standard PDFs. Any competitor can import, that's the point." />
@@ -81,37 +87,33 @@ export default function DataPortabilityPage() {
         </Section>
 
         <Section title="Try it now">
-          <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-5">
-            <p className="text-sm text-[var(--color-text)] mb-4">
-              Already have an account? Run an export right now and verify the commitment with your own data.
-            </p>
-            <Link
-              href="/admin/data-export"
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-black"
-            >
-              <Download className="w-4 h-4" /> Run an export <ArrowRight className="w-4 h-4" />
+          <p className="text-[14px] text-[var(--color-text)]">
+            Already have an account? Run an export right now and verify the commitment with your own data.{" "}
+            <Link href="/admin/data-export" className="inline-flex items-center gap-1 font-bold underline underline-offset-2">
+              Open Data export <ArrowRight className="w-3.5 h-3.5" />
             </Link>
-          </div>
+          </p>
         </Section>
 
         <Section title="Open schema">
-          <p className="text-sm text-[var(--color-text)] mb-3">
+          <p className="text-[14px] text-[var(--color-text)] mb-3">
             The DDL of every table mentioned above is public. Read it, audit it, fork it.
           </p>
           <a
             href="https://github.com/gmgetzfrid-lang/manufacturing-os/blob/master/supabase/schema.sql"
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--color-text)] hover:text-[var(--color-text)] underline"
+            className="inline-flex items-center gap-1.5 text-[14px] font-bold text-[var(--color-text)] underline underline-offset-2"
           >
             View the database schema <ExternalLink className="w-3.5 h-3.5" />
           </a>
         </Section>
 
-        <div className="mt-12 pt-6 border-t border-[var(--color-border)] flex items-center justify-between text-xs text-[var(--color-text-muted)]">
-          <span>Last updated 2026-05-29</span>
+        <div className="px-1 pt-2 flex items-center justify-between text-[12px] text-[var(--color-text-muted)]">
+          <span>Last updated May 29, 2026</span>
           <Link href="/" className="hover:text-[var(--color-text)]">Back to home</Link>
         </div>
+        </PageBody>
       </main>
     </div>
   );
@@ -119,10 +121,9 @@ export default function DataPortabilityPage() {
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="mb-10">
-      <h2 className="text-lg font-black text-[var(--color-text)] mb-3">{title}</h2>
+    <Card label={title}>
       {children}
-    </section>
+    </Card>
   );
 }
 
@@ -131,8 +132,8 @@ function Bullet({ icon, title, body }: { icon: React.ReactNode; title: string; b
     <li className="flex items-start gap-3">
       <div className="p-1.5 bg-[var(--color-surface-2)] rounded-md shrink-0 mt-0.5">{icon}</div>
       <div>
-        <div className="text-sm font-bold text-[var(--color-text)]">{title}</div>
-        <div className="text-xs text-[var(--color-text-muted)]">{body}</div>
+        <div className="text-[14px] font-bold text-[var(--color-text)]">{title}</div>
+        <div className="text-[13px] text-[var(--color-text-muted)]">{body}</div>
       </div>
     </li>
   );
@@ -140,9 +141,9 @@ function Bullet({ icon, title, body }: { icon: React.ReactNode; title: string; b
 
 function UseCase({ title, body }: { title: string; body: string }) {
   return (
-    <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-4 shadow-sm">
-      <div className="text-sm font-bold text-[var(--color-text)] mb-1">{title}</div>
-      <div className="text-xs text-[var(--color-text-muted)] leading-relaxed">{body}</div>
+    <div className="py-3">
+      <div className="text-[14px] font-bold text-[var(--color-text)] mb-0.5">{title}</div>
+      <div className="text-[13px] text-[var(--color-text-muted)] leading-relaxed">{body}</div>
     </div>
   );
 }

@@ -104,15 +104,15 @@ export default function PermissionsExplorer() {
   };
 
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] mb-5 overflow-hidden">
+    <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-base font-bold text-[var(--color-text)]">App-wide permissions</span>
-        <span className="text-xs text-[var(--color-text-muted)]">✓ can do · ◐ conditional (hover for why) · - cannot · ⚠ known gap</span>
+        <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">App-wide permissions</h2>
+        <span className="text-[12px] text-[var(--color-text-muted)]">✓ can do · ◐ conditional (hover for why) · - cannot · ⚠ known gap</span>
         <div className="ml-auto flex items-center gap-2 flex-wrap">
           <div className="relative">
             <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter capabilities…" className="pl-7 pr-2 h-8 w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-2)]/50 text-xs outline-none focus:border-[var(--color-accent-ring)]" />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter capabilities…" aria-label="Filter capabilities" className="pl-7 pr-2 h-9 w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-2)]/50 text-xs outline-none focus:border-[var(--color-accent-ring)]" />
           </div>
           <select value={area} onChange={(e) => setArea(e.target.value)} className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
             <option value="all">All areas</option>
@@ -156,6 +156,6 @@ export default function PermissionsExplorer() {
         </table>
       </div>
       <div className="px-4 py-2 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-faint)]">{STAFF_NOTE} · Beyond roles, ownership (document → folder → library → owning team&apos;s supervisor) and per-library grants add ◐ authority. Hover for notes.</div>
-    </div>
+    </section>
   );
 }

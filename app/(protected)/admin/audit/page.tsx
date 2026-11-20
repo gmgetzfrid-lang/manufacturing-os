@@ -17,9 +17,9 @@ import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import IsoGuidance from "@/components/ui/IsoGuidance";
 import ViewTabs, { ACTIVITY_VIEWS } from "@/components/navigation/ViewTabs";
-import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
-import { Button } from "@/components/ui/Button";
-import { Input, Select as UiSelect } from "@/components/ui/Field";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
+import { bandInput, bandInputIcon, bandSelect, plural } from "@/components/admin/band";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 
 // Auditor included: the role exists FOR audit review — it was defined with an
@@ -195,117 +195,111 @@ export default function AuditLogPage() {
 
   if (!canRead) {
     return (
-      <div className="p-8">
-        <div className="max-w-3xl mx-auto bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-6 shadow-sm flex items-center gap-3">
-          <div className="p-3 bg-[var(--color-surface-2)] rounded-xl"><ScrollText className="w-6 h-6 text-[var(--color-text)]" /></div>
-          <div>
-            <h1 className="text-xl font-black text-[var(--color-text)]">Audit Log</h1>
-            <p className="text-sm text-[var(--color-text-muted)] mt-1">Admin-class roles only. Ask your workspace admin if you need access.</p>
-            <div className="text-xs text-[var(--color-text-faint)] mt-2">Signed in as {userEmail || "-"} ({activeRole || "-"})</div>
-          </div>
-        </div>
-      </div>
+      <PageShell width="work">
+        <PageHero kicker="History · Audit log" title="Admin-class roles only." overlap={false}
+          sub={<>Ask your workspace admin if you need access. Signed in as {userEmail || "-"} ({activeRole || "-"}).</>} />
+      </PageShell>
     );
   }
 
+  // The answer: how much happened, and how much of it undid something.
+  const when = range === "24h" ? " in the last 24 hours" : range === "7d" ? " in the last 7 days" : range === "30d" ? " in the last 30 days" : "";
+  const answer = loading && rows.length === 0 ? "Audit log"
+    : error && rows.length === 0 ? "Couldn't load the audit log."
+    : kpis.total === 0 ? `No events${when}.`
+    : `${plural(kpis.total, "event")}${when}.`;
+
   return (
     <PageShell width="work">
-        <ViewTabs title="History" tabs={ACTIVITY_VIEWS} />
-        {/* Header */}
-        <PageHeaderBar
-          icon={ScrollText}
-          title="Audit Log"
-          subtitle={
+        <PageHero
+          kicker="History · Audit log"
+          title={answer}
+          sub={
             <>
-              Every meaningful action across the workspace, with who and when.{" "}
-              <IsoGuidance topic="audit_log" size="md" />
+              {kpis.total > 0 && (
+                <>
+                  <span className={kpis.deletes > 0 ? "font-semibold text-rose-300" : ""}>{kpis.deletes} delete{kpis.deletes === 1 ? "" : "s"}, undo{kpis.deletes === 1 ? "" : "s"} or forced change{kpis.deletes === 1 ? "" : "s"}</span>
+                  {kpis.topAction && <> · most common: <b className="text-white">{prettyAction(kpis.topAction[0])}</b> ({kpis.topAction[1]})</>}
+                  {kpis.topUser && <> · most active: <b className="text-white">{kpis.topUser[0]}</b> ({kpis.topUser[1]})</>}
+                  {" · "}
+                </>
+              )}
+              Who did what, and when. <IsoGuidance topic="audit_log" size="md" />
             </>
           }
-          actions={
-            <>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => exportAuditCsv(filtered, docMeta)}
-                disabled={filtered.length === 0}
-                title="Download the currently-visible audit rows as a CSV (Excel opens it natively)."
-              >
-                <Download className="w-3.5 h-3.5" /> Export CSV
-              </Button>
-              <Button variant="secondary" size="sm" onClick={fetchRows} disabled={loading}>
-                <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
-              </Button>
-            </>
+          tools={
+            <button type="button" className={heroQuiet} onClick={fetchRows} disabled={loading} aria-label="Refresh">
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> <span className="max-sm:hidden">Refresh</span>
+            </button>
           }
-        />
-
-        {/* What matters, in one line. */}
-        <p className="mb-5 text-sm text-[var(--color-text-muted)]">
-          <b className="text-[var(--color-text)]">{kpis.total}</b> event{kpis.total === 1 ? "" : "s"}
-          {range === "24h" ? " in the last 24 hours" : range === "7d" ? " in the last 7 days" : range === "30d" ? " in the last 30 days" : ""}
-          {" · "}
-          <span className={kpis.deletes > 0 ? "font-bold text-rose-700 dark:text-rose-400" : ""}>{kpis.deletes} delete{kpis.deletes === 1 ? "" : "s"}, undo{kpis.deletes === 1 ? "" : "s"} or forced change{kpis.deletes === 1 ? "" : "s"}</span>
-          {kpis.topAction && <> · most common: <b className="text-[var(--color-text)]">{prettyAction(kpis.topAction[0])}</b> ({kpis.topAction[1]})</>}
-          {kpis.topUser && <> · most active: <b className="text-[var(--color-text)]">{kpis.topUser[0]}</b> ({kpis.topUser[1]})</>}
-        </p>
-
-        {/* Filters */}
-        <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-sm p-3 mb-5 flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1.5 text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">
-            <Filter className="w-3 h-3" /> Filter:
-          </div>
-          <Select value={range} onChange={(v) => setRange(v as typeof range)} options={[
-            { value: "24h", label: "Last 24h" },
-            { value: "7d",  label: "Last 7 days" },
-            { value: "30d", label: "Last 30 days" },
-            { value: "all", label: "All time" },
-          ]} />
-          <Select value={actionFilter} onChange={setActionFilter} options={[
-            { value: "ALL", label: "All actions" },
-            ...Object.keys(ACTION_STYLE).sort().map((k) => ({ value: k, label: prettyAction(k) })),
-          ]} />
-          <Select value={resourceFilter} onChange={setResourceFilter} options={[
-            { value: "ALL", label: "Any resource" },
-            { value: "document", label: "Documents" },
-            { value: "project", label: "Projects" },
-            { value: "milestone", label: "Milestones" },
-            { value: "asset", label: "Assets" },
-          ]} />
-          <Select value={libraryFilter} onChange={setLibraryFilter} options={[
-            { value: "ALL", label: "Any library" },
-            ...libraries.map((l) => ({ value: l.id, label: l.name })),
-          ]} />
-          <div className="w-56">
-            <Input
-              value={userQuery}
-              onChange={(e) => setUserQuery(e.target.value)}
-              placeholder="Filter by user email…"
-            />
-          </div>
-          <div className="ml-auto flex items-center gap-1.5">
-            <span className="text-[11px] text-[var(--color-text-faint)]">Showing {filtered.length} of {rows.length}</span>
+          primary={
             <button
-              onClick={() => setLimit((n) => n + 200)}
-              className="text-[11px] font-bold text-[var(--color-text)] px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] transition-colors"
-            >Show 200 more</button>
+              type="button"
+              className={heroPrimary}
+              onClick={() => exportAuditCsv(filtered, docMeta)}
+              disabled={filtered.length === 0}
+              title="Download the rows shown as a CSV (Excel opens it)."
+            >
+              <Download className="w-4 h-4" /> Export CSV
+            </button>
+          }
+        >
+          <div className="[&>div]:mb-0">
+            <ViewTabs tabs={ACTIVITY_VIEWS} variant="dark" />
           </div>
-        </div>
+          {/* Filters steer the whole log, so they sit in the band. */}
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <div className="relative flex-1 min-w-[200px]">
+              <Filter className={bandInputIcon} />
+              <input
+                value={userQuery}
+                onChange={(e) => setUserQuery(e.target.value)}
+                aria-label="Filter by user email"
+                placeholder="Filter by user email"
+                className={bandInput}
+              />
+            </div>
+            <Select label="When" value={range} onChange={(v) => setRange(v as typeof range)} options={[
+              { value: "24h", label: "Last 24h" },
+              { value: "7d",  label: "Last 7 days" },
+              { value: "30d", label: "Last 30 days" },
+              { value: "all", label: "All time" },
+            ]} />
+            <Select label="Action" value={actionFilter} onChange={setActionFilter} options={[
+              { value: "ALL", label: "All actions" },
+              ...Object.keys(ACTION_STYLE).sort().map((k) => ({ value: k, label: prettyAction(k) })),
+            ]} />
+            <Select label="Resource" value={resourceFilter} onChange={setResourceFilter} options={[
+              { value: "ALL", label: "Any resource" },
+              { value: "document", label: "Documents" },
+              { value: "project", label: "Projects" },
+              { value: "milestone", label: "Milestones" },
+              { value: "asset", label: "Assets" },
+            ]} />
+            <Select label="Library" value={libraryFilter} onChange={setLibraryFilter} options={[
+              { value: "ALL", label: "Any library" },
+              ...libraries.map((l) => ({ value: l.id, label: l.name })),
+            ]} />
+          </div>
+        </PageHero>
 
-        {/* Feed */}
-        {error && (
-          <p role="alert" className="mb-3 border-l-2 border-red-500 pl-3 text-xs text-red-700 dark:text-red-400 flex items-start gap-2">
-            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> Couldn&apos;t load the audit log: {error}{" "}
-            <button type="button" onClick={() => void fetchRows()} className="font-bold underline">Try again</button>
-          </p>
-        )}
-
-        <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-sm overflow-hidden">
+        <PageBody>
+        <Card pad={false} className="overflow-hidden">
+          {error && rows.length > 0 && (
+            <p role="alert" className="px-4 sm:px-5 pt-4 text-[13px] text-red-700 dark:text-red-400 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> Couldn&apos;t load the audit log: {error}{" "}
+              <button type="button" onClick={() => void fetchRows()} className="font-bold underline">Try again</button>
+            </p>
+          )}
           {loading && rows.length === 0 ? (
-            <LoadingBlock what="the audit log" className="border-0 rounded-none" />
+            <LoadingBlock what="the audit log" className="border-0 rounded-none p-5" />
           ) : error && rows.length === 0 ? (
-            <div className="py-16 text-center text-[var(--color-text-muted)] text-sm">The audit log didn&apos;t load.</div>
+            <p role="alert" className="py-12 px-5 text-center text-[14px] text-red-700 dark:text-red-400">
+              The audit log didn&apos;t load: {error}{" "}
+              <button type="button" onClick={() => void fetchRows()} className="font-bold underline">Try again</button>
+            </p>
           ) : filtered.length === 0 ? (
-            <div className="py-16 text-center text-[var(--color-text-faint)] text-sm italic">No matching events.</div>
+            <div className="py-12 text-center text-[14px] text-[var(--color-text-muted)]">No matching events. Widen the dates or clear a filter.</div>
           ) : (
             <ul className="divide-y divide-[var(--color-border)]">
               {filtered.map((r) => (
@@ -313,21 +307,35 @@ export default function AuditLogPage() {
               ))}
             </ul>
           )}
-        </div>
+          {/* The log keeps going: say how much is shown and fetch more. */}
+          {rows.length > 0 && (
+            <div className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] flex items-center justify-between gap-3 text-[13px]">
+              <span className="text-[var(--color-text-muted)]">{filtered.length} of {rows.length} loaded shown</span>
+              {rows.length >= limit && (
+                <button type="button" onClick={() => setLimit((n) => n + 200)} className="font-bold text-[var(--color-accent)] hover:underline">
+                  Show 200 more
+                </button>
+              )}
+            </div>
+          )}
+        </Card>
+        </PageBody>
     </PageShell>
   );
 }
 
 interface SelectProps {
+  label: string;
   value: string;
   onChange: (v: string) => void;
   options: Array<{ value: string; label: string }>;
 }
-function Select({ value, onChange, options }: SelectProps) {
+/** A filter on the dark band. */
+function Select({ label, value, onChange, options }: SelectProps) {
   return (
-    <UiSelect value={value} onChange={(e) => onChange(e.target.value)}>
+    <select aria-label={label} value={value} onChange={(e) => onChange(e.target.value)} className={`${bandSelect} max-w-[12rem]`}>
       {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-    </UiSelect>
+    </select>
   );
 }
 
@@ -349,7 +357,7 @@ function AuditRowItem({ row, docMeta }: AuditRowItemProps) {
   })();
 
   return (
-    <li className="px-4 py-3 hover:bg-[var(--color-surface-2)] transition-colors flex items-start gap-3">
+    <li className="px-4 sm:px-5 py-3 hover:bg-[var(--color-surface-2)] transition-colors flex items-start gap-3">
       <div className={`shrink-0 w-8 h-8 rounded-lg border ${style.tone} flex items-center justify-center`}>
         <Icon className="w-4 h-4" />
       </div>

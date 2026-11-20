@@ -184,16 +184,16 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
   const notice = target ? archivedNotice({ archiveId: target.archiveId, root: target.root, kind: target.kind, fileName: target.fileName, note: target.note }) : null;
 
   return (
-    <div>
+    <div className="space-y-4">
       {notice && (
-        <p className="mb-4 border-l-2 border-amber-500 pl-3 text-[12px] text-amber-800 dark:text-amber-300 leading-relaxed">{notice.message}</p>
+        <p className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] px-5 py-3 text-[13px] text-amber-800 dark:text-amber-300 leading-relaxed">{notice.message}</p>
       )}
 
       {!zip ? (
         <div
           {...drag.bind}
           onClick={() => inputRef.current?.click()}
-          className={`rounded-2xl border-2 border-dashed p-8 text-center cursor-pointer transition-colors border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] ${drag.ring}`}
+          className={`rounded-2xl p-10 text-center cursor-pointer transition-colors bg-[var(--color-surface)] shadow-[var(--shadow-card)] hover:bg-[var(--color-surface-2)] ${drag.ring}`}
         >
           <input ref={inputRef} type="file" accept=".zip,application/zip" className="hidden"
             onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); e.target.value = ""; }} />
@@ -215,8 +215,8 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
           ) : (
             <>
               <UploadCloud className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-2" />
-              <div className="text-sm font-bold text-[var(--color-text)]">Drop the backup .zip here, or click to choose</div>
-              <div className="text-[11px] text-[var(--color-text-muted)] mt-1 inline-flex items-center gap-1.5">
+              <div className="text-[14px] font-bold text-[var(--color-text)]">Drop the backup .zip here, or tap to choose</div>
+              <div className="text-[13px] text-[var(--color-text-muted)] mt-1 inline-flex items-center gap-1.5">
                 <ShieldCheck className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Opened in your browser only. Never uploaded or saved again.
               </div>
             </>
@@ -225,7 +225,7 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-[20rem_1fr] gap-3">
           {/* File list */}
-          <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden flex flex-col max-h-[70vh]">
+          <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden flex flex-col max-h-[70vh]">
             <div className="px-3 py-2 border-b border-[var(--color-border)] flex items-center gap-2">
               <Search className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
               <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={`Filter ${entries.length} files…`}
@@ -250,7 +250,7 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
           </div>
 
           {/* Preview */}
-          <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden flex flex-col min-h-[24rem] max-h-[70vh]">
+          <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden flex flex-col min-h-[24rem] max-h-[70vh]">
             {previewBusy ? (
               <div className="flex-1 grid place-items-center text-sm text-[var(--color-text-muted)]"><span className="inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Opening the file…</span></div>
             ) : preview ? (
@@ -278,7 +278,7 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
                       <ShieldQuestion className="w-3 h-3" /> unverified
                     </span>
                   )}
-                  <a href={preview.url} download={preview.name} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:underline"><Download className="w-3 h-3" /> Save a copy</a>
+                  <a href={preview.url} download={preview.name} className="inline-flex items-center gap-1 text-[12px] font-bold text-[var(--color-text)] hover:underline"><Download className="w-3 h-3" /> Save a copy</a>
                 </div>
                 <div className="flex-1 overflow-auto bg-[var(--color-surface-2)] grid place-items-center">
                   {preview.kind === "pdf" ? (

@@ -136,7 +136,7 @@ export default function AssetPhotoCarousel({
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-base font-black text-white truncate">{asset.tag}</span>
+              <span className="text-[15px] font-black text-white truncate">{asset.tag}</span>
               {assetType && (
                 <span className="text-[11px] font-black uppercase tracking-widest bg-white/15 text-white/90 px-1.5 py-0.5 rounded">
                   {assetType.name}
@@ -304,7 +304,7 @@ function EmptyState({ canUpload, onUpload }: { canUpload: boolean; onUpload?: ()
       <div className="p-6 rounded-3xl bg-white/5 backdrop-blur mb-4">
         <ImageIcon className="w-16 h-16 text-white/40" />
       </div>
-      <h3 className="text-base font-black text-white mb-1">No photos yet</h3>
+      <h3 className="text-[15px] font-bold text-white mb-1">No photos yet</h3>
       <p className="text-xs text-white/60 leading-relaxed mb-4">
         Photos added here show wherever this tag appears.
       </p>

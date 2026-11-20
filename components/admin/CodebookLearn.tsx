@@ -94,10 +94,10 @@ export default function CodebookLearn({ orgId, uid, book, canWrite, onChanged, o
   };
 
   // Suggestions, not warnings: plain cards with a quiet button each.
-  const card = "rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4";
+  const card = "rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5";
   const btn = "inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[12.5px] font-black disabled:opacity-50";
   return (
-    <div className="mb-4 space-y-3" data-codebook-learn>
+    <div className="space-y-4 empty:hidden" data-codebook-learn>
       {numberingNew && best && (
         <div className={card}>
           <div className="flex items-start gap-2 flex-wrap">

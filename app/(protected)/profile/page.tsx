@@ -7,14 +7,14 @@
 import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
-  User as UserIcon, Mail, Shield, Bell, LogOut, Save,
+  Mail, Shield, Bell, LogOut, Save,
   AlertTriangle, Check, Briefcase, Edit3, Camera, Trash2, Loader2,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase, setPreferMicrosoft } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
-import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
-import { Button } from "@/components/ui/Button";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card, heroPrimary } from "@/components/ui/PageHero";
 import { Input } from "@/components/ui/Field";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import FileThumb from "@/components/ui/FileThumb";
@@ -109,22 +109,26 @@ export default function ProfilePage() {
   };
 
   if (loading) {
-    return <PageShell width="form"><LoadingBlock what="your profile" /></PageShell>;
+    return <PageShell width="form"><PageHero kicker="Your profile" title="Your profile" size="md" overlap={false} /><LoadingBlock what="your profile" /></PageShell>;
   }
 
   return (
     <PageShell width="form">
-        <PageHeaderBar icon={UserIcon} title="My Profile" subtitle={`${displayName || userEmail || ""}${activeRole ? ` · ${activeRole}` : ""}`} />
+        <PageHero
+          kicker="Your profile"
+          size="md"
+          title={`Signed in as ${displayName.trim() || (userEmail ? userEmail.split("@")[0] : "you")}.`}
+          sub={`${activeRole ? `${activeRole} · ` : ""}${orgs.length} workspace${orgs.length === 1 ? "" : "s"}${userEmail ? ` · ${userEmail}` : ""}`}
+        />
 
-        {error && (
-          <p role="alert" className="mb-4 border-l-2 border-red-500 pl-3 text-xs text-red-700 dark:text-red-400 flex items-start gap-2">
-            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
-          </p>
-        )}
-
+        <PageBody>
         {/* Identity */}
-        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
-          <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3">Identity</div>
+        <Card label="Identity">
+          {error && (
+            <p role="alert" className="mb-3 text-[13px] text-red-700 dark:text-red-400 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
+            </p>
+          )}
 
           {/* Avatar — photo if set, otherwise initials from the display name
               (Grant Getzfrid → GG). This is the face shown everywhere. */}
@@ -137,9 +141,10 @@ export default function ProfilePage() {
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center gap-2">
                 <button
+                  type="button"
                   onClick={() => avatarInputRef.current?.click()}
                   disabled={avatarBusy}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-[var(--color-border-strong)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] transition-colors disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-[13px] font-semibold border border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] transition-colors disabled:opacity-50"
                 >
                   {avatarBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
                   {hasAvatar ? "Change photo" : "Add photo"}
@@ -153,8 +158,9 @@ export default function ProfilePage() {
                       catch (e) { setAvatarError(`Couldn't remove the photo: ${(e as Error).message}`); }
                       finally { setAvatarBusy(false); }
                     }}
+                    type="button"
                     disabled={avatarBusy}
-                    className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-bold text-rose-600 hover:bg-[var(--color-surface-2)] transition-colors disabled:opacity-50"
+                    className="inline-flex items-center gap-1 h-9 px-2.5 rounded-lg text-[13px] font-semibold text-rose-600 hover:bg-[var(--color-surface-2)] transition-colors disabled:opacity-50"
                   >
                     <Trash2 className="w-3.5 h-3.5" /> Remove
                   </button>
@@ -172,7 +178,7 @@ export default function ProfilePage() {
                   )}
                 </div>
               ) : (
-                <div className="text-[11px] text-[var(--color-text-muted)]">
+                <div className="text-[12px] text-[var(--color-text-muted)]">
                   No photo? Your initials show instead, so set your display name below.
                 </div>
               )}
@@ -193,37 +199,37 @@ export default function ProfilePage() {
 
           <Row icon={Mail} label="Email" value={userEmail ?? "-"} mono />
           <div className="mt-3">
-            <label className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest inline-flex items-center gap-1">
-              <Edit3 className="w-2.5 h-2.5" /> Display name
+            <label htmlFor="profile-display-name" className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] inline-flex items-center gap-1">
+              <Edit3 className="w-3 h-3" /> Display name
             </label>
             <Input
+              id="profile-display-name"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
               placeholder="Your display name (defaults to email handle)"
               className="mt-1"
             />
           </div>
-          <div className="mt-3 flex items-center justify-end gap-3">
-            {saved && <span role="status" className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 dark:text-emerald-400"><Check className="w-3.5 h-3.5" /> Saved</span>}
-            <Button size="sm" onClick={save} loading={saving} disabled={loadFailed}>
-              {!saving && <Save className="w-3.5 h-3.5" />}
-              Save
-            </Button>
+          <div className="mt-4 flex items-center justify-end gap-3">
+            {saved && <span role="status" className="inline-flex items-center gap-1 text-[13px] font-bold text-emerald-700 dark:text-emerald-400"><Check className="w-3.5 h-3.5" /> Saved</span>}
+            <button type="button" onClick={save} disabled={saving || loadFailed} className={heroPrimary}>
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              Save name
+            </button>
           </div>
-        </div>
+        </Card>
 
         {/* Workspaces */}
-        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
-          <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3">Workspaces</div>
+        <Card label="Workspaces">
           {orgs.length === 0 ? (
-            <p className="text-xs text-[var(--color-text-muted)] italic">You aren&apos;t a member of any workspaces.</p>
+            <p className="text-[14px] text-[var(--color-text-muted)]">You aren&apos;t a member of any workspaces.</p>
           ) : (
             <ul className="divide-y divide-[var(--color-border)]">
               {orgs.map((o) => (
                 <li key={o.org_id} className="py-2 flex items-center gap-3">
                   <Briefcase className="w-4 h-4 text-[var(--color-text-muted)]" />
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-bold text-[var(--color-text)] truncate">{o.org_name}</div>
+                    <div className="text-[14px] font-bold text-[var(--color-text)] truncate">{o.org_name}</div>
                     <div className="text-[11px] text-[var(--color-text-muted)] font-mono uppercase tracking-wider">{o.role}</div>
                   </div>
                   {o.org_id === activeOrgId && <span className="text-[11px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded">current</span>}
@@ -231,37 +237,38 @@ export default function ProfilePage() {
               ))}
             </ul>
           )}
-        </div>
+        </Card>
 
         {/* Current session */}
-        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
-          <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3">Current session</div>
+        <Card label="Current session">
           <Row icon={Shield} label="Role" value={activeRole || "-"} />
-        </div>
+        </Card>
 
         {/* Quick links */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <Link
             href="/settings/notifications"
-            className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-4 flex items-center gap-3 hover:border-[var(--color-border-strong)] transition-all hover:shadow-md"
+            className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] p-4 flex items-center gap-3 hover-lift"
           >
-            <div className="p-2.5 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border border-[var(--color-border)]"><Bell className="w-4 h-4" /></div>
+            <div className="p-2.5 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><Bell className="w-4 h-4" /></div>
             <div className="flex-1">
-              <div className="text-sm font-bold text-[var(--color-text)]">Notification preferences</div>
-              <div className="text-[11px] text-[var(--color-text-muted)]">What gets emailed to you, and when.</div>
+              <div className="text-[14px] font-bold text-[var(--color-text)]">Notification preferences</div>
+              <div className="text-[13px] text-[var(--color-text-muted)]">What gets emailed to you, and when.</div>
             </div>
           </Link>
           <button
+            type="button"
             onClick={handleSignOut}
-            className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-4 flex items-center gap-3 hover:border-[var(--color-border-strong)] transition-all hover:shadow-md text-left"
+            className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] p-4 flex items-center gap-3 hover-lift text-left"
           >
-            <div className="p-2.5 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border border-[var(--color-border)]"><LogOut className="w-4 h-4" /></div>
+            <div className="p-2.5 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><LogOut className="w-4 h-4" /></div>
             <div className="flex-1">
-              <div className="text-sm font-bold text-[var(--color-text)]">Sign out</div>
-              <div className="text-[11px] text-[var(--color-text-muted)]">End your session on this device.</div>
+              <div className="text-[14px] font-bold text-[var(--color-text)]">Sign out</div>
+              <div className="text-[13px] text-[var(--color-text-muted)]">End your session on this device.</div>
             </div>
           </button>
         </div>
+        </PageBody>
     </PageShell>
   );
 }
@@ -270,8 +277,8 @@ function Row({ icon: Icon, label, value, mono }: { icon: React.ComponentType<{ c
   return (
     <div className="flex items-center gap-3 py-1.5">
       <Icon className="w-4 h-4 text-[var(--color-text-faint)]" />
-      <span className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest w-16">{label}</span>
-      <span className={`text-sm text-[var(--color-text)] ${mono ? "font-mono" : ""}`}>{value}</span>
+      <span className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] w-16">{label}</span>
+      <span className={`text-[14px] text-[var(--color-text)] min-w-0 truncate ${mono ? "font-mono" : ""}`}>{value}</span>
     </div>
   );
 }

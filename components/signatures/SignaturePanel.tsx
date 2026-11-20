@@ -41,14 +41,15 @@ export default function SignaturePanel({
   }, [resourceType, resourceId, load]);
 
   return (
-    <div className={`rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] ${className}`}>
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)]">
+    <div className={`rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] ${className}`}>
+      <div className="flex items-center gap-2 px-4 sm:px-5 py-3 border-b border-[var(--color-border)]">
         <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-sm font-black text-[var(--color-text)] flex-1">Signatures {sigs && sigs.length > 0 && <span className="text-[var(--color-text-muted)] font-bold">({sigs.length})</span>}</span>
+        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] flex-1">Signatures{sigs && sigs.length > 0 && <> · {sigs.length}</>}</span>
         {canSign && (
           <button
+            type="button"
             onClick={() => requestSignature({ resourceType, resourceId, resourceLabel })}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-bold hover:bg-[var(--color-accent-hover)]"
+            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 text-[12px] font-bold"
           >
             <PenLine className="w-3.5 h-3.5" /> Sign
           </button>

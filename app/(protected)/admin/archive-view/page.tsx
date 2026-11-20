@@ -7,9 +7,9 @@
 // — nothing is re-uploaded, and it's discarded the moment they leave.
 
 import React from "react";
-import Link from "next/link";
-import { ArrowLeft, Archive } from "lucide-react";
 import BackupViewer from "@/components/archive/BackupViewer";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody } from "@/components/ui/PageHero";
 import { useRole } from "@/components/providers/RoleContext";
 
 export default function ArchiveViewPage() {
@@ -27,25 +27,26 @@ export default function ArchiveViewPage() {
     return () => { alive = false; };
   }, [activeOrgId, activeRole]);
   if (allowed === false) {
-    return <div className="p-8 text-center text-sm text-[var(--color-text-muted)]">The backup viewer is for Admin and Document Control. An Admin can change this in Admin, Permissions, Action permissions.</div>;
+    return (
+      <PageShell width="work">
+        <PageHero kicker="Admin · Storage · View from a backup" back={{ href: "/admin/storage", label: "Back to Storage" }}
+          title="Admin and Doc Control only." size="md" overlap={false}
+          sub="The backup viewer is for Admin and Document Control. An Admin can change this in Admin, Permissions, Action permissions." />
+      </PageShell>
+    );
   }
   return (
-    <div className="max-w-5xl mx-auto p-4 sm:p-6">
-      <div className="flex items-start gap-3 mb-5">
-        <Link href="/admin/storage" aria-label="Back to Storage" className="p-2 mt-1 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] transition-colors">
-          <ArrowLeft className="w-5 h-5" />
-        </Link>
-        <div className="flex-1 min-w-0">
-          <h1 className="text-xl font-black text-[var(--color-text)] flex items-center gap-2">
-            <Archive className="w-5 h-5 text-[var(--color-text-muted)]" /> View from a backup
-          </h1>
-          <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-            Open files from a backup .zip in this browser. Nothing is uploaded, and it&apos;s gone when you leave.
-          </p>
-        </div>
-      </div>
-
-      <BackupViewer />
-    </div>
+    <PageShell width="work">
+      <PageHero
+        kicker="Admin · Storage · View from a backup"
+        back={{ href: "/admin/storage", label: "Back to Storage" }}
+        size="md"
+        title="Open a backup here."
+        sub="Open files from a backup .zip in this browser. Nothing is uploaded, and it's gone when you leave."
+      />
+      <PageBody>
+        <BackupViewer />
+      </PageBody>
+    </PageShell>
   );
 }

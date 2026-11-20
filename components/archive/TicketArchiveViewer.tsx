@@ -122,7 +122,7 @@ export default function TicketArchiveViewer({
   const attachments = Array.isArray(row?.attachments) ? row!.attachments! : [];
 
   return (
-    <div role="dialog" aria-modal="true" className="fixed inset-0 z-[200] bg-slate-900/50 backdrop-blur-sm flex flex-col p-4 sm:p-8">
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-[200] bg-[var(--color-ink)]/60 flex flex-col p-4 sm:p-8">
       <div className="mx-auto w-full max-w-5xl flex-1 min-h-0 rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl flex flex-col overflow-hidden">
         <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
           <FileText className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
@@ -170,7 +170,7 @@ export default function TicketArchiveViewer({
           <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[1fr_18rem] gap-0">
             <div className="overflow-y-auto p-4 space-y-4">
               <div>
-                <div className="text-base font-black text-[var(--color-text)]">{row.title || ticketLabel}</div>
+                <div className="text-[15px] font-bold text-[var(--color-text)]">{row.title || ticketLabel}</div>
                 <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
                   {row.status} {row.requester_name ? `· ${row.requester_name}` : ""} {row.closed_at ? `· closed ${fmtDate(row.closed_at)}` : ""}
                 </div>

@@ -40,12 +40,12 @@ export default function WorkHistoryPanel({ orgId, assetId, code, tag, unitCode }
   };
 
   return (
-    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-hidden mb-5">
-      <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between gap-2">
-        <span className="text-sm font-black text-[var(--color-text)] inline-flex items-center gap-2">
-          <History className="w-4 h-4 text-[var(--color-text-muted)]" /> Work history
-        </span>
-        {ready && data && <span className="text-[11px] font-mono text-[var(--color-text-muted)]">{jobs.length} work order{jobs.length === 1 ? "" : "s"} · {byProject.size} project{byProject.size === 1 ? "" : "s"}</span>}
+    <section className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden">
+      <div className="px-4 sm:px-5 pt-4 pb-3 border-b border-[var(--color-border)] flex items-center justify-between gap-2">
+        <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] inline-flex items-center gap-2">
+          <History className="w-4 h-4" /> Work history
+        </h2>
+        {ready && data && <span className="text-[12px] text-[var(--color-text-muted)]">{jobs.length} work order{jobs.length === 1 ? "" : "s"} · {byProject.size} project{byProject.size === 1 ? "" : "s"}</span>}
       </div>
       {!ready ? (
         <div className="px-4 py-4 flex items-center gap-2 text-[12.5px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Reading the jobs…</div>
@@ -59,7 +59,7 @@ export default function WorkHistoryPanel({ orgId, assetId, code, tag, unitCode }
         <ul className="divide-y divide-[var(--color-border)]">
           {[...byProject.entries()].map(([pid, js]) => (
             <li key={pid} className="px-4 py-3 space-y-1.5">
-              <Link href={`/projects/${pid}?tab=work`} className="text-[13.5px] font-black text-[var(--color-text)] hover:text-[var(--color-accent)]">{js[0].projectName}</Link>
+              <Link href={`/projects/${pid}?tab=work`} className="text-[14px] font-bold text-[var(--color-text)] hover:underline">{js[0].projectName}</Link>
               <ul className="space-y-1.5">
                 {js.map((j) => {
                   const st = j.cancelled ? { word: "Cancelled", cls: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" } : STATUS[j.status] ?? { word: "Not started", cls: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" };
@@ -96,6 +96,6 @@ export default function WorkHistoryPanel({ orgId, assetId, code, tag, unitCode }
           </ul>
         </div>
       )}
-    </div>
+    </section>
   );
 }

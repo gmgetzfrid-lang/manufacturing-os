@@ -23,7 +23,9 @@ import {
   listAiInstructions, saveAiInstruction, deleteAiInstruction,
   SCOPE_LABELS, type AiInstruction, type AiInstructionScope,
 } from "@/lib/aiInstructions";
-import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card, heroPrimary } from "@/components/ui/PageHero";
+import { plural } from "@/components/admin/band";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
@@ -112,72 +114,74 @@ function AiInstructionsInner() {
     catch (e) { setError((e as Error).message); }
   };
 
-  if (!activeOrgId) return <PageShell width="work"><LoadingBlock what="AI instructions" /></PageShell>;
+  if (!activeOrgId) return <PageShell width="work"><PageHero kicker="Admin · AI instructions" title="AI instructions" overlap={false} /><LoadingBlock what="AI instructions" /></PageShell>;
   const closeEditor = () => { if (!busy) { setEditing(null); setFromLink(false); } };
   const openNew = () => { setFromLink(false); setEditing({ scope: "global", title: "", body: "", enabled: true }); };
 
+  const on = (rows ?? []).filter((r) => r.enabled).length;
+  const off = (rows ?? []).length - on;
+  const answer = rows === null ? (loadError ? "Couldn't load the instructions." : "AI instructions")
+    : rows.length === 0 ? "Nothing taught yet."
+    : `${plural(on, "rule")} the AI follows.`;
+
   return (
     <PageShell width="work">
-      <PageHeaderBar
-        icon={GraduationCap}
-        title="AI Instructions"
-        subtitle={rows
-          ? `${rows.filter((r) => r.enabled).length} rule${rows.filter((r) => r.enabled).length === 1 ? "" : "s"} the AI follows on every call${rows.some((r) => !r.enabled) ? ` · ${rows.filter((r) => !r.enabled).length} turned off` : ""}.`
-          : "Your site's conventions, written once. The AI follows them on every call."}
-        actions={canWrite ? (
-          <button onClick={openNew}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-black">
+      <PageHero
+        kicker="Admin · AI instructions"
+        title={answer}
+        sub={<>
+          {off > 0 ? `${off} turned off. ` : ""}Your site&apos;s conventions, written once. The AI follows them on every call.
+          {!canWrite && " Read only: Admins and Document Controllers write these."}
+        </>}
+        primary={canWrite ? (
+          <button type="button" onClick={openNew} className={heroPrimary}>
             <Plus className="w-4 h-4" /> New instruction
           </button>
         ) : undefined}
       />
 
-      {!canWrite && (
-        <p className="mb-3 text-xs text-[var(--color-text-muted)]">
-          Read only. Admins and Document Controllers write these.
-        </p>
-      )}
-
+      <PageBody>
       {error && !editing && (
-        <p role="alert" className="mb-3 border-l-2 border-red-500 pl-3 text-xs text-red-700 dark:text-red-400 flex items-start gap-2">
-          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {error}
-        </p>
+        <Card>
+          <p role="alert" className="text-[14px] text-red-700 dark:text-red-400 flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {error}
+          </p>
+        </Card>
       )}
 
       {rows === null && loadError ? (
-        <p role="alert" className="border-l-2 border-red-500 pl-3 py-1 text-sm text-red-700 dark:text-red-400">
-          Couldn&apos;t load the instructions: {loadError}{" "}
-          <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
-        </p>
+        <Card>
+          <p role="alert" className="text-[14px] text-red-700 dark:text-red-400">
+            Couldn&apos;t load the instructions: {loadError}{" "}
+            <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
+          </p>
+        </Card>
       ) : rows === null ? (
-        <LoadingBlock what="AI instructions" />
+        <Card><LoadingBlock what="AI instructions" className="border-0 p-0" /></Card>
       ) : rows.length === 0 ? (
-        <div className="rounded-2xl border-2 border-dashed border-[var(--color-border)] bg-[var(--color-surface-2)] p-8 text-center">
-          <Sparkles className="w-8 h-8 text-[var(--color-text-muted)] mx-auto mb-2" />
-          <div className="text-sm font-black text-[var(--color-text)]">Nothing taught yet</div>
-          <p className="text-xs text-[var(--color-text-muted)] mt-1 max-w-md mx-auto">
+        <Card className="text-center py-10">
+          <Sparkles className="w-7 h-7 text-[var(--color-text-muted)] mx-auto mb-2" />
+          <div className="text-[14px] font-bold text-[var(--color-text)]">Teach the first rule</div>
+          <p className="text-[14px] text-[var(--color-text-muted)] mt-1 max-w-md mx-auto">
             For example: &ldquo;equipment descriptions use the P&amp;ID service name, not the vendor
             model.&rdquo;
           </p>
-        </div>
+        </Card>
       ) : (
-        <div className="space-y-5">
+        <>
           {SCOPES.map((scope) => {
             const inScope = rows.filter((r) => r.scope === scope);
             if (inScope.length === 0) return null;
             return (
-              <div key={scope}>
-                <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1.5">
-                  {SCOPE_LABELS[scope]}
-                </div>
-                <div className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] bg-[var(--color-surface)]">
+              <Card key={scope} label={`${SCOPE_LABELS[scope]} · ${inScope.length}`} pad={false} className="overflow-hidden">
+                <div className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
                   {inScope.map((r) => (
-                    <div key={r.id} className={`px-3.5 py-2.5 flex items-start gap-3 ${r.enabled ? "" : "opacity-50"}`}>
+                    <div key={r.id} className={`px-4 sm:px-5 py-3 flex items-start gap-3 ${r.enabled ? "" : "opacity-50"}`}>
                       <div className="flex-1 min-w-0">
-                        <div className="text-sm font-black text-[var(--color-text)]">{r.title}</div>
-                        <div className="text-xs text-[var(--color-text-muted)] whitespace-pre-wrap">{r.body}</div>
+                        <div className="text-[14px] font-bold text-[var(--color-text)]">{r.title}</div>
+                        <div className="text-[13px] text-[var(--color-text-muted)] whitespace-pre-wrap">{r.body}</div>
                         {r.created_by_name && (
-                          <div className="text-[11px] text-[var(--color-text-faint)] mt-0.5">taught by {r.created_by_name}</div>
+                          <div className="text-[12px] text-[var(--color-text-muted)] mt-0.5">taught by {r.created_by_name}</div>
                         )}
                       </div>
                       {canWrite && (
@@ -188,7 +192,7 @@ function AiInstructionsInner() {
                             <Power className="w-3.5 h-3.5" />
                           </button>
                           <button onClick={() => { setFromLink(false); setEditing(r); }} title="Edit" aria-label={`Edit ${r.title}`}
-                            className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-accent-hover)] hover:bg-[var(--color-surface-2)]">
+                            className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
                           <button onClick={() => void remove(r)} title="Delete" aria-label={`Delete ${r.title}`}
@@ -200,11 +204,12 @@ function AiInstructionsInner() {
                     </div>
                   ))}
                 </div>
-              </div>
+              </Card>
             );
           })}
-        </div>
+        </>
       )}
+      </PageBody>
 
       {editing && (
         <Modal onClose={closeEditor} size="md" dismissable={!busy}>

@@ -318,29 +318,30 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
 
   if (!isOpen) return null;
 
-  const STEPS = ["Library Info", "Document Fields", "Permissions"];
+  const STEPS = ["Library info", "Document fields", "Permissions"];
 
   return (
-    <div role="dialog" aria-modal="true" aria-label={initialData ? "Edit Library" : "Create New Library"} className="fixed inset-0 z-50 flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/50 backdrop-blur-sm p-4">
-      <div className="bg-[var(--color-surface)] w-full max-w-3xl rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-[var(--color-border)] max-h-[92vh]">
+    <div role="dialog" aria-modal="true" aria-label={initialData ? "Edit Library" : "Create New Library"} className="fixed inset-0 z-50 flex items-start sm:items-center justify-center overflow-y-auto bg-[var(--color-ink)]/60 p-4">
+      <div className="bg-[var(--color-surface)] w-full max-w-3xl rounded-2xl shadow-2xl flex flex-col overflow-hidden max-h-[92vh]">
 
         {/* Header */}
-        <div className="px-8 py-5 border-b border-[var(--color-border)] flex justify-between items-center shrink-0">
+        <div className="px-5 sm:px-8 py-4 border-b border-[var(--color-border)] flex justify-between items-center shrink-0">
           <div>
-            <h2 className="text-xl font-black text-[var(--color-text)]">
-              {initialData ? "Edit Library" : "Create New Library"}
+            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Admin · Libraries</div>
+            <h2 className="text-[15px] font-bold text-[var(--color-text)]">
+              {initialData ? `Edit ${initialData.name || "library"}` : "New library"}
             </h2>
           </div>
           <button onClick={onClose} disabled={isLoading} aria-label="Close" className="p-2 text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] rounded-lg transition-colors">
             <X className="w-5 h-5" />
           </button>
         </div>
-        <div className="px-8 pt-4 shrink-0">
+        <div className="px-5 sm:px-8 pt-4 shrink-0">
           <StepPath steps={STEPS} current={step - 1} onPick={(i) => setStep((i + 1) as 1 | 2 | 3)} />
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto p-8">
+        <div className="flex-1 overflow-y-auto p-5 sm:p-8">
 
           {/* STEP 1: Library Info */}
           {step === 1 && (
@@ -354,7 +355,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     placeholder="e.g. Bakersfield P&IDs, Safety Procedures"
-                    className="w-full px-4 py-3 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl text-[var(--color-text)] font-bold focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:bg-[var(--color-surface)] outline-none transition-all text-lg placeholder:text-[var(--color-text-faint)]"
+                    className="w-full px-4 py-3 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl text-[var(--color-text)] font-bold focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:bg-[var(--color-surface)] outline-none transition-all text-[15px] placeholder:text-[var(--color-text-faint)]"
                     autoFocus
                   />
                 </div>
@@ -611,7 +612,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
                 className="px-6 py-2.5 text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] rounded-xl shadow hover:bg-[var(--color-accent-hover)] flex items-center disabled:opacity-60 transition-all"
               >
                 <Save className="w-4 h-4 mr-2" />
-                {isLoading ? "Saving…" : initialData ? "Save Library" : "Create Library"}
+                {isLoading ? "Saving…" : initialData ? "Save library" : "Create library"}
               </button>
             )}
           </div>

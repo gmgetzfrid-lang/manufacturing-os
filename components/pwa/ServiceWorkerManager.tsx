@@ -72,7 +72,7 @@ export default function ServiceWorkerManager() {
   return (
     <div className="fixed bottom-4 left-4 z-[200] flex flex-col gap-2 pointer-events-none">
       {offline && (
-        <div role="status" className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] text-amber-800 dark:text-amber-300 text-xs font-bold px-3 py-1.5 shadow-md">
+        <div role="status" className="pointer-events-auto inline-flex items-center gap-2 rounded-full bg-[var(--color-surface)] text-amber-800 dark:text-amber-300 text-[12px] font-bold px-3 py-1.5 shadow-[var(--shadow-card)]">
           <WifiOff className="w-3.5 h-3.5" />
           Offline. Showing what was saved on this device.
         </div>
@@ -80,7 +80,7 @@ export default function ServiceWorkerManager() {
       {updateReady && (
         <button
           onClick={applyUpdate}
-          className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-xs font-bold px-3 py-1.5 shadow-md transition-colors"
+          className="pointer-events-auto inline-flex items-center gap-2 rounded-full bg-[var(--color-ink)] hover:bg-[var(--color-ink-2)] text-[var(--color-ink-fg)] text-[12px] font-semibold px-3.5 h-9 shadow-[var(--shadow-card)] transition-colors"
         >
           <RefreshCw className="w-3.5 h-3.5" />
           A new version is ready. Tap to reload.

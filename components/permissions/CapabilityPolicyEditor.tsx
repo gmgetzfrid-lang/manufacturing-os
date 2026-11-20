@@ -104,7 +104,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
 
   if (!policy) {
     return (
-      <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] mb-5 px-4 py-3 text-xs text-[var(--color-text-muted)] inline-flex items-center gap-2 w-full">
+      <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] px-5 py-4 text-[13px] text-[var(--color-text-muted)] flex items-center gap-2 w-full">
         {loadError ? (
           <span role="alert" className="text-rose-700 dark:text-rose-400">
             Couldn&apos;t load the action permissions: {loadError}{" "}
@@ -116,18 +116,18 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
   }
 
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] mb-5 overflow-hidden">
-      <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
+    <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden">
+      <div className="px-4 sm:px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <SlidersHorizontal className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-base font-bold text-[var(--color-text)]">Action permissions</span>
-        <span className="text-xs text-[var(--color-text-muted)]">Who may do each workflow action. Checked on the server, logged on save.</span>
+        <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Action permissions</h2>
+        <span className="text-[13px] text-[var(--color-text-muted)]">Who may do each workflow action. Checked on the server, logged on save.</span>
         {canEdit && (
           <div className="ml-auto flex items-center gap-2">
-            <button onClick={resetDefaults} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+            <button onClick={resetDefaults} className="inline-flex items-center gap-1 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
               <RotateCcw className="w-3 h-3" /> Restore defaults
             </button>
             <button onClick={() => void save()} disabled={!dirty || saving}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-40">
+              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 text-[13px] font-bold disabled:opacity-40">
               {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Save policy
             </button>
           </div>
@@ -187,6 +187,6 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
       <div className="px-4 py-2 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-faint)]">
         Identity rights are never configurable: a ticket&apos;s requester, assigned drafter, and assigned engineer always keep their own-ticket actions. &ldquo;Engineer&rdquo; covers every Engineer-1…4 tier (tiers are labels, enforced identically).
       </div>
-    </div>
+    </section>
   );
 }

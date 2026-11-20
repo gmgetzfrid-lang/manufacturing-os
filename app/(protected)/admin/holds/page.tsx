@@ -15,10 +15,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
-  AlertOctagon, Clock, AlertTriangle, Check, X,
+  Clock, AlertTriangle, Check, X,
   ChevronRight, Lock, TrendingUp,
 } from "lucide-react";
-import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card } from "@/components/ui/PageHero";
+import { plural } from "@/components/admin/band";
 import { Spinner } from "@/components/ui/Spinner";
 import { useRole } from "@/components/providers/RoleContext";
 import {
@@ -108,85 +110,82 @@ export default function HoldsPage() {
   const totalByReason = useMemo(() => metrics?.activeByReason ?? [], [metrics]);
   const maxBarCount = useMemo(() => totalByReason.reduce((m, r) => Math.max(m, r.count), 1), [totalByReason]);
 
-  if (!activeOrgId) return <div className="p-6 text-sm text-[var(--color-text-muted)]">No active organization.</div>;
+  if (!activeOrgId) return (
+    <PageShell width="work">
+      <PageHero kicker="Document control · Holds" title="Holds" sub="No active organization." overlap={false} />
+    </PageShell>
+  );
+
+  // The answer: how much is blocked, and for how long.
+  const onHold = metrics?.activeCount ?? holds.length;
+  const answer = loading && !metrics ? "Holds"
+    : error && holds.length === 0 ? "Couldn't load the holds."
+    : onHold === 0 ? "Nothing on hold."
+    : `${plural(onHold, "document")} on hold.`;
 
   return (
-    <PageShell width="work" className="space-y-5">
-      <ViewTabs title="Documents" tabs={DOCUMENT_VIEWS} />
-      <PageHeaderBar
-        icon={AlertOctagon}
-        title="Hold Queue"
-        subtitle="Blocked documents, oldest first."
-      />
-
-      {error && (
-        <p role="alert" className="flex items-center gap-2 text-xs text-red-700 dark:text-red-400 border-l-2 border-red-500 pl-3">
-          <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> {error}
-          {!busy && <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>}
-        </p>
-      )}
-
-      {/* What matters, in one line. */}
-      {metrics && (
-        <p className="text-sm text-[var(--color-text-muted)] flex items-center gap-x-2 gap-y-1 flex-wrap">
-          <span className="inline-flex items-center gap-1"><Lock className="w-3.5 h-3.5" /><b className={metrics.activeCount > 0 ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text)]"}>{metrics.activeCount}</b> on hold</span>
-          <span>·</span>
-          <span className="inline-flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> longest <b className={metrics.longestActiveDays > 14 ? "text-red-700 dark:text-red-400" : "text-[var(--color-text)]"}>{metrics.longestActiveDays}d</b></span>
-          <span>·</span>
-          <span className="inline-flex items-center gap-1"><TrendingUp className="w-3.5 h-3.5" /> average closed in <b className="text-[var(--color-text)]">{metrics.avgClosedDurationDays}d</b> (90 days)</span>
-          <span>·</span>
-          <span>last 7 days: {metrics.openedLast7Days} opened, {metrics.releasedLast7Days} released</span>
-        </p>
-      )}
-
-      {/* By reason */}
-      {totalByReason.length > 0 && (
-        <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-4">
-          <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest mb-3">By reason</div>
-          <div className="space-y-1.5">
-            {totalByReason.map((r) => (
-              <div key={r.reason} className="flex items-center gap-3 text-xs">
-                <div className="w-44 shrink-0 truncate text-[var(--color-text)]">{r.reason}</div>
-                <div className="flex-1 bg-[var(--color-surface-2)] rounded-full h-3 overflow-hidden">
-                  <div
-                    className="h-full bg-amber-500"
-                    style={{ width: `${(r.count / maxBarCount) * 100}%` }}
-                  />
-                </div>
-                <div className="w-8 text-right font-mono font-bold text-[var(--color-text)]">{r.count}</div>
-              </div>
-            ))}
-          </div>
+    <PageShell width="work">
+      <PageHero
+        kicker="Document control · Holds"
+        title={answer}
+        sub={metrics ? (
+          <span className="inline-flex items-center gap-x-2 gap-y-1 flex-wrap">
+            {onHold > 0 && <span className="inline-flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> Longest <b className={metrics.longestActiveDays > 14 ? "text-rose-300" : "text-white"}>{metrics.longestActiveDays} days</b> ·</span>}
+            <span className="inline-flex items-center gap-1"><TrendingUp className="w-3.5 h-3.5" /> closed in {metrics.avgClosedDurationDays} days on average (90 days)</span>
+            <span>· last 7 days: {metrics.openedLast7Days} opened, {metrics.releasedLast7Days} released</span>
+          </span>
+        ) : "Blocked documents, oldest first."}
+      >
+        <div className="[&>div]:mb-0">
+          <ViewTabs tabs={DOCUMENT_VIEWS} variant="dark" />
         </div>
-      )}
+      </PageHero>
 
+      <PageBody>
       {/* Active queue */}
       {loading ? (
-        <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)] py-8 justify-center">
-          <Spinner size="xs" /> Loading hold queue…
-        </div>
-      ) : holds.length === 0 ? (
-        <div className="text-sm text-[var(--color-text-muted)] py-12 text-center border border-dashed border-[var(--color-border-strong)] rounded-xl px-6 space-y-2">
-          <div className="font-bold text-[var(--color-text)]">No active holds.</div>
-          <div className="text-xs text-[var(--color-text-muted)] max-w-md mx-auto">
-            A hold is placed from the document&apos;s side panel, for example while waiting on sign-off, vendor data or a field check.
+        <Card>
+          <div className="flex items-center gap-2 text-[13px] text-[var(--color-text-muted)] py-6 justify-center">
+            <Spinner size="xs" /> Loading the holds…
           </div>
-        </div>
+        </Card>
+      ) : holds.length === 0 ? (
+        <Card className="text-center py-10">
+          {error ? (
+            <p role="alert" className="text-[14px] text-red-700 dark:text-red-400 flex items-center justify-center gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0" /> {error}
+              {!busy && <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>}
+            </p>
+          ) : (
+            <>
+              <div className="text-[14px] font-bold text-emerald-700 dark:text-emerald-400">Every document is free to move.</div>
+              <div className="mt-1 text-[14px] text-[var(--color-text-muted)] max-w-md mx-auto">
+                A hold is placed from the document&apos;s side panel, for example while waiting on sign-off, vendor data or a field check.
+              </div>
+            </>
+          )}
+        </Card>
       ) : (
-        <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl overflow-hidden">
-          <div className="divide-y divide-[var(--color-border)]">
+        <Card pad={false} className="overflow-hidden" label={<span className="inline-flex items-center gap-2"><Lock className="w-3.5 h-3.5" /> On hold, oldest first</span>}>
+          {error && (
+            <p role="alert" className="px-4 sm:px-5 pb-3 flex items-center gap-2 text-[13px] text-red-700 dark:text-red-400">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> {error}
+              {!busy && <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>}
+            </p>
+          )}
+          <div className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
             {holds.map((h) => {
               const meta = docs.get(h.documentId);
               const ageDays = Math.max(0, Math.round((Date.now() - new Date(h.openedAt as string).getTime()) / 86400_000));
               const expectedMs = h.expectedReleaseAt ? new Date(h.expectedReleaseAt as string).getTime() : null;
               const lateDays = expectedMs && Date.now() > expectedMs ? Math.round((Date.now() - expectedMs) / 86400_000) : 0;
               return (
-                <div key={h.id} className="px-4 py-3 hover:bg-[var(--color-surface-2)] transition-colors flex items-start gap-3">
+                <div key={h.id} className="px-4 sm:px-5 py-3 hover:bg-[var(--color-surface-2)] transition-colors flex items-start gap-3">
                   <div className="shrink-0 w-1 h-10 rounded-full bg-amber-500 mt-1" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       {meta ? (
-                        <Link href={`/documents/${meta.libraryId}?doc=${h.documentId}`} className="text-sm font-bold text-[var(--color-text)] hover:text-[var(--color-accent-hover)] inline-flex items-center gap-1">
+                        <Link href={`/documents/${meta.libraryId}?doc=${h.documentId}`} className="text-[14px] font-bold text-[var(--color-text)] hover:underline inline-flex items-center gap-1">
                           {meta.documentNumber && <span className="font-mono">{meta.documentNumber}</span>}
                           {meta.title && <span className="text-[var(--color-text)]">{meta.documentNumber ? "· " : ""}{meta.title}</span>}
                           <ChevronRight className="w-3 h-3" />
@@ -194,27 +193,28 @@ export default function HoldsPage() {
                       ) : (
                         <span className="text-sm font-mono text-[var(--color-text-muted)]">(document)</span>
                       )}
-                      <span className="text-[11px] font-bold text-amber-800 bg-amber-100 border border-amber-200 dark:text-amber-300 dark:bg-amber-950/40 dark:border-amber-900 px-1.5 py-0.5 rounded">{h.reason}</span>
+                      <span className="text-[12px] font-semibold text-amber-800 dark:text-amber-300">{h.reason}</span>
                     </div>
-                    <div className="mt-1 text-[11px] text-[var(--color-text-muted)] flex items-center gap-2 flex-wrap">
+                    <div className="mt-1 text-[12px] text-[var(--color-text-muted)] flex items-center gap-2 flex-wrap">
                       <span className="inline-flex items-center gap-0.5">
                         <Clock className="w-3 h-3" /> {ageDays === 0 ? "today" : `${ageDays}d`}
                         {lateDays > 0 && <span className="ml-1 font-bold text-red-700 dark:text-red-400">(+{lateDays}d late)</span>}
                       </span>
                       {h.openedByName && <span>opened by {h.openedByName}</span>}
                     </div>
-                    {h.notes && <div className="mt-1 text-[11px] text-[var(--color-text)] whitespace-pre-wrap">{h.notes}</div>}
+                    {h.notes && <div className="mt-1 text-[13px] text-[var(--color-text)] whitespace-pre-wrap">{h.notes}</div>}
                     {releasingId === h.id && (
                       <div className="mt-2 flex items-center gap-1.5">
                         <input
                           value={releaseDraft}
                           onChange={(e) => setReleaseDraft(e.target.value)}
                           placeholder="How it was resolved (optional)"
+                          aria-label="How it was resolved"
                           onKeyDown={(e) => { if (e.key === "Enter" && !busy) void onRelease(h.id!); }}
-                          className="flex-1 text-xs border border-[var(--color-border-strong)] rounded px-2 py-1 bg-[var(--color-surface)] text-[var(--color-text)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-ring)]"
+                          className="flex-1 min-w-0 h-9 text-[13px] border border-[var(--color-border-strong)] rounded-lg px-2.5 bg-[var(--color-surface)] text-[var(--color-text)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-ring)]"
                           autoFocus
                         />
-                        <button onClick={() => onRelease(h.id!)} disabled={busy} className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] disabled:opacity-40 transition-colors">
+                        <button type="button" onClick={() => onRelease(h.id!)} disabled={busy} className="inline-flex items-center gap-1 h-9 px-3 rounded-lg text-[13px] font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] disabled:opacity-40 transition-colors">
                           <Check className="w-3 h-3" /> Release
                         </button>
                         <button onClick={() => { setReleasingId(null); setReleaseDraft(""); }} disabled={busy} aria-label="Cancel release" className="p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors">
@@ -226,7 +226,8 @@ export default function HoldsPage() {
                   {canRelease && releasingId !== h.id && (
                     <button
                       onClick={() => { setReleasingId(h.id!); setReleaseDraft(""); }}
-                      className="shrink-0 text-[11px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] px-2 py-1 rounded inline-flex items-center gap-1 transition-colors"
+                      type="button"
+                      className="shrink-0 h-8 text-[12px] font-semibold text-[var(--color-text)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] px-2.5 rounded-lg inline-flex items-center gap-1 transition-colors"
                     >
                       <Check className="w-3 h-3" /> Release
                     </button>
@@ -235,8 +236,29 @@ export default function HoldsPage() {
               );
             })}
           </div>
-        </div>
+        </Card>
       )}
+
+      {/* By reason */}
+      {totalByReason.length > 0 && (
+        <Card label="By reason">
+          <div className="space-y-2">
+            {totalByReason.map((r) => (
+              <div key={r.reason} className="flex items-center gap-3 text-[13px]">
+                <div className="w-44 shrink-0 truncate text-[var(--color-text)]">{r.reason}</div>
+                <div className="flex-1 bg-[var(--color-surface-2)] rounded-full h-2.5 overflow-hidden">
+                  <div
+                    className="h-full bg-amber-500"
+                    style={{ width: `${(r.count / maxBarCount) * 100}%` }}
+                  />
+                </div>
+                <div className="w-8 text-right tabular-nums font-bold text-[var(--color-text)]">{r.count}</div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+      </PageBody>
     </PageShell>
   );
 }

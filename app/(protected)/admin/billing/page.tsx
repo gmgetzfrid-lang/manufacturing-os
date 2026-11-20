@@ -13,14 +13,15 @@
 import React, { useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
-  CreditCard, Clock, CheckCircle2, AlertTriangle, Lock, Loader2,
+  Clock, CheckCircle2, AlertTriangle, Lock, Loader2,
   ExternalLink, ArrowRight,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { useSubscription } from "@/components/providers/SubscriptionProvider";
 import { trialDaysRemaining, isTrialExpired } from "@/lib/subscription";
 import { supabase } from "@/lib/supabase";
-import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card, heroPrimary } from "@/components/ui/PageHero";
 import { Spinner } from "@/components/ui/Spinner";
 
 export default function BillingPage() {
@@ -79,98 +80,101 @@ export default function BillingPage() {
     }
   };
 
+  // The answer: where the subscription stands, in words.
+  const planName = info?.plan ? info.plan[0].toUpperCase() + info.plan.slice(1) : null;
+  const answer = loading ? "Billing"
+    : !info ? "Couldn't load your subscription."
+    : info.status === "trialing" && !expired ? `${days} day${days === 1 ? "" : "s"} left in your trial.`
+    : info.status === "active" ? "Subscription active."
+    : info.status === "past_due" ? "Payment past due."
+    : info.status === "canceled" ? "Subscription canceled."
+    : info.status === "unpaid" ? "Payment failed."
+    : info.status === "paused" ? "Subscription paused."
+    : expired ? "Your trial has ended."
+    : "Billing needs attention.";
+  const sub = !info ? "Your plan, payment method and invoices."
+    : info.status === "trialing" && !expired ? <>No payment needed during the trial.{info.trialEndsAt && <> It ends {new Date(info.trialEndsAt).toLocaleDateString()}.</>}</>
+    : info.status === "active" || info.status === "past_due" ? <>Plan: {planName ?? "-"}{info.currentPeriodEnd && <> · renews {new Date(info.currentPeriodEnd).toLocaleDateString()}</>}</>
+    : expired ? "Pick a plan below to continue."
+    : "Update your payment method to restore access.";
+  const showPortal = !!info && (info.status === "active" || info.status === "past_due");
+
   return (
     <PageShell width="form">
-      <PageHeaderBar
-        icon={CreditCard}
-        title="Billing & Subscription"
-        subtitle="Manage your plan, payment method, and invoice history."
+      <PageHero
+        kicker="Admin · Billing"
+        title={answer}
+        size="md"
+        sub={sub}
+        primary={showPortal ? (
+          <button type="button" onClick={openPortal} disabled={busyPortal} className={heroPrimary}>
+            {busyPortal ? <Loader2 className="w-4 h-4 animate-spin" /> : <ExternalLink className="w-4 h-4" />}
+            Manage subscription
+          </button>
+        ) : undefined}
       />
 
-      {checkoutResult === "success" && (
-          <p role="status" className="mb-6 border-l-2 border-emerald-500 pl-3 text-sm text-emerald-800 dark:text-emerald-300 flex items-start gap-2">
-            <CheckCircle2 className="w-5 h-5 mt-0.5 shrink-0" />
-            <span>
-              <b>Subscription started.</b> Your status can take a few seconds to update.
-              <button onClick={() => void refresh()} className="ml-1 underline font-bold">Refresh now</button>
-            </span>
-          </p>
-        )}
-        {checkoutResult === "canceled" && (
-          <p className="mb-6 text-sm text-[var(--color-text-muted)]">
-            Checkout canceled. No payment was taken.
-          </p>
-        )}
-        {error && (
-          <p role="alert" className="mb-6 border-l-2 border-red-500 pl-3 text-xs text-red-700 dark:text-red-400 flex items-start gap-2">
-            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
-          </p>
-        )}
-
-        {!isAuthorized && (
-          <p className="mb-6 text-xs text-[var(--color-text-muted)] flex items-start gap-2">
-            <Lock className="w-4 h-4 mt-0.5 shrink-0" />
-            <span>Only Admin and Manager roles manage billing.</span>
-          </p>
-        )}
-
+      <PageBody>
         {/* Current status card */}
-        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-6 mb-6">
+        <Card label="Subscription">
+          {checkoutResult === "success" && (
+            <p role="status" className="mb-3 text-[14px] text-emerald-800 dark:text-emerald-300 flex items-start gap-2">
+              <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />
+              <span>
+                <b>Subscription started.</b> Your status can take a few seconds to update.
+                <button type="button" onClick={() => void refresh()} className="ml-1 underline font-bold">Refresh now</button>
+              </span>
+            </p>
+          )}
+          {checkoutResult === "canceled" && (
+            <p className="mb-3 text-[14px] text-[var(--color-text-muted)]">
+              Checkout canceled. No payment was taken.
+            </p>
+          )}
+          {error && (
+            <p role="alert" className="mb-3 text-[13px] text-red-700 dark:text-red-400 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
+            </p>
+          )}
           {loading ? (
-            <div className="text-sm text-[var(--color-text-muted)] flex items-center gap-2"><Spinner size="sm" /> Loading your subscription…</div>
+            <div className="text-[14px] text-[var(--color-text-muted)] flex items-center gap-2"><Spinner size="sm" /> Loading your subscription…</div>
           ) : !info ? (
-            <div className="text-sm text-[var(--color-text-muted)]">Couldn&apos;t load your subscription. <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button></div>
+            <div className="text-[14px] text-[var(--color-text-muted)]">Couldn&apos;t load your subscription. <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button></div>
           ) : info.status === "trialing" && !expired ? (
-            <div>
-              <div className="flex items-center gap-3 mb-3">
-                <div className="p-2 bg-[var(--color-surface-2)] rounded-xl"><Clock className="w-5 h-5 text-[var(--color-text-muted)]" /></div>
-                <div>
-                  <div className="text-base font-black text-[var(--color-text)]">Free Trial</div>
-                  <div className="text-xs text-[var(--color-text-muted)]">No payment required during trial</div>
-                </div>
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-[var(--color-surface-2)] rounded-[10px]"><Clock className="w-4 h-4 text-[var(--color-text-muted)]" /></div>
+              <div>
+                <div className="text-[14px] font-bold text-[var(--color-text)]">Free trial · {days} day{days === 1 ? "" : "s"} left</div>
+                <div className="text-[13px] text-[var(--color-text-muted)]">No payment required during the trial{info.trialEndsAt ? `. Ends ${new Date(info.trialEndsAt).toLocaleDateString()}.` : "."}</div>
               </div>
-              <div className="text-4xl font-black text-[var(--color-text)] mb-1">
-                {days} <span className="text-base font-bold text-[var(--color-text-muted)]">day{days === 1 ? "" : "s"} remaining</span>
-              </div>
-              {info.trialEndsAt && (
-                <div className="text-xs text-[var(--color-text-muted)]">Trial ends {new Date(info.trialEndsAt).toLocaleDateString()}</div>
-              )}
             </div>
           ) : info.status === "active" || info.status === "past_due" ? (
-            <div>
-              <div className="flex items-center gap-3 mb-3">
-                <div className={`p-2 rounded-xl ${info.status === "past_due" ? "bg-amber-100 dark:bg-amber-950/40" : "bg-emerald-100 dark:bg-emerald-950/40"}`}>
-                  {info.status === "past_due" ? <AlertTriangle className="w-5 h-5 text-amber-700" /> : <CheckCircle2 className="w-5 h-5 text-emerald-700" />}
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-[10px] bg-[var(--color-surface-2)]">
+                {info.status === "past_due" ? <AlertTriangle className="w-4 h-4 text-amber-700" /> : <CheckCircle2 className="w-4 h-4 text-emerald-700" />}
+              </div>
+              <div>
+                <div className={`text-[14px] font-bold ${info.status === "past_due" ? "text-amber-800 dark:text-amber-300" : "text-[var(--color-text)]"}`}>
+                  {info.status === "past_due" ? "Payment past due" : "Active subscription"}
                 </div>
-                <div>
-                  <div className="text-base font-black text-[var(--color-text)]">
-                    {info.status === "past_due" ? "Payment Past Due" : "Active Subscription"}
-                  </div>
-                  <div className="text-xs text-[var(--color-text-muted)]">
-                    Plan: <b>{info.plan ? info.plan[0].toUpperCase() + info.plan.slice(1) : "-"}</b>
-                    {info.currentPeriodEnd && <> · Renews {new Date(info.currentPeriodEnd).toLocaleDateString()}</>}
-                  </div>
+                <div className="text-[13px] text-[var(--color-text-muted)]">
+                  Plan: <b>{planName ?? "-"}</b>
+                  {info.currentPeriodEnd && <> · Renews {new Date(info.currentPeriodEnd).toLocaleDateString()}</>}
+                  . Card, invoices and plan changes are in Manage subscription.
                 </div>
               </div>
-              <button
-                onClick={openPortal} disabled={busyPortal}
-                className="mt-3 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-xs font-bold transition-colors disabled:opacity-50"
-              >
-                {busyPortal ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5" />}
-                Manage subscription / payment
-              </button>
             </div>
           ) : (
             <div className="flex items-start gap-3">
-              <div className="p-2 bg-red-100 dark:bg-red-950/40 rounded-xl"><AlertTriangle className="w-5 h-5 text-red-700 dark:text-red-400" /></div>
+              <div className="p-2 bg-[var(--color-surface-2)] rounded-[10px]"><AlertTriangle className="w-4 h-4 text-red-700 dark:text-red-400" /></div>
               <div>
-                <div className="text-base font-black text-[var(--color-text)]">
-                  {info.status === "canceled" ? "Subscription Canceled" :
-                   info.status === "unpaid" ? "Payment Failed" :
-                   info.status === "paused" ? "Subscription Paused" :
-                   expired ? "Trial Expired" : "Action Required"}
+                <div className="text-[14px] font-bold text-red-700 dark:text-red-400">
+                  {info.status === "canceled" ? "Subscription canceled" :
+                   info.status === "unpaid" ? "Payment failed" :
+                   info.status === "paused" ? "Subscription paused" :
+                   expired ? "Trial expired" : "Action required"}
                 </div>
-                <div className="text-xs text-[var(--color-text-muted)] mt-0.5">
+                <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">
                   {expired
                     ? "Your free trial has ended. Pick a plan below to continue."
                     : "Update your payment method to restore access."}
@@ -178,13 +182,18 @@ export default function BillingPage() {
               </div>
             </div>
           )}
-        </div>
+          {!isAuthorized && (
+            <p className="mt-3 pt-3 border-t border-[var(--color-border)] text-[13px] text-[var(--color-text-muted)] flex items-start gap-2">
+              <Lock className="w-4 h-4 mt-0.5 shrink-0" />
+              <span>Only Admin and Manager roles manage billing.</span>
+            </p>
+          )}
+        </Card>
 
         {/* Plans grid */}
         {isAuthorized && info?.status !== "active" && (
-          <div className="mb-6">
-            <h2 className="text-sm font-black text-[var(--color-text)] mb-3">Plans</h2>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Card label="Plans">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <Plan
                 name="Starter" planKey="starter" price="$299" tagline="For small teams"
                 features={["Up to 10 users", "All workflow features", "24-hour export presigned URLs", "Email support"]}
@@ -201,8 +210,9 @@ export default function BillingPage() {
                 contactMode
               />
             </div>
-          </div>
+          </Card>
         )}
+      </PageBody>
     </PageShell>
   );
 }
@@ -214,14 +224,14 @@ function Plan({
   featured?: boolean; onSubscribe?: () => void; busy?: boolean; contactMode?: boolean;
 }) {
   return (
-    <div className={`rounded-2xl border p-5 flex flex-col bg-[var(--color-surface)] ${featured ? "border-[var(--color-border-strong)] border-2" : "border-[var(--color-border)]"}`}>
+    <div className={`rounded-xl p-4 flex flex-col ${featured ? "bg-[var(--color-surface-2)]" : "ring-1 ring-[var(--color-border)]"}`}>
       <div className="flex items-center justify-between mb-1">
-        <div className="text-sm font-black text-[var(--color-text)]">{name}</div>
-        {featured && <span className="text-[11px] font-bold text-[var(--color-text-muted)]">Most picked</span>}
+        <div className="text-[14px] font-bold text-[var(--color-text)]">{name}</div>
+        {featured && <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">Most picked</span>}
       </div>
-      <div className="text-xs text-[var(--color-text-muted)] mb-3">{tagline}</div>
-      <div className="text-3xl font-black text-[var(--color-text)] mb-1">{price}{price !== "Contact" && <span className="text-sm font-bold text-[var(--color-text-faint)]">/mo</span>}</div>
-      <ul className="mt-3 space-y-1.5 text-xs flex-1 text-[var(--color-text-muted)]">
+      <div className="text-[13px] text-[var(--color-text-muted)]">{tagline}</div>
+      <div className="mt-2 text-[15px] font-extrabold text-[var(--color-text)]">{price}{price !== "Contact" && <span className="text-[13px] font-semibold text-[var(--color-text-muted)]"> a month</span>}</div>
+      <ul className="mt-3 space-y-1.5 text-[13px] flex-1 text-[var(--color-text-muted)]">
         {features.map((f) => (
           <li key={f} className="flex items-start gap-1.5">
             <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-0.5 text-[var(--color-text-faint)]" />
@@ -232,14 +242,15 @@ function Plan({
       {contactMode ? (
         <a
           href="mailto:sales@manufacturing-os.app?subject=Enterprise%20inquiry"
-          className={`mt-4 inline-flex items-center justify-center gap-1 w-full py-2 rounded-lg text-xs font-black border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-opacity`}
+          className="mt-4 inline-flex items-center justify-center gap-1 w-full h-10 rounded-xl text-[13px] font-bold border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-opacity"
         >
           Contact sales <ArrowRight className="w-3.5 h-3.5" />
         </a>
       ) : (
         <button
+          type="button"
           onClick={onSubscribe} disabled={busy}
-          className={`mt-4 inline-flex items-center justify-center gap-1 w-full py-2 rounded-lg text-xs font-black transition-colors disabled:opacity-50 ${
+          className={`mt-4 inline-flex items-center justify-center gap-1 w-full h-10 rounded-xl text-[13px] font-extrabold transition-colors disabled:opacity-50 ${
             featured ? "bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)]" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)]"
           }`}
         >

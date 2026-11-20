@@ -9,14 +9,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { Tag as TagIcon, MapPin, FileText, AlertOctagon, Lock, RefreshCw, ImageIcon, Printer, Loader2, QrCode } from "lucide-react";
+import { MapPin, FileText, AlertOctagon, Lock, RefreshCw, ImageIcon, Printer, Loader2, QrCode } from "lucide-react";
 import MoreMenu from "@/components/ui/MoreMenu";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import SignedImg from "@/components/assets/SignedImg";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
-import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
-import { Button } from "@/components/ui/Button";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
 import { getAssetByTag, listAssetPhotos, type Asset, type AssetPhoto } from "@/lib/assets";
 import AliasPanel from "@/components/assets/AliasPanel";
 import MentionsPanel from "@/components/assets/MentionsPanel";
@@ -44,6 +44,7 @@ export default function AssetHubPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [partError, setPartError] = useState<string | null>(null);
+  const [docLimit, setDocLimit] = useState(25);
 
   const refresh = useCallback(async () => {
     if (!activeOrgId || !tag) return;
@@ -102,7 +103,13 @@ export default function AssetHubPage() {
   const heldCount = useMemo(() => Array.from(holdsByDoc.values()).reduce((a, b) => a + (b > 0 ? 1 : 0), 0), [holdsByDoc]);
 
   if (loading && docs.length === 0 && !asset) {
-    return <div className="p-6"><LoadingBlock what={tag || "the equipment"} /></div>;
+    return (
+      <PageShell width="work">
+        <PageHero kicker="Equipment" title={<span className="font-mono">{tag}</span>} size="md" overlap={false}
+          back={{ href: "/admin/assets", label: "Back to operating areas" }} />
+        <LoadingBlock what={tag || "the equipment"} />
+      </PageShell>
+    );
   }
 
   const printPack = async () => {
@@ -145,42 +152,39 @@ export default function AssetHubPage() {
     }
   };
 
+  // The answer: what state this equipment's paperwork is in.
+  const answer = error && docs.length === 0 ? <>{tag}: couldn&apos;t load its documents.</>
+    : heldCount > 0 ? <>{tag}: {heldCount} document{heldCount === 1 ? "" : "s"} on hold.</>
+    : docCount === 0 ? <>{tag}: no documents yet.</>
+    : <>{tag}: {docCount} document{docCount === 1 ? "" : "s"}, none on hold.</>;
+  const backHref = asset?.unit_code ? `/admin/assets?unit=${encodeURIComponent(asset.unit_code)}` : "/admin/assets";
+
   return (
     <PageShell width="work">
-        {/* Header */}
-        <PageHeaderBar
-          icon={TagIcon}
-          title={<span className="font-mono">{tag}</span>}
-          subtitle={
+        <PageHero
+          kicker={<>Operating areas{asset?.unit_code ? ` · Unit ${asset.unit_code}` : ""} · {tag}</>}
+          back={{ href: backHref, label: "Back to operating areas" }}
+          size="md"
+          title={answer}
+          sub={
             <>
               {asset?.description || (asset ? "Registered asset" : "Not in the equipment list. Showing documents tagged with it.")}
-              {asset?.location && (
-                <span className="mt-1 flex items-center gap-1 text-xs text-[var(--color-text-muted)]">
-                  <MapPin className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> {asset.location}
-                </span>
-              )}
+              {asset?.location && <> · <MapPin className="inline w-3.5 h-3.5 -mt-0.5" /> {asset.location}</>}
+              {photos.length > 0 && <> · {photos.length} photo{photos.length === 1 ? "" : "s"}</>}
             </>
           }
-          actions={
+          tools={
             <>
-              {/* Report a problem: pre-filled drafting request. The scan
-                  landing must let the field WRITE, not just read. */}
-              <Link
-                href={`/requests/new?title=${encodeURIComponent(`Issue at ${tag}`)}&description=${encodeURIComponent(`Equipment: ${tag}${asset?.location ? ` (${asset.location})` : ""}\n\nDescribe the problem: `)}`}
-                className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]"
-              >
-                <AlertOctagon className="w-3.5 h-3.5" /> Report a problem
-              </Link>
               {/* One click from equipment tag to a single stamped PDF of every
                   current drawing, each sheet carrying its own verify-QR. */}
               {docs.length > 0 && uid && activeOrgId && (
-                <Button variant="secondary" size="sm" disabled={packing} onClick={() => void printPack()}>
+                <button type="button" className={heroQuiet} disabled={packing} onClick={() => void printPack()}>
                   {packing
                     ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> {packProgress ? `Packing ${packProgress[0]}/${packProgress[1]}…` : "Packing…"}</>
-                    : <><Printer className="w-3.5 h-3.5" /> Print doc pack</>}
-                </Button>
+                    : <><Printer className="w-3.5 h-3.5" /> <span className="max-sm:hidden">Print doc pack</span><span className="sm:hidden">Pack</span></>}
+                </button>
               )}
-              <MoreMenu items={[
+              <MoreMenu iconOnly triggerClass={heroQuiet} items={[
                 // The QR sticker turns this equipment into an app entry point:
                 // scan at the pump, land on this page.
                 { icon: <QrCode className="w-4 h-4" />, label: "Print QR label", onClick: () => void printLabel() },
@@ -188,57 +192,69 @@ export default function AssetHubPage() {
               ]} />
             </>
           }
+          // Report a problem: a pre-filled drafting request. The scan landing
+          // must let the field WRITE, not just read.
+          primary={
+            <Link
+              href={`/requests/new?title=${encodeURIComponent(`Issue at ${tag}`)}&description=${encodeURIComponent(`Equipment: ${tag}${asset?.location ? ` (${asset.location})` : ""}\n\nDescribe the problem: `)}`}
+              className={heroPrimary}
+            >
+              <AlertOctagon className="w-4 h-4" /> Report a problem
+            </Link>
+          }
         />
 
-        {/* One line with what matters: how many documents, and how many are held. */}
-        <p className="mb-4 text-sm text-[var(--color-text-muted)]">
-          <span className="font-bold text-[var(--color-text)]">{docCount}</span> controlled document{docCount === 1 ? "" : "s"}
-          {heldCount > 0
-            ? <> · <span className="font-bold text-rose-700 dark:text-rose-400">{heldCount} on hold</span></>
-            : <> · none on hold</>}
-          {photos.length > 0 && <> · {photos.length} photo{photos.length === 1 ? "" : "s"}</>}
-        </p>
-
-        {packNote && (
-          <p role="status" className={`mb-4 border-l-2 pl-3 text-xs ${packNote.startsWith("Pack failed") || packNote.startsWith("Label failed") ? "border-red-500 text-red-700 dark:text-red-400" : "border-emerald-500 text-emerald-700 dark:text-emerald-400"}`}>
-            {packNote}
-          </p>
-        )}
-
-        {error && (
-          <p role="alert" className="mb-4 border-l-2 border-red-500 pl-3 text-xs text-red-700 dark:text-red-400">
-            Couldn&apos;t load the documents: {error}{" "}
-            <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
-          </p>
-        )}
-        {partError && !error && (
-          <p role="alert" className="mb-4 border-l-2 border-amber-500 pl-3 text-xs text-amber-800 dark:text-amber-300">
-            {partError}{" "}
-            <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
-          </p>
-        )}
-
+        <PageBody>
         {/* Documents */}
-        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-hidden mb-5">
-          <div className="px-4 py-3 border-b border-[var(--color-border)] text-sm font-black text-[var(--color-text)] inline-flex items-center gap-2"><FileText className="w-4 h-4 text-[var(--color-text-muted)]" /> Controlled documents</div>
+        <Card pad={false} className="overflow-hidden"
+          label={<span className="inline-flex items-center gap-2"><FileText className="w-4 h-4" /> Controlled documents · {docCount}</span>}>
+          {(packNote || error || (partError && !error)) && (
+            <div className="px-4 sm:px-5 pb-3 space-y-1.5">
+              {packNote && (
+                <p role="status" className={`text-[13px] ${packNote.startsWith("Pack failed") || packNote.startsWith("Label failed") ? "text-red-700 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400"}`}>
+                  {packNote}
+                </p>
+              )}
+              {error && (
+                <p role="alert" className="text-[13px] text-red-700 dark:text-red-400">
+                  Couldn&apos;t load the documents: {error}{" "}
+                  <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
+                </p>
+              )}
+              {partError && !error && (
+                <p role="alert" className="text-[13px] text-amber-800 dark:text-amber-300">
+                  {partError}{" "}
+                  <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
+                </p>
+              )}
+            </div>
+          )}
           {docs.length === 0 ? (
-            <div className="p-8 text-center text-xs text-[var(--color-text-faint)] italic">No controlled documents are tagged to {tag} yet.</div>
+            <div className="px-4 py-8 border-t border-[var(--color-border)] text-center text-[14px] text-[var(--color-text-muted)]">No controlled documents are tagged to {tag} yet.</div>
           ) : (
-            <ul className="divide-y divide-[var(--color-border)]">
-              {docs.map((d) => (
+            <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
+              {docs.slice(0, docLimit).map((d) => (
                 <li key={d.id}>
-                  <Link href={d.libraryId ? `/documents/${d.libraryId}?doc=${d.id}` : "/documents"} className="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors">
-                    <span className="font-mono text-xs font-bold text-[var(--color-text)] truncate flex-1">{d.number}{d.title && d.title !== d.number ? <span className="font-sans font-normal text-[var(--color-text-muted)]"> · {d.title}</span> : ""}</span>
-                    {d.rev && <span className="text-[11px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded shrink-0">Rev {d.rev}</span>}
+                  <Link href={d.libraryId ? `/documents/${d.libraryId}?doc=${d.id}` : "/documents"} className="flex items-center gap-3 px-4 sm:px-5 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors">
+                    <span className="font-mono text-[14px] font-bold text-[var(--color-text)] truncate flex-1">{d.number}{d.title && d.title !== d.number ? <span className="font-sans font-normal text-[var(--color-text-muted)]"> · {d.title}</span> : ""}</span>
+                    {d.rev && <span className="text-[12px] text-[var(--color-text-muted)] shrink-0">Rev {d.rev}</span>}
                     {d.status && <span className={`text-[11px] font-bold uppercase px-1.5 py-0.5 rounded border shrink-0 ${stateStyle(documentState(d.status)).pill}`}>{d.status}</span>}
-                    {(holdsByDoc.get(d.id) ?? 0) > 0 && <span className="text-[11px] font-bold text-rose-700 dark:text-rose-400 inline-flex items-center gap-0.5 shrink-0"><AlertOctagon className="w-3 h-3" /> hold</span>}
-                    {d.checkedOutByName && <span className="text-[11px] font-bold text-[var(--color-text)] inline-flex items-center gap-0.5 shrink-0"><Lock className="w-3 h-3" />{d.checkedOutByName}</span>}
+                    {(holdsByDoc.get(d.id) ?? 0) > 0 && <span className="text-[12px] font-bold text-rose-700 dark:text-rose-400 inline-flex items-center gap-0.5 shrink-0"><AlertOctagon className="w-3.5 h-3.5" /> On hold</span>}
+                    {d.checkedOutByName && <span className="text-[12px] font-semibold text-[var(--color-text)] inline-flex items-center gap-0.5 shrink-0"><Lock className="w-3 h-3" />{d.checkedOutByName}</span>}
                   </Link>
                 </li>
               ))}
             </ul>
           )}
-        </div>
+          {docs.length > docLimit && (
+            <div className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] flex items-center justify-between text-[13px]">
+              <span className="text-[var(--color-text-muted)]">{docLimit} of {docs.length} shown</span>
+              <button type="button" onClick={() => setDocLimit((n) => n + 50)} className="font-bold text-[var(--color-accent)] hover:underline">
+                Show {Math.min(50, docs.length - docLimit)} more
+              </button>
+            </div>
+          )}
+        </Card>
 
         {/* Every job done on it, across projects, and what was learned. */}
         {asset?.id && activeOrgId && (
@@ -271,17 +287,17 @@ export default function AssetHubPage() {
 
         {/* Photos */}
         {photos.length > 0 && (
-          <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-4">
-            <div className="text-sm font-black text-[var(--color-text)] inline-flex items-center gap-2 mb-3"><ImageIcon className="w-4 h-4 text-[var(--color-text-muted)]" /> Photos</div>
+          <Card label={<span className="inline-flex items-center gap-2"><ImageIcon className="w-4 h-4" /> Photos · {photos.length}</span>}>
             <div className="flex flex-wrap gap-2">
               {photos.slice(0, 12).map((p) => (
-                <div key={p.id} className="w-24 h-24 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] flex items-center justify-center text-[11px] text-[var(--color-text-faint)] overflow-hidden" title={p.caption || ""}>
+                <div key={p.id} className="w-24 h-24 rounded-lg bg-[var(--color-surface-2)] flex items-center justify-center text-[11px] text-[var(--color-text-faint)] overflow-hidden" title={p.caption || ""}>
                   <SignedImg path={p.file_url} alt={p.caption || `${tag} photo`} className="w-full h-full object-cover" placeholder={<span className="px-1 text-center truncate">{p.caption || "Photo"}</span>} />
                 </div>
               ))}
             </div>
-          </div>
+          </Card>
         )}
+        </PageBody>
     </PageShell>
   );
 }

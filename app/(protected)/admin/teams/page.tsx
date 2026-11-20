@@ -16,6 +16,9 @@ import { setLibraryOwnerTeam } from "@/lib/ownership";
 import { UsersRound, Plus, Trash2, Loader2, Check, Search, ShieldAlert } from "lucide-react";
 import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 import LoadingBlock from "@/components/ui/LoadingBlock";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card, heroPrimary } from "@/components/ui/PageHero";
+import { plural } from "@/components/admin/band";
 
 interface OrgMember { uid: string; display_name: string | null; email: string | null; role: string }
 
@@ -131,12 +134,10 @@ export default function AdminTeamsPage() {
 
   if (!isAdmin) {
     return (
-      <div className="p-8 max-w-2xl">
-        <p className="flex items-center gap-3 text-sm text-[var(--color-text-muted)]">
-          <ShieldAlert className="w-5 h-5" />
-          <span>Only Admins and Managers can manage teams.</span>
-        </p>
-      </div>
+      <PageShell width="work">
+        <PageHero kicker="Admin · Teams" title="Admins and managers only." overlap={false}
+          sub={<span className="inline-flex items-center gap-2"><ShieldAlert className="w-4 h-4" /> Only Admins and Managers can manage teams.</span>} />
+      </PageShell>
     );
   }
 
@@ -145,107 +146,111 @@ export default function AdminTeamsPage() {
     return !q || (m.display_name ?? "").toLowerCase().includes(q) || (m.email ?? "").toLowerCase().includes(q);
   });
 
-  return (
-    <div className="p-6 lg:p-8 max-w-6xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl grid place-items-center bg-[var(--color-surface-2)] text-[var(--color-text)]">
-            <UsersRound className="w-5 h-5" />
-          </div>
-          <div>
-            <h1 className="text-xl font-black text-[var(--color-text)]">Teams &amp; departments</h1>
-            <p className="text-sm text-[var(--color-text-muted)]">
-              {loading ? "Group people, give a whole team access, and let a department own a library." : `${teams.length} team${teams.length === 1 ? "" : "s"} · ${members.length} people`}
-            </p>
-          </div>
-        </div>
-        <button onClick={() => setCreating(true)} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]">
-          <Plus className="w-4 h-4" /> New team
-        </button>
-      </div>
+  const answer = loading && teams.length === 0 ? "Teams"
+    : loadError ? "Couldn't load teams."
+    : teams.length === 0 ? "No teams yet."
+    : `${plural(teams.length, "team")}, ${plural(members.length, "person", "people")}.`;
 
+  return (
+    <PageShell width="work">
+      <PageHero
+        kicker="Admin · Teams and departments"
+        title={answer}
+        sub="Group people, give a whole team access, and let a department own a library."
+        primary={<button type="button" onClick={() => setCreating(true)} className={heroPrimary}><Plus className="w-4 h-4" /> New team</button>}
+      />
+
+      <PageBody>
       {loading && teams.length === 0 ? (
-        <LoadingBlock what="teams" />
+        <Card><LoadingBlock what="teams" className="border-0 p-0" /></Card>
       ) : loadError ? (
-        <p role="alert" className="border-l-2 border-red-500 pl-3 py-1 text-sm text-red-700 dark:text-red-400">
-          Couldn&apos;t load teams: {loadError}{" "}
-          <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
-        </p>
+        <Card>
+          <p role="alert" className="text-[14px] text-red-700 dark:text-red-400">
+            Couldn&apos;t load teams: {loadError}{" "}
+            <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
+          </p>
+        </Card>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-5">
+        <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-4 items-start">
           {/* team list */}
-          <div className="space-y-2">
+          <Card label="Teams" pad={false} className="overflow-hidden">
             {creating && (
-              <div className="p-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm">
+              <div className="px-4 pb-3 border-b border-[var(--color-border)]">
                 <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Team name (e.g. Drafting)"
+                  aria-label="Team name"
                   onKeyDown={(e) => e.key === "Enter" && handleCreate()}
-                  className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-sm text-[var(--color-text)] mb-2" />
-                <div className="flex items-center gap-1.5 mb-2">
+                  className="w-full h-10 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] text-[var(--color-text)] mb-2" />
+                <div className="flex items-center gap-1.5 mb-2" role="group" aria-label="Team color">
                   {TEAM_COLORS.map((c) => (
-                    <button key={c} onClick={() => setNewColor(c)} aria-label={`Team color ${c}`} aria-pressed={newColor === c} className={`w-5 h-5 rounded-full ${newColor === c ? "ring-2 ring-offset-1 ring-[var(--color-text-muted)]" : ""}`} style={{ backgroundColor: c }} />
+                    <button key={c} type="button" onClick={() => setNewColor(c)} aria-label={`Team color ${c}`} aria-pressed={newColor === c} className={`w-6 h-6 rounded-full ${newColor === c ? "ring-2 ring-offset-1 ring-[var(--color-text-muted)]" : ""}`} style={{ backgroundColor: c }} />
                   ))}
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={handleCreate} disabled={busy || !newName.trim()} className="flex-1 inline-flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">{busy && <Loader2 className="w-3 h-3 animate-spin" />} Create</button>
-                  <button onClick={() => { setCreating(false); setNewName(""); }} className="px-3 py-1.5 rounded-lg text-xs font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Cancel</button>
+                  <button type="button" onClick={handleCreate} disabled={busy || !newName.trim()} className="flex-1 inline-flex items-center justify-center gap-1 h-9 px-3 rounded-lg text-[13px] font-bold bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 disabled:opacity-50">{busy && <Loader2 className="w-3 h-3 animate-spin" />} Create</button>
+                  <button type="button" onClick={() => { setCreating(false); setNewName(""); }} className="h-9 px-3 rounded-lg text-[13px] font-semibold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Cancel</button>
                 </div>
               </div>
             )}
             {teams.length === 0 && !creating && (
-              <div className="p-6 text-center rounded-2xl border border-dashed border-[var(--color-border)] text-sm text-[var(--color-text-muted)]">No teams yet. Create one to get started.</div>
+              <div className="px-4 pb-5 text-[14px] text-[var(--color-text-muted)]">No teams yet. Make one to get started.</div>
             )}
+            <div className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)] empty:border-t-0">
             {teams.map((t) => (
-              <button key={t.id} onClick={() => openTeam(t)}
-                className={`group w-full flex items-center gap-3 p-3 rounded-2xl border text-left transition-colors ${selected?.id === t.id ? "border-[var(--color-text)] bg-[var(--color-surface-2)]" : "border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-border-strong)]"}`}>
-                <span className="w-9 h-9 rounded-xl grid place-items-center text-white shrink-0" style={{ backgroundColor: t.color ?? "#4f46e5" }}>
-                  <UsersRound className="w-4 h-4" />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="font-bold text-sm text-[var(--color-text)] truncate">{t.name}</div>
-                  <div className="text-xs text-[var(--color-text-muted)]">{t.memberCount ?? 0} member{(t.memberCount ?? 0) === 1 ? "" : "s"}</div>
-                </div>
-                <Trash2 aria-label={`Delete ${t.name}`} onClick={(e) => { e.stopPropagation(); void handleDelete(t); }} className="w-4 h-4 text-[var(--color-text-faint)] opacity-60 group-hover:opacity-100 hover:text-rose-600" />
-              </button>
+              <div key={t.id} className={`group flex items-center gap-3 px-4 py-3 transition-colors ${selected?.id === t.id ? "bg-[var(--color-surface-2)]" : "hover:bg-[var(--color-surface-2)]"}`}>
+                <button type="button" onClick={() => openTeam(t)} aria-current={selected?.id === t.id ? "true" : undefined} className="flex items-center gap-3 min-w-0 flex-1 text-left">
+                  <span className="w-9 h-9 rounded-[10px] grid place-items-center text-white shrink-0" style={{ backgroundColor: t.color ?? "#4f46e5" }}>
+                    <UsersRound className="w-4 h-4" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-bold text-[14px] text-[var(--color-text)] truncate">{t.name}</span>
+                    <span className="block text-[13px] text-[var(--color-text-muted)]">{t.memberCount ?? 0} member{(t.memberCount ?? 0) === 1 ? "" : "s"}</span>
+                  </span>
+                </button>
+                <button type="button" aria-label={`Delete ${t.name}`} onClick={() => void handleDelete(t)} className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-rose-600">
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
             ))}
-          </div>
+            </div>
+          </Card>
 
           {/* member editor */}
-          <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm overflow-hidden">
+          <Card pad={false} className="overflow-hidden">
             {!selected ? (
-              <div className="p-12 text-center text-[var(--color-text-muted)]">
-                <UsersRound className="w-10 h-10 mx-auto mb-3 text-[var(--color-text-faint)]" />
-                Select a team to manage its members.
+              <div className="p-12 text-center text-[14px] text-[var(--color-text-muted)]">
+                <UsersRound className="w-8 h-8 mx-auto mb-3 text-[var(--color-text-faint)]" />
+                Pick a team to manage its members.
               </div>
             ) : (
               <>
                 <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
                   <span className="w-8 h-8 rounded-lg grid place-items-center text-white shrink-0" style={{ backgroundColor: selected.color ?? "#4f46e5" }}><UsersRound className="w-4 h-4" /></span>
                   <input key={selected.id} defaultValue={selected.name} aria-label="Team name" onBlur={(e) => { if (e.target.value.trim() && e.target.value !== selected.name) { void rename(selected, e.target.value.trim()); } }}
-                    className="font-black text-[var(--color-text)] bg-transparent flex-1 outline-none" />
-                  <span className="text-xs text-[var(--color-text-muted)]">{teamMemberIds.length} in team</span>
+                    className="text-[15px] font-bold text-[var(--color-text)] bg-transparent flex-1 min-w-0 outline-none" />
+                  <span className="text-[13px] text-[var(--color-text-muted)]">{teamMemberIds.length} in team</span>
                 </div>
 
                 {/* Department: supervisor (effective owner of owned libraries) + owned libraries */}
-                <div className="px-5 py-3 border-b border-[var(--color-border)] space-y-2 bg-[var(--color-surface-2)]/40">
+                <div className="px-5 py-3 border-b border-[var(--color-border)] space-y-2">
                   <div className="flex items-center gap-2">
-                    <span className="text-[11px] font-bold text-[var(--color-text-muted)] w-24 shrink-0">Supervisor</span>
-                    <select value={selected.supervisorUserId ?? ""} onChange={(e) => void setSupervisor(e.target.value || null)}
-                      className="flex-1 text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] px-2 py-1.5 outline-none">
+                    <label htmlFor="team-supervisor" className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)] w-24 shrink-0">Supervisor</label>
+                    <select id="team-supervisor" value={selected.supervisorUserId ?? ""} onChange={(e) => void setSupervisor(e.target.value || null)}
+                      className="flex-1 min-w-0 h-9 text-[13px] rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] px-2 outline-none">
                       <option value="">None</option>
                       {members.map((m) => <option key={m.uid} value={m.uid}>{m.display_name || m.email || m.uid}</option>)}
                     </select>
                   </div>
-                  <div className="text-[11px] text-[var(--color-text-muted)]">The supervisor owns any library this department owns, unless that library names its own owner.</div>
+                  <div className="text-[12px] text-[var(--color-text-muted)]">The supervisor owns any library this department owns, unless that library names its own owner.</div>
                   <div>
-                    <div className="text-[11px] font-bold text-[var(--color-text-muted)] mb-1">Owns libraries</div>
+                    <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)] mb-1.5">Owns libraries</div>
                     <div className="flex flex-wrap gap-1.5">
                       {libraries.map((l) => {
                         const owned = l.owner_team_id === selected.id;
                         const otherTeam = !!l.owner_team_id && l.owner_team_id !== selected.id;
                         return (
-                          <button key={l.id} onClick={() => void toggleLibrary(l.id, owned)} disabled={otherTeam}
+                          <button key={l.id} type="button" onClick={() => void toggleLibrary(l.id, owned)} disabled={otherTeam} aria-pressed={owned}
                             title={otherTeam ? "Owned by another department" : undefined}
-                            className={`px-2 py-0.5 rounded-full text-[11px] font-bold border transition-colors disabled:opacity-40 ${owned ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>
+                            className={`px-2.5 py-1 rounded-full text-[12px] font-semibold border transition-colors disabled:opacity-40 ${owned ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>
                             {l.name}{otherTeam ? " · other" : ""}
                           </button>
                         );
@@ -258,32 +263,33 @@ export default function AdminTeamsPage() {
                 <div className="px-5 py-3 border-b border-[var(--color-border)]">
                   <div className="relative">
                     <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
-                    <input value={memberSearch} onChange={(e) => setMemberSearch(e.target.value)} placeholder="Search people…"
-                      className="w-full pl-9 pr-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-sm text-[var(--color-text)]" />
+                    <input value={memberSearch} onChange={(e) => setMemberSearch(e.target.value)} placeholder="Search people…" aria-label="Search people"
+                      className="w-full h-10 pl-9 pr-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[14px] text-[var(--color-text)]" />
                   </div>
                 </div>
                 <div className="max-h-[480px] overflow-auto divide-y divide-[var(--color-border)]">
                   {filteredMembers.map((m) => {
                     const inTeam = teamMemberIds.includes(m.uid);
                     return (
-                      <button key={m.uid} onClick={() => toggleMember(m.uid)} aria-pressed={inTeam} className="w-full flex items-center gap-3 px-5 py-2.5 hover:bg-[var(--color-surface-2)] text-left">
+                      <button key={m.uid} type="button" onClick={() => toggleMember(m.uid)} aria-pressed={inTeam} className="w-full flex items-center gap-3 px-5 py-2.5 hover:bg-[var(--color-surface-2)] text-left">
                         <span aria-hidden className={`w-5 h-5 rounded-md grid place-items-center shrink-0 ${inTeam ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "border border-[var(--color-border-strong)]"}`}>
                           {inTeam && <Check className="w-3.5 h-3.5" />}
                         </span>
                         <div className="min-w-0 flex-1">
-                          <div className="text-sm font-semibold text-[var(--color-text)] truncate">{m.display_name || m.email || m.uid}</div>
-                          <div className="text-xs text-[var(--color-text-muted)] truncate">{m.email} · {m.role}</div>
+                          <div className="text-[14px] font-semibold text-[var(--color-text)] truncate">{m.display_name || m.email || m.uid}</div>
+                          <div className="text-[13px] text-[var(--color-text-muted)] truncate">{m.email} · {m.role}</div>
                         </div>
                       </button>
                     );
                   })}
-                  {filteredMembers.length === 0 && <div className="px-5 py-8 text-center text-sm text-[var(--color-text-muted)]">No matching people.</div>}
+                  {filteredMembers.length === 0 && <div className="px-5 py-8 text-center text-[14px] text-[var(--color-text-muted)]">No matching people.</div>}
                 </div>
               </>
             )}
-          </div>
+          </Card>
         </div>
       )}
-    </div>
+      </PageBody>
+    </PageShell>
   );
 }

@@ -21,8 +21,9 @@ import {
   Trophy, GitPullRequestArrow, Briefcase, ShieldAlert, BookOpenCheck, Timer,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
-import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
-import { Button } from "@/components/ui/Button";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card, heroPrimary } from "@/components/ui/PageHero";
+import { bandInput, bandInputIcon, bandSeg, bandSegItem, plural } from "@/components/admin/band";
 import {
   listCompanies, saveCompany, gatherCompanyProfile,
   COMPANY_KIND_LABEL, type Company, type CompanyProfileData,
@@ -82,63 +83,84 @@ export default function CompaniesPage() {
       (!q || c.name.toLowerCase().includes(q) || (c.trade ?? "").toLowerCase().includes(q)));
   }, [companies, search, kindFilter]);
 
+  const doNotUse = companies.filter((c) => c.status === "do_not_use").length;
+  const answer = loading ? "Known companies" : error && companies.length === 0 ? "Couldn't load the companies."
+    : companies.length === 0 ? "No companies yet." : `${plural(companies.length, "company", "companies")}.`;
+  const sub = loading
+    ? "Contractors, vendors and crews, scored only on recorded work."
+    : <>{doNotUse > 0 && <><span className="font-semibold text-rose-300">{doNotUse} marked do not use</span>. </>}Scored only on recorded work, never on opinion.</>;
+  const [limit, setLimit] = useState(20);
+
   return (
     <PageShell width="work">
-      <PageHeaderBar
-        icon={HardHat}
-        title="Known Companies"
-        subtitle={loading ? "Contractors, vendors and crews, scored only on recorded work." : `${companies.length} compan${companies.length === 1 ? "y" : "ies"}${companies.some((c) => c.status === "do_not_use") ? ` · ${companies.filter((c) => c.status === "do_not_use").length} marked do not use` : ""}. Scored only on recorded work, never on opinion.`}
-        actions={canManage ? (
-          <Button onClick={() => setShowAdd(true)}><Plus className="w-4 h-4" /> Add company</Button>
+      <PageHero
+        kicker="Known companies"
+        title={answer}
+        sub={sub}
+        primary={canManage ? (
+          <button type="button" onClick={() => setShowAdd(true)} className={heroPrimary}><Plus className="w-4 h-4" /> Add company</button>
         ) : undefined}
-      />
-
-      <div className="flex flex-wrap items-center gap-2 mb-4">
-        {KIND_FILTERS.map((k) => (
-          <button key={k} onClick={() => setKindFilter(k)} aria-pressed={kindFilter === k}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-              kindFilter === k
-                ? "bg-[var(--color-text)] text-[var(--color-surface)]"
-                : "bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
-            {k === "all" ? "All" : COMPANY_KIND_LABEL[k]}
-          </button>
-        ))}
-        <div className="relative flex-1 min-w-56">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)]" />
-          <input value={search} onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by name or trade…"
-            className="w-full pl-9 pr-3 py-2 bg-[var(--color-surface)] text-[var(--color-text)] rounded-xl border border-[var(--color-border)] text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative flex-1 min-w-[220px]">
+            <Search className={bandInputIcon} />
+            <label htmlFor="company-search" className="sr-only">Search companies</label>
+            <input id="company-search" value={search} onChange={(e) => setSearch(e.target.value)}
+              placeholder="Find by name or trade (piping, E&I)"
+              className={bandInput} />
+          </div>
+          <div className={bandSeg} role="group" aria-label="Kind of company">
+            {KIND_FILTERS.map((k) => (
+              <button key={k} type="button" onClick={() => setKindFilter(k)} aria-pressed={kindFilter === k} className={bandSegItem(kindFilter === k)}>
+                {k === "all" ? "All" : COMPANY_KIND_LABEL[k]}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      </PageHero>
 
+      <PageBody>
       {error && (
-        <p role="alert" className="mb-4 flex items-center gap-2 border-l-2 border-rose-500 pl-3 text-xs font-bold text-rose-700 dark:text-rose-300">
-          <AlertTriangle className="w-4 h-4 shrink-0" /> Couldn&apos;t load the companies: {error}
-          <button type="button" onClick={() => void refresh()} className="underline">Try again</button>
-        </p>
+        <Card>
+          <p role="alert" className="flex items-center gap-2 text-[14px] font-semibold text-rose-700 dark:text-rose-300">
+            <AlertTriangle className="w-4 h-4 shrink-0" /> Couldn&apos;t load the companies: {error}
+            <button type="button" onClick={() => void refresh()} className="underline">Try again</button>
+          </p>
+        </Card>
       )}
 
       {loading ? (
-        <LoadingBlock what="companies" />
+        <Card><LoadingBlock what="companies" className="border-0 p-0" /></Card>
       ) : shown.length === 0 ? (
-        <div className="bg-[var(--color-surface)] border border-dashed border-[var(--color-border-strong)] rounded-2xl p-12 text-center">
-          <HardHat className="w-10 h-10 mx-auto text-[var(--color-text-faint)] mb-3" />
-          <h3 className="text-base font-black text-[var(--color-text)] mb-1">
-            {companies.length === 0 ? "No companies in the registry yet" : "No companies match"}
+        <Card className="text-center py-10">
+          <HardHat className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-3" />
+          <h3 className="text-[14px] font-bold text-[var(--color-text)] mb-1">
+            {companies.length === 0 ? "Start the registry" : "No companies match"}
           </h3>
-          <p className="text-xs text-[var(--color-text-muted)] max-w-md mx-auto">
+          <p className="text-[14px] text-[var(--color-text-muted)] max-w-md mx-auto">
             {companies.length === 0
               ? "Add the contractors and vendors you work with. Their record (awards, change orders, turnover acceptance, safety events) fills in as projects run."
               : "Try a different filter or search."}
           </p>
-        </div>
+        </Card>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {shown.map((c) => (
-            <CompanyCard key={c.id} company={c} profile={profiles.get(c.id) ?? null} failed={profileFailed.has(c.id)} />
-          ))}
-        </div>
+        <>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {shown.slice(0, limit).map((c) => (
+              <CompanyCard key={c.id} company={c} profile={profiles.get(c.id) ?? null} failed={profileFailed.has(c.id)} />
+            ))}
+          </div>
+          {shown.length > limit && (
+            <Card className="flex items-center justify-between text-[13px]">
+              <span className="text-[var(--color-text-muted)]">{limit} of {shown.length} shown</span>
+              <button type="button" onClick={() => setLimit((n) => n + 40)} className="font-bold text-[var(--color-accent)] hover:underline">
+                Show {Math.min(40, shown.length - limit)} more
+              </button>
+            </Card>
+          )}
+        </>
       )}
+      </PageBody>
 
       {showAdd && activeOrgId && uid && (
         <AddCompanyModal orgId={activeOrgId} actorId={uid}
@@ -170,7 +192,7 @@ function CompanyCard({ company: c, profile, failed }: { company: Company; profil
 
   return (
     <Link href={`/companies/${c.id}`}
-      className="group block bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-4 shadow-sm hover-lift hover:border-[var(--color-accent-ring)]">
+      className="group block bg-[var(--color-surface)] rounded-2xl p-4 sm:p-5 shadow-[var(--shadow-card)] hover-lift">
       <div className="flex items-start gap-4">
         {/* Dial */}
         <div className="shrink-0 flex flex-col items-center">
@@ -185,9 +207,9 @@ function CompanyCard({ company: c, profile, failed }: { company: Company; profil
         {/* Identity + dimensions */}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-black text-[var(--color-text)] truncate group-hover:text-[var(--color-text)] transition-colors">{c.name}</span>
-            <span className="text-[11px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)]">{COMPANY_KIND_LABEL[c.kind]}</span>
-            {c.trade && <span className="text-[11px] text-[var(--color-text-muted)]">{c.trade}</span>}
+            <span className="text-[15px] font-bold text-[var(--color-text)] truncate group-hover:underline">{c.name}</span>
+            <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">{COMPANY_KIND_LABEL[c.kind]}</span>
+            {c.trade && <span className="text-[13px] text-[var(--color-text-muted)]">{c.trade}</span>}
             {c.status === "do_not_use" && (
               <span className="text-[11px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border border-rose-500/50 bg-rose-500/10 text-rose-700 dark:text-rose-300">Do not use</span>
             )}
@@ -197,7 +219,7 @@ function CompanyCard({ company: c, profile, failed }: { company: Company; profil
           {/* The five dimensions — each shows its work on hover AND in text. */}
           <div className="mt-2 space-y-1">
             {(sc?.dimensions ?? []).map((d) => (
-              <div key={d.key} className="flex items-center gap-2 text-[11px]" title={d.detail}>
+              <div key={d.key} className="flex items-center gap-2 text-[12px]" title={d.detail}>
                 <span className="w-24 shrink-0 font-bold text-[var(--color-text-muted)]">{d.label}</span>
                 {d.score != null ? (
                   <>
@@ -223,7 +245,7 @@ function CompanyCard({ company: c, profile, failed }: { company: Company; profil
       </div>
 
       {/* Fact strip — the juicy row. */}
-      <div className="mt-3 pt-2.5 border-t border-[var(--color-border)] flex flex-wrap gap-x-4 gap-y-1.5 text-[11px] text-[var(--color-text-muted)]">
+      <div className="mt-3 pt-2.5 border-t border-[var(--color-border)] flex flex-wrap gap-x-4 gap-y-1.5 text-[12px] text-[var(--color-text-muted)]">
         {(profile?.projects.length ?? 0) > 0 && (
           <span className="inline-flex items-center gap-1" title={profile!.projects.map((p) => p.projectName).join(", ")}>
             <Briefcase className="w-3 h-3" /> {profile!.projects.length} job{profile!.projects.length === 1 ? "" : "s"}
@@ -301,38 +323,38 @@ function AddCompanyModal({ orgId, actorId, onClose, onCreated }: {
   };
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="Add a known company" className="fixed inset-0 z-[200] bg-slate-900/50 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
+    <div role="dialog" aria-modal="true" aria-label="Add a known company" className="fixed inset-0 z-[200] bg-[var(--color-ink)]/60 animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+      <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="p-2 bg-[var(--color-surface-2)] rounded-lg"><HardHat className="w-5 h-5 text-[var(--color-text-muted)]" /></div>
           <div className="flex-1">
-            <div className="text-sm font-black text-[var(--color-text)]">Add a known company</div>
-            <div className="text-xs text-[var(--color-text-muted)]">Their record fills in from real work. This is the front of the file.</div>
+            <div className="text-[14px] font-bold text-[var(--color-text)]">Add a known company</div>
+            <div className="text-[13px] text-[var(--color-text-muted)]">Their record fills in from real work. This is the front of the file.</div>
           </div>
           <button onClick={onClose} disabled={busy} aria-label="Close" className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"><X className="w-4 h-4" /></button>
         </div>
         <div className="px-6 py-5 space-y-3">
           <div className="grid grid-cols-2 gap-3">
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Company name *" autoFocus
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Company name *" aria-label="Company name" autoFocus
               className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
-            <select value={kind} onChange={(e) => setKind(e.target.value as Company["kind"])}
+            <select value={kind} aria-label="Kind" onChange={(e) => setKind(e.target.value as Company["kind"])}
               className="px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]">
               {(Object.keys(COMPANY_KIND_LABEL) as Company["kind"][]).map((k) => (
                 <option key={k} value={k}>{COMPANY_KIND_LABEL[k]}</option>
               ))}
             </select>
           </div>
-          <input value={trade} onChange={(e) => setTrade(e.target.value)} placeholder="Trade (piping, E&I, scaffolding…)"
+          <input value={trade} onChange={(e) => setTrade(e.target.value)} placeholder="Trade (piping, E&I, scaffolding…)" aria-label="Trade"
             className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
-          <div className="grid grid-cols-3 gap-3">
-            <input value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="Contact name"
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <input value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="Contact name" aria-label="Contact name"
               className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
-            <input value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} placeholder="Email"
+            <input value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} placeholder="Email" aria-label="Email"
               className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
-            <input value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} placeholder="Phone"
+            <input value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} placeholder="Phone" aria-label="Phone"
               className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] text-[var(--color-text)]" />
           </div>
-          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Notes"
+          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Notes" aria-label="Notes"
             className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y bg-[var(--color-surface)] text-[var(--color-text)]" />
           {error && (
             <p role="alert" className="flex items-start gap-2 border-l-2 border-rose-500 pl-3 text-xs font-bold text-rose-700 dark:text-rose-300">
@@ -340,7 +362,7 @@ function AddCompanyModal({ orgId, actorId, onClose, onCreated }: {
             </p>
           )}
         </div>
-        <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
+        <div className="px-6 py-3 border-t border-[var(--color-border)] flex items-center justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
           <button onClick={() => void submit()} disabled={busy || !name.trim()}
             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
