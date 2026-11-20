@@ -185,7 +185,9 @@ function PhotoTagChip({
 
     return (
       <>
-        <span className="ui-tag tabular-nums !p-0 !gap-0 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        {/* The pill's clicks are its own: never the row's select or open. */}
+        <span className="ui-tag tabular-nums shrink-0 !p-0 !gap-0 overflow-hidden"
+          onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
           <button
             ref={buttonRef}
             type="button"

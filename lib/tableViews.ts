@@ -6,7 +6,14 @@ import type { ExplorerViewConfig, TableViewConfig, ViewColumn } from "@/types/sc
 
 const TABLE = "table_views";
 
-type ViewScope = "user" | "org";
+/** "user": one person's view of one folder. "org": everyone's view of one
+ *  folder (Admin/DocCtrl write it). "library": everyone's default for every
+ *  folder of a library that has no columns of its own (Admin/DocCtrl). */
+type ViewScope = "user" | "org" | "library";
+
+/** The collection part of the library-wide key. A folder's part is its id
+ *  (a uuid) or "none" for the library's top level, so "all" can't collide. */
+const LIBRARY_PART = "all";
 
 function safePart(v?: string | null) {
   const s = (v ?? "").trim();
@@ -28,6 +35,10 @@ export function tableViewId(params: {
     const uid = safePart(params.ownerUserId);
     return `tv_user_${orgId}_${uid}_${libraryId}_${collectionId}`;
   }
+  // Same table, same row shape: an org row whose folder part is "all".
+  // owner_user_id stays null, so the existing write policy (Admin/DocCtrl
+  // only for org rows) covers it with no schema change.
+  if (params.scope === "library") return `tv_org_${orgId}_org_${libraryId}_${LIBRARY_PART}`;
   return `tv_org_${orgId}_org_${libraryId}_${collectionId}`;
 }
 
@@ -128,9 +139,9 @@ export async function saveTableView(params: {
     id,
     org_id: params.orgId ?? null,
     owner_user_id: params.scope === "user" ? (params.ownerUserId ?? null) : null,
-    name: params.name ?? (params.scope === "user" ? "My View" : "Org Default View"),
+    name: params.name ?? (params.scope === "user" ? "My View" : params.scope === "library" ? "Library Default View" : "Org Default View"),
     library_id: params.libraryId ?? null,
-    collection_id: params.collectionId ?? null,
+    collection_id: params.scope === "library" ? null : (params.collectionId ?? null),
     columns: params.columns,
     column_config: params.columnConfig ?? {},
     updated_at: new Date().toISOString(),
@@ -221,6 +232,9 @@ export async function resolveEffectiveColumns(params: {
   const orgView = await getTableView({ scope: "org", ...params });
   if (orgView?.columns?.length) return orgView.columns;
 
+  const libraryView = await getTableView({ scope: "library", ...params });
+  if (libraryView?.columns?.length) return libraryView.columns;
+
   return params.defaultColumns;
 }
 
@@ -234,6 +248,44 @@ export async function deleteTableView(params: {
   const id = tableViewId(params);
   const { error } = await supabase.from(TABLE).delete().eq("id", id);
   if (error) throw new Error(error.message);
+}
+
+/** Drop a row's columns so the folder follows the next level up (its org
+ *  row, then the library default). The row's saved sort and layout stay;
+ *  a row with nothing else in it is removed. */
+export async function clearTableViewColumns(params: {
+  scope: ViewScope;
+  orgId?: string;
+  ownerUserId?: string;
+  libraryId?: string;
+  collectionId?: string;
+}) {
+  const row = await getTableView(params);
+  if (!row || !row.columns?.length) return;
+  const id = tableViewId(params);
+  const { error } = !row.sort && !row.view
+    ? await supabase.from(TABLE).delete().eq("id", id)
+    : await supabase.from(TABLE).update({ columns: [], updated_at: new Date().toISOString() }).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+/** The folders of a library whose org row sets columns of their own (so
+ *  they don't follow the library default). Collection ids; null is the
+ *  library's top level. */
+export async function listFoldersWithOwnColumns(params: {
+  orgId: string;
+  libraryId: string;
+}): Promise<(string | null)[]> {
+  const prefix = `tv_org_${safePart(params.orgId)}_org_${safePart(params.libraryId)}_`;
+  const { data, error } = await supabase
+    .from(TABLE)
+    .select("id, collection_id, columns")
+    .eq("library_id", params.libraryId)
+    .is("owner_user_id", null);
+  if (error || !data) return [];
+  return (data as { id: string; collection_id: string | null; columns: string[] | null }[])
+    .filter((r) => r.id.startsWith(prefix) && r.id !== `${prefix}${LIBRARY_PART}` && (r.columns?.length ?? 0) > 0)
+    .map((r) => r.collection_id ?? null);
 }
 
 export function listenTableView(
@@ -278,36 +330,48 @@ export function listenEffectiveColumns(
     defaultColumns: string[];
   },
   cb: (result: {
-    scopeUsed: "user" | "org" | "default";
+    /** Where the columns came from: your own for this folder, the org's
+     *  for this folder, the library default, or the app default. */
+    scopeUsed: "user" | "org" | "library" | "default";
     columns: string[];
     userView: TableViewConfig | null;
     orgView: TableViewConfig | null;
+    libraryView: TableViewConfig | null;
   }) => void
 ): () => void {
   let userView: TableViewConfig | null = null;
   let orgView: TableViewConfig | null = null;
+  let libraryView: TableViewConfig | null = null;
+  // Wait for every level to answer once before the first emit, so a folder
+  // never flashes the app default before its saved columns arrive.
+  const pending = new Set<string>(params.ownerUserId ? ["user", "org", "library"] : ["org", "library"]);
 
   const emit = () => {
+    if (pending.size) return;
+    const base = { userView, orgView, libraryView };
     if (params.ownerUserId && userView?.columns?.length) {
-      cb({ scopeUsed: "user", columns: userView.columns, userView, orgView });
+      cb({ scopeUsed: "user", columns: userView.columns, ...base });
       return;
     }
     if (orgView?.columns?.length) {
-      cb({ scopeUsed: "org", columns: orgView.columns, userView, orgView });
+      cb({ scopeUsed: "org", columns: orgView.columns, ...base });
       return;
     }
-    cb({ scopeUsed: "default", columns: params.defaultColumns, userView, orgView });
+    if (libraryView?.columns?.length) {
+      cb({ scopeUsed: "library", columns: libraryView.columns, ...base });
+      return;
+    }
+    cb({ scopeUsed: "default", columns: params.defaultColumns, ...base });
   };
 
   const unsubs: Array<() => void> = [];
 
-  unsubs.push(listenTableView({ scope: "org", ...params }, (v) => { orgView = v; emit(); }));
+  unsubs.push(listenTableView({ scope: "org", ...params }, (v) => { orgView = v; pending.delete("org"); emit(); }));
+  unsubs.push(listenTableView({ scope: "library", ...params }, (v) => { libraryView = v; pending.delete("library"); emit(); }));
 
   if (params.ownerUserId) {
-    unsubs.push(listenTableView({ scope: "user", ...params }, (v) => { userView = v; emit(); }));
+    unsubs.push(listenTableView({ scope: "user", ...params }, (v) => { userView = v; pending.delete("user"); emit(); }));
   }
-
-  emit();
 
   return () => { for (const u of unsubs) u(); };
 }

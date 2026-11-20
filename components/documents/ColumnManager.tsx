@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
-import { ChevronDown, ChevronUp, Eye, EyeOff, X, Trash2, Pencil, Check, Loader2, KeyRound, GripVertical } from "lucide-react";
+import { ChevronDown, ChevronUp, Eye, EyeOff, X, Trash2, Pencil, Check, Loader2, KeyRound, GripVertical, Columns } from "lucide-react";
 import { appConfirm } from "@/components/providers/DialogProvider";
 
 export type ColumnOption = {
@@ -29,9 +29,32 @@ export default function ColumnManager(props: {
    *  lets the user pick which columns make a document distinct from
    *  another in the same library. Applied with the Apply button. */
   onChangeUniquenessKeys?: (next: string[]) => Promise<void> | void;
+  /** The folder being looked at, for the "This folder" choice. */
+  folderName?: string;
+  /** Where this folder's columns come from now. */
+  source?: "user" | "org" | "library" | "default";
+  /** Admin/DocCtrl: save the columns as the library default, for every
+   *  folder without columns of its own. switchFolders also clears the
+   *  other folders' own columns so they follow it too. */
+  onApplyToLibrary?: (next: string[], opts: { switchFolders: boolean }) => Promise<void>;
+  /** Other folders of the library with columns of their own. */
+  otherFoldersWithOwn?: number;
+  /** Set when this folder has its own columns and can go back to the
+   *  library's. */
+  onUseLibrary?: () => Promise<void>;
 }) {
-  const { isOpen, onClose, columns, active, onChange, onDeleteColumn, onRenameColumn, isController, uniquenessKeys, onChangeUniquenessKeys } = props;
+  const {
+    isOpen, onClose, columns, active, onChange, onDeleteColumn, onRenameColumn, isController, uniquenessKeys, onChangeUniquenessKeys,
+    folderName, source, onApplyToLibrary, otherFoldersWithOwn = 0, onUseLibrary,
+  } = props;
   const [draft, setDraft] = useState<string[]>(active);
+  // Where Apply saves: this folder (your view) or every folder (the library
+  // default, for the whole org). Starts on the library when that's what
+  // this folder follows now.
+  const [target, setTarget] = useState<"folder" | "library">(onApplyToLibrary && source === "library" ? "library" : "folder");
+  const [switchFolders, setSwitchFolders] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
   const initialUniq = useMemo(
     () => (uniquenessKeys && uniquenessKeys.length > 0 ? uniquenessKeys : ["documentNumber"]),
     [uniquenessKeys],
@@ -95,14 +118,32 @@ export default function ColumnManager(props: {
   };
 
   const apply = async () => {
-    onChange(draft);
-    if (onChangeUniquenessKeys) {
-      const sameAsInitial =
-        uniqDraft.length === initialUniq.length &&
-        uniqDraft.every((k, i) => k === initialUniq[i]);
-      if (!sameAsInitial) await onChangeUniquenessKeys(uniqDraft);
+    if (applying) return;
+    setApplying(true);
+    setApplyError(null);
+    try {
+      if (target === "library" && onApplyToLibrary) await onApplyToLibrary(draft, { switchFolders });
+      else await onChange(draft);
+      if (onChangeUniquenessKeys) {
+        const sameAsInitial =
+          uniqDraft.length === initialUniq.length &&
+          uniqDraft.every((k, i) => k === initialUniq[i]);
+        if (!sameAsInitial) await onChangeUniquenessKeys(uniqDraft);
+      }
+      onClose();
+    } catch (e) {
+      setApplyError((e as Error).message || "Couldn't save the columns.");
+    } finally {
+      setApplying(false);
     }
-    onClose();
+  };
+
+  const switchToLibrary = async () => {
+    if (!onUseLibrary || applying) return;
+    setApplying(true);
+    try { await onUseLibrary(); onClose(); }
+    catch (e) { setApplyError((e as Error).message || "Couldn't switch to the library's columns."); }
+    finally { setApplying(false); }
   };
 
   const startRename = (key: string, currentLabel: string) => {
@@ -157,8 +198,14 @@ export default function ColumnManager(props: {
       <div className="w-full max-w-2xl rounded-lg bg-[var(--color-surface)] shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-between">
           <div>
-            <div className="text-sm font-bold text-[var(--color-text)]">Library Column Manager</div>
-            <div className="text-[13px] text-[var(--color-text-muted)]">Add, rename, reorder, hide, or remove columns. Applies to every folder in this library.</div>
+            <div className="text-sm font-bold text-[var(--color-text)]">Columns</div>
+            <div className="text-[13px] text-[var(--color-text-muted)]">
+              {isController ? "Show, hide, order, rename or remove columns." : "Show, hide and order the columns."}{" "}
+              {source === "library" ? "This folder uses the library's columns."
+                : source === "user" ? "This folder has your own columns."
+                : source === "org" ? "This folder has its own columns."
+                : ""}
+            </div>
           </div>
           <button aria-label="Close"
             onClick={onClose}
@@ -305,7 +352,7 @@ export default function ColumnManager(props: {
           <div className="border border-[var(--color-border)] rounded-xl p-3">
             <div className="flex items-center justify-between mb-2">
               <div className="text-[13px] font-bold text-[var(--color-text-muted)]">Visible order</div>
-              <div className="text-[13px] text-[var(--color-text-faint)]">Drag rows to reorder · arrows still work</div>
+              <div className="text-[13px] text-[var(--color-text-faint)]">Drag a row, or use the arrows</div>
             </div>
             <div className="space-y-1 max-h-[320px] overflow-auto">
               {options.map((col, idx) => {
@@ -314,7 +361,7 @@ export default function ColumnManager(props: {
                 const showBelow = hoverIndex === idx && dragIndex !== null && dragIndex < idx;
                 return (
                   <div key={col.key} className="relative">
-                    {showAbove && <div className="absolute -top-0.5 left-0 right-0 h-0.5 bg-[var(--color-surface-2)] rounded-full" />}
+                    {showAbove && <div className="absolute -top-1 left-0 right-0 h-0.5 bg-[var(--color-main)] rounded-full" />}
                     <div
                       draggable
                       onDragStart={(e) => {
@@ -348,6 +395,7 @@ export default function ColumnManager(props: {
                           onClick={() => move(idx, "up")}
                           disabled={idx === 0}
                           title="Move up"
+                          aria-label={`Move ${col.label} up`}
                         >
                           <ChevronUp className="h-3.5 w-3.5" />
                         </button>
@@ -356,17 +404,77 @@ export default function ColumnManager(props: {
                           onClick={() => move(idx, "down")}
                           disabled={idx === options.length - 1}
                           title="Move down"
+                          aria-label={`Move ${col.label} down`}
                         >
                           <ChevronDown className="h-3.5 w-3.5" />
                         </button>
                       </div>
                     </div>
-                    {showBelow && <div className="absolute -bottom-0.5 left-0 right-0 h-0.5 bg-[var(--color-surface-2)] rounded-full" />}
+                    {showBelow && <div className="absolute -bottom-1 left-0 right-0 h-0.5 bg-[var(--color-main)] rounded-full" />}
                   </div>
                 );
               })}
             </div>
           </div>
+        </div>
+
+        {/* Where these columns go: this folder, or every folder of the
+            library (Admin/DocCtrl, for the whole org). */}
+        <div className="px-5 pb-4">
+          {onApplyToLibrary ? (
+            <fieldset>
+              <legend className="text-[13px] font-bold text-[var(--color-text-muted)] mb-2">Use these columns for</legend>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {([
+                  { key: "folder" as const, title: "This folder", sub: `Just for you, in ${folderName || "this folder"}` },
+                  { key: "library" as const, title: "Every folder in this library", sub: "Everyone in your org, in every folder without its own columns" },
+                ]).map((o) => (
+                  <label key={o.key}
+                    className={`flex items-start gap-2.5 rounded-lg border px-3 py-2.5 cursor-pointer transition-colors ${
+                      target === o.key
+                        ? "border-[var(--color-main)] bg-[var(--color-accent-soft)]"
+                        : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+                    }`}>
+                    <input type="radio" name="column-target" value={o.key} checked={target === o.key}
+                      onChange={() => setTarget(o.key)}
+                      className="mt-0.5 w-3.5 h-3.5 accent-[var(--color-main)]" />
+                    <span className="min-w-0">
+                      <span className="block text-[14px] font-semibold text-[var(--color-text)]">{o.title}</span>
+                      <span className="block text-[13px] text-[var(--color-text-muted)] leading-snug">{o.sub}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+              {target === "library" && otherFoldersWithOwn > 0 && (
+                <label className="mt-2 flex items-start gap-2 text-[13px] text-[var(--color-text)] cursor-pointer">
+                  <input type="checkbox" checked={switchFolders} onChange={(e) => setSwitchFolders(e.target.checked)}
+                    className="mt-0.5 w-3.5 h-3.5 accent-[var(--color-main)]" />
+                  <span>
+                    Also switch the {otherFoldersWithOwn} other folder{otherFoldersWithOwn === 1 ? "" : "s"} that set{otherFoldersWithOwn === 1 ? "s" : ""} {otherFoldersWithOwn === 1 ? "its" : "their"} own columns for everyone
+                    <span className="block text-[var(--color-text-muted)]">Otherwise {otherFoldersWithOwn === 1 ? "it keeps its" : "they keep their"} own. People&apos;s personal columns stay theirs.</span>
+                  </span>
+                </label>
+              )}
+            </fieldset>
+          ) : (
+            <div className="text-[13px] text-[var(--color-text-muted)]">
+              Saved for you, in {folderName || "this folder"}.
+            </div>
+          )}
+          {onUseLibrary && (
+            <div className="mt-3 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[13px] text-[var(--color-text-muted)]">
+              <Columns className="w-3.5 h-3.5 text-[var(--color-text-faint)]" aria-hidden />
+              <span>{source === "user" ? "You have your own columns in this folder" : "This folder has its own columns"}</span>
+              <span aria-hidden>·</span>
+              <button type="button" onClick={() => void switchToLibrary()} disabled={applying}
+                className="font-semibold text-[var(--color-accent-text)] underline-offset-2 hover:underline disabled:opacity-50">
+                Use the library&apos;s
+              </button>
+            </div>
+          )}
+          {applyError && (
+            <div role="alert" className="mt-2 text-[13px] text-[var(--state-overdue)]">{applyError}</div>
+          )}
         </div>
 
         <div className="px-5 py-4 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
@@ -377,10 +485,12 @@ export default function ColumnManager(props: {
             Cancel
           </button>
           <button
-            onClick={apply}
-            className="px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-bold"
+            onClick={() => void apply()}
+            disabled={applying}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-bold disabled:opacity-60"
           >
-            Apply
+            {applying && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+            {target === "library" && onApplyToLibrary ? "Use for every folder" : "Apply"}
           </button>
         </div>
       </div>

@@ -365,8 +365,9 @@ export default function CheckoutStatusCell({
   currentUserEmail?: string;
   userRole?: string | null;
   onCheckout: (doc: DocumentRecord) => void;
-  /** In a table row: a free document shows its buttons only on row hover
-   *  or focus, so the column reads as who has what. */
+  /** In a table row: the buttons are quiet secondary buttons, always
+   *  there (a touchscreen has no hover); the row's hover only firms them
+   *  up, so the column still reads as who has what. */
   quiet?: boolean;
 }) {
   const [showInfo, setShowInfo] = useState(false);
@@ -409,10 +410,12 @@ export default function CheckoutStatusCell({
     }
   };
 
-  const small = "inline-flex items-center gap-1 h-7 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors whitespace-nowrap";
+  const small = quiet
+    ? "inline-flex items-center gap-1 h-7 px-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text-muted)] group-hover:border-[var(--color-border-strong)] group-hover:text-[var(--color-text)] hover:!border-[var(--color-text-faint)] hover:bg-[var(--color-surface-2)] focus-visible:border-[var(--color-border-strong)] focus-visible:text-[var(--color-text)] disabled:opacity-50 transition-colors whitespace-nowrap"
+    : "inline-flex items-center gap-1 h-7 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors whitespace-nowrap";
   if (!isCheckedOut) {
     return (
-      <div className={`flex items-center gap-1 ${quiet ? "opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" : ""}`}>
+      <div className="flex items-center gap-1">
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); onCheckout(docRecord); }}
@@ -466,7 +469,7 @@ export default function CheckoutStatusCell({
         className={`shrink-0 w-7 h-7 grid place-items-center rounded-md transition-colors ${
           showInfo
             ? "bg-[var(--color-surface-2)] text-[var(--color-text)]"
-            : `text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] ${quiet ? "opacity-0 group-hover:opacity-100 focus-visible:opacity-100" : ""}`
+            : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
         }`}
       >
         <Info className="w-3.5 h-3.5" />

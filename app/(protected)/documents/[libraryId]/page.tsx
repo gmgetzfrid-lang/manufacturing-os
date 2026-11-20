@@ -108,8 +108,11 @@ import {
   listenEffectiveColumns,
   saveTableView,
   deleteTableView,
+  clearTableViewColumns,
+  listFoldersWithOwnColumns,
   resolveEffectiveViewState,
 } from "@/lib/tableViews";
+import { useColumnReorder } from "@/components/documents/useColumnReorder";
 import {
   clickItem,
   contextClickItem,
@@ -201,6 +204,8 @@ import {
   Image as ImageIcon,
   Link as LinkIcon,
   Map as MapIcon,
+  Library as LibraryIcon,
+  RotateCcw,
 } from "lucide-react";
 
 const BUILTIN_COLUMNS = [
@@ -863,7 +868,8 @@ export default function LibraryExplorerPage() {
   const handleMarqueeMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return;
     const target = e.target as HTMLElement;
-    if (target.closest("[data-doc-item], button, a, input, textarea, select")) return;
+    // Never from the header row: a press there sorts or moves a column.
+    if (target.closest("[data-doc-item], button, a, input, textarea, select, thead")) return;
     const base = e.ctrlKey || e.metaKey ? new Set(selectedDocIds) : new Set<string>();
     marqueeRef.current = { x1: e.clientX, y1: e.clientY, base, moved: false };
     const container = e.currentTarget as HTMLElement;
@@ -1262,15 +1268,20 @@ export default function LibraryExplorerPage() {
   const [colWidths, setColWidths] = useState<Record<string, number>>({});
   const colWidthsRef = useRef<Record<string, number>>({});
   const resizingRef = useRef<{ key: string; startX: number; startWidth: number } | null>(null);
+  const resizeClickGuardRef = useRef(false);
   const saveWidthsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Keep colWidthsRef in sync so resize handler can read latest value on mouseup
   useEffect(() => { colWidthsRef.current = colWidths; }, [colWidths]);
 
   const [activeColumns, setActiveColumns] = useState<string[]>([]);
-  // A column header being dragged to a new place, and where it would land.
-  const [dragCol, setDragCol] = useState<string | null>(null);
-  const [dropCol, setDropCol] = useState<string | null>(null);
+  // Which saved levels set this folder's columns: your own here, the org's
+  // here, the library default (its columns), else the app default. The
+  // first one present wins, in that order.
+  const [colLevels, setColLevels] = useState<{ user: boolean; folder: boolean; library: string[] | null }>({ user: false, folder: false, library: null });
+  // Other folders of this library with org columns of their own (they don't
+  // follow the library default). Counted when the column manager opens.
+  const [foldersWithOwnColumns, setFoldersWithOwnColumns] = useState<(string | null)[]>([]);
   const [columnDefs, setColumnDefs] = useState<MetadataFieldDefinition[]>([]);
   const [showFullScreen, setShowFullScreen] = useState(false);
   const [showRevUp, setShowRevUp] = useState(false);
@@ -2116,6 +2127,9 @@ export default function LibraryExplorerPage() {
       ? ["documentNumber", ...schemaDefaults.filter((k) => k !== "documentNumber")]
       : schemaDefaults;
 
+    // First visit: the app default until the saved columns answer. A folder
+    // change keeps the last folder's columns meanwhile (no flash).
+    setActiveColumns((prev) => (prev.length ? prev : defaults));
     const unsub = listenEffectiveColumns(
       {
         orgId: activeOrgId,
@@ -2126,6 +2140,11 @@ export default function LibraryExplorerPage() {
       },
       (res) => {
         setActiveColumns(res.columns);
+        setColLevels({
+          user: !!res.userView?.columns?.length,
+          folder: !!res.orgView?.columns?.length,
+          library: res.libraryView?.columns?.length ? res.libraryView.columns : null,
+        });
       }
     );
 
@@ -2133,6 +2152,16 @@ export default function LibraryExplorerPage() {
       if (unsub) unsub();
     };
   }, [library, currentFolderId, activeOrgId, uid, libraryId, currentFolder?.columnOverrides]);
+
+  // The column manager offers to switch folders that have their own
+  // columns: count them when it opens (Admin/DocCtrl only).
+  useEffect(() => {
+    if (!showColumnManager || !activeOrgId || !isControllerRole(activeRole)) return;
+    let alive = true;
+    void listFoldersWithOwnColumns({ orgId: activeOrgId, libraryId })
+      .then((ids) => { if (alive) setFoldersWithOwnColumns(ids); });
+    return () => { alive = false; };
+  }, [showColumnManager, activeOrgId, activeRole, libraryId]);
 
   // Load this folder's saved default view (sort + layout + density) and apply
   // it when we enter the folder. Resolution is user default → org default →
@@ -2271,12 +2300,11 @@ export default function LibraryExplorerPage() {
       key: c.key,
       label: overrides[c.key] || c.label,
     }));
-    const dynamic = columnDefs.map((c) => ({ key: c.key, label: c.label }));
-    const known = new Set([
-      ...builtins.map((c) => c.key),
-      ...optional.map((c) => c.key),
-      ...dynamic.map((c) => c.key),
-    ]);
+    // A custom column that reuses a built-in key (title, rev, status) is the
+    // same column: list it once, under the name its header shows.
+    const builtinKeys = new Set([...builtins.map((c) => c.key), ...optional.map((c) => c.key)]);
+    const dynamic = columnDefs.filter((c) => !builtinKeys.has(c.key)).map((c) => ({ key: c.key, label: c.label }));
+    const known = new Set([...builtinKeys, ...dynamic.map((c) => c.key)]);
     const orphans = activeColumns
       .filter((k) => !known.has(k))
       .map((k) => ({ key: k, label: overrides[k] || k }));
@@ -2292,7 +2320,11 @@ export default function LibraryExplorerPage() {
     const before = activeColumns;
     setActiveColumns(next);
     if (!activeOrgId || !uid) return;
-    const scope = opts?.scope === "org" && isController ? "org" : "user";
+    // A schema act in a folder that follows the library default lands in
+    // the library default, so the folder doesn't split off from it.
+    const scope = opts?.scope === "org" && isController
+      ? (colLevels.library && !colLevels.folder ? "library" : "org")
+      : "user";
     try {
       await saveTableView({
         scope,
@@ -2308,11 +2340,67 @@ export default function LibraryExplorerPage() {
       setError(`Couldn't save the columns: ${(e as Error).message}`);
       return;
     }
+    setColLevels((prev) => scope === "user" ? { ...prev, user: true }
+      : scope === "org" ? { ...prev, folder: true }
+      : { ...prev, library: next });
     // A user row now exists here — surface the "Clear my default" escape
     // hatch immediately, not on the next folder visit.
-    setViewDefaults((prev) => scope === "user"
-      ? { ...prev, hasUserRow: true }
-      : { ...prev, hasOrgRow: true });
+    if (scope !== "library") {
+      setViewDefaults((prev) => scope === "user"
+        ? { ...prev, hasUserRow: true }
+        : { ...prev, hasOrgRow: true });
+    }
+  };
+
+  // ── Library-wide columns (Admin/DocCtrl) ─────────────────────────────
+  // One set of columns for every folder of the library, for the whole org.
+  // A folder with columns of its own keeps them until someone switches it
+  // back ("Use the library's"); this folder follows the library at once.
+  const viewParams = () => ({ orgId: activeOrgId!, libraryId, collectionId: currentFolderId ?? undefined });
+  const refreshViewDefaults = async () => {
+    try {
+      const res = await resolveEffectiveViewState({ ...viewParams(), ownerUserId: uid ?? undefined });
+      setViewDefaults({ hasUserRow: res.hasUserRow, hasOrgRow: res.hasOrgRow });
+    } catch { /* indicator only */ }
+  };
+  const applyColumnsToLibrary = async (next: string[], opts?: { switchFolders?: boolean }) => {
+    if (!activeOrgId || !uid || !isController) return;
+    const before = activeColumns;
+    setActiveColumns(next);
+    try {
+      await saveTableView({ scope: "library", orgId: activeOrgId, libraryId, columns: next });
+      await clearTableViewColumns({ scope: "user", ...viewParams(), ownerUserId: uid });
+      await clearTableViewColumns({ scope: "org", ...viewParams() });
+      if (opts?.switchFolders) {
+        const others = await listFoldersWithOwnColumns({ orgId: activeOrgId, libraryId });
+        for (const id of others) {
+          await clearTableViewColumns({ scope: "org", orgId: activeOrgId, libraryId, collectionId: id ?? undefined });
+        }
+        setFoldersWithOwnColumns([]);
+      }
+      setColLevels({ user: false, folder: false, library: next });
+      void refreshViewDefaults();
+    } catch (e) {
+      setActiveColumns(before);
+      setError(`Couldn't save the columns for the library: ${(e as Error).message}`);
+    }
+  };
+  // This folder drops its own columns and follows the library default.
+  // Anyone can drop their own; Admin/DocCtrl also drop the folder's org row.
+  const followLibraryColumns = async () => {
+    if (!activeOrgId || !uid || !colLevels.library) return;
+    const before = activeColumns;
+    setActiveColumns(colLevels.library);
+    try {
+      await clearTableViewColumns({ scope: "user", ...viewParams(), ownerUserId: uid });
+      if (isController) await clearTableViewColumns({ scope: "org", ...viewParams() });
+      setColLevels((prev) => ({ ...prev, user: false, folder: isController ? false : prev.folder }));
+      if (isController) setFoldersWithOwnColumns((prev) => prev.filter((id) => id !== (currentFolderId ?? null)));
+      void refreshViewDefaults();
+    } catch (e) {
+      setActiveColumns(before);
+      setError(`Couldn't switch this folder to the library's columns: ${(e as Error).message}`);
+    }
   };
 
   const openCreateFolder = () => {
@@ -3186,7 +3274,10 @@ export default function LibraryExplorerPage() {
   const handleResizeStart = useCallback((e: React.PointerEvent, colKey: string) => {
     e.preventDefault();
     e.stopPropagation();
-    const startWidth = colWidths[colKey] ?? getDefaultColWidth(colKey);
+    // Start from the width on screen (the title fills what's left, so its
+    // default isn't what you see), so the edge doesn't jump under the pointer.
+    const shown = (e.currentTarget as HTMLElement).closest("th")?.getBoundingClientRect().width;
+    const startWidth = colWidths[colKey] ?? (shown ? Math.round(shown) : getDefaultColWidth(colKey));
     resizingRef.current = { key: colKey, startX: e.clientX, startWidth };
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
@@ -3207,6 +3298,9 @@ export default function LibraryExplorerPage() {
     const onUp = () => {
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
+      // The release ends a resize; it isn't a click that sorts the column.
+      resizeClickGuardRef.current = true;
+      setTimeout(() => { resizeClickGuardRef.current = false; }, 0);
       document.removeEventListener("pointermove", onMove);
       document.removeEventListener("pointerup", onUp);
       document.removeEventListener("pointercancel", onUp);
@@ -3305,6 +3399,24 @@ export default function LibraryExplorerPage() {
     return value == null ? "-" : String(value);
   };
 
+  // A column's header label: the library's rename, else the built-in or
+  // custom column's own name.
+  const columnLabel = (colKey: string): string =>
+    library?.columnLabelOverrides?.[colKey]
+    || BUILTIN_COLUMNS.find((c) => c.key === colKey)?.label
+    || OPTIONAL_BUILTIN_COLUMNS.find((c) => c.key === colKey)?.label
+    || columnMap.get(colKey)?.label
+    || colKey;
+
+  // Drag a header to move its column (pointer events: mouse, pen, touch).
+  // Saved like every other column tweak: to your view of this folder.
+  const columnDrag = useColumnReorder({
+    columns: activeColumns,
+    labelFor: columnLabel,
+    onReorder: (next) => { void updateColumns(next); },
+    scrollEl: tableScrollEl,
+  });
+
   if (!activeOrgId) {
     return (
       <div className="min-h-full px-3 sm:px-4 pt-3 sm:pt-4">
@@ -3330,6 +3442,13 @@ export default function LibraryExplorerPage() {
   }
 
   const isController = isControllerRole(activeRole);
+  // Where this folder's columns come from, and whether "Use the library's"
+  // would actually bring the library default here for this person.
+  const columnSource: "user" | "org" | "library" | "default" =
+    colLevels.user ? "user" : colLevels.folder ? "org" : colLevels.library ? "library" : "default";
+  const canUseLibraryColumns = !!colLevels.library
+    && (columnSource === "user" || columnSource === "org")
+    && (isController || !colLevels.folder);
   const allSelected = sortedDocs.length > 0 && selectedDocIds.size === sortedDocs.length;
   const someSelected = selectedDocIds.size > 0 && !allSelected;
 
@@ -4399,6 +4518,52 @@ export default function LibraryExplorerPage() {
                                 </span>
                               </button>
                             )}
+                            {/* Columns: where this folder's come from, and the
+                                choice of this folder or every folder. */}
+                            <div className="mt-1.5 pt-2 border-t border-[var(--color-border)]">
+                              <div className="px-3 pb-1 text-[13px] font-semibold text-[var(--color-text)]">Columns</div>
+                              <div className="px-3 pb-1.5 text-[13px] text-[var(--color-text-muted)] leading-snug">
+                                {columnSource === "user" ? "This folder has your own columns."
+                                  : columnSource === "org" ? "This folder has its own columns."
+                                  : columnSource === "library" ? "This folder uses the library's columns."
+                                  : "Standard columns. The library has no columns of its own yet."}
+                              </div>
+                              <button
+                                onClick={() => { setViewMenuOpen(false); setShowColumnManager(true); }}
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                              >
+                                <Columns className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
+                                <span className="flex-1">
+                                  Choose and order columns
+                                  <span className="block text-[13px] font-normal text-[var(--color-text-muted)]">Show, hide and move them up or down</span>
+                                </span>
+                              </button>
+                              {isController && (
+                                <button
+                                  onClick={() => { setViewMenuOpen(false); void applyColumnsToLibrary(activeColumns); }}
+                                  className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                                >
+                                  <LibraryIcon className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
+                                  <span className="flex-1">
+                                    Use these for every folder in this library
+                                    <span className="block text-[13px] font-normal text-[var(--color-text-muted)]">Everyone in your org, in every folder without its own columns</span>
+                                  </span>
+                                  {columnSource === "library" && <Check className="w-3.5 h-3.5 text-[var(--state-released)]" />}
+                                </button>
+                              )}
+                              {canUseLibraryColumns && (
+                                <button
+                                  onClick={() => { setViewMenuOpen(false); void followLibraryColumns(); }}
+                                  className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                                >
+                                  <RotateCcw className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
+                                  <span className="flex-1">
+                                    Use the library&apos;s columns here
+                                    <span className="block text-[13px] font-normal text-[var(--color-text-muted)]">{isController && colLevels.folder ? "Drops this folder's own columns for everyone" : "Drops your own columns in this folder"}</span>
+                                  </span>
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </>
                       )}
@@ -4412,6 +4577,20 @@ export default function LibraryExplorerPage() {
                     </button>
                   )}
               </div>
+
+            {/* This folder's columns differ from the library's: say so, with
+                the way back. */}
+            {docLayout === "details" && canUseLibraryColumns && (
+              <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 mb-2 text-[13px] text-[var(--color-text-muted)]">
+                <Columns className="w-3.5 h-3.5 text-[var(--color-text-faint)]" aria-hidden />
+                <span>{columnSource === "user" ? "You have your own columns in this folder" : "This folder has its own columns"}</span>
+                <span aria-hidden>·</span>
+                <button type="button" onClick={() => void followLibraryColumns()}
+                  className="font-semibold text-[var(--color-accent-text)] underline-offset-2 hover:underline rounded focus-visible:outline-2">
+                  Use the library&apos;s
+                </button>
+              </div>
+            )}
 
             <div
               className="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] overflow-hidden flex flex-col min-h-[320px] relative focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-strong)]"
@@ -4562,46 +4741,39 @@ export default function LibraryExplorerPage() {
                             />
                           </th>
                           {activeColumns.map((colKey) => <React.Fragment key={colKey}>{((): React.ReactNode => {
-                            const builtinLabel = BUILTIN_COLUMNS.find((c) => c.key === colKey)?.label
-                              ?? OPTIONAL_BUILTIN_COLUMNS.find((c) => c.key === colKey)?.label;
-                            const overrideLabel = library?.columnLabelOverrides?.[colKey];
-                            const label = overrideLabel || builtinLabel || columnMap.get(colKey)?.label || colKey;
+                            const label = columnLabel(colKey);
                             const width = getColWidth(colKey);
                             const isResized = !!colWidths[colKey];
+                            const isDragged = columnDrag.draggingKey === colKey;
                             return (
                               <th
                                 key={colKey}
-                                className={`relative px-2 ${headerPad} cursor-pointer hover:bg-[var(--color-surface-2)] select-none transition-colors group ${dropCol === colKey && dragCol && dragCol !== colKey ? (activeColumns.indexOf(dragCol) < activeColumns.indexOf(colKey) ? "shadow-[inset_-3px_0_0_0_var(--color-accent)]" : "shadow-[inset_3px_0_0_0_var(--color-accent)]") : ""} ${dragCol === colKey ? "opacity-50" : ""}`}
+                                ref={columnDrag.register(colKey)}
+                                className={`relative pl-3 pr-2 ${headerPad} cursor-pointer select-none [-webkit-user-select:none] hover:bg-[var(--color-surface-2)] transition-colors group/th ${isDragged ? "opacity-40" : ""}`}
                                 // The title takes whatever width is left, unless it was resized.
                                 style={width && !(colKey === "title" && !isResized) ? { width } : undefined}
-                                onClick={() => handleSort(colKey)}
-                                // Drag a header onto another to move it there; saved to your view.
-                                onDragOver={(e) => { if (!dragCol || !e.dataTransfer.types.includes("application/x-doc-column")) return; e.preventDefault(); e.dataTransfer.dropEffect = "move"; if (dropCol !== colKey) setDropCol(colKey); }}
-                                onDragLeave={() => { if (dropCol === colKey) setDropCol(null); }}
-                                onDrop={(e) => {
-                                  if (!dragCol || !e.dataTransfer.types.includes("application/x-doc-column")) return;
-                                  e.preventDefault();
-                                  const from = dragCol;
-                                  setDragCol(null); setDropCol(null);
-                                  if (from === colKey) return;
-                                  // Moving right lands after the column dropped on; moving left, before it.
-                                  const right = activeColumns.indexOf(from) < activeColumns.indexOf(colKey);
-                                  const next = activeColumns.filter((k) => k !== from);
-                                  next.splice(next.indexOf(colKey) + (right ? 1 : 0), 0, from);
-                                  void updateColumns(next);
-                                }}
+                                // Press and move to drag the column to the line; a plain click sorts.
+                                onPointerDown={columnDrag.onPointerDown(colKey)}
+                                onDragStart={(e) => e.preventDefault()}
+                                onClick={() => { if (!columnDrag.consumeClick() && !resizeClickGuardRef.current) handleSort(colKey); }}
+                                title={`${label}: click to sort, drag to move`}
+                                aria-sort={sortKey === colKey ? (sortDir === "asc" ? "ascending" : "descending") : undefined}
                               >
-                                <div className="flex items-center gap-1 min-w-0 pr-2 cursor-grab active:cursor-grabbing" draggable
-                                  title="Drag to move this column · click to sort"
-                                  onDragStart={(e) => { e.dataTransfer.setData("application/x-doc-column", colKey); e.dataTransfer.effectAllowed = "move"; setDragCol(colKey); }}
-                                  onDragEnd={() => { setDragCol(null); setDropCol(null); }}>
+                                {/* The grip: shows on hover (always on a touchscreen, where
+                                    it's the one place a drag starts). */}
+                                <span data-col-grip aria-hidden
+                                  className="absolute left-0 inset-y-0 w-3 grid place-items-center cursor-grab text-[var(--color-text-faint)] opacity-0 group-hover/th:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity"
+                                  style={{ touchAction: "none" }}>
+                                  <GripVertical className="w-3 h-3.5" />
+                                </span>
+                                <div className="flex items-center gap-1 min-w-0 pr-1.5">
                                   <span className="truncate flex-1">{label}</span>
                                   {sortKey === colKey ? (
                                     sortDir === "asc"
                                       ? <ChevronUp className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
                                       : <ChevronDown className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
                                   ) : (
-                                    <ArrowUpDown className="w-3 h-3 text-[var(--color-text-faint)] opacity-0 group-hover:opacity-100 shrink-0" />
+                                    <ArrowUpDown className="w-3 h-3 text-[var(--color-text-faint)] opacity-0 group-hover/th:opacity-100 shrink-0" />
                                   )}
                                 </div>
 
@@ -4609,6 +4781,7 @@ export default function LibraryExplorerPage() {
                                     Always-visible vertical bar with a wide hit zone. Brightens on hover. */}
                                 {isController && (
                                   <div
+                                    data-col-resize
                                     onPointerDown={(e) => handleResizeStart(e, colKey)}
                                     onDoubleClick={(e) => handleResizeReset(e, colKey)}
                                     onClick={(e) => e.stopPropagation()}
@@ -4617,7 +4790,7 @@ export default function LibraryExplorerPage() {
                                     className="absolute top-0 right-0 h-full w-2.5 cursor-col-resize flex items-center justify-center group/grip z-10"
                                   >
                                     <div className={`h-1/2 w-[2px] rounded-full transition-colors ${
-                                      isResized ? "bg-[var(--color-border-strong)]" : "bg-[var(--color-border)] group-hover:bg-[var(--color-border-strong)] group-hover/grip:bg-[var(--color-text-muted)]"
+                                      isResized ? "bg-[var(--color-border-strong)]" : "bg-[var(--color-border)] group-hover/th:bg-[var(--color-border-strong)] group-hover/grip:bg-[var(--color-text-muted)]"
                                     }`} />
                                   </div>
                                 )}
@@ -4833,7 +5006,7 @@ export default function LibraryExplorerPage() {
                                                 setEditingDocNumValue(docRecord.documentNumber || "");
                                                 setEditingDocNumError(null);
                                               }}
-                                              className="shrink-0 w-7 h-7 grid place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                                              className="shrink-0 w-7 h-7 grid place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
                                               title="Rename the number"
                                               aria-label={`Rename ${docRecord.documentNumber || "the number"}`}
                                             >
@@ -4865,7 +5038,7 @@ export default function LibraryExplorerPage() {
                                         className={`p-1 rounded-md transition-all ${
                                           isStaged
                                             ? "text-white bg-[var(--color-main)] opacity-100"
-                                            : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] opacity-60 sm:opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                                            : "text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)] hover:!text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                                         }`}
                                         title={isStaged ? "Remove from reference stack" : "Add to reference stack"}
                                         aria-label={isStaged ? "Remove from reference stack" : "Add to reference stack"}
@@ -4879,7 +5052,7 @@ export default function LibraryExplorerPage() {
                                 <td className={`px-2 ${rowPad} text-center`}>
                                   <button
                                     onClick={(e) => { e.stopPropagation(); setSelectedDoc(docRecord); setShowMetadataEditor(true); }}
-                                    className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] p-1 rounded-md hover:bg-[var(--color-surface-2)] transition-all opacity-60 sm:opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                                    className="text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)] hover:!text-[var(--color-text)] p-1 rounded-md hover:bg-[var(--color-surface-2)] transition-colors"
                                     title="Edit metadata"
                                     aria-label="Edit metadata"
                                   >
@@ -4962,6 +5135,9 @@ export default function LibraryExplorerPage() {
           />
         )}
       </InspectorDrawer>
+
+      {/* A column header on the move: its ghost and the drop line. */}
+      {columnDrag.overlay}
 
       {/* MARQUEE (rubber-band) selection rectangle */}
       {marquee && (
@@ -5211,6 +5387,11 @@ export default function LibraryExplorerPage() {
           columns={columnOptions}
           active={activeColumns}
           onChange={updateColumns}
+          folderName={currentFolder ? currentFolder.name : "the top of this library"}
+          source={columnSource}
+          onApplyToLibrary={isController ? applyColumnsToLibrary : undefined}
+          otherFoldersWithOwn={foldersWithOwnColumns.filter((id) => id !== (currentFolderId ?? null)).length}
+          onUseLibrary={canUseLibraryColumns ? followLibraryColumns : undefined}
           onDeleteColumn={isController ? handleDeleteColumn : undefined}
           onRenameColumn={isController ? handleRenameColumn : undefined}
           isController={isController}

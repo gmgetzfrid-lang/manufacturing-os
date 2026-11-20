@@ -1,13 +1,13 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { Plus, X, Check, Pencil } from "lucide-react";
 import AssetTagChip from "@/components/assets/AssetTagChip";
 
-/** Pill slots in a cell: up to four tags; with more, three and a "+N"
- *  pill, so the cell stays two tidy rows of two. */
-const SHOWN = 4;
+/** The cell's box: exactly two rows of pills (26px each, 4px apart, 1px
+ *  above and below). More than that scrolls down inside the cell, so a row
+ *  with ten tags is as tall as a row with four. */
+const BOX_MAX_H = 58;
 
 interface PillCellProps {
   values: string[];
@@ -27,10 +27,6 @@ export default function PillCell({
   orgId, userId, canManageAssets,
 }: PillCellProps) {
   const [editing, setEditing] = useState(false);
-  // The "+N" list: where it opens (fixed, under the +N pill), or null.
-  const [allAt, setAllAt] = useState<{ top: number; left: number } | null>(null);
-  const moreRef = useRef<HTMLButtonElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
   const [pills, setPills] = useState<string[]>(values);
   const [input, setInput] = useState("");
   const [saving, setSaving] = useState(false);
@@ -77,37 +73,44 @@ export default function PillCell({
     if (editing) requestAnimationFrame(() => inputRef.current?.focus());
   }, [editing]);
 
-  // The full list closes on Escape, on its ×, on the +N pill again, or on a
-  // click outside it (a pill's own quick look or uploader doesn't count).
-  useEffect(() => {
-    if (!allAt) return;
-    const onDown = (e: MouseEvent) => {
-      const t = e.target as Element | null;
-      if (!t || listRef.current?.contains(t) || moreRef.current?.contains(t) || t.closest('[role="dialog"]')) return;
-      setAllAt(null);
-    };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); setAllAt(null); moreRef.current?.focus(); } };
-    const onScroll = (e: Event) => { if (!listRef.current?.contains(e.target as Node)) setAllAt(null); };
-    document.addEventListener("mousedown", onDown, true);
-    document.addEventListener("keydown", onKey, true);
-    window.addEventListener("scroll", onScroll, true);
-    return () => {
-      document.removeEventListener("mousedown", onDown, true);
-      document.removeEventListener("keydown", onKey, true);
-      window.removeEventListener("scroll", onScroll, true);
-    };
-  }, [allAt]);
+  // The box: every tag, wrapped, scrolling down when there are more than
+  // two rows; a soft fade at an edge where more is hidden.
+  const boxRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const [more, setMore] = useState<{ above: boolean; below: boolean }>({ above: false, below: false });
 
-  const openAll = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (allAt) { setAllAt(null); return; }
-    const r = moreRef.current?.getBoundingClientRect();
-    if (!r) return;
-    const width = 320;
-    setAllAt({
-      top: Math.min(r.bottom + 6, window.innerHeight - 220),
-      left: Math.max(8, Math.min(r.left, window.innerWidth - width - 8)),
-    });
+  useEffect(() => {
+    const el = boxRef.current;
+    if (editing || !el) return;
+    const check = () => {
+      const above = el.scrollTop > 1;
+      const below = el.scrollTop + el.clientHeight < el.scrollHeight - 1;
+      setMore((m) => (m.above === above && m.below === below ? m : { above, below }));
+    };
+    check();
+    el.addEventListener("scroll", check, { passive: true });
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    if (listRef.current) ro.observe(listRef.current);
+    return () => {
+      el.removeEventListener("scroll", check);
+      ro.disconnect();
+    };
+  }, [editing, pills.length]);
+
+  // Pressing a pill must not pick up the row (rows drag into folders): the
+  // row stops being draggable until the press ends.
+  const holdRow = (e: React.PointerEvent) => {
+    const row = (e.currentTarget as HTMLElement).closest<HTMLElement>('[draggable="true"]');
+    if (!row) return;
+    row.setAttribute("draggable", "false");
+    const restore = () => {
+      row.setAttribute("draggable", "true");
+      window.removeEventListener("pointerup", restore, true);
+      window.removeEventListener("pointercancel", restore, true);
+    };
+    window.addEventListener("pointerup", restore, true);
+    window.addEventListener("pointercancel", restore, true);
   };
 
   const chip = (tag: string) => (
@@ -123,30 +126,37 @@ export default function PillCell({
 
   // ── VIEW MODE ────────────────────────────────────────────────────────────────
   if (!editing) {
+    const FADE = 14;
+    const mask = more.above && more.below
+      ? `linear-gradient(to bottom, transparent 0, #000 ${FADE}px, #000 calc(100% - ${FADE}px), transparent 100%)`
+      : more.below
+        ? `linear-gradient(to bottom, #000 calc(100% - ${FADE}px), transparent 100%)`
+        : more.above
+          ? `linear-gradient(to bottom, transparent 0, #000 ${FADE}px)`
+          : undefined;
     return (
       <div className={`relative flex items-center min-w-0 ${saving ? "opacity-60" : ""}`}>
-        {/* Pills in tidy rows, four slots at most, the last a "+N" pill that
-            opens the whole list. Each pill opens its equipment; its camera
-            opens the photos or adds them. */}
-        <div className="flex flex-wrap items-center content-center gap-1 flex-1 min-w-0">
-          {pills.length === 0 ? (
-            <span className="text-[14px] text-[var(--color-text-faint)] select-none leading-6">-</span>
-          ) : (
-            <>
-              {pills.slice(0, pills.length > SHOWN ? SHOWN - 1 : SHOWN).map(chip)}
-              {pills.length > SHOWN && (
-                <button type="button" ref={moreRef} onClick={openAll}
-                  title={`All ${pills.length} ${label}`}
-                  aria-label={`Show all ${pills.length} ${label}`}
-                  aria-expanded={!!allAt}
-                  aria-haspopup="dialog"
-                  className={`ui-tag is-more tabular-nums ${allAt ? "!bg-[var(--color-main)] !text-white !border-[var(--color-main)]" : ""}`}>
-                  +{pills.length - (SHOWN - 1)}
-                </button>
-              )}
-            </>
-          )}
-        </div>
+        {pills.length === 0 ? (
+          <span className="text-[14px] text-[var(--color-text-faint)] select-none leading-6">-</span>
+        ) : (
+          // Every tag, wrapped, in a box two rows tall that scrolls down
+          // (wheel, trackpad, touch) with a thin bar that shows there's
+          // more. Each pill opens its equipment; its camera opens the
+          // photos or adds them.
+          <div
+            ref={boxRef}
+            role="group"
+            aria-label={`${label}: ${pills.length}`}
+            onPointerDown={holdRow}
+            onDoubleClick={(e) => e.stopPropagation()}
+            className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden select-none [scrollbar-width:thin] [scrollbar-color:var(--color-border-strong)_transparent] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[var(--color-border-strong)]"
+            style={{ maxHeight: BOX_MAX_H, ...(mask ? { maskImage: mask, WebkitMaskImage: mask } : {}) }}
+          >
+            <div ref={listRef} className="flex flex-wrap items-center content-start gap-1 py-px pr-1">
+              {pills.map(chip)}
+            </div>
+          </div>
+        )}
 
         {/* Edit, for people who may: an icon button at the cell's right edge
             that shows on the row's hover (always on a touchscreen). It takes
@@ -155,39 +165,13 @@ export default function PillCell({
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+            onDoubleClick={(e) => e.stopPropagation()}
             className="absolute -right-1.5 top-1/2 -translate-y-1/2 w-7 h-7 grid place-items-center rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-sm text-[var(--color-text-muted)] hover:text-[var(--color-main)] hover:bg-[var(--color-accent-soft)] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity"
             title={pills.length === 0 ? `Add ${label}` : `Edit ${label}`}
             aria-label={pills.length === 0 ? `Add ${label}` : `Edit ${label}`}
           >
             {pills.length === 0 ? <Plus className="w-3.5 h-3.5" /> : <Pencil className="w-3.5 h-3.5" />}
           </button>
-        )}
-
-        {allAt && typeof document !== "undefined" && createPortal(
-          <div
-            ref={listRef}
-            role="dialog"
-            aria-label={`All ${label}`}
-            onClick={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-            onDoubleClick={(e) => e.stopPropagation()}
-            onContextMenu={(e) => e.stopPropagation()}
-            style={{ top: allAt.top, left: allAt.left, width: 320 }}
-            className="fixed z-[600] rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-xl p-3 max-h-[60vh] overflow-y-auto"
-          >
-            <div className="flex items-center gap-2 mb-2">
-              <span className="font-display text-[15px] font-semibold text-[var(--color-heading)]">{label}</span>
-              <span className="ui-count">{pills.length}</span>
-              <button type="button" onClick={() => setAllAt(null)} aria-label="Close the list"
-                className="ml-auto w-7 h-7 grid place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="flex flex-wrap items-center gap-1">
-              {pills.map(chip)}
-            </div>
-          </div>,
-          document.body,
         )}
       </div>
     );
