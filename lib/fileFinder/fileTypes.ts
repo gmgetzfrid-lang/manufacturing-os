@@ -55,13 +55,13 @@ const BY_EXT: Record<string, { key: FileIconKey; label: string; color: string }>
 };
 
 export const CONTAINER_TYPES: Record<"library" | "folder" | "folderOpen" | "drive" | "unit" | "equipment" | "project" | "tag" | "estate", FileTypeInfo> = {
-  library: { key: "library", label: "Library", color: "#7c3aed", ext: "" },
+  library: { key: "library", label: "Library", color: "#3b4656", ext: "" },
   folder: { key: "folder", label: "Folder", color: "#d97706", ext: "" },
   folderOpen: { key: "folderOpen", label: "Folder", color: "#d97706", ext: "" },
   drive: { key: "drive", label: "Drive listing", color: "#0f766e", ext: "" },
   // The estate's own things, drawn with the same hand as the paper.
   estate: { key: "estate", label: "Estate", color: "#475569", ext: "" },
-  unit: { key: "unit", label: "Unit", color: "#7c3aed", ext: "" },
+  unit: { key: "unit", label: "Unit", color: "#3b4656", ext: "" },
   equipment: { key: "equipment", label: "Equipment", color: "#059669", ext: "" },
   project: { key: "project", label: "Project", color: "#d97706", ext: "" },
   tag: { key: "tag", label: "Tag", color: "#64748b", ext: "" },
