@@ -125,12 +125,12 @@ export function mixHex(a: string, b: string, t: number): string {
  *  hub, bridge) is flagged in the waiting color. */
 export const ACCENT = {
   /** The node you picked, and the connection chain between two nodes. */
-  get focus() { return themeColor("--color-accent", "#2e6be7"); },
-  get path() { return themeColor("--color-accent", "#2e6be7"); },
+  get focus() { return themeColor("--color-main", "#2262e6"); },
+  get path() { return themeColor("--color-main", "#2262e6"); },
   /** The signal color lifted so it reads on the 3D scene's night sky. */
-  get focusOnDark() { return mixHex(themeColor("--color-accent", "#2e6be7"), "#ffffff", 0.35); },
+  get focusOnDark() { return mixHex(themeColor("--color-main", "#2262e6"), "#ffffff", 0.35); },
   /** Insight spotlight (orphan / hub / bridge): worth a look. */
   get found() { return themeColor("--state-held", HELD); },
   /** Search match ring. */
-  get search() { return themeColor("--color-accent", "#2e6be7"); },
+  get search() { return themeColor("--color-main", "#2262e6"); },
 };

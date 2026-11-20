@@ -1835,6 +1835,8 @@ export default function TicketDetailView() {
               resourceId={ticket.id}
               resourceLabel={`request ${ticket.ticketId}`}
               canSign={activeRole === 'Admin' || activeRole === 'DocCtrl' || (activeRole?.includes('Engineer') ?? false)}
+              // The formal sign-off is due when the request waits on you for final approval.
+              yourTurn={onYou && ticket.status === 'PENDING_FINAL_APPROVAL'}
             />
           )}
         </div>
