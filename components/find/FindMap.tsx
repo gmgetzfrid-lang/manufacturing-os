@@ -6,7 +6,8 @@
 //                    file the equipment on it;
 //   on equipment     the equipment you searched, its documents hung under it;
 //   nowhere yet      the whole site (unit > type > equipment).
-// One level opens at a time so every label reads.
+// One level opens at a time so every label reads. A switch at its top
+// right changes what it shows: this folder, its unit, or the whole site.
 //
 // It also drives: tap a subfolder and the list opens it; tap a unit and the
 // list opens that unit's folder; tap a piece of equipment and it is searched
@@ -58,7 +59,19 @@ interface Props {
   className?: string;
 }
 
-export default function FindMap({ orgId, unit, assetId, docs, candidates, onPickAsset, onUnit, onDoc, folder, onFolder, className = "" }: Props) {
+type Scope = "folder" | "unit" | "site";
+const SCOPE_KEY = "map:scope";
+
+export default function FindMap({ orgId, unit: unitProp, assetId, docs, candidates, onPickAsset, onUnit, onDoc, folder: folderProp, onFolder, className = "" }: Props) {
+  // What the map shows: the folder you're in, its unit, or the whole site.
+  // It starts on where you are; a choice made in the switch is remembered.
+  const [picked, setPicked] = useState<Scope | null>(null);
+  useEffect(() => { try { const v = window.localStorage.getItem(SCOPE_KEY); if (v === "folder" || v === "unit" || v === "site") setPicked(v); } catch { /* per-viewer only */ } }, []);
+  const options: Scope[] = [...(folderProp ? ["folder" as const] : []), ...(unitProp ? ["unit" as const] : []), "site"];
+  const scope: Scope = picked && options.includes(picked) ? picked : options[0];
+  const pick = (s: Scope) => { setPicked(s); try { window.localStorage.setItem(SCOPE_KEY, s); } catch { /* per-viewer only */ } };
+  const folder = scope === "folder" ? folderProp ?? null : null;
+  const unit = scope === "site" ? null : unitProp;
   const [base, setBase] = useState<MapBase | null>(null);
   const [openDoc, setOpenDoc] = useState<string | null>(null);
   const [equip, setEquip] = useState<{ key: string; on: Map<string, FolderMapEquip[]> } | null>(null);
@@ -109,7 +122,6 @@ export default function FindMap({ orgId, unit, assetId, docs, candidates, onPick
   useEffect(() => {
     if (!assetId || !assetReady) return;
     setFlyTo({ ids: [`asset:${assetId}`], nonce: Date.now() });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assetId, assetReady, docsKey]);
 
   // The picked equipment and its documents stay lit; the rest dims.
@@ -128,6 +140,18 @@ export default function FindMap({ orgId, unit, assetId, docs, candidates, onPick
 
   return (
     <div className={`relative overflow-hidden rounded-xl bg-[var(--color-surface-2)] ${className}`} data-find-map={folderMap ? "folder" : "site"}>
+      {options.length > 1 && !assetId && (
+        <div role="radiogroup" aria-label="What the map shows"
+          className="absolute top-2 right-2 z-20 inline-flex items-center gap-0.5 p-0.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-sm">
+          {options.map((o) => (
+            <button key={o} type="button" role="radio" aria-checked={scope === o} onClick={() => pick(o)}
+              title={o === "folder" ? `Just ${folderProp?.name ?? "this folder"}` : o === "unit" ? `Everything in unit ${unitProp}` : "Every unit on the site"}
+              className={`h-7 px-2.5 rounded text-[13px] font-semibold whitespace-nowrap transition-colors ${scope === o ? "bg-[var(--color-main)] text-white" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+              {o === "folder" ? "This folder" : o === "unit" ? `Unit ${unitProp}` : "Whole site"}
+            </button>
+          ))}
+        </div>
+      )}
       {openDoc && <DocInPlace docId={openDoc} onClose={() => setOpenDoc(null)} />}
       {folderMap ? (
         folderMap.tree.length <= 1 ? (

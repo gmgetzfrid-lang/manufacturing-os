@@ -9,7 +9,7 @@
 import React from "react";
 import { badgeText } from "@/lib/badge";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 export interface ViewTab {
   label: string;
@@ -37,6 +37,19 @@ export default function ViewTabs({
   right?: React.ReactNode;
 }) {
   const pathname = usePathname() ?? "";
+  const router = useRouter();
+  // The Graph opens on the library and folder you were in, not the whole
+  // estate (it has a way back up to everything). The folder is read from
+  // the address at the moment of the tap.
+  const libMatch = /^\/documents\/([0-9a-f-]{36})/.exec(pathname);
+  const hrefFor = (href: string) => href === "/documents/graph" && libMatch ? `/documents/graph?focus=${encodeURIComponent(`lib:${libMatch[1]}`)}` : href;
+  const openGraphHere = (e: React.MouseEvent, href: string) => {
+    if (href !== "/documents/graph" || !libMatch || e.metaKey || e.ctrlKey || e.shiftKey) return;
+    const folderId = new URLSearchParams(window.location.search).get("folderId");
+    if (!folderId) return;
+    e.preventDefault();
+    router.push(`/documents/graph?focus=${encodeURIComponent(`folder:${folderId}`)}`);
+  };
   const isActive = (t: ViewTab) => {
     if (t.exclude?.some((x) => pathname === x || pathname.startsWith(x + "/"))) return false;
     return t.exact ? pathname === t.href : pathname === t.href || pathname.startsWith(t.href + "/") || pathname.startsWith(t.href + "?");
@@ -65,7 +78,8 @@ export default function ViewTabs({
           return (
             <Link
               key={t.href}
-              href={t.href}
+              href={hrefFor(t.href)}
+              onClick={(e) => openGraphHere(e, t.href)}
               aria-current={active ? "page" : undefined}
               className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 px-3 h-8 rounded-lg text-xs font-bold transition-colors ${
                 active

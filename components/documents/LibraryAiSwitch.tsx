@@ -46,7 +46,7 @@ export default function LibraryAiSwitch({ orgId, libraryId, libraryName, exclude
           title={canChange ? (on ? "Turn off: never send this library to AI" : "Turn on: allow AI to read this library") : "Only Admin and Doc Control can change this"}
           className="group inline-flex items-center gap-2 rounded-md text-[14px] text-[var(--color-text)] disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)]"
         >
-          <span className={`relative inline-flex shrink-0 w-9 h-5 rounded-full transition-colors group-disabled:opacity-50 ${on ? "bg-[var(--color-accent)]" : "bg-[var(--color-border-strong)]"}`}>
+          <span className={`relative inline-flex shrink-0 w-9 h-5 rounded-full transition-colors group-disabled:opacity-50 ${on ? "bg-[var(--color-main)]" : "bg-[var(--color-border-strong)]"}`}>
             <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-[var(--color-surface)] shadow grid place-items-center transition-transform ${on ? "translate-x-4" : ""}`}>
               {busy && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-muted)]" />}
             </span>
