@@ -105,9 +105,9 @@ export default function CustomizeNodeModal({
 
   return createPortal(
     <div className="fixed inset-0 z-[400] grid place-items-center p-4 bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)]" onClick={onClose}>
-      <div className="w-full max-w-lg rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+      <div className="w-full max-w-lg rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-[var(--color-border)]">
-          <h2 className="font-black text-[var(--color-text)]">{title}</h2>
+          <h2 className="font-semibold text-[var(--color-text)]">{title}</h2>
           <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
 
@@ -146,7 +146,7 @@ export default function CustomizeNodeModal({
                 const active = v.icon === k;
                 return (
                   <button key={k} onClick={() => set({ icon: active ? undefined : k })} title={k}
-                    className={`aspect-square grid place-items-center rounded-lg border transition-colors ${active ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"}`}>
+                    className={`aspect-square grid place-items-center rounded-lg border transition-colors ${active ? "border-[var(--color-text-muted)] bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"}`}>
                     <NodeIcon name={k} className="w-4 h-4" />
                   </button>
                 );
@@ -173,7 +173,7 @@ export default function CustomizeNodeModal({
               )}
             </div>
             {v.coverImageUrl && !/^(https?:|data:|blob:)/i.test(v.coverImageUrl) && (
-              <p className="text-[11px] text-[var(--color-text-muted)] mt-1">Uploaded image · stored securely</p>
+              <p className="text-[13px] text-[var(--color-text-muted)] mt-1">Uploaded image · stored securely</p>
             )}
           </div>
 
@@ -185,13 +185,13 @@ export default function CustomizeNodeModal({
                 const cur = v.headerHeight ?? "auto";
                 return (
                   <button key={key} onClick={() => set({ headerHeight: key })}
-                    className={`py-1.5 rounded-lg text-xs font-bold border ${cur === key ? "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
+                    className={`py-1.5 rounded-lg text-[13px] font-bold border ${cur === key ? "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
                     {label}
                   </button>
                 );
               })}
             </div>
-            <p className="text-[11px] text-[var(--color-text-muted)] mt-1">Auto shows a banner when a cover or color is set. Folders inherit this page&apos;s header unless they set their own.</p>
+            <p className="text-[13px] text-[var(--color-text-muted)] mt-1">Auto shows a banner when a cover or color is set. Folders inherit this page&apos;s header unless they set their own.</p>
           </div>
 
           {/* page background */}
@@ -202,7 +202,7 @@ export default function CustomizeNodeModal({
                 const cur = v.bgType ?? "none";
                 return (
                   <button key={key} onClick={() => set({ bgType: key })}
-                    className={`py-1.5 rounded-lg text-xs font-bold border ${cur === key ? "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
+                    className={`py-1.5 rounded-lg text-[13px] font-bold border ${cur === key ? "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
                     {label}
                   </button>
                 );
@@ -212,7 +212,7 @@ export default function CustomizeNodeModal({
               <div className="mt-2 flex items-center gap-1.5">
                 {([["neutral", "Neutral"], ["brand", "Brand"]] as const).map(([key, label]) => (
                   <button key={key} onClick={() => set({ bgTint: key })}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border ${(v.bgTint ?? "neutral") === key ? "border-[var(--color-text)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
+                    className={`px-2.5 py-1 rounded-lg text-[13px] font-bold border ${(v.bgTint ?? "neutral") === key ? "border-[var(--color-text)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
                     {label} tint
                   </button>
                 ))}
@@ -224,12 +224,12 @@ export default function CustomizeNodeModal({
                   onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleBgUpload(f); e.target.value = ""; }} />
                 <div className="flex items-center gap-2">
                   <button onClick={() => bgFileRef.current?.click()} disabled={bgUploading || !storagePrefix}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-bold border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
                     {bgUploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />} {v.bgImagePath ? "Replace image" : "Upload image"}
                   </button>
-                  {v.bgImagePath && <span className="text-[11px] text-[var(--color-text-muted)]">Image set</span>}
+                  {v.bgImagePath && <span className="text-[13px] text-[var(--color-text-muted)]">Image set</span>}
                 </div>
-                <label className="block text-[11px] text-[var(--color-text-muted)]">
+                <label className="block text-[13px] text-[var(--color-text-muted)]">
                   Strength {Math.round((v.bgOpacity ?? 0.18) * 100)}%
                   <input type="range" min={5} max={35} value={Math.round((v.bgOpacity ?? 0.18) * 100)}
                     onChange={(e) => set({ bgOpacity: Number(e.target.value) / 100 })}
@@ -237,7 +237,7 @@ export default function CustomizeNodeModal({
                 </label>
               </div>
             )}
-            <p className="text-[11px] text-[var(--color-text-muted)] mt-1">Backgrounds sit behind your content cards (kept subtle so text stays readable).</p>
+            <p className="text-[13px] text-[var(--color-text-muted)] mt-1">Backgrounds sit behind your content cards (kept subtle so text stays readable).</p>
           </div>
 
           {/* tint (only meaningful with a cover) */}
@@ -247,7 +247,7 @@ export default function CustomizeNodeModal({
               <div className="mt-1.5 grid grid-cols-3 gap-1.5">
                 {([["none", "Original"], ["brand", "Brand duotone"], ["mono", "Mono"]] as const).map(([key, label]) => (
                   <button key={key} onClick={() => set({ coverTint: key })}
-                    className={`py-1.5 rounded-lg text-xs font-bold border ${ (v.coverTint ?? "none") === key ? "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
+                    className={`py-1.5 rounded-lg text-[13px] font-bold border ${ (v.coverTint ?? "none") === key ? "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
                     {label}
                   </button>
                 ))}
@@ -257,7 +257,7 @@ export default function CustomizeNodeModal({
         </div>
 
         <div className="px-5 py-3.5 border-t border-[var(--color-border)] flex items-center justify-end gap-2">
-          {saveErr && <p role="alert" className="mr-auto text-xs text-rose-700 dark:text-rose-300">{saveErr}</p>}
+          {saveErr && <p role="alert" className="mr-auto text-[13px] text-rose-700 dark:text-rose-300">{saveErr}</p>}
           <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Cancel</button>
           <button onClick={handleSave} disabled={saving} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold text-[var(--color-accent-fg)] disabled:opacity-50" style={{ background: "var(--color-accent)" }}>
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save

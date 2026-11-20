@@ -46,11 +46,11 @@ export function FolderMarkBar({ orgId, folderId, onChanged }: { orgId: string; f
     finally { setBusy(false); }
   };
 
-  if (!data) return error ? <span className="text-[11px] text-red-700">{error}</span> : null;
+  if (!data) return error ? <span className="text-[13px] text-red-700">{error}</span> : null;
   const own = data.own, inh = data.inherited;
   const inside = [inh.area?.label, inh.type, inh.equipment?.tag].filter(Boolean).join(" › ");
   return (
-    <div className="flex flex-wrap items-center gap-1.5 text-[11px] pointer-events-auto rounded-md bg-[var(--color-surface)]/95 border border-[var(--color-border)] px-2 py-1">
+    <div className="flex flex-wrap items-center gap-1.5 text-[13px] pointer-events-auto rounded-md bg-[var(--color-surface)]/95 border border-[var(--color-border)] px-2 py-1">
       <span className="font-bold">This folder is</span>
       {own.area && <span className={`${chip} border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]`}><Factory className="w-3 h-3" /> {own.area.label}<button title="Unmark" onClick={() => void send({ kind: "clear", which: "area" })}><X className="w-3 h-3" /></button></span>}
       {own.type && <span className={`${chip} border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]`}><Layers className="w-3 h-3" /> {own.type}<button title="Unmark" onClick={() => void send({ kind: "clear", which: "type" })}><X className="w-3 h-3" /></button></span>}
@@ -61,7 +61,7 @@ export function FolderMarkBar({ orgId, folderId, onChanged }: { orgId: string; f
           className={`${chip} border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]`}><Wand2 className="w-3 h-3" /> {data.suggestion.kind === "area" ? "Operating area" : "Equipment"}: {data.suggestion.value}?</button>
       )}
       {!editing && (
-        <select value="" onChange={(e) => { const k = e.target.value as MarkKind; setEditing(k); setUnit(data.units[0]?.code ?? ""); }} className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-[11px]">
+        <select value="" onChange={(e) => { const k = e.target.value as MarkKind; setEditing(k); setUnit(data.units[0]?.code ?? ""); }} className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-[13px]">
           <option value="">Mark as…</option>
           <option value="area">Operating area</option>
           <option value="type">Equipment type</option>
@@ -70,18 +70,18 @@ export function FolderMarkBar({ orgId, folderId, onChanged }: { orgId: string; f
       )}
       {editing === "area" && (
         data.units.length
-          ? <><select value={unit} onChange={(e) => setUnit(e.target.value)} className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-[11px]">{data.units.map((u) => <option key={u.code} value={u.code}>{u.label} ({u.code})</option>)}</select>
+          ? <><select value={unit} onChange={(e) => setUnit(e.target.value)} className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-[13px]">{data.units.map((u) => <option key={u.code} value={u.code}>{u.label} ({u.code})</option>)}</select>
             <button disabled={busy || !unit} onClick={() => void send({ kind: "area", unitCode: unit })} className="rounded bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-2 py-0.5 font-bold disabled:opacity-50">Mark</button></>
           : <span className="text-amber-700">No operating areas in the Site Codebook yet (Intelligence › Setup).</span>
       )}
       {editing === "type" && (
-        <><input list="eqtypes" value={text} onChange={(e) => setText(e.target.value)} placeholder="e.g. Heaters" className="w-28 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-[11px]" />
+        <><input list="eqtypes" value={text} onChange={(e) => setText(e.target.value)} placeholder="e.g. Heaters" className="w-28 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-[13px]" />
           <datalist id="eqtypes">{data.types.map((t) => <option key={t} value={t} />)}</datalist>
           <button disabled={busy || !text.trim()} onClick={() => void send({ kind: "type", label: text })} className="rounded bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-2 py-0.5 font-bold disabled:opacity-50">Mark</button></>
       )}
       {editing === "equipment" && (
-        <><input value={text} onChange={(e) => setText(e.target.value)} placeholder="Tag, e.g. H-2" className="w-20 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-[11px] font-mono" />
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (optional)" className="w-32 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-[11px]" />
+        <><input value={text} onChange={(e) => setText(e.target.value)} placeholder="Tag, e.g. H-2" className="w-20 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-[13px] font-display tabular-nums" />
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (optional)" className="w-32 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-[13px]" />
           <button disabled={busy || !text.trim()} onClick={() => void send({ kind: "equipment", tag: text, name })} className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-0.5 font-bold disabled:opacity-50">Mark</button></>
       )}
       {editing && <button onClick={() => setEditing(null)} className="text-[var(--color-text-muted)] hover:underline">cancel</button>}
@@ -127,12 +127,12 @@ export function LibrarySetup({ orgId, libraryId, libraryName, onDone, onClose }:
       <div className="w-full max-w-2xl max-h-[85vh] flex flex-col rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between">
           <div>
-            <div className="text-sm font-black">Set up {libraryName} as an equipment library</div>
-            <div className="text-[11px] text-[var(--color-text-muted)]">Say what each level of folders is. Everything filed underneath inherits it.</div>
+            <div className="text-sm font-semibold">Set up {libraryName} as an equipment library</div>
+            <div className="text-[13px] text-[var(--color-text-muted)]">Say what each level of folders is. Everything filed underneath inherits it.</div>
           </div>
           <button aria-label="Close" onClick={onClose} className="p-1 opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
         </div>
-        <div className="px-4 py-3 space-y-2 text-xs">
+        <div className="px-4 py-3 space-y-2 text-[13px]">
           {levels.map((l, i) => (
             <label key={i} className="flex items-center gap-2">
               <span className="w-28 text-[var(--color-text-muted)]">{i === 0 ? "Top folders" : `Level ${i + 1} folders`}</span>
@@ -141,7 +141,7 @@ export function LibrarySetup({ orgId, libraryId, libraryName, onDone, onClose }:
               </select>
             </label>
           ))}
-          <div className="text-[11px] text-[var(--color-text-muted)]">Example: Crude Unit / H-1 Crude Heater / (inspection reports, datasheets…) is Operating area, Equipment, Nothing.</div>
+          <div className="text-[13px] text-[var(--color-text-muted)]">Example: Crude Unit / H-1 Crude Heater / (inspection reports, datasheets…) is Operating area, Equipment, Nothing.</div>
           <div className="flex gap-2">
             <button onClick={() => void preview()} disabled={!!busy} className="rounded-md border border-[var(--color-border)] px-3 py-1 font-bold disabled:opacity-50">Preview</button>
             {rows && <button onClick={() => void apply()} disabled={!!busy || !counts || counts.area + counts.type + counts.eq === 0} className="rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1 font-bold disabled:opacity-50">Apply</button>}
@@ -153,7 +153,7 @@ export function LibrarySetup({ orgId, libraryId, libraryName, onDone, onClose }:
         </div>
         {rows && (
           <div className="flex-1 overflow-auto border-t border-[var(--color-border)]">
-            <table className="w-full text-[11px]">
+            <table className="w-full text-[13px]">
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.folderId} className="border-b border-[var(--color-border)]">

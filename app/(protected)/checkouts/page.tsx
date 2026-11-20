@@ -9,12 +9,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
-  KeyRound, Search, AlertTriangle, Lock, Clock,
-  Layers, User as UserIcon, FileText, Briefcase, AlarmClock,
+  KeyRound, Search, AlertTriangle, Lock,
+  Layers, AlarmClock,
   ExternalLink, Network, Tag, ChevronDown,
 } from "lucide-react";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, Card } from "@/components/ui/PageHero";
+import { bandInput, bandInputIcon, bandSelect, bandSeg, bandSegItem } from "@/components/admin/band";
 import { Spinner } from "@/components/ui/Spinner";
 import { useRole } from "@/components/providers/RoleContext";
 import { listAllActiveCheckouts, autoReleaseExpiredAdHoc } from "@/lib/projects";
@@ -174,67 +175,60 @@ export default function CheckoutsPage() {
     : error ? "Checkouts didn't load."
     : rows.length === 0 ? "Nothing checked out."
     : `${rows.length.toLocaleString()} checked out.`;
-  const answerBits: string[] = [];
-  if (!loading && !error && rows.length > 0) {
-    if (mine > 0) answerBits.push(`${mine === rows.length ? "All" : mine} by you.`);
-    if (stale > 0) answerBits.push(`${stale} past ${stale === 1 ? "its" : "their"} expected release.`);
-    if (overlaps.length > 0) answerBits.push(`${overlaps.length} overlap${overlaps.length === 1 ? "" : "s"} to talk through.`);
-  }
-  const darkField = "h-10 w-full rounded-[10px] border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] text-white placeholder:text-[var(--color-ink-muted)] px-3 text-base sm:text-[14px] focus:outline-none focus:border-[var(--color-ink-muted)] focus:ring-2 focus:ring-[var(--color-accent)]/40 [&_option]:bg-[var(--color-surface)] [&_option]:text-[var(--color-text)]";
+  const ready = !loading && !error && rows.length > 0;
+  // The numbers that back it up, in ruled cells.
+  const answerFacts = ready ? [
+    { label: "By you", value: mine.toLocaleString() },
+    { label: "Overdue", value: stale.toLocaleString(), tone: stale > 0 ? "bad" as const : undefined },
+    { label: "Overlaps", value: overlaps.length.toLocaleString(), tone: overlaps.length > 0 ? "warn" as const : undefined },
+  ] : undefined;
 
   return (
     <PageShell width="work">
       <PageHero
-        kicker="Document control · Checkouts"
+        kicker="Document control"
         title={answer}
         sub={
           <>
-            {answerBits.length > 0 ? answerBits.join(" ") : "Every document locked right now, across every library."}{" "}
+            Every document locked right now, across every library.{" "}
             <HelpTooltip className="align-middle">
-              A <b>checkout</b> declares &ldquo;I&rsquo;m working on this drawing - don&rsquo;t touch.&rdquo;
-              <b className="block mt-1">Project checkouts</b> are tied to an open project and stay until the project closes or the user releases.
-              <b className="block mt-1">Ad-hoc checkouts</b> auto-expire after 24h.
-              <b className="block mt-1">Collaborative sessions</b> share one lockId so multiple people can co-edit.
+              A <b>checkout</b> says &ldquo;I&rsquo;m working on this drawing, don&rsquo;t touch.&rdquo;
+              <b className="block mt-1">Project checkouts</b> are tied to an open project and stay until the project closes or the person releases them.
+              <b className="block mt-1">Ad-hoc checkouts</b> release on their own after 24 hours.
+              <b className="block mt-1">Shared checkouts</b> let several people work on one drawing together.
             </HelpTooltip>
           </>
         }
+        facts={answerFacts}
         tools={
-          <div className="inline-flex rounded-[10px] border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] p-0.5" role="group" aria-label="Group the list">
-            <button
-              onClick={() => setView("grouped")}
-              aria-pressed={view === "grouped"}
-              className={`h-8 px-3 text-[13px] font-semibold rounded-lg transition-colors ${view === "grouped" ? "bg-white text-[var(--color-ink)] shadow-sm" : "text-[var(--color-ink-muted)] hover:text-white"}`}
-            >
+          <div className={bandSeg} role="group" aria-label="Group the list">
+            <button type="button" onClick={() => setView("grouped")} aria-pressed={view === "grouped"} className={bandSegItem(view === "grouped")}>
               By project
             </button>
-            <button
-              onClick={() => setView("flat")}
-              aria-pressed={view === "flat"}
-              className={`h-8 px-3 text-[13px] font-semibold rounded-lg transition-colors ${view === "flat" ? "bg-white text-[var(--color-ink)] shadow-sm" : "text-[var(--color-ink-muted)] hover:text-white"}`}
-            >
+            <button type="button" onClick={() => setView("flat")} aria-pressed={view === "flat"} className={bandSegItem(view === "flat")}>
               One list
             </button>
           </div>
         }
       >
-        <ViewTabs tabs={DOCUMENT_VIEWS} variant="dark" />
+        <ViewTabs tabs={DOCUMENT_VIEWS} />
         {/* Filters */}
-        <div className="mt-3 grid grid-cols-2 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2">
+        <div className="mt-4 grid grid-cols-2 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2">
           <div className="relative col-span-2 md:col-span-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-ink-muted)] pointer-events-none" />
+            <Search className={bandInputIcon} />
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search by document, person or project"
               aria-label="Search checkouts"
-              className={`${darkField} pl-9`}
+              className={`${bandInput} max-sm:text-base`}
             />
           </div>
-          <select value={libraryFilter} onChange={(e) => setLibraryFilter(e.target.value)} aria-label="Library" className={darkField}>
+          <select value={libraryFilter} onChange={(e) => setLibraryFilter(e.target.value)} aria-label="Library" className={`${bandSelect} w-full min-w-0`}>
             <option value="">All libraries</option>
             {uniqueLibs.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
           </select>
-          <select value={userFilter} onChange={(e) => setUserFilter(e.target.value)} aria-label="Person" className={darkField}>
+          <select value={userFilter} onChange={(e) => setUserFilter(e.target.value)} aria-label="Person" className={`${bandSelect} w-full min-w-0`}>
             <option value="">Everyone</option>
             {uniqueUsers.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
           </select>
@@ -243,7 +237,7 @@ export default function CheckoutsPage() {
 
       <PageBody>
         {/* What needs a word: checkouts past their date, edits that overlap. */}
-        <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 space-y-3 empty:hidden [&>*]:!mb-0">
+        <div className="space-y-3 empty:hidden [&>*]:!mb-0">
           <StaleCheckoutBanner userId={uid ?? undefined} />
           {activeOrgId && uid && (
             <EditOverlapBanner
@@ -300,31 +294,29 @@ export default function CheckoutsPage() {
 
         {loading ? (
           <Card>
-            <div className="flex items-center gap-2 text-[14px] text-[var(--color-text-muted)]">
+            <div className="flex items-center gap-2 text-[15px] text-[var(--color-text-muted)]">
               <Spinner size="sm" /> Loading checkouts…
             </div>
           </Card>
         ) : error ? (
           <Card>
-            <div role="alert" className="text-[14px] text-rose-700 dark:text-rose-300 flex items-start gap-2">
+            <div role="alert" className="text-[15px] font-semibold text-[var(--state-overdue)] flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> Couldn&apos;t load the checkouts: {error}
             </div>
           </Card>
         ) : filtered.length === 0 ? (
           <Card>
-            <div className="py-8 text-center">
-              <KeyRound className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-3" />
-              <p className="text-[14px] text-[var(--color-text-muted)]">
-                {rows.length === 0 ? "No one has a document checked out." : "No checkouts match your filters."}
-              </p>
-            </div>
+            <p className="flex items-center gap-2.5 text-[15px] text-[var(--color-text-muted)]">
+              <KeyRound className="w-5 h-5 shrink-0 text-[var(--color-text-faint)]" />
+              {rows.length === 0 ? "No one has a document checked out." : "No checkouts match your filters."}
+            </p>
           </Card>
         ) : view === "grouped" ? (
           <>
             {grouped.map((g, idx) => <ProjectGroup key={idx} project={g.project} items={g.items} />)}
           </>
         ) : (
-          <FlatTable items={filtered} />
+          <CheckoutsTable items={filtered} showProject />
         )}
       </PageBody>
     </PageShell>
@@ -333,107 +325,115 @@ export default function CheckoutsPage() {
 
 function ProjectGroup({ project, items }: { project: Project | null; items: CheckoutWithContext[] }) {
   return (
-    <section className="bg-[var(--color-surface)] rounded-2xl overflow-hidden shadow-[var(--shadow-card)]">
-      <div className="px-4 sm:px-5 py-3.5 border-b border-[var(--color-border)] flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0">
+    <section className="min-w-0">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-2.5">
+        <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)] min-w-0">
           {project ? (
-            <Briefcase className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
+            <Link href={`/projects/${project.id}`} className="hover:text-[var(--color-accent-text)] hover:underline underline-offset-4">
+              {project.name}
+            </Link>
+          ) : "Ad-hoc checkouts"}
+        </h2>
+        <span className="text-[14px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
+          {project ? (
+            <>
+              {project.ownerUserName && <span>{project.ownerUserName}</span>}
+              {project.visibility === "private" && <Lock className="w-3 h-3" aria-label="Private" />}
+              {project.status && <span className="capitalize">{String(project.status).replace(/_/g, " ")}</span>}
+            </>
           ) : (
-            <Clock className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
+            <span>Release on their own after 24 hours</span>
           )}
-          <div className="min-w-0">
-            {project ? (
-              <Link href={`/projects/${project.id}`} className="text-[14px] font-bold text-[var(--color-text)] hover:underline">
-                {project.name}
-              </Link>
-            ) : (
-              <h2 className="text-[14px] font-bold text-[var(--color-text)]">Ad-hoc checkouts</h2>
-            )}
-            <div className="text-[12px] text-[var(--color-text-muted)] flex items-center gap-2 mt-0.5">
-              {project ? (
-                <>
-                  <span>{project.ownerUserName}</span>
-                  {project.visibility === "private" && <Lock className="w-3 h-3" />}
-                  <span>· {project.status}</span>
-                </>
-              ) : (
-                <span>Quick reviews: auto-release after 24h</span>
-              )}
-            </div>
-          </div>
-        </div>
-        <span className="shrink-0 text-[13px] text-[var(--color-text-muted)] tabular-nums">
+        </span>
+        <span className="ml-auto text-[14px] text-[var(--color-text-muted)] tabular-nums">
           {items.length} file{items.length === 1 ? "" : "s"}
         </span>
       </div>
-      <div className="divide-y divide-[var(--color-border)]">
-        {items.map((r) => <CheckoutRow key={r.id} row={r} />)}
-      </div>
+      <CheckoutsTable items={items} />
     </section>
   );
 }
 
-function FlatTable({ items }: { items: CheckoutWithContext[] }) {
+const MODE_LABEL: Record<string, string> = { view: "View", markup: "Markup", edit: "Edit", drafting: "Drafting" };
+
+/** Every checkout as a row: the document, who has it, since when, when it
+ *  comes back. A checkout past its release date gets a red left edge. */
+function CheckoutsTable({ items, showProject }: { items: CheckoutWithContext[]; showProject?: boolean }) {
   return (
-    <Card pad={false} className="overflow-hidden">
-      <div className="divide-y divide-[var(--color-border)]">
-        {items.map((r) => <CheckoutRow key={r.id} row={r} showProject />)}
-      </div>
-    </Card>
+    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+      <table className="w-full text-[14px]">
+        <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left max-sm:hidden">
+          <tr>
+            <th className="font-semibold px-4 h-10">Document</th>
+            <th className="font-semibold px-4 hidden lg:table-cell">Library</th>
+            <th className="font-semibold px-4">Checked out by</th>
+            <th className="font-semibold px-4 hidden md:table-cell">Kind</th>
+            <th className="font-semibold px-4">Since</th>
+            <th className="font-semibold px-4">Release</th>
+            {showProject && <th className="font-semibold px-4 hidden xl:table-cell">Project</th>}
+            <th className="w-12"><span className="sr-only">Open</span></th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-[var(--color-border)]">
+          {items.map((r) => <CheckoutRow key={r.id} row={r} showProject={showProject} />)}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
 function CheckoutRow({ row, showProject }: { row: CheckoutWithContext; showProject?: boolean }) {
-  const isStale = row.expectedReleaseAt && new Date(row.expectedReleaseAt as string) < new Date();
+  const isStale = !!row.expectedReleaseAt && new Date(row.expectedReleaseAt as string) < new Date();
   const isAdhoc = !row.projectId;
+  const href = `/documents/${row.libraryId}?doc=${row.documentId}`;
+  const release = isStale
+    ? <span className="font-semibold text-[var(--state-overdue)] inline-flex items-center gap-1"><AlarmClock className="w-3.5 h-3.5" /> Was due {formatRelative(row.expectedReleaseAt as Timestamp)}</span>
+    : row.expectedReleaseAt ? <span>Due {formatRelative(row.expectedReleaseAt as Timestamp)}</span>
+    : isAdhoc && row.autoExpiresAt ? <span>Releases {formatRelative(row.autoExpiresAt)}</span>
+    : <span className="text-[var(--color-text-muted)]">At check-in</span>;
+  const why = row.purpose || row.note;
+  const sub = row.docTitle && row.docTitle !== row.docNumber ? row.docTitle : why ? `“${why}”` : null;
   return (
-    <div className="px-4 sm:px-5 py-3 hover:bg-[var(--color-surface-2)]/60 transition-colors">
-      <div className="flex items-center gap-3">
-        <FileText className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
-        <div className="flex-1 min-w-0">
-          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-            <span className="text-[14px] font-bold text-[var(--color-text)] truncate">{row.docNumber || "-"}</span>
-            {row.docTitle && row.docTitle !== row.docNumber && <span className="text-[13px] text-[var(--color-text-muted)] truncate">{row.docTitle}</span>}
-            {row.libraryName && <span className="text-[13px] text-[var(--color-text-muted)] truncate">in {row.libraryName}</span>}
-          </div>
-          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-[var(--color-text-muted)]">
-            <span className="inline-flex items-center gap-1">
-              <UserIcon className="w-3 h-3" /><b className="text-[var(--color-text)] font-medium">{row.userName}</b>
-            </span>
-            <span className="inline-flex items-center gap-1 uppercase text-[11px] font-bold bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{row.mode}</span>
-            <span className="inline-flex items-center gap-1">
-              <Clock className="w-3 h-3" />since {formatRelative(row.startedAt)}
-            </span>
-            {isStale && (
-              <span className="inline-flex items-center gap-1 font-bold text-amber-700 dark:text-amber-400">
-                <AlarmClock className="w-3 h-3" /> Past expected release
-              </span>
-            )}
-            {isAdhoc && row.autoExpiresAt && (
-              <span className="inline-flex items-center gap-1 text-[var(--color-text-muted)]">
-                <AlarmClock className="w-3 h-3" /> Expires {formatRelative(row.autoExpiresAt)}
-              </span>
-            )}
-            {showProject && row.project && (
-              <Link href={`/projects/${row.project.id}`} className="inline-flex items-center gap-1 text-[var(--color-accent-text)] hover:underline">
-                <Briefcase className="w-3 h-3" /> {row.project.name}
-              </Link>
-            )}
-          </div>
-          {(row.purpose || row.note) && (
-            <div className="mt-1 text-[13px] text-[var(--color-text-muted)] line-clamp-1">&ldquo;{row.purpose || row.note}&rdquo;</div>
-          )}
+    <tr className="hover:bg-[var(--color-surface-2)] transition-colors max-sm:block max-sm:relative">
+      <td className="px-4 py-3 relative max-sm:block max-sm:pr-14">
+        {isStale && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />}
+        <Link href={href} className="font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
+          {row.docNumber || "-"}
+        </Link>
+        {sub && (
+          <div className="text-[13px] text-[var(--color-text-muted)] truncate max-w-[42ch]" title={why ? `Why: ${why}` : undefined}>{sub}</div>
+        )}
+        {/* Phone: who, since and release under the document. */}
+        <div className="sm:hidden mt-1 flex flex-wrap gap-x-3 text-[13px] text-[var(--color-text-muted)]">
+          <span className="font-semibold text-[var(--color-text)]">{row.userName}</span>
+          <span>{MODE_LABEL[row.mode] ?? row.mode}</span>
+          <span>Since {formatRelative(row.startedAt)}</span>
+          {release}
         </div>
+      </td>
+      <td className="px-4 py-3 text-[var(--color-text-muted)] hidden lg:table-cell">{row.libraryName || "-"}</td>
+      <td className="px-4 py-3 font-semibold text-[var(--color-text)] max-sm:hidden whitespace-nowrap">{row.userName}</td>
+      <td className="px-4 py-3 hidden md:table-cell">{MODE_LABEL[row.mode] ?? row.mode}</td>
+      <td className="px-4 py-3 whitespace-nowrap max-sm:hidden">{formatRelative(row.startedAt)}</td>
+      <td className="px-4 py-3 whitespace-nowrap max-sm:hidden">{release}</td>
+      {showProject && (
+        <td className="px-4 py-3 hidden xl:table-cell">
+          {row.project ? (
+            <Link href={`/projects/${row.project.id}`} className="text-[var(--color-accent-text)] hover:underline">{row.project.name}</Link>
+          ) : <span className="text-[var(--color-text-muted)]">Ad-hoc</span>}
+        </td>
+      )}
+      <td className="pr-3 py-3 text-right max-sm:absolute max-sm:right-1 max-sm:top-1.5">
         <Link
-          href={`/documents/${row.libraryId}?doc=${row.documentId}`}
-          className="shrink-0 w-9 h-9 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
-          title="Open document"
-          aria-label="Open document"
+          href={href}
+          className="inline-grid w-9 h-9 place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
+          title="Open the document"
+          aria-label={`Open ${row.docNumber || "the document"}`}
         >
           <ExternalLink className="w-4 h-4" />
         </Link>
-      </div>
-    </div>
+      </td>
+    </tr>
   );
 }
 
@@ -475,26 +475,28 @@ function ConsolidationPanel({
   const checkoutById = new Map(checkouts.map((c) => [c.id ?? "", c]));
 
   return (
-    <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden">
-      <button
-        onClick={onToggle}
-        aria-expanded={isOpen}
-        className="w-full px-4 sm:px-5 py-3.5 flex items-center justify-between gap-3 text-left hover:bg-[var(--color-surface-2)]/60 transition-colors"
-      >
-        <div className="flex items-center gap-2 min-w-0 flex-wrap">
-          <Network className="w-4 h-4 text-amber-600 shrink-0" />
-          <h2 className="text-[14px] font-bold text-[var(--color-text)]">
-            Checkouts that overlap
-          </h2>
-          <div className="text-[13px] text-amber-800 dark:text-amber-300">
-            {assetCount > 0 && <span className="mr-2">{assetCount} asset overlap{assetCount === 1 ? "" : "s"}</span>}
-            {scopeCount > 0 && <span>{scopeCount} scope overlap{scopeCount === 1 ? "" : "s"}</span>}
-          </div>
-        </div>
-        <ChevronDown className={`w-4 h-4 text-[var(--color-text-muted)] transition-transform ${isOpen ? "" : "-rotate-90"}`} />
-      </button>
+    <section className="min-w-0">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2.5 min-h-8">
+        <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)] inline-flex items-center gap-2">
+          <Network className="w-4 h-4 text-[var(--state-held)] shrink-0" />
+          Checkouts that overlap
+        </h2>
+        <span className="text-[14px] text-[var(--color-text-muted)]">
+          {assetCount > 0 && <span className="mr-3">{assetCount} on the same equipment</span>}
+          {scopeCount > 0 && <span>{scopeCount} in the same unit or system</span>}
+        </span>
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={isOpen}
+          className="ml-auto inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+        >
+          {isOpen ? "Hide" : "Show"}
+          <ChevronDown className={`w-4 h-4 text-[var(--color-text-muted)] transition-transform ${isOpen ? "rotate-180" : ""}`} />
+        </button>
+      </div>
       {isOpen && (
-        <div className="border-t border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
           {overlaps.map((o, i) => (
             <OverlapCard key={i} overlap={o} checkoutById={checkoutById} onNudge={onNudge} />
           ))}
@@ -527,13 +529,13 @@ function OverlapCard({
 
   const heading =
     overlap.kind === "asset"
-      ? <><Tag className="w-3 h-3" /> Asset <b className="font-mono">{overlap.assetTag}</b></>
-      : <><Layers className="w-3 h-3" /> {overlap.level === "system" ? "System" : "Unit"} <b>{overlap.scopeName}</b></>;
+      ? <><Tag className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Equipment <span className="font-display text-[16px] font-semibold tabular-nums">{overlap.assetTag}</span></>
+      : <><Layers className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {overlap.level === "system" ? "System" : "Unit"} <span className="font-display text-[16px] font-semibold">{overlap.scopeName}</span></>;
 
   return (
     <div className="px-4 sm:px-5 py-3">
       <div className="flex items-center gap-2">
-        <div className="text-[13px] font-bold text-[var(--color-text)] inline-flex items-center gap-1.5 flex-1 min-w-0">
+        <div className="text-[15px] text-[var(--color-text)] inline-flex items-center gap-1.5 flex-1 min-w-0">
           {heading}
           <span className="text-[var(--color-text-muted)] font-normal">, {involved.length} checkout{involved.length === 1 ? "" : "s"}</span>
         </div>
@@ -542,20 +544,20 @@ function OverlapCard({
             onClick={doNudge}
             disabled={nudging || nudged}
             title="Send everyone here an in-app heads-up to coordinate"
-            className={`shrink-0 inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-[12px] font-bold transition-colors ${
-              nudged ? "text-emerald-700 dark:text-emerald-400"
-                     : "border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-60"
+            className={`shrink-0 inline-flex items-center gap-1.5 h-9 px-3 rounded-md text-[14px] font-semibold transition-colors ${
+              nudged ? "text-[var(--color-text)]"
+                     : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-60"
             }`}
           >
-            <Send className="w-3 h-3" /> {nudged ? "Heads-up sent" : nudging ? "Sending…" : "Send a heads-up"}
+            {nudged ? <span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-released)]" /> : <Send className="w-3.5 h-3.5" />} {nudged ? "Heads-up sent" : nudging ? "Sending…" : "Send a heads-up"}
           </button>
         )}
       </div>
       <div className="mt-1.5 space-y-1">
         {involved.map((c) => (
-          <div key={c.id} className="flex items-center gap-2 text-[13px] text-[var(--color-text)]">
+          <div key={c.id} className="flex items-center gap-2 text-[14px] text-[var(--color-text)]">
             <Lock className="w-3 h-3 text-[var(--color-text-faint)] shrink-0" />
-            <span className="font-mono text-[var(--color-text-muted)] shrink-0">{c.docNumber || "-"}</span>
+            <span className="font-display text-[15px] font-semibold tabular-nums shrink-0">{c.docNumber || "-"}</span>
             <span className="truncate flex-1 min-w-0">{c.docTitle || "(untitled)"}</span>
             <span className="text-[var(--color-text-muted)]">{c.userName || c.userId.slice(0, 8)}</span>
             {c.libraryId && c.documentId && (

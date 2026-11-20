@@ -41,7 +41,7 @@ export default function SignaturePanel({
   }, [resourceType, resourceId, load]);
 
   return (
-    <div className={`rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] ${className}`}>
+    <div className={`rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] ${className}`}>
       <div className="flex items-center gap-2 px-4 sm:px-5 py-3 border-b border-[var(--color-border)]">
         <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-[13px] font-semibold text-[var(--color-text-muted)] flex-1">Signatures{sigs && sigs.length > 0 && <> · {sigs.length}</>}</span>
@@ -49,7 +49,7 @@ export default function SignaturePanel({
           <button
             type="button"
             onClick={() => requestSignature({ resourceType, resourceId, resourceLabel })}
-            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 text-[12px] font-bold"
+            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[13px] font-bold"
           >
             <PenLine className="w-3.5 h-3.5" /> Sign
           </button>
@@ -57,13 +57,13 @@ export default function SignaturePanel({
       </div>
       <div className="p-3">
         {!sigs ? (
-          <div className="text-xs text-[var(--color-text-muted)] py-2 text-center">Loading signatures…</div>
+          <div className="text-[13px] text-[var(--color-text-muted)] py-2 text-center">Loading signatures…</div>
         ) : failed ? (
-          <div className="text-xs text-rose-700 dark:text-rose-400 py-3 text-center">
+          <div className="text-[13px] text-rose-700 dark:text-rose-400 py-3 text-center">
             Couldn&apos;t load signatures. <button type="button" onClick={() => void load()} className="font-bold underline">Try again</button>
           </div>
         ) : sigs.length === 0 ? (
-          <div className="text-xs text-[var(--color-text-muted)] italic py-3 text-center">No signatures yet.</div>
+          <div className="text-[13px] text-[var(--color-text-muted)] italic py-3 text-center">No signatures yet.</div>
         ) : (
           <ul className="space-y-2">
             {sigs.map((s) => {
@@ -77,7 +77,7 @@ export default function SignaturePanel({
                       <span className="font-bold">{s.intent}</span> by <span className="font-bold" style={{ fontFamily: "cursive" }}>{s.signerName}</span>
                       {s.signerRole && <span className="text-[var(--color-text-muted)]"> · {s.signerRole}</span>}
                     </div>
-                    <div className="text-[11px] text-[var(--color-text-muted)]">{new Date(s.signedAt).toLocaleString()}</div>
+                    <div className="text-[13px] text-[var(--color-text-muted)]">{new Date(s.signedAt).toLocaleString()}</div>
                   </div>
                 </li>
               );

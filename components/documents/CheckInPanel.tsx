@@ -544,11 +544,11 @@ export default function CheckInPanel({
       </h3>
 
       <div>
-        <div className="text-xs font-bold text-[var(--color-text-muted)] uppercase mb-1.5">How did it go?</div>
+        <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">How did it go?</div>
         {/* Cards render only once the derivation facts are in — a card set
             that reshuffles under the cursor is worse than a 200ms wait. */}
         {!factsReady ? (
-          <div className="p-4 rounded-xl border border-dashed border-[var(--color-border-strong)] text-center text-[var(--color-text-faint)] text-xs flex items-center justify-center gap-2">
+          <div className="p-4 rounded-xl border border-dashed border-[var(--color-border-strong)] text-center text-[var(--color-text-faint)] text-[13px] flex items-center justify-center gap-2">
             <Loader2 className="w-3.5 h-3.5 animate-spin" /> Working out your options…
           </div>
         ) : (
@@ -564,7 +564,7 @@ export default function CheckInPanel({
                 className={`w-full p-3 rounded-xl border-2 text-left transition-all ${isSel ? CARD_SELECTED : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}
               >
                 <div className="font-bold text-sm text-[var(--color-text)]">{card.label}</div>
-                {isSel && <p className="text-[11px] text-[var(--color-text-muted)] leading-snug mt-1">{card.hint}</p>}
+                {isSel && <p className="text-[13px] text-[var(--color-text-muted)] leading-snug mt-1">{card.hint}</p>}
               </button>
             );
           })}
@@ -581,7 +581,7 @@ export default function CheckInPanel({
             rows={3}
             className="w-full p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
           />
-          <div className="text-[11px] text-[var(--color-text-muted)] mt-1">
+          <div className="text-[13px] text-[var(--color-text-muted)] mt-1">
             Saved on the record word for word. The next person reads it.
           </div>
         </div>
@@ -600,7 +600,7 @@ export default function CheckInPanel({
                 type="button"
                 onClick={() => { setMocStatus(opt.v); if (opt.v === "none") setMocNumber(""); }}
                 aria-pressed={mocStatus === opt.v}
-                className={`flex-1 py-1 text-[11px] font-bold rounded transition-colors ${mocStatus === opt.v ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
+                className={`flex-1 py-1 text-[13px] font-bold rounded transition-colors ${mocStatus === opt.v ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
               >
                 {opt.label}
               </button>
@@ -611,11 +611,11 @@ export default function CheckInPanel({
               value={mocNumber}
               onChange={(e) => setMocNumber(e.target.value)}
               placeholder="MOC number: e.g. MOC-2026-014"
-              className="w-full px-2.5 py-1.5 border border-[var(--color-border)] rounded-md text-xs focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+              className="w-full px-2.5 py-1.5 border border-[var(--color-border)] rounded-md text-[13px] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
             />
           )}
           {mocStatus === "none" && (
-            <p className="flex items-start gap-1.5 border-l-2 border-amber-500 pl-2 text-[11px] text-amber-800 dark:text-amber-300">
+            <p className="flex items-start gap-1.5 border-l-2 border-amber-500 pl-2 text-[13px] text-amber-800 dark:text-amber-300">
               <ShieldAlert className="w-3.5 h-3.5 shrink-0 mt-0.5" />
               <span>
                 This goes to Document Control flagged as an <b>undocumented field change</b>. Reporting it is right: it is never blocked.
@@ -641,7 +641,7 @@ export default function CheckInPanel({
             type="button"
             {...fileDrag.bind}
             onClick={() => fileInputRef.current?.click()}
-            className={`w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-dashed border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-slate-400 transition-colors ${fileDrag.ring}`}
+            className={`w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-dashed border-[var(--color-border-strong)] text-[13px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-slate-400 transition-colors ${fileDrag.ring}`}
           >
             <Upload className="w-3.5 h-3.5" /> {fileDrag.over ? fileDrag.say : "Drop or attach redline photos or marked-up files"}
           </button>
@@ -650,7 +650,7 @@ export default function CheckInPanel({
               {files.map((f, i) => {
                 const st = fileStates.get(f);
                 return (
-                  <li key={`${f.name}-${i}`} className="flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
+                  <li key={`${f.name}-${i}`} className="flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]">
                     <FileThumb file={f} size={32} />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate font-semibold text-[var(--color-text)]">{f.name}</span>
@@ -665,7 +665,7 @@ export default function CheckInPanel({
                       <button
                         type="button"
                         onClick={() => { void sendFile(f, ticketNoRef.current!).catch(() => { /* its row says so */ }); }}
-                        className="shrink-0 px-2 py-1 rounded-md border border-[var(--color-border)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                        className="shrink-0 px-2 py-1 rounded-md border border-[var(--color-border)] text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                       >
                         Try again
                       </button>
@@ -689,7 +689,7 @@ export default function CheckInPanel({
       )}
 
       {selected?.allowHoldOffer && (
-        <label className="flex items-start gap-2 text-[11px] text-[var(--color-text-muted)] cursor-pointer">
+        <label className="flex items-start gap-2 text-[13px] text-[var(--color-text-muted)] cursor-pointer">
           <input
             type="checkbox"
             checked={alsoHold}

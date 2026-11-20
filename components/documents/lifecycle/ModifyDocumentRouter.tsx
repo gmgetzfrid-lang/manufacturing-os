@@ -192,11 +192,11 @@ export default function ModifyDocumentRouter(props: ModifyDocumentRouterProps) {
   const hasSet = !!doc.setId;
   return (
     <div className="fixed inset-0 z-[180] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
+      <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-lg shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface-2)]">
           <div>
-            <h2 className="font-black text-[var(--color-text)]">Modify Document</h2>
-            <div className="text-[11px] font-mono text-[var(--color-text-muted)] mt-0.5">
+            <h2 className="font-semibold text-[var(--color-text)]">Modify Document</h2>
+            <div className="text-[13px] font-display tabular-nums text-[var(--color-text-muted)] mt-0.5">
               {doc.documentNumber || doc.title || doc.id} · Rev {doc.rev || "-"} · {doc.status || "-"}
             </div>
           </div>
@@ -283,7 +283,7 @@ function RouterChoice({
       </div>
       <div className="flex-1 min-w-0">
         <div className="text-sm font-bold text-[var(--color-text)]">{label}</div>
-        <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">{sub}</div>
+        <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{sub}</div>
       </div>
       <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
     </button>

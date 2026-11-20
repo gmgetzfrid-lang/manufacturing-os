@@ -116,7 +116,7 @@ export default function EditOverlapBanner({
             className="flex items-start gap-2.5 pl-3 py-1 border-l-2 border-amber-500 text-amber-800 dark:text-amber-300"
           >
             <Users className="w-4 h-4 mt-0.5 shrink-0" />
-            <div className="flex-1 min-w-0 text-xs leading-relaxed">
+            <div className="flex-1 min-w-0 text-[13px] leading-relaxed">
               <b>{row.documentLabel}:</b>{" "}
               {onlyMine ? (
                 <>you and <b>{otherNames.join(", ")}</b> both have active edit work on this document</>
@@ -128,11 +128,11 @@ export default function EditOverlapBanner({
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
               {nudged.has(row.documentId) ? (
-                <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400">Heads-up sent</span>
+                <span className="text-[13px] font-bold text-emerald-700 dark:text-emerald-400">Heads-up sent</span>
               ) : (
                 <button
                   onClick={() => void sendHeadsUp(row)}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[13px] font-bold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                   title="Send an in-app heads-up to everyone involved"
                 >
                   <BellRing className="w-3 h-3" /> Send heads-up

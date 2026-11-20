@@ -43,7 +43,7 @@ export default function InspectorDrawer({ isOpen, onClose, children, title }: In
       {/* The panel: white, raised over the dimmed page, from the right. */}
       <aside
         ref={asideRef}
-        className={`fixed top-0 right-0 bottom-0 sm:top-3.5 sm:right-3.5 z-[60] w-full sm:w-[580px] lg:w-[640px] sm:max-w-[calc(100vw-28px)] bg-[var(--color-surface)] sm:rounded-t-[20px] flex flex-col overflow-hidden transition-transform duration-500 ${
+        className={`fixed top-0 right-0 bottom-0 sm:top-3.5 sm:right-3.5 z-[60] w-full sm:w-[580px] lg:w-[640px] sm:max-w-[calc(100vw-28px)] bg-[var(--color-surface)] sm:rounded-t-xl flex flex-col overflow-hidden transition-transform duration-500 ${
           isOpen ? "translate-x-0" : "translate-x-[calc(100%+6rem)] pointer-events-none"
         }`}
         style={{
@@ -57,12 +57,12 @@ export default function InspectorDrawer({ isOpen, onClose, children, title }: In
       >
         {/* Where you are, and the way out */}
         <div className="shrink-0 px-5 sm:px-7 pt-5 pb-1 flex items-center gap-3">
-          <div className="flex-1 min-w-0 truncate text-[13px] font-semibold text-[var(--color-text-muted)]" title={title}>
+          <div className="flex-1 min-w-0 truncate text-[14px] font-medium text-[var(--color-text-muted)]" title={title}>
             {title ?? "Document"}
           </div>
           <button
             onClick={onClose}
-            className="shrink-0 w-9 h-9 rounded-[10px] grid place-items-center bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)] transition-colors"
+            className="shrink-0 w-9 h-9 rounded-md grid place-items-center border border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
             title="Close (Esc)"
             aria-label="Close"
           >

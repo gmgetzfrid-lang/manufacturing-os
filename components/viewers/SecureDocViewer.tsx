@@ -209,7 +209,7 @@ export default function SecureDocViewer({
       <div className="absolute inset-0 z-50 pointer-events-none overflow-hidden flex items-center justify-center">
         <div className="w-full h-full flex flex-col items-center justify-center opacity-[0.03] transform -rotate-12 select-none">
            {Array.from({ length: 10 }).map((_, i) => (
-             <div key={i} className="text-4xl font-black text-[var(--color-text)] whitespace-nowrap mb-24">
+             <div key={i} className="text-4xl font-semibold text-[var(--color-text)] whitespace-nowrap mb-24">
                 {watermarkText || "UNCONTROLLED COPY"} | {viewerId} | {new Date().toLocaleDateString()}
              </div>
            ))}
@@ -220,21 +220,21 @@ export default function SecureDocViewer({
           panel, history drawer) already shows the title big, so it isn't
           repeated. */}
       <div className="h-9 border-b border-[var(--color-border)] flex items-center gap-2 px-3 shrink-0 z-50 min-w-0" title={title}>
-        <span className="text-[12px] font-bold text-[var(--color-text)] truncate">{docNumber}</span>
-        <span className="text-[12px] text-[var(--color-text-muted)] shrink-0">Rev {rev}</span>
+        <span className="font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)] truncate">{docNumber}</span>
+        <span className="text-[13px] text-[var(--color-text-muted)] shrink-0">Rev <span className="font-display tabular-nums font-semibold text-[var(--color-text)]">{rev}</span></span>
         <Lock className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0 ml-auto" aria-label="Print and save are off in this preview" />
       </div>
 
       {/* Print or save pressed: why nothing happened, said right here. */}
       {blockedNote && (
-        <div role="status" className="px-3 py-1.5 border-b border-[var(--color-border)] text-[12px] text-[var(--color-text)] shrink-0 z-50">
+        <div role="status" className="px-3 py-1.5 border-b border-[var(--color-border)] text-[13px] text-[var(--color-text)] shrink-0 z-50">
           Print and save are off in this preview. Open the drawing and use Print or Download there: it stamps the copy.
         </div>
       )}
 
       {/* Someone else is mid-change on this document: a plain line. */}
       {lockHolder && (
-        <div className="px-3 py-1.5 border-b border-[var(--color-border)] flex items-center gap-2 text-[12px] text-amber-300 shrink-0 z-50">
+        <div className="px-3 py-1.5 border-b border-[var(--color-border)] flex items-center gap-2 text-[13px] text-amber-300 shrink-0 z-50">
           <Lock className="w-3.5 h-3.5 shrink-0" />
           <span className="truncate">
             <b>{lockHolder.name || 'Another user'}</b> has this checked out
@@ -267,7 +267,7 @@ export default function SecureDocViewer({
         ) : error ? (
           <div role="alert" className="absolute inset-0 flex flex-col items-center justify-center z-20 px-6 text-center">
             <AlertTriangle className="w-8 h-8 mb-3 text-rose-400" />
-            <h3 className="text-[14px] font-bold text-[var(--color-text)]">Couldn&apos;t open the preview</h3>
+            <h3 className="font-display text-[17px] font-semibold text-[var(--color-text)]">Couldn&apos;t open the preview</h3>
             <p className="text-[13px] mt-1 text-[var(--color-text-muted)] max-w-md">{error}</p>
           </div>
         ) : blobUrl ? (
@@ -286,9 +286,9 @@ export default function SecureDocViewer({
 
       {/* PRINT PROTECTION CURTAIN (on paper, so plain black on white) */}
       <div className="hidden print:flex fixed inset-0 z-[9999] bg-white flex-col items-center justify-center p-10 text-center">
-        <div className="border-2 border-slate-900 p-10 rounded-2xl">
+        <div className="border-2 border-slate-900 p-10 rounded-lg">
           <ShieldAlert className="w-16 h-16 text-slate-900 mb-6 mx-auto" />
-          <h1 className="text-3xl font-black text-slate-900 mb-3">Controlled document</h1>
+          <h1 className="font-display text-3xl font-semibold text-slate-900 mb-3">Controlled document</h1>
           <p className="text-lg text-slate-700 mb-6">
               This preview doesn&apos;t print. Open the full view and use Print: it stamps the copy.
           </p>

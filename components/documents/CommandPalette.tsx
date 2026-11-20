@@ -226,7 +226,7 @@ export default function CommandPalette({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-xl bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-2xl shadow-xl overflow-hidden animate-in fade-in zoom-in-95 slide-in-from-top-2 duration-200"
+        className="w-full max-w-xl bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-lg shadow-xl overflow-hidden animate-in fade-in zoom-in-95 slide-in-from-top-2 duration-200"
       >
         {/* Search input */}
         <div className="flex items-center gap-3 px-4 py-3.5 border-b border-[var(--color-border)]">
@@ -287,7 +287,7 @@ export default function CommandPalette({
                   onClick={() => execute(item)}
                   onMouseEnter={() => setActiveIdx(idx)}
                   className={`w-full flex items-center gap-3 px-4 py-2 text-left transition-colors ${
-                    active ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "hover:bg-[var(--color-surface-2)]"
+                    active ? "bg-[var(--color-surface-2)] text-[var(--color-text)] ring-1 ring-[var(--color-border-strong)]" : "hover:bg-[var(--color-surface-2)]"
                   }`}
                 >
                   <div
@@ -316,7 +316,7 @@ export default function CommandPalette({
         </div>
 
         {/* Footer hint */}
-        <div className="px-4 py-2 border-t border-[var(--color-border)] flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
+        <div className="px-4 py-2 border-t border-[var(--color-border)] flex items-center justify-between text-[13px] text-[var(--color-text-muted)]">
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1">
               <kbd className="font-mono bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1 rounded">↑</kbd>
@@ -327,7 +327,7 @@ export default function CommandPalette({
               <kbd className="font-mono bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1 rounded">↵</kbd> select
             </span>
           </div>
-          <span className="flex items-center gap-2 font-mono">
+          <span className="flex items-center gap-2 font-display tabular-nums">
             {orgSearching && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-muted)]" />}
             {items.length} results
           </span>

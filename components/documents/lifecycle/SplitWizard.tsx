@@ -141,15 +141,15 @@ export default function SplitWizard(props: SplitWizardProps) {
     <div className="fixed inset-0 z-[200] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in flex items-start justify-center p-4 overflow-y-auto">
       <form
         onSubmit={(e) => { e.preventDefault(); }}
-        className="w-full max-w-4xl bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden my-8 animate-in fade-in zoom-in-95"
+        className="w-full max-w-4xl bg-[var(--color-surface)] rounded-lg shadow-2xl overflow-hidden my-8 animate-in fade-in zoom-in-95"
       >
         {/* Header */}
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface-2)]">
           <div className="flex items-center gap-2">
             <SplitIcon className="w-5 h-5 text-[var(--color-text-muted)]" />
             <div>
-              <h2 className="font-black text-[var(--color-text)]">Split Document</h2>
-              <div className="text-[11px] font-mono text-[var(--color-text-muted)] mt-0.5">
+              <h2 className="font-semibold text-[var(--color-text)]">Split Document</h2>
+              <div className="text-[13px] font-display tabular-nums text-[var(--color-text-muted)] mt-0.5">
                 Source: {doc.documentNumber || doc.title || doc.id} · Rev {doc.rev || "-"}
               </div>
             </div>
@@ -200,7 +200,7 @@ export default function SplitWizard(props: SplitWizardProps) {
           )}
 
           {error && (
-            <div className="flex items-start gap-2 text-xs border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
+            <div className="flex items-start gap-2 text-[13px] border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
             </div>
           )}
@@ -256,7 +256,7 @@ function Step1Targets({
 }) {
   return (
     <div className="space-y-3">
-      <div className="text-[11px] text-[var(--color-text-muted)]">
+      <div className="text-[13px] text-[var(--color-text-muted)]">
         Define the new documents that will replace <b>{doc.documentNumber || doc.title}</b>.
         At least 2 are required. Each target needs a document number, title, initial rev label, and a PDF file.
       </div>
@@ -267,7 +267,7 @@ function Step1Targets({
             <div className="flex items-center justify-between mb-2">
               <div className="text-[13px] font-semibold text-[var(--color-text)] ">Target {i + 1}</div>
               {targets.length > 2 && (
-                <button onClick={() => onRemove(i)} className="text-[11px] text-red-600 hover:text-red-800 inline-flex items-center gap-1">
+                <button onClick={() => onRemove(i)} className="text-[13px] text-red-600 hover:text-red-800 inline-flex items-center gap-1">
                   <Trash2 className="w-3 h-3" /> Remove
                 </button>
               )}
@@ -284,31 +284,31 @@ function Step1Targets({
                 }}
                 fieldLabel="document number"
                 placeholder="Document number"
-                className="font-mono"
+                className="font-display tabular-nums"
               />
               <input
                 value={t.title}
                 onChange={(e) => onUpdate(i, { title: e.target.value })}
                 placeholder="Title"
-                className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5"
+                className="text-[13px] border border-[var(--color-border-strong)] rounded px-2 py-1.5"
               />
               <input
                 value={t.initialRevLabel}
                 onChange={(e) => onUpdate(i, { initialRevLabel: e.target.value })}
                 placeholder="Initial rev (e.g. 0)"
-                className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5 font-mono"
+                className="text-[13px] border border-[var(--color-border-strong)] rounded px-2 py-1.5 font-display tabular-nums"
               />
               <input
                 value={t.sheetNumber}
                 onChange={(e) => onUpdate(i, { sheetNumber: e.target.value })}
                 placeholder="Sheet # (optional)"
-                className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5 font-mono"
+                className="text-[13px] border border-[var(--color-border-strong)] rounded px-2 py-1.5 font-display tabular-nums"
               />
             </div>
             <div className="mt-2 flex items-center gap-2">
               <PdfDrop onFile={(f) => onUpdate(i, { file: f })} file={t.file}>
                 {t.file ? (
-                  <span className="inline-flex items-center gap-2 text-[11px] text-[var(--color-text)] text-left min-w-0">
+                  <span className="inline-flex items-center gap-2 text-[13px] text-[var(--color-text)] text-left min-w-0">
                     <FileThumb file={t.file} size={28} />
                     <span className="min-w-0">
                       <span className="block font-mono truncate">{t.file.name}</span>
@@ -316,7 +316,7 @@ function Step1Targets({
                     </span>
                   </span>
                 ) : (
-                  <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
+                  <span className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]">
                     <Upload className="w-3.5 h-3.5" /> Drop or pick the PDF
                   </span>
                 )}
@@ -326,13 +326,13 @@ function Step1Targets({
               value={t.changeLog}
               onChange={(e) => onUpdate(i, { changeLog: e.target.value })}
               placeholder={`Initial change note (default: "Created via split of ${doc.documentNumber ?? "source"}")`}
-              className="mt-2 w-full text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5"
+              className="mt-2 w-full text-[13px] border border-[var(--color-border-strong)] rounded px-2 py-1.5"
             />
           </div>
         ))}
       </div>
 
-      <button onClick={onAdd} className="text-xs font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)] inline-flex items-center gap-1">
+      <button onClick={onAdd} className="text-[13px] font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)] inline-flex items-center gap-1">
         <Plus className="w-3 h-3" /> Add another target sheet
       </button>
     </div>
@@ -350,7 +350,7 @@ function Step2Tags({
 }) {
   if (sourceTags.length === 0) {
     return (
-      <div className="text-xs text-[var(--color-text-muted)] italic py-6 text-center border border-dashed border-[var(--color-border)] rounded-lg">
+      <div className="text-[13px] text-[var(--color-text-muted)] italic py-6 text-center border border-dashed border-[var(--color-border)] rounded-lg">
         Source has no asset tags. New documents will start with no tags - you can add them later.
       </div>
     );
@@ -358,7 +358,7 @@ function Step2Tags({
 
   return (
     <div className="space-y-3">
-      <div className="text-[11px] text-[var(--color-text-muted)]">
+      <div className="text-[13px] text-[var(--color-text-muted)]">
         Distribute the source&apos;s {sourceTags.length} asset tag{sourceTags.length === 1 ? "" : "s"} across the new sheets.
         A tag can appear on multiple targets - some equipment legitimately spans sheets.
       </div>
@@ -379,9 +379,9 @@ function Step2Tags({
             return (
               <div key={key} className="grid items-center"
                    style={{ gridTemplateColumns: `minmax(120px, 1fr) repeat(${targets.length}, minmax(80px, 100px))` }}>
-                <div className="px-3 py-2 text-xs">
-                  <span className="font-mono font-bold text-[var(--color-text)]">{tag.tag}</span>
-                  {tag.type && <span className="ml-2 text-[11px] text-[var(--color-text-muted)]">({tag.type})</span>}
+                <div className="px-3 py-2 text-[13px]">
+                  <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{tag.tag}</span>
+                  {tag.type && <span className="ml-2 text-[13px] text-[var(--color-text-muted)]">({tag.type})</span>}
                 </div>
                 {targets.map((t, i) => (
                   <div key={i} className="px-2 py-2 text-center border-l border-[var(--color-border)]">
@@ -420,17 +420,17 @@ function Step3Confirm({
   return (
     <div className="space-y-4">
       {/* Preview */}
-      <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-3 text-xs">
+      <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-3 text-[13px]">
         <div className="font-bold text-[var(--color-text)] mb-2">What will happen</div>
         <ul className="list-disc ml-5 space-y-1 text-[var(--color-text)]">
           <li>
-            <span className="font-mono">{doc.documentNumber || doc.title}</span> Rev {doc.rev || "-"} →{" "}
+            <span className="font-display tabular-nums">{doc.documentNumber || doc.title}</span> Rev {doc.rev || "-"} →{" "}
             <span className="text-amber-700 font-bold">Superseded</span>
           </li>
           {targets.map((t, i) => (
             <li key={i}>
-              New: <span className="font-mono font-bold">{t.documentNumber}</span> ({t.title}) at Rev{" "}
-              <span className="font-mono">{t.initialRevLabel}</span> - {t.assetTagKeys.size} tag
+              New: <span className="font-display font-semibold tabular-nums">{t.documentNumber}</span> ({t.title}) at Rev{" "}
+              <span className="font-display tabular-nums">{t.initialRevLabel}</span> - {t.assetTagKeys.size} tag
               {t.assetTagKeys.size === 1 ? "" : "s"}
             </li>
           ))}
@@ -463,7 +463,7 @@ function Step3Confirm({
         <input
           value={moc}
           onChange={(e) => setMoc(e.target.value)}
-          className="mt-1 w-full text-sm border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 font-mono"
+          className="mt-1 w-full text-sm border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 font-display tabular-nums"
         />
       </label>
 
@@ -475,7 +475,7 @@ function Step3Confirm({
             These options copy operational state from the source document onto every new sheet so you don&apos;t lose context when splitting.
           </HelpTooltip>
         </div>
-        <div className="space-y-1.5 text-xs">
+        <div className="space-y-1.5 text-[13px]">
           <CarryOver
             label="Active holds (with origin note)"
             checked={copyHolds}

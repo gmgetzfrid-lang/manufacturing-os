@@ -105,27 +105,27 @@ export default function CollectionsStrip({
             Collections
           </span>
           {/* Scope chip — makes it obvious these books belong to THIS folder. */}
-          <span className="text-[11px] font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded px-1.5 py-px truncate max-w-[180px]" title={folderId && folderName ? `Books in “${folderName}”` : "Books at the library root"}>
+          <span className="text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded px-1.5 py-px truncate max-w-[180px]" title={folderId && folderName ? `Books in “${folderName}”` : "Books at the library root"}>
             {folderId && folderName ? folderName : "Library root"}
           </span>
           {collections.length > 0 && (
-            <span className="text-[11px] text-[var(--color-text-faint)] shrink-0">· {collections.length}</span>
+            <span className="text-[13px] text-[var(--color-text-faint)] shrink-0">· {collections.length}</span>
           )}
         </div>
         <button
           onClick={() => setCreating(true)}
-          className="inline-flex items-center gap-1 h-8 px-3 rounded-lg text-[12px] font-bold border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] transition-colors"
+          className="inline-flex items-center gap-1 h-8 px-3 rounded-lg text-[13px] font-bold border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] transition-colors"
         >
           <Plus className="w-3.5 h-3.5" /> New collection
         </button>
       </div>
 
       {error && (
-        <div className="mb-2 text-[11px] border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">{error}</div>
+        <div className="mb-2 text-[13px] border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">{error}</div>
       )}
 
       {collections.length === 0 ? (
-        <div className="text-[11px] text-[var(--color-text-muted)] italic py-1">
+        <div className="text-[13px] text-[var(--color-text-muted)] italic py-1">
           No books {folderId && folderName ? <>in <b>{folderName}</b></> : "at the library root"} yet.
         </div>
       ) : (
@@ -180,7 +180,7 @@ function CollectionCard({
       onClick={onOpen}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); } }}
       title={count > 0 ? "Open book" : "Add documents to this book"}
-      className={`group shrink-0 w-60 rounded-2xl border p-3 shadow-sm hover-lift transition-all relative cursor-pointer ${
+      className={`group shrink-0 w-60 rounded-lg border p-3 hover-lift transition-all relative cursor-pointer ${
         isOrg
           ? "bg-[var(--color-surface)] border-[var(--color-border)] hover:border-[var(--color-border)]"
           : "bg-[var(--color-surface)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"
@@ -198,8 +198,8 @@ function CollectionCard({
         </div>
 
         <div className="min-w-0 flex-1 pr-4">
-          <div className="text-xs font-black text-[var(--color-text)] line-clamp-2 leading-snug">{collection.name}</div>
-          <div className="mt-1 text-[11px] font-bold text-[var(--color-text-muted)]">
+          <div className="text-[13px] font-semibold text-[var(--color-text)] line-clamp-2 leading-snug">{collection.name}</div>
+          <div className="mt-1 text-[13px] font-bold text-[var(--color-text-muted)]">
             {count} {count === 1 ? "sheet" : "sheets"}
           </div>
           <div className="mt-1.5">

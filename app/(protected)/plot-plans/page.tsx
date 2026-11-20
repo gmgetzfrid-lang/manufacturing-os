@@ -14,6 +14,7 @@ import { listPlotPlans, createPlotPlan, deletePlotPlan } from "@/lib/plotPlans";
 import { SignedPlotImage } from "@/components/plotPlans/SignedPlotImage";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, Card, heroPrimary } from "@/components/ui/PageHero";
+import { humanDate } from "@/components/documents/StatusTag";
 import { plural } from "@/components/admin/band";
 import { Button } from "@/components/ui/Button";
 import { Input, Field } from "@/components/ui/Field";
@@ -61,16 +62,19 @@ export default function PlotPlansPage() {
   const answer = !plans ? (loadError ? "Couldn't load plot plans." : "Plot plans")
     : plans.length === 0 ? "No plot plans yet."
     : `${plural(plans.length, "plot plan")}.`;
-  const sub = plans && plans.length > 0
-    ? `${plural(markers, "marker")} on them. Find equipment on the drawing; each marker shows that item's state.`
-    : "Find equipment on the drawing. Each marker shows that item's state.";
+  const sub = "Find equipment on the drawing. Each marker shows that item's state.";
+  const facts = plans && plans.length > 0 ? [
+    { label: "Markers", value: markers.toLocaleString() },
+    { label: "No image", value: plans.filter((p) => !p.imagePath).length.toLocaleString() },
+  ] : undefined;
 
   return (
     <PageShell width="work">
         <PageHero
-          kicker="Operating areas · Map"
+          kicker="Operating areas"
           title={answer}
           sub={sub}
+          facts={facts}
           primary={isController ? (
             <button type="button" onClick={() => setShowCreate(true)} className={heroPrimary}>
               <Plus className="w-4 h-4" /> New plot plan
@@ -78,54 +82,73 @@ export default function PlotPlansPage() {
           ) : undefined}
         >
           <div className="[&>div]:mb-0">
-            <ViewTabs tabs={EQUIPMENT_VIEWS} variant="dark" />
+            <ViewTabs tabs={EQUIPMENT_VIEWS} />
           </div>
         </PageHero>
 
         <PageBody>
         {loadError && !plans ? (
           <Card>
-            <p role="alert" className="text-[14px] text-red-700 dark:text-red-400">
+            <p role="alert" className="text-[15px] font-semibold text-[var(--state-overdue)]">
               Couldn&apos;t load plot plans: {loadError}{" "}
-              <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
+              <button type="button" onClick={() => void refresh()} className="font-normal text-[var(--color-accent-text)] hover:underline">Try again</button>
             </p>
           </Card>
         ) : !plans ? (
           <Card><LoadingBlock what="plot plans" className="border-0 p-0" /></Card>
         ) : plans.length === 0 ? (
-          <Card className="text-center py-10">
-            <div className="w-12 h-12 rounded-xl bg-[var(--color-surface-2)] mx-auto mb-3 flex items-center justify-center">
-              <MapIcon className="w-6 h-6 text-[var(--color-text-muted)]" />
+          <Card>
+            <div className="flex items-start gap-3">
+              <MapIcon className="w-5 h-5 mt-0.5 shrink-0 text-[var(--color-text-muted)]" />
+              <div>
+                <h2 className="text-[15px] font-semibold text-[var(--color-text)]">Start with one drawing</h2>
+                <p className="mt-0.5 text-[15px] text-[var(--color-text-muted)]">Upload a plot plan, P&amp;ID or unit layout, then place markers on its equipment.</p>
+              </div>
             </div>
-            <h3 className="text-[14px] font-bold text-[var(--color-text)]">Start with one drawing</h3>
-            <p className="mt-1 text-[14px] text-[var(--color-text-muted)] max-w-md mx-auto">Upload a plot plan, P&amp;ID or unit layout, then place markers on its equipment.</p>
           </Card>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {plans.map((p) => (
-              <div key={p.id} className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden hover-lift">
-                <Link href={`/plot-plans/${p.id}`} className="block" aria-label={`Open ${p.name}`}>
-                  <div className="aspect-video bg-[var(--color-surface-2)] flex items-center justify-center overflow-hidden">
-                    {p.imagePath ? (
-                      <SignedPlotImage path={p.imagePath} alt={p.name} className="w-full h-full object-cover" />
-                    ) : (
-                      <ImageIcon className="w-10 h-10 text-[var(--color-text-faint)]" />
+          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+            <table className="w-full text-[15px]">
+              <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left max-sm:hidden">
+                <tr>
+                  <th className="font-semibold px-4 h-10 w-[128px]"><span className="sr-only">Drawing</span></th>
+                  <th className="font-semibold px-4">Plot plan</th>
+                  <th className="font-semibold px-4 text-right w-28">Markers</th>
+                  <th className="font-semibold px-4 w-32 hidden md:table-cell">Added</th>
+                  <th className="w-14"><span className="sr-only">Actions</span></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--color-border)]">
+              {plans.map((p) => (
+                <tr key={p.id} className="hover:bg-[var(--color-surface-2)] cursor-pointer" onClick={() => router.push(`/plot-plans/${p.id}`)}>
+                  <td className="pl-4 pr-2 py-2.5 w-[112px] sm:w-[128px]">
+                    <div className="w-24 aspect-video rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-center overflow-hidden">
+                      {p.imagePath ? (
+                        <SignedPlotImage path={p.imagePath} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <ImageIcon className="w-5 h-5 text-[var(--color-text-faint)]" />
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-4 py-2.5 max-sm:pl-1">
+                    <Link href={`/plot-plans/${p.id}`} onClick={(e) => e.stopPropagation()} className="font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{p.name}</Link>
+                    {p.description && <div className="text-[13px] text-[var(--color-text-muted)] truncate max-w-[60ch]">{p.description}</div>}
+                    <div className="sm:hidden text-[13px] text-[var(--color-text-muted)]">{plural(p.markers.length, "marker")}</div>
+                  </td>
+                  <td className="px-4 py-2.5 text-right font-display text-[17px] font-semibold tabular-nums max-sm:hidden">{p.markers.length.toLocaleString()}</td>
+                  <td className="px-4 py-2.5 text-[14px] hidden md:table-cell">{humanDate(p.createdAt)}</td>
+                  <td className="pr-3 py-2.5 text-right">
+                    {isController && (
+                      <button type="button" onClick={(e) => { e.stopPropagation(); void onDelete(p); }} title="Delete" aria-label={`Delete ${p.name}`}
+                        className="inline-grid w-8 h-8 place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)] transition-colors">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     )}
-                  </div>
-                </Link>
-                <div className="p-4 flex items-start gap-2">
-                  <Link href={`/plot-plans/${p.id}`} className="min-w-0 flex-1">
-                    <div className="text-[14px] font-bold text-[var(--color-text)] truncate">{p.name}</div>
-                    <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{p.markers.length} marker{p.markers.length === 1 ? "" : "s"}</div>
-                  </Link>
-                  {isController && (
-                    <button type="button" onClick={() => onDelete(p)} title="Delete" aria-label={`Delete ${p.name}`} className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-red-600 hover:bg-[var(--color-surface-2)] transition-colors">
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
+                  </td>
+                </tr>
+              ))}
+              </tbody>
+            </table>
           </div>
         )}
         </PageBody>
@@ -199,27 +222,27 @@ function CreatePlotPlanModal({
         </Field>
         <div>
           <span className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Background image</span>
-          <label {...drag.bind} className={`flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-6 cursor-pointer hover:border-[var(--color-text-muted)] transition-colors ${drag.ring}`}>
+          <label {...drag.bind} className={`flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-6 cursor-pointer hover:border-[var(--color-text-muted)] transition-colors ${drag.ring}`}>
             {drag.over ? (
-              <span className="text-xs font-bold text-[var(--color-text)]">{drag.say}</span>
+              <span className="text-[14px] font-semibold text-[var(--color-text)]">{drag.say}</span>
             ) : file ? (
               <span className="flex items-center gap-2 min-w-0">
                 <FileThumb file={file} />
                 <span className="min-w-0 text-left">
-                  <span className="block text-xs font-bold text-[var(--color-text)] truncate max-w-[14rem]">{file.name}</span>
-                  <span className="block text-[11px] text-[var(--color-text-muted)]">{formatBytes(file.size)}{dims ? ` · ${dims.w} × ${dims.h}` : ""}</span>
+                  <span className="block text-[14px] font-semibold text-[var(--color-text)] truncate max-w-[14rem]">{file.name}</span>
+                  <span className="block text-[13px] text-[var(--color-text-muted)]">{formatBytes(file.size)}{dims ? ` · ${dims.w} × ${dims.h}` : ""}</span>
                 </span>
               </span>
             ) : (
               <>
                 <ImageIcon className="w-6 h-6 text-[var(--color-text-faint)]" />
-                <span className="text-xs font-medium text-[var(--color-text-muted)]">Plot plan, P&amp;ID or unit layout (PNG/JPG)</span>
+                <span className="text-[14px] text-[var(--color-text-muted)]">Plot plan, P&amp;ID or unit layout (PNG or JPG)</span>
               </>
             )}
             <input type="file" accept="image/*" className="sr-only" onChange={(e) => { onPick(e.target.files?.[0] ?? null); e.target.value = ""; }} />
           </label>
         </div>
-        {error && <p role="alert" className="text-xs text-red-700 dark:text-red-400">{error}</p>}
+        {error && <p role="alert" className="text-[14px] font-semibold text-[var(--state-overdue)]">{error}</p>}
       </ModalBody>
       <ModalFooter>
         <Button variant="secondary" onClick={onClose}>Cancel</Button>

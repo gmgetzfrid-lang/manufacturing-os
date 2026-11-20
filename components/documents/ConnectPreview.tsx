@@ -44,16 +44,16 @@ export default function ConnectPreview({ orgId, plan, loading, canChange, onStar
 
   return (
     <div className="fixed inset-0 z-[60] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
-      <div className="w-full max-w-3xl rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl" onClick={(e) => e.stopPropagation()}>
+      <div className="w-full max-w-3xl rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3 p-4 border-b border-[var(--color-border)]">
           <div>
-            <div className="text-base font-black">Before anything is sent to AI</div>
-            <div className="text-xs text-[var(--color-text-muted)]">Nothing has run yet. Check what will be read, change it, then press Start.</div>
+            <div className="text-base font-semibold">Before anything is sent to AI</div>
+            <div className="text-[13px] text-[var(--color-text-muted)]">Nothing has run yet. Check what will be read, change it, then press Start.</div>
           </div>
           <button aria-label="Close" onClick={onClose} className="opacity-60 hover:opacity-100"><X className="w-5 h-5" /></button>
         </div>
 
-        <div className="p-4 space-y-3 text-xs">
+        <div className="p-4 space-y-3 text-[13px]">
           <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] p-3 space-y-1">
             <div className="font-bold inline-flex items-center gap-1.5"><Send className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> What leaves the server, on {model ? <>your key ({model})</> : <>your AI key</>}</div>
             <ul className="list-disc pl-5 space-y-0.5 text-[var(--color-text)]">
@@ -63,7 +63,7 @@ export default function ConnectPreview({ orgId, plan, loading, canChange, onStar
               {totals.blocked > 0 && <li><b>{totals.blocked}</b> file{totals.blocked === 1 ? " is" : "s are"} held back from AI and will not be touched.</li>}
             </ul>
             {!plan.hasKey && <div className="text-amber-800">No AI key on your account. Text will still be read on the server, but nothing can be sent to a model until you add a key in Intelligence › Setup.</div>}
-            <div className="text-[11px] text-[var(--color-text-muted)]">Only Admin and Doc Control can run this. Every change it makes to a drawing is recorded and can be undone afterwards.</div>
+            <div className="text-[13px] text-[var(--color-text-muted)]">Only Admin and Doc Control can run this. Every change it makes to a drawing is recorded and can be undone afterwards.</div>
           </div>
 
           <div className="font-bold">Libraries</div>
@@ -93,7 +93,7 @@ export default function ConnectPreview({ orgId, plan, loading, canChange, onStar
                           {l.sample.map((f) => (
                             <li key={f.id} className="flex items-center gap-2">
                               <span className="truncate flex-1">{f.name}</span>
-                              {f.census && <span className="shrink-0 text-[11px] font-semibold text-[var(--color-text)]">to your model</span>}
+                              {f.census && <span className="shrink-0 text-[13px] font-semibold text-[var(--color-text)]">to your model</span>}
                               <span className={`shrink-0 rounded-full border px-1.5 text-[11px] ${STATE[f.state].tone}`}>{STATE[f.state].sent ? "will be read" : STATE[f.state].label.split(" - ")[0]}</span>
                             </li>
                           ))}
@@ -102,7 +102,7 @@ export default function ConnectPreview({ orgId, plan, loading, canChange, onStar
                       )}
                     </div>
                   )}
-                  {!l.selected && !l.neverAi && tick && <div className="mt-1 pl-5 text-[11px] text-[var(--color-text-muted)]">Ticked. Press &ldquo;Update the list&rdquo; to see its files.</div>}
+                  {!l.selected && !l.neverAi && tick && <div className="mt-1 pl-5 text-[13px] text-[var(--color-text-muted)]">Ticked. Press &ldquo;Update the list&rdquo; to see its files.</div>}
                   {l.neverAi && <div className="mt-1 pl-5 text-[11px] text-rose-700 inline-flex items-center gap-1"><Lock className="w-3 h-3" /> Never sent to AI. Nothing in it is read.</div>}
                 </li>
               );

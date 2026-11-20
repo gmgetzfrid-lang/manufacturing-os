@@ -29,13 +29,13 @@ export default function StagingTray({ docs, onRemove, onClear, onOpen }: Staging
                   key={doc.id}
                   className="flex items-center gap-2 bg-[var(--color-surface-2)] rounded-lg px-3 py-2 border border-[var(--color-border)] group"
                 >
-                  <span className="w-5 h-5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)] flex items-center justify-center text-[11px] font-black shrink-0">
+                  <span className="w-5 h-5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)] flex items-center justify-center text-[11px] font-semibold shrink-0">
                     {idx + 1}
                   </span>
-                  <span className="text-[11px] font-mono font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded border border-[var(--color-border)] shrink-0 truncate max-w-[80px]">
+                  <span className="text-[13px] font-display font-semibold tabular-nums text-[var(--color-text)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded border border-[var(--color-border)] shrink-0 truncate max-w-[80px]">
                     {doc.documentNumber || "-"}
                   </span>
-                  <span className="text-xs text-[var(--color-text)] truncate flex-1 min-w-0">
+                  <span className="text-[13px] text-[var(--color-text)] truncate flex-1 min-w-0">
                     {doc.title || doc.name}
                   </span>
                   <button aria-label="Remove"
@@ -55,7 +55,7 @@ export default function StagingTray({ docs, onRemove, onClear, onOpen }: Staging
           <div className="flex items-center gap-2.5 flex-1 min-w-0">
             <BookOpen className="w-4 h-4 text-slate-400 shrink-0" />
             <span className="text-sm font-bold text-white whitespace-nowrap">Reference Stack</span>
-            <span className="text-xs font-black bg-slate-700 text-white px-2 py-0.5 rounded-full shrink-0">
+            <span className="text-xs font-semibold bg-slate-700 text-white px-2 py-0.5 rounded-full shrink-0">
               {badgeText(docs.length)}
             </span>
             {/* Pills preview — hidden on small screens */}
@@ -70,7 +70,7 @@ export default function StagingTray({ docs, onRemove, onClear, onOpen }: Staging
                 </span>
               ))}
               {docs.length > 6 && (
-                <span className="text-[11px] text-slate-400 whitespace-nowrap">+{docs.length - 6} more</span>
+                <span className="text-[13px] text-slate-400 whitespace-nowrap">+{docs.length - 6} more</span>
               )}
             </div>
           </div>

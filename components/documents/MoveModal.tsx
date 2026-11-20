@@ -29,11 +29,11 @@ export default function MoveModal(props: {
 
   return (
     <div className="fixed inset-0 z-[80] flex items-start sm:items-center justify-center overflow-y-auto bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in p-4">
-      <div className="w-full max-w-3xl rounded-2xl bg-[var(--color-surface)] shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
+      <div className="w-full max-w-3xl rounded-lg bg-[var(--color-surface)] shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-between">
           <div>
             <div className="text-sm font-bold text-[var(--color-text)]">{title || "Move"}</div>
-            <div className="text-xs text-[var(--color-text-muted)]">Select a destination folder.</div>
+            <div className="text-[13px] text-[var(--color-text-muted)]">Select a destination folder.</div>
           </div>
           <button aria-label="Close"
             onClick={onClose}

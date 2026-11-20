@@ -88,7 +88,7 @@ export default function DocContextMenu({
               role="menuitem"
               disabled={entry.disabled}
               onClick={() => { onClose(); entry.onSelect(); }}
-              className={`w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-xs font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+              className={`w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-[13px] font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
                 entry.danger
                   ? "text-red-600 hover:bg-red-50"
                   : "text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"

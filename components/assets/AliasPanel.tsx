@@ -62,14 +62,14 @@ export default function AliasPanel({
 
   if (rows === null) {
     return (
-      <div className="rounded-2xl shadow-[var(--shadow-card)] bg-[var(--color-surface)] p-4 sm:p-5 text-[13px] text-[var(--color-text-muted)] flex items-center gap-2 w-full">
+      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5 text-[13px] text-[var(--color-text-muted)] flex items-center gap-2 w-full">
         <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading other names…
       </div>
     );
   }
 
   return (
-    <section className="rounded-2xl shadow-[var(--shadow-card)] bg-[var(--color-surface)] p-4 sm:p-5 space-y-2.5">
+    <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5 space-y-2.5">
       <div className="flex items-center gap-2 text-[var(--color-text-muted)]">
         <Tags className="w-4 h-4" />
         <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)]">Also known as</h2>
@@ -78,7 +78,7 @@ export default function AliasPanel({
         Nicknames, old tags before a renumber, vendor names.
       </p>
       {loadFailed && (
-        <p role="alert" className="text-[11px] text-rose-700 dark:text-rose-400">
+        <p role="alert" className="text-[13px] text-rose-700 dark:text-rose-400">
           Couldn&apos;t load the other names. <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
         </p>
       )}
@@ -124,9 +124,9 @@ export default function AliasPanel({
       )}
 
       {rows.length === 0 && !canManage && !loadFailed && (
-        <div className="text-[11px] text-[var(--color-text-faint)] italic">No other names recorded.</div>
+        <div className="text-[13px] text-[var(--color-text-faint)] italic">No other names recorded.</div>
       )}
-      {error && <div role="alert" className="text-[11px] text-rose-700 dark:text-rose-400">{error}</div>}
+      {error && <div role="alert" className="text-[13px] text-rose-700 dark:text-rose-400">{error}</div>}
     </section>
   );
 }

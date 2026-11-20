@@ -108,12 +108,12 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
 
   return (
     <div className="fixed inset-0 z-[520] flex items-center justify-center bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] p-4" onClick={onClose}>
-      <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden" onClick={(e) => e.stopPropagation()}>
+      <div className="w-full max-w-md bg-[var(--color-surface)] rounded-lg shadow-2xl border border-[var(--color-border)] overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3">
           <CalendarClock className="w-5 h-5 text-[var(--color-text-muted)]" />
           <div className="flex-1 min-w-0">
             <div className="text-sm font-bold text-[var(--color-text)]">Responsibility &amp; review</div>
-            <div className="text-[11px] text-[var(--color-text-muted)] truncate">Applies to every document in this {scopeLabel}{name ? ` · ${name}` : ""}</div>
+            <div className="text-[13px] text-[var(--color-text-muted)] truncate">Applies to every document in this {scopeLabel}{name ? ` · ${name}` : ""}</div>
           </div>
           <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
         </div>
@@ -124,11 +124,11 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
           <div className="p-5 space-y-3">
             {/* Owner */}
             <div className="space-y-1 pb-1 border-b border-[var(--color-border)]">
-              <div className="text-[11px] font-bold text-[var(--color-text-muted)]">Owner</div>
+              <div className="text-[13px] font-bold text-[var(--color-text-muted)]">Owner</div>
               {owner ? (
                 <div className="flex items-center gap-2">
                   <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-xs text-[var(--color-text)]">{owner.name || owner.email}</span>
-                  <button onClick={() => { setOwnerState(null); setOwnerChanged(true); }} className="text-[11px] text-red-600 hover:underline">Clear</button>
+                  <button onClick={() => { setOwnerState(null); setOwnerChanged(true); }} className="text-[13px] text-red-600 hover:underline">Clear</button>
                 </div>
               ) : (
                 <>
@@ -142,7 +142,7 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
                   )}
                 </>
               )}
-              <div className="text-[11px] text-[var(--color-text-muted)]">The owner gets this scope&apos;s notifications and review reminders; if they fall behind, Admin/DocCtrl are escalated.</div>
+              <div className="text-[13px] text-[var(--color-text-muted)]">The owner gets this scope&apos;s notifications and review reminders; if they fall behind, Admin/DocCtrl are escalated.</div>
             </div>
 
             <label className="flex items-center gap-2 text-sm text-[var(--color-text)]">
@@ -151,19 +151,19 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
             {enabled && (
               <>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-[var(--color-text-muted)]">Every</span>
+                  <span className="text-[13px] text-[var(--color-text-muted)]">Every</span>
                   <input type="number" min={1} value={count} onChange={(e) => setCount(Math.max(1, parseInt(e.target.value) || 1))} className={`${inp} w-20`} />
                   <select value={unit} onChange={(e) => setUnit(e.target.value as typeof unit)} className={inp}>
                     <option value="days">days</option><option value="months">months</option><option value="years">years</option>
                   </select>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-[var(--color-text-muted)]">Warn</span>
+                  <span className="text-[13px] text-[var(--color-text-muted)]">Warn</span>
                   <input type="number" min={0} value={lead} onChange={(e) => setLead(Math.max(0, parseInt(e.target.value) || 0))} className={`${inp} w-20`} />
-                  <span className="text-xs text-[var(--color-text-muted)]">days before due</span>
+                  <span className="text-[13px] text-[var(--color-text-muted)]">days before due</span>
                 </div>
                 <div className="space-y-1">
-                  <div className="text-[11px] font-bold text-[var(--color-text-muted)]">Notify (besides Admin/DocCtrl)</div>
+                  <div className="text-[13px] font-bold text-[var(--color-text-muted)]">Notify (besides Admin/DocCtrl)</div>
                   <div className="flex flex-wrap gap-1">
                     {reviewers.map((r) => (
                       <span key={r.uid} className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-[11px] text-[var(--color-text)]">{r.name || r.email}<button aria-label="Remove" onClick={() => setReviewers((p) => p.filter((x) => x.uid !== r.uid))}><X className="w-3 h-3" /></button></span>
@@ -178,13 +178,13 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
                     </div>
                   )}
                 </div>
-                <div className="text-[11px] text-[var(--color-text-muted)]">{describeInterval({ enabled, intervalCount: count, intervalUnit: unit })} · a document overrides this with its own cycle.</div>
+                <div className="text-[13px] text-[var(--color-text-muted)]">{describeInterval({ enabled, intervalCount: count, intervalUnit: unit })} · a document overrides this with its own cycle.</div>
               </>
             )}
             <div className="flex justify-between gap-2 pt-2 border-t border-[var(--color-border)]">
-              <button onClick={() => void remove()} disabled={busy || !existing} className="px-3 py-2 rounded-lg text-xs font-bold text-red-600 hover:bg-red-50 disabled:opacity-40">Remove cycle</button>
+              <button onClick={() => void remove()} disabled={busy || !existing} className="px-3 py-2 rounded-lg text-[13px] font-bold text-red-600 hover:bg-red-50 disabled:opacity-40">Remove cycle</button>
               <div className="flex gap-2">
-                <button onClick={onClose} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text-muted)]">Cancel</button>
+                <button onClick={onClose} className="px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text-muted)]">Cancel</button>
                 <button onClick={() => void save()} disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--color-accent)] text-white text-xs font-bold disabled:opacity-50">{busy && <Loader2 className="w-4 h-4 animate-spin" />} Save</button>
               </div>
             </div>

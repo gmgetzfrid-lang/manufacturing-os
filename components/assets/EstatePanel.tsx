@@ -30,20 +30,20 @@ export default function EstatePanel({ orgId, assetId, tag }: { orgId: string; as
   const error = state.key === key ? state.error : null;
 
   return (
-    <section className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden">
+    <section className="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] overflow-hidden">
       <div className="px-4 sm:px-5 pt-4 pb-3 border-b border-[var(--color-border)] flex items-center justify-between">
         <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)] inline-flex items-center gap-2"><Waypoints className="w-4 h-4" /> Across the estate</h2>
-        <Link href={`/documents/graph?q=${encodeURIComponent(tag)}`} className="text-[13px] font-bold text-[var(--color-accent-text)] hover:underline">Explore on the map →</Link>
+        <Link href={`/documents/graph?q=${encodeURIComponent(tag)}`} className="text-[13px] text-[var(--color-accent-text)] hover:underline">Explore on the map →</Link>
       </div>
       <div className="p-4 space-y-4">
-        {error && <div role="alert" className="text-xs text-red-700 dark:text-red-400">Couldn&apos;t look across the estate: {error}</div>}
+        {error && <div role="alert" className="text-[13px] text-red-700 dark:text-red-400">Couldn&apos;t look across the estate: {error}</div>}
         {!res && !error && <div className="text-xs text-[var(--color-text-muted)] inline-flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Looking across drawings, text, folders and work in flight…</div>}
         {res && (
           <>
             <EntityStrip entities={res.entities} />
             {res.groups.map((g) => (
               <div key={g.key}>
-                <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)] mb-1">{g.label} · {g.ids.length}</div>
+                <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">{g.label} · {g.ids.length}</div>
                 <ul className="divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)]">
                   {g.ids.slice(0, 8).map((id) => {
                     const r = res.results.find((x) => x.id === id)!;
@@ -52,7 +52,7 @@ export default function EstatePanel({ orgId, assetId, tag }: { orgId: string; as
                         <Link href={r.href} className="flex items-center gap-2 hover:underline">
                           <FileTypeIcon type={fileTypeOf(r.name)} className="w-4 h-4 shrink-0" />
                           <span className="text-sm font-semibold truncate">{r.name}</span>
-                          <span className="text-[11px] text-[var(--color-text-muted)] truncate">{[r.libraryName, ...r.path].filter(Boolean).join(" / ")}</span>
+                          <span className="text-[13px] text-[var(--color-text-muted)] truncate">{[r.libraryName, ...r.path].filter(Boolean).join(" / ")}</span>
                         </Link>
                         <RelationChips relations={r.relations} />
                         <PageHits pages={r.pages} />
@@ -60,12 +60,12 @@ export default function EstatePanel({ orgId, assetId, tag }: { orgId: string; as
                     );
                   })}
                 </ul>
-                {g.ids.length > 8 && <div className="text-[11px] text-[var(--color-text-muted)] mt-1">…and {g.ids.length - 8} more on the map.</div>}
+                {g.ids.length > 8 && <div className="text-[13px] text-[var(--color-text-muted)] mt-1">…and {g.ids.length - 8} more on the map.</div>}
               </div>
             ))}
-            {res.results.length === 0 && <div className="text-xs text-[var(--color-text-muted)]">Nothing in the estate is linked to {tag} yet. Reading its drawings (Intelligence › Knowledge) is what creates these links.</div>}
+            {res.results.length === 0 && <div className="text-[13px] text-[var(--color-text-muted)]">Nothing in the estate is linked to {tag} yet. Reading its drawings (Intelligence › Knowledge) is what creates these links.</div>}
             <div>
-              <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)] mb-1 inline-flex items-center gap-1"><Activity className="w-3 h-3" /> Happening now</div>
+              <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1 inline-flex items-center gap-1"><Activity className="w-3 h-3" /> Happening now</div>
               <ActivityPanel activity={res.activity} />
             </div>
             <CoverageLine coverage={res.coverage} />

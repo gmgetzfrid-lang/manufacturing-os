@@ -31,6 +31,8 @@ import OriginBadge from "@/components/documents/OriginBadge";
 import DocClassControl from "@/components/documents/DocClassControl";
 import AddToPackageButton from "@/components/documents/AddToPackageButton";
 import MoreMenu, { type MoreItem } from "@/components/ui/MoreMenu";
+import { heroPrimary, heroQuiet } from "@/components/ui/PageHero";
+import { docStatusTone, humanDate } from "@/components/documents/StatusTag";
 import CheckoutHistoryPanel from "@/components/documents/CheckoutHistoryPanel";
 import CompareRevisionsModal from "@/components/documents/CompareRevisionsModal";
 import { effectiveOwnerForDocument, requestDeletion } from "@/lib/ownership";
@@ -95,7 +97,7 @@ function formatTs(value: unknown): string {
   try {
     const d = typeof value === "string" ? new Date(value) : value instanceof Date ? value : null;
     if (!d) return "-";
-    return d.toLocaleString();
+    return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
   } catch {
     return "-";
   }
@@ -324,7 +326,7 @@ export default function InspectorPanel({
     return (
       <div className="text-center py-12 text-[var(--color-text-faint)] bg-[var(--color-surface-2)] rounded-xl border border-[var(--color-border)] border-dashed">
         <Search className="w-8 h-8 mx-auto mb-2 opacity-50" />
-        <p className="text-xs">Select a document to view details.</p>
+        <p className="text-[14px]">Select a document to view details.</p>
       </div>
     );
   }
@@ -337,10 +339,7 @@ export default function InspectorPanel({
   // The big line is the item's number; the title shows under it when it says more.
   const bigName = selectedDoc.documentNumber || title;
   const showTitle = !!selectedDoc.documentNumber && title.trim() !== selectedDoc.documentNumber.trim();
-  const statusTone = selectedDoc.status === "Issued" ? "text-emerald-700 dark:text-emerald-400"
-    : selectedDoc.status === "Superseded" ? "text-amber-700 dark:text-amber-400"
-    : selectedDoc.status === "Void" || selectedDoc.status === "Archived" ? "text-rose-700 dark:text-rose-400"
-    : "text-[var(--color-text)]";
+  const statusDot = { good: "var(--state-released)", warn: "var(--state-held)", bad: "var(--state-overdue)", none: "var(--color-text-faint)" }[docStatusTone(selectedDoc.status)];
   const sheetRaw = meta.sheet ?? selectedDoc.sheetNumber;
   const sheet = sheetRaw == null || sheetRaw === "" ? null : String(sheetRaw);
   const tags = collectTagGroups(selectedDoc.metadata as Record<string, unknown> | null, customColumns).flatMap((g) => g.tags);
@@ -349,38 +348,48 @@ export default function InspectorPanel({
   return (
     <div className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-300">
 
-      {/* HEADER: the item, big; its state in words under it. ─────────── */}
+      {/* HEADER: a title block. The drawing number big, then ruled cells
+          for its rev, status, who has it and when it last changed. ──── */}
       <div>
-        <h2 className="text-[34px] sm:text-[44px] leading-[1.02] font-black tracking-[-0.03em] text-[var(--color-text)] break-words">
+        <h2 className="font-display text-[32px] sm:text-[40px] leading-[1.02] font-semibold tabular-nums tracking-[-0.01em] text-[var(--color-text)] break-words">
           {bigName}
         </h2>
         {showTitle && (
-          <p className="mt-2 text-[15px] font-semibold text-[var(--color-text)] break-words">{title}</p>
+          <p className="mt-1.5 text-[15px] text-[var(--color-text)] break-words">{title}</p>
         )}
-        <p className="mt-2.5 text-[14px] text-[var(--color-text-muted)] flex flex-wrap items-center gap-x-1.5 gap-y-1">
-          <span>Rev <b className="text-[var(--color-text)]">{selectedDoc.rev || "-"}</b></span>
-          <span aria-hidden="true">·</span>
-          <span className={`font-semibold ${statusTone}`}>{selectedDoc.status || "No status"}</span>
-          {sheet && <><span aria-hidden="true">·</span><span>Sheet {sheet}</span></>}
-          {tagLine && <><span aria-hidden="true">·</span><span>{tagLine}</span></>}
-          {selectedDoc.effectiveDate && <EffectivePill effectiveDate={selectedDoc.effectiveDate} />}
-        </p>
-        {/* Follow + who else is looking */}
-        {selectedDoc.id && selectedDoc.orgId && uid && (
-          <div className="mt-3 flex items-center gap-2 flex-wrap">
-            <WatchButton
-              orgId={selectedDoc.orgId}
-              userId={uid}
-              resourceType="document"
-              resourceId={selectedDoc.id}
-            />
-            <PresenceIndicator
-              resourceType="document"
-              resourceId={selectedDoc.id}
-              userId={uid}
-              userName={userEmail?.split("@")[0]}
-              role={activeRole || undefined}
-            />
+        <dl className="mt-4 grid grid-cols-2 sm:grid-cols-4 border-y border-[var(--color-border-strong)]">
+          <div className="py-2.5 pr-3 min-w-0">
+            <dt className="text-[13px] text-[var(--color-text-muted)]">Rev</dt>
+            <dd className="mt-0.5 font-display text-[22px] leading-tight font-semibold tabular-nums text-[var(--color-text)] truncate">{selectedDoc.rev || "-"}</dd>
+          </div>
+          <div className="py-2.5 px-3 border-l border-[var(--color-border-strong)] min-w-0">
+            <dt className="text-[13px] text-[var(--color-text-muted)]">Status</dt>
+            <dd className="mt-0.5 flex items-center gap-1.5 font-display text-[19px] leading-[1.16] font-semibold text-[var(--color-text)] min-w-0">
+              <span aria-hidden className="w-2 h-2 rounded-full shrink-0" style={{ background: statusDot }} />
+              <span className="truncate">{selectedDoc.status || "None"}</span>
+            </dd>
+          </div>
+          <div className="py-2.5 sm:px-3 pr-3 max-sm:border-t sm:border-l border-[var(--color-border-strong)] min-w-0">
+            <dt className="text-[13px] text-[var(--color-text-muted)]">Checked out</dt>
+            <dd className={`mt-0.5 font-display text-[19px] leading-[1.16] font-semibold truncate ${isCheckedOut ? "text-[var(--state-held)]" : "text-[var(--color-text)]"}`}
+              title={isCheckedOut ? `Checked out by ${checkedOutByMe ? "you" : selectedDoc.checkedOutByName || "someone else"}` : undefined}>
+              {isCheckedOut ? (checkedOutByMe ? "You" : selectedDoc.checkedOutByName || "Yes") : "No"}
+            </dd>
+          </div>
+          <div className="py-2.5 pl-3 max-sm:border-t border-l border-[var(--color-border-strong)] min-w-0">
+            <dt className="text-[13px] text-[var(--color-text-muted)]">Updated</dt>
+            <dd className="mt-0.5 font-display text-[19px] leading-[1.16] font-semibold tabular-nums text-[var(--color-text)] truncate">{humanDate(selectedDoc.updatedAt)}</dd>
+          </div>
+        </dl>
+        {(sheet || tagLine || selectedDoc.effectiveDate) && (
+          <div className="mt-2.5 flex flex-wrap items-center gap-x-5 gap-y-1 text-[14px]">
+            {sheet && (
+              <span><span className="text-[var(--color-text-muted)]">Sheet</span> <span className="font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)]">{sheet}</span></span>
+            )}
+            {tagLine && (
+              <span className="min-w-0"><span className="text-[var(--color-text-muted)]">Equipment</span> <span className="font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)]">{tagLine}</span></span>
+            )}
+            {selectedDoc.effectiveDate && <EffectivePill effectiveDate={selectedDoc.effectiveDate} />}
           </div>
         )}
       </div>
@@ -389,14 +398,14 @@ export default function InspectorPanel({
           can carry. A doc with unmerged parallel work must look WRONG
           everywhere you meet it, not just in specialist views. */}
       {openBranches.length > 0 && (
-        <div className="border-l-2 border-amber-500 pl-3 text-xs text-amber-800 dark:text-amber-300">
+        <div className="border-l-[3px] border-[var(--state-held)] pl-3 text-[14px] text-[var(--color-text)]">
           <b className="inline-flex items-center gap-1"><GitBranch className="w-3.5 h-3.5" /> The current revision is missing parallel work.</b>
           {openBranches.map((b) => (
-            <span key={b.id} className="block mt-1 text-[11px]">
-              {b.createdByName || b.createdBy} published it on {new Date(b.createdAt).toLocaleDateString()}: &ldquo;{b.reason}&rdquo;
+            <span key={b.id} className="block mt-1 text-[13px] text-[var(--color-text-muted)]">
+              {b.createdByName || b.createdBy} published it on {humanDate(b.createdAt)}: &ldquo;{b.reason}&rdquo;
             </span>
           ))}
-          <span className="block mt-1 text-[11px]">Merge it into a new revision or withdraw it from the Control Tower open items.</span>
+          <span className="block mt-1 text-[13px] text-[var(--color-text-muted)]">Merge it into a new revision or withdraw it from the Control Tower open items.</span>
         </div>
       )}
 
@@ -417,7 +426,7 @@ export default function InspectorPanel({
         />
       )}
       {staleHolderCount > 0 && (
-        <p className="border-l-2 border-amber-500 pl-3 text-xs text-amber-800 dark:text-amber-300">
+        <p className="border-l-[3px] border-[var(--state-held)] pl-3 text-[14px] text-[var(--color-text)]">
           <b>{staleHolderCount} {staleHolderCount === 1 ? "person may be" : "people may be"} using an old revision.</b>{" "}
           They took an older copy in the last 60 days. See who under Who has a copy below.
         </p>
@@ -429,8 +438,8 @@ export default function InspectorPanel({
         const canPub = !!(canPublishEff && onRevUp);
         const pubLocked = selectedDoc.status === "Archived" || (isCheckedOut && !checkedOutByMe);
         const publishMain = canPub && checkedOutByMe && !pubLocked;
-        const main = "inline-flex items-center justify-center gap-2 h-[46px] px-6 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[15px] font-extrabold hover:bg-[var(--color-accent-hover)] shadow-[0_12px_24px_-12px_var(--color-accent)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors";
-        const quiet = "inline-flex items-center justify-center gap-1.5 h-[46px] px-4 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors";
+        const main = `${heroPrimary} disabled:cursor-not-allowed`;
+        const quiet = `${heroQuiet} !h-10 disabled:cursor-not-allowed`;
         const publish = (cls: string) => (
           <button onClick={onRevUp} disabled={pubLocked} className={cls}
             title={isCheckedOut && !checkedOutByMe ? `Locked: ${selectedDoc.checkedOutByName || "another user"} has this checked out. Publishing over their work is blocked - coordinate or ask them to check in.` : "Publish a new revision"}>
@@ -466,16 +475,35 @@ export default function InspectorPanel({
                 {selectedDoc.id && selectedDoc.orgId && uid && (
                   <AddToPackageButton doc={selectedDoc} orgId={selectedDoc.orgId} userId={uid} userName={userEmail?.split("@")[0] ?? null} openSignal={pkgAsk} hideTrigger />
                 )}
+                {/* Follow, and who else is looking */}
+                {selectedDoc.id && selectedDoc.orgId && uid && (
+                  <>
+                    <WatchButton
+                      orgId={selectedDoc.orgId}
+                      userId={uid}
+                      resourceType="document"
+                      resourceId={selectedDoc.id}
+                      className="!h-10 !px-3.5 !rounded-md !border-[var(--color-border-strong)] !bg-[var(--color-surface)] hover:!bg-[var(--color-surface-2)] !text-[14px] !font-semibold !text-[var(--color-text)]"
+                    />
+                    <PresenceIndicator
+                      resourceType="document"
+                      resourceId={selectedDoc.id}
+                      userId={uid}
+                      userName={userEmail?.split("@")[0]}
+                      role={activeRole || undefined}
+                    />
+                  </>
+                )}
               </>;
             })()}
-            {isCheckedOut && !checkedOutByMe && <span className="basis-full text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Lock className="w-3.5 h-3.5" /> Checked out by {selectedDoc.checkedOutByName || "another user"}. Publishing waits until they check it in.</span>}
+            {isCheckedOut && !checkedOutByMe && <span className="basis-full text-[14px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Lock className="w-3.5 h-3.5" /> Publishing waits until {selectedDoc.checkedOutByName || "they"} check{selectedDoc.checkedOutByName ? "s" : ""} it in.</span>}
           </div>
         );
       })()}
 
       {/* PREVIEW ────────────────────────────────────────────────────── */}
       {selectedVersion?.fileUrl ? (
-        <div className="relative group rounded-[14px] overflow-hidden h-[40vh] min-h-72 bg-[var(--color-ink-2)]">
+        <div className="relative group rounded-lg overflow-hidden h-[40vh] min-h-72 bg-[var(--color-ink)]">
           <SecureDocViewer
             url={selectedVersion.fileUrl}
             title={title}
@@ -494,7 +522,7 @@ export default function InspectorPanel({
           />
         </div>
       ) : (
-        <div className="h-40 rounded-[14px] bg-[var(--color-surface-2)] flex items-center justify-center text-[13px] text-[var(--color-text-muted)]">
+        <div className="h-40 rounded-lg bg-[var(--color-surface-2)] flex items-center justify-center text-[14px] text-[var(--color-text-muted)]">
           No preview for this file
         </div>
       )}
@@ -591,14 +619,14 @@ export default function InspectorPanel({
             <button
               onClick={() => setShareOpen(true)}
               title="Generate a public share link for someone outside the org"
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
+              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
             >
               <LinkIcon className="w-3 h-3" /> Share
             </button>
             <NextLink
               href={`/transmittals?compose=1&doc=${selectedDoc.id}`}
               title="Issue this document on a transmittal: a cover sheet to someone, with a receipt"
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
+              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
             >
               <Send className="w-3 h-3" /> Transmit
             </NextLink>
@@ -641,19 +669,19 @@ export default function InspectorPanel({
       <PanelSection id="history" title="Revisions and activity">
         {/* The deep views live HERE, nested — not as a duplicate top-level
             button showing the same list through a second door. */}
-        <div className="grid grid-cols-2 gap-2">
+        <div className="flex flex-wrap gap-2">
           <button
             onClick={() => setCompareOpen(true)}
             disabled={!selectedDoc.id}
             title="Overlay any two revisions: grey unchanged, red removed, green added"
-            className="flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             <GitCompare className="w-3.5 h-3.5" /> Compare revisions
           </button>
           <button
             onClick={onHistory}
             title="Open the full history drawer"
-            className="flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-all"
+            className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             <History className="w-3.5 h-3.5" /> Full history
           </button>
@@ -679,12 +707,12 @@ export default function InspectorPanel({
         ) : recentAudits.length === 0 ? (
           <div className="text-[13px] text-[var(--color-text-muted)]">No recent activity.</div>
         ) : (
-          <div className="space-y-3">
+          <div>
             {recentAudits.map((log, i) => (
-              <div key={i} className="flex flex-col gap-0.5 border-l-2 border-[var(--color-border)] pl-3">
-                <span className="text-[11px] font-bold text-[var(--color-text)] uppercase">{log.action.replace(/_/g, ' ')}</span>
-                <span className="text-[11px] text-[var(--color-text-muted)]">by {log.userEmail?.split('@')[0]}</span>
-                <span className="text-[11px] text-[var(--color-text-faint)] font-mono">{formatTs(log.timestamp)}</span>
+              <div key={i} className="flex items-baseline gap-3 py-1.5 border-b border-[var(--color-border)] last:border-b-0 text-[14px]">
+                <span className="flex-1 min-w-0 font-semibold text-[var(--color-text)]">{(() => { const t = log.action.replace(/_/g, " ").toLowerCase(); return t.charAt(0).toUpperCase() + t.slice(1); })()}</span>
+                <span className="shrink-0 text-[13px] text-[var(--color-text-muted)]">{log.userEmail?.split('@')[0]}</span>
+                <span className="shrink-0 text-[13px] text-[var(--color-text-muted)] tabular-nums">{formatTs(log.timestamp)}</span>
               </div>
             ))}
           </div>
@@ -746,8 +774,9 @@ export default function InspectorPanel({
           id="checkout"
           title="Checkout"
           summary={isCheckedOut
-            ? <span className="inline-flex items-center font-semibold text-amber-800 dark:text-amber-300">
-                {checkedOutByMe ? "Checked out by you" : `Checked out · ${selectedDoc.checkedOutByName || "someone"}`}
+            ? <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--color-text)]">
+                <span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-held)]" />
+                {checkedOutByMe ? "Checked out by you" : `Checked out by ${selectedDoc.checkedOutByName || "someone"}`}
               </span>
             : undefined}
         >
@@ -761,9 +790,9 @@ export default function InspectorPanel({
         {isController && isCheckedOut && onForceUnlock && (
           <button
             onClick={() => onForceUnlock(selectedDoc)}
-            className="w-full mt-3 py-2 bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-rose-700 dark:text-rose-400 border border-[var(--color-border)] rounded-lg text-xs font-bold flex items-center justify-center transition-colors"
+            className="mt-3 inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)] transition-colors"
           >
-            <Shield className="w-3.5 h-3.5 mr-1.5" />
+            <Shield className="w-3.5 h-3.5" />
             Force release the lock
           </button>
         )}
@@ -802,16 +831,16 @@ export default function InspectorPanel({
               onClick={() => setModifyOpen(true)}
               disabled={selectedDoc.status === "Archived"}
               title="Structural changes beyond a rev-up: split into sheets, merge documents, renumber, correct a label"
-              className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors w-full"
             >
-              <Wrench className="w-3.5 h-3.5" /> Other lifecycle changes… <span className="font-normal text-[var(--color-text-muted)]">split · merge · renumber</span>
+              <Wrench className="w-3.5 h-3.5" /> Split, merge or renumber…
             </button>
           )}
           <div className="grid grid-cols-2 gap-2">
-            <button onClick={onMove} className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all">
+            <button onClick={onMove} className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
               <ArrowRight className="w-3.5 h-3.5" /> Move
             </button>
-            <button onClick={onPermissions} className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all">
+            <button onClick={onPermissions} className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
               <Lock className="w-3.5 h-3.5" /> Permissions
             </button>
           </div>
@@ -832,7 +861,7 @@ export default function InspectorPanel({
               <button
                 onClick={onSupersede}
                 disabled={selectedDoc.status === "Archived" || selectedDoc.status === "Superseded"}
-                className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 <Layers className="w-3.5 h-3.5" /> Supersede
               </button>
@@ -840,7 +869,7 @@ export default function InspectorPanel({
             {onArchive && (
               <button
                 onClick={onArchive}
-                className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border text-xs font-bold transition-all border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 {selectedDoc.status === "Archived"
                   ? <><ArchiveRestore className="w-3.5 h-3.5" /> Restore</>
@@ -856,7 +885,7 @@ export default function InspectorPanel({
                 catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
               }}
               title="Put the chain of custody (revisions, holds, audit trail) into a report you can print to PDF"
-              className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-all"
+              className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               <Shield className="w-3.5 h-3.5" /> Evidence pack
             </button>
@@ -866,7 +895,7 @@ export default function InspectorPanel({
           {isController && (
             <button
               onClick={onDelete}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-rose-700 dark:text-rose-400 hover:bg-[var(--color-surface-2)] transition-all"
+              className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors !text-[var(--state-overdue)]"
             >
               <Trash2 className="w-3.5 h-3.5" /> Delete document
             </button>
@@ -887,7 +916,7 @@ export default function InspectorPanel({
                   await appAlert({ message: "Sent. Admin or Doc Control will review it." });
                 } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
               }}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-rose-700 dark:text-rose-400 hover:bg-[var(--color-surface-2)] transition-all"
+              className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors !text-[var(--state-overdue)]"
             >
               <Trash2 className="w-3.5 h-3.5" /> Request deletion
             </button>
@@ -897,12 +926,12 @@ export default function InspectorPanel({
 
       {/* FILE DETAILS ───────────────────────────────────────────────── */}
       <PanelSection id="filedetails" title="File details">
-        <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-[13px]">
+        <div className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2 text-[14px]">
           <div className="text-[var(--color-text-muted)]">Type</div>
-          <div className="text-[var(--color-text)] font-mono truncate" title={fileType}>{ext ? `.${ext}` : fileType}</div>
+          <div className="text-[var(--color-text)] truncate" title={fileType}>{ext ? `.${ext}` : fileType}</div>
 
           <div className="text-[var(--color-text-muted)]">Size</div>
-          <div className="text-[var(--color-text)] font-mono">{formatBytes(sizeBytes)}</div>
+          <div className="text-[var(--color-text)] tabular-nums">{formatBytes(sizeBytes)}</div>
 
           <div className="text-[var(--color-text-muted)] flex items-center gap-1"><Calendar className="w-3 h-3" /> Created</div>
           <div className="text-[var(--color-text)]">{formatTs(selectedDoc.createdAt)}</div>
@@ -1003,28 +1032,28 @@ function TransmittalTrail({ orgId, documentId, currentRev }: { orgId: string; do
     return () => { alive = false; };
   }, [orgId, documentId]);
 
-  if (state === "loading") return <p className="mt-3 text-[11px] text-[var(--color-text-muted)]">Checking transmittals…</p>;
-  if (state === "failed") return <p className="mt-3 text-[11px] text-rose-700 dark:text-rose-300">Couldn&apos;t load the transmittals for this document.</p>;
+  if (state === "loading") return <p className="mt-3 text-[13px] text-[var(--color-text-muted)]">Checking transmittals…</p>;
+  if (state === "failed") return <p className="mt-3 text-[13px] text-[var(--state-overdue)]">Couldn&apos;t load the transmittals for this document.</p>;
   // Never transmitted: nothing to show.
   if (rows.length === 0) return null;
   return (
-    <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 px-3 py-2.5">
+    <div className="mt-3 rounded-lg border border-[var(--color-border)] px-3 py-2.5">
       <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Transmitted on</div>
       <ul className="space-y-1">
         {rows.map((r) => {
           const stale = !!(r.rev && currentRev && r.rev !== currentRev);
           return (
-            <li key={r.id} className="flex items-center gap-2 text-[11px] flex-wrap">
-              <NextLink href={`/transmittals?t=${r.id}`} className="font-mono font-black text-[var(--color-accent-text)] hover:underline">{r.number}</NextLink>
+            <li key={r.id} className="flex items-center gap-2 text-[13px] flex-wrap">
+              <NextLink href={`/transmittals?t=${r.id}`} className="font-display text-[15px] tabular-nums text-[var(--color-accent-text)] hover:underline">{r.number}</NextLink>
               <span className="text-[var(--color-text-muted)]">
                 Rev {r.rev ?? "-"} · {r.purpose ?? "-"} · to {r.recipient}
-                {r.issuedAt ? ` · ${new Date(r.issuedAt).toLocaleDateString()}` : ""}
+                {r.issuedAt ? ` · ${humanDate(r.issuedAt)}` : ""}
               </span>
               {r.status === "acknowledged"
-                ? <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-300">Received</span>
-                : <span className="text-[11px] font-bold text-amber-700 dark:text-amber-400">Not confirmed yet</span>}
+                ? <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold"><span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-released)]" />Received</span>
+                : <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold"><span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-held)]" />Not confirmed yet</span>}
               {stale && (
-                <span className="text-[11px] font-bold text-rose-700 dark:text-rose-300" title={`They have Rev ${r.rev}. Current is Rev ${currentRev}.`}>
+                <span className="text-[13px] font-semibold text-[var(--state-overdue)]" title={`They have Rev ${r.rev}. Current is Rev ${currentRev}.`}>
                   Has an old rev
                 </span>
               )}
@@ -1068,7 +1097,7 @@ function PanelSection({ id, title, summary, defaultOpen = false, children }: {
     <section className="border-b border-[var(--color-border)] last:border-b-0">
       <button type="button" onClick={toggle} aria-expanded={open}
         className="w-full min-h-12 py-2 flex items-center gap-3 text-left group">
-        <span className="flex-1 min-w-0 text-[14px] font-semibold text-[var(--color-text)] group-hover:underline underline-offset-4 decoration-[var(--color-border-strong)]">{title}</span>
+        <span className="flex-1 min-w-0 font-display text-[17px] font-semibold text-[var(--color-text)] group-hover:underline underline-offset-4 decoration-[var(--color-border-strong)]">{title}</span>
         {summary && <span className="flex items-center gap-1.5 flex-wrap justify-end min-w-0 text-[13px] text-[var(--color-text-muted)]">{summary}</span>}
         <ChevronRight className={`w-4 h-4 shrink-0 text-[var(--color-text-muted)] transition-transform ${open ? "rotate-90" : ""}`} />
       </button>

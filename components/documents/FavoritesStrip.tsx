@@ -37,7 +37,7 @@ export default function FavoritesStrip({
         <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">
           My favorites
         </span>
-        <span className="text-[11px] text-[var(--color-text-faint)]">· {favs.length}</span>
+        <span className="text-[13px] text-[var(--color-text-faint)]">· {favs.length}</span>
       </div>
       <div className="flex gap-2 overflow-x-auto pb-0.5 -mx-0.5 px-0.5">
         {favs.map((d) => (
@@ -48,8 +48,8 @@ export default function FavoritesStrip({
           >
             <div className="flex items-center gap-1.5 mb-0.5">
               <FileText className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
-              <span className="text-[11px] font-bold text-[var(--color-text)] truncate">{d.documentNumber}</span>
-              {d.rev && <span className="text-[11px] text-[var(--color-text-faint)] shrink-0">Rev {d.rev}</span>}
+              <span className="text-[13px] font-bold text-[var(--color-text)] truncate">{d.documentNumber}</span>
+              {d.rev && <span className="text-[13px] text-[var(--color-text-faint)] shrink-0">Rev {d.rev}</span>}
               <button
                 onClick={(e) => { e.stopPropagation(); void toggle(d.id); }}
                 className="ml-auto opacity-60 group-hover:opacity-100"
@@ -58,7 +58,7 @@ export default function FavoritesStrip({
                 <Star className="w-3 h-3 text-amber-500 fill-amber-400" />
               </button>
             </div>
-            <div className="text-[11px] text-[var(--color-text-muted)] truncate">{d.title}</div>
+            <div className="text-[13px] text-[var(--color-text-muted)] truncate">{d.title}</div>
           </button>
         ))}
       </div>

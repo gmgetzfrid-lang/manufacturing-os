@@ -25,7 +25,7 @@ export default function FileTagChip({ tag, type = "Linked drawings", orgId, user
   const interactive = !!orgId;
   const hasFiles = fileCount > 0;
 
-  const base = "inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold border mr-1 mb-1 whitespace-nowrap shadow-sm transition-all";
+  const base = "inline-flex items-center px-2 py-0.5 rounded text-[13px] font-bold border mr-1 mb-1 whitespace-nowrap shadow-sm transition-all";
   const state = hasFiles
     ? "text-[var(--color-text)] border-[var(--color-border)] hover:border-[var(--color-border)] cursor-pointer bg-[var(--color-surface-2)]"
     : interactive
@@ -48,7 +48,7 @@ export default function FileTagChip({ tag, type = "Linked drawings", orgId, user
         <span className={hasFiles ? "text-[var(--color-text-muted)] mr-1" : "text-[var(--color-text-faint)] mr-1"}><FileText className="w-3 h-3" /></span>
         <span>{tag}</span>
         {hasFiles ? (
-          <span className="ml-1.5 inline-flex items-center gap-0.5 px-1 py-px rounded bg-[var(--color-surface)] text-[var(--color-text)] text-[11px] font-black">
+          <span className="ml-1.5 inline-flex items-center gap-0.5 px-1 py-px rounded bg-[var(--color-surface)] text-[var(--color-text)] text-[13px] font-semibold">
             <Files className="w-2.5 h-2.5" />{fileCount}
           </span>
         ) : interactive ? (

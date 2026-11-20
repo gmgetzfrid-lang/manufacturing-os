@@ -948,13 +948,13 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
             onClick={toggleFocus}
             disabled={picked.size === 0}
             title={picked.size === 0 ? "Pin sheets below, then focus on just those" : focusActive ? "Show all sheets" : "Show only your pinned sheets"}
-            className={`flex-1 inline-flex items-center justify-center gap-1.5 h-8 px-2 rounded-lg text-[12px] font-bold transition-colors disabled:opacity-40 ${focusActive ? "bg-[var(--color-ink-fg)] text-[var(--color-ink)]" : "bg-[var(--color-ink-2)] text-[var(--color-text)] hover:bg-[var(--color-ink-line)]"}`}
+            className={`flex-1 inline-flex items-center justify-center gap-1.5 h-8 px-2 rounded-lg text-[13px] font-bold transition-colors disabled:opacity-40 ${focusActive ? "bg-[var(--color-ink-fg)] text-[var(--color-ink)]" : "bg-[var(--color-ink-2)] text-[var(--color-text)] hover:bg-[var(--color-ink-line)]"}`}
             aria-pressed={focusActive}
           >
             <Layers className="w-3.5 h-3.5" /> {focusActive ? "Focused" : "Focus"}{picked.size > 0 ? ` (${picked.size})` : ""}
           </button>
           {picked.size > 0 && (
-            <button type="button" onClick={() => { setPicked(new Set()); setFocusMode(false); }} title="Clear the pinned set" className="h-8 px-2 rounded-lg text-[12px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]">Clear</button>
+            <button type="button" onClick={() => { setPicked(new Set()); setFocusMode(false); }} title="Clear the pinned set" className="h-8 px-2 rounded-lg text-[13px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]">Clear</button>
           )}
         </div>
         {/* Thumbnails — the one and only nav, labelled with the first two visible
@@ -970,9 +970,9 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                 <button type="button" onClick={() => goToSheet(idx, { flash: true, addToFocus: !isVisible(idx) })} className="block w-full text-left" title={lines.join(" · ")} aria-current={activeIdx === idx ? "page" : undefined}>
                   <PageThumb url={entry.resolvedUrl} />
                   <div className="px-2 py-1.5 bg-[var(--color-ink)] flex items-baseline gap-2">
-                    <span className="shrink-0 text-[11px] font-bold text-[var(--color-text-muted)]">{idx + 1}</span>
-                    <span className="flex-1 min-w-0 text-[12px] font-bold text-[var(--color-text)] truncate">{lines[0] || `Sheet ${idx + 1}`}</span>
-                    {lines[1] && <span className="shrink-0 text-[11px] font-semibold text-[var(--color-text-muted)]">{lines[1]}</span>}
+                    <span className="shrink-0 text-[13px] font-bold text-[var(--color-text-muted)]">{idx + 1}</span>
+                    <span className="flex-1 min-w-0 text-[13px] font-bold text-[var(--color-text)] truncate">{lines[0] || `Sheet ${idx + 1}`}</span>
+                    {lines[1] && <span className="shrink-0 text-[13px] font-semibold text-[var(--color-text-muted)]">{lines[1]}</span>}
                   </div>
                 </button>
                 <button type="button" onClick={() => togglePick(idx)} title={isPicked ? "Remove from focus set" : "Pin to focus set"} className={`absolute top-1 right-1 w-7 h-7 grid place-items-center rounded-md transition-opacity bg-[color-mix(in_srgb,var(--color-ink)_75%,transparent)] ${isPicked ? "text-[var(--color-ink-fg)]" : "text-[var(--color-text-muted)] opacity-60 sm:opacity-0 group-hover:opacity-100"}`} aria-pressed={isPicked} aria-label={isPicked ? "Remove from focus set" : "Pin to focus set"}>
@@ -1048,7 +1048,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                 className="bg-transparent text-[13px] font-medium text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] outline-none w-full min-w-0"
                 title="Search anything: equipment tag, sheet #, document name or any metadata. Typo-tolerant (P-34 = p34). Enter jumps; + pins a sheet to your focus set."
               />
-              {searchMsg && <span className={`text-[12px] font-bold shrink-0 ${searchMsg === "No match" ? "text-rose-400" : "text-[var(--color-text-muted)]"}`}>{searchMsg}</span>}
+              {searchMsg && <span className={`text-[13px] font-bold shrink-0 ${searchMsg === "No match" ? "text-rose-400" : "text-[var(--color-text-muted)]"}`}>{searchMsg}</span>}
               {search ? (
                 <button type="button" onMouseDown={(e) => { e.preventDefault(); setSearch(""); setSearchMsg(null); setShowSuggest(false); searchInputRef.current?.focus(); }} title="Clear" aria-label="Clear the search" className="shrink-0 w-6 h-6 grid place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
               ) : (
@@ -1071,9 +1071,9 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                       >
                         <div className="flex items-center gap-2 text-[13px]">
                           <span className="font-bold text-[var(--color-text)] truncate">{e?.doc.documentNumber || `Sheet ${r.idx + 1}`}</span>
-                          <span className="text-[12px] text-[var(--color-text-muted)] truncate">{e?.doc.title || e?.doc.name}</span>
+                          <span className="text-[13px] text-[var(--color-text-muted)] truncate">{e?.doc.title || e?.doc.name}</span>
                         </div>
-                        <div className="text-[11px] text-[var(--color-text-muted)] truncate">matched “{r.matched}”</div>
+                        <div className="text-[13px] text-[var(--color-text-muted)] truncate">matched “{r.matched}”</div>
                       </button>
                       <button
                         type="button"
@@ -1120,7 +1120,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                         <div className={MENU_HEAD}>{g.label}</div>
                         <div className="flex flex-wrap gap-1 px-2 pb-2">
                           {g.tags.map(([t, idx]) => (
-                            <button type="button" key={t} onClick={() => { setTagMenuOpen(false); goToSheet(idx, { flash: true }); }} title={`Sheet ${idx + 1}`} className="inline-flex items-center h-7 px-2 rounded-md bg-[var(--color-ink-2)] hover:bg-[var(--color-ink-line)] text-[12px] font-bold text-[var(--color-text)] transition-colors">
+                            <button type="button" key={t} onClick={() => { setTagMenuOpen(false); goToSheet(idx, { flash: true }); }} title={`Sheet ${idx + 1}`} className="inline-flex items-center h-7 px-2 rounded-md bg-[var(--color-ink-2)] hover:bg-[var(--color-ink-line)] text-[13px] font-bold text-[var(--color-text)] transition-colors">
                               {t}
                             </button>
                           ))}
@@ -1221,11 +1221,11 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                 reachable without eating the page. Sticks to the top. */}
             <div className="sticky top-0 z-10 bg-[color-mix(in_srgb,var(--color-ink)_88%,transparent)] backdrop-blur-sm border-b border-[var(--color-border)] px-4 py-1.5 flex items-center gap-3">
               <div className="w-5 h-5 rounded-full bg-[var(--color-ink-2)] flex items-center justify-center text-[11px] font-bold text-[var(--color-text)] shrink-0">{idx + 1}</div>
-              <span className="text-[12px] font-bold text-[var(--color-text)] shrink-0">{entry.doc.documentNumber || "-"}</span>
-              <span className="text-[12px] text-[var(--color-text-muted)] font-medium truncate">{entry.doc.title || entry.doc.name}</span>
+              <span className="text-[13px] font-bold text-[var(--color-text)] shrink-0">{entry.doc.documentNumber || "-"}</span>
+              <span className="text-[13px] text-[var(--color-text-muted)] font-medium truncate">{entry.doc.title || entry.doc.name}</span>
               <div className="ml-auto flex items-center gap-2 shrink-0">
-                <span className="text-[12px] text-[var(--color-text-muted)] hidden sm:inline">Rev {entry.doc.rev || "-"}</span>
-                <span className="text-[12px] text-[var(--color-text-muted)] hidden md:inline">· {entry.doc.status || "-"}</span>
+                <span className="text-[13px] text-[var(--color-text-muted)] hidden sm:inline">Rev {entry.doc.rev || "-"}</span>
+                <span className="text-[13px] text-[var(--color-text-muted)] hidden md:inline">· {entry.doc.status || "-"}</span>
                 {isMarkedUp(entry.doc.id) && (
                   <span className="text-[12px] font-bold text-[var(--color-text)] inline-flex items-center gap-1"><Pen className="w-3 h-3" /> Marked up</span>
                 )}
@@ -1233,7 +1233,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                   type="button"
                   onClick={() => togglePick(idx)}
                   title={picked.has(entry.doc.id ?? "") ? "Remove from focus set" : "Add to focus set - review just the sheets you need"}
-                  className={`text-[12px] font-bold inline-flex items-center gap-1 h-7 px-2 rounded-md transition-colors ${picked.has(entry.doc.id ?? "") ? "bg-[var(--color-ink-fg)] text-[var(--color-ink)]" : "bg-[var(--color-ink-2)] text-[var(--color-text)] hover:bg-[var(--color-ink-line)]"}`}
+                  className={`text-[13px] font-bold inline-flex items-center gap-1 h-7 px-2 rounded-md transition-colors ${picked.has(entry.doc.id ?? "") ? "bg-[var(--color-ink-fg)] text-[var(--color-ink)]" : "bg-[var(--color-ink-2)] text-[var(--color-text)] hover:bg-[var(--color-ink-line)]"}`}
                   aria-pressed={picked.has(entry.doc.id ?? "")}
                 >
                   <Pin className={`w-3 h-3 ${picked.has(entry.doc.id ?? "") ? "fill-current" : ""}`} /> {picked.has(entry.doc.id ?? "") ? "Focused" : "Focus"}
@@ -1348,7 +1348,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
           ))}
           <div className="w-px h-5 shrink-0 bg-[var(--color-ink-line)] mx-0.5" aria-hidden="true" />
           <button type="button" onClick={() => clearActiveMarkup(activeEntry?.doc.id)} title="Clear this sheet's markup" aria-label="Clear this sheet's markup" className="w-9 h-9 shrink-0 rounded-[10px] grid place-items-center text-[var(--color-text-muted)] hover:text-rose-400 hover:bg-[var(--color-ink-2)] transition-colors"><Trash2 className="w-4 h-4" /></button>
-          <button type="button" onClick={() => setMarkupMode(false)} title="Done marking up" className="ml-1 shrink-0 h-8 px-3 rounded-lg bg-[var(--color-ink-2)] hover:bg-[var(--color-ink-line)] text-[var(--color-text)] text-[12px] font-bold">Done</button>
+          <button type="button" onClick={() => setMarkupMode(false)} title="Done marking up" className="ml-1 shrink-0 h-8 px-3 rounded-lg bg-[var(--color-ink-2)] hover:bg-[var(--color-ink-line)] text-[var(--color-text)] text-[13px] font-bold">Done</button>
         </div>
       )}
 

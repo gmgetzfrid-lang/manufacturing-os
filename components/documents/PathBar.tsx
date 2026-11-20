@@ -77,7 +77,7 @@ export default function PathBar({ library, segments, onNavigate, onDropItems, on
   const hidden = ancestors.slice(0, ancestors.length - visibleAncestors.length);
 
   const chip = onDark
-    ? "flex items-center gap-1.5 py-1 rounded-md transition-colors shrink-0 uppercase hover:text-white"
+    ? "flex items-center gap-1.5 py-1 rounded-md transition-colors shrink-0 hover:text-[var(--color-text)] hover:underline underline-offset-4"
     : "flex items-center gap-1.5 px-1.5 py-1 rounded-lg transition-colors shrink-0 " +
       "hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]";
 
@@ -107,12 +107,12 @@ export default function PathBar({ library, segments, onNavigate, onDropItems, on
   });
   const dropRing = (key: string) =>
     dropOn !== key ? ""
-    : onDark ? " px-1.5 bg-[var(--color-ink-2)] ring-2 ring-[var(--color-ink-line)] text-white"
+    : onDark ? " px-1.5 bg-[var(--color-surface)] ring-2 ring-[var(--color-border-strong)] text-[var(--color-text)]"
     : " bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] ring-2 ring-[var(--color-border-strong)] text-[var(--color-text)]";
-  const here = onDark ? "text-white" : "text-[var(--color-text)] font-bold";
+  const here = onDark ? "text-[var(--color-text)]" : "text-[var(--color-text)] font-bold";
 
   return (
-    <nav className={`flex items-center min-w-0 overflow-hidden ${onDark ? "text-[13px] font-semibold text-[var(--color-ink-muted)]" : "text-xs font-medium text-[var(--color-text-muted)]"}`} aria-label="Folder path">
+    <nav className={`flex items-center min-w-0 overflow-hidden ${onDark ? "text-[14px] font-medium text-[var(--color-text-muted)]" : "text-[13px] font-medium text-[var(--color-text-muted)]"}`} aria-label="Folder path">
       {home && (
         <>
           <Link href={home.href} className={`${chip} max-sm:hidden`}>{home.label}</Link>
@@ -160,7 +160,7 @@ export default function PathBar({ library, segments, onNavigate, onDropItems, on
                     key={seg.id}
                     role="menuitem"
                     onClick={() => { setMenuOpen(false); onNavigate(seg.id); }}
-                    className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[13px] font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                     style={{ paddingLeft: `${12 + i * 10}px` }}
                   >
                     <Tile icon={seg.icon} color={seg.color} />

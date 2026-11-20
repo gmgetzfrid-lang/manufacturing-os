@@ -87,9 +87,9 @@ export default function NodePeek({
         )}
         <span className="mt-1.5 w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: colorFor(node.type) }} />
         <div className="flex-1 min-w-0">
-          <div className="text-xs font-black text-[var(--color-text)] break-words">{node.label}</div>
-          {node.sub && <div className="text-[11px] text-[var(--color-text-muted)] break-words">{node.sub}</div>}
-          <div className="text-[11px] text-[var(--color-text-faint)] mt-0.5">
+          <div className="text-[13px] font-semibold text-[var(--color-text)] break-words">{node.label}</div>
+          {node.sub && <div className="text-[13px] text-[var(--color-text-muted)] break-words">{node.sub}</div>}
+          <div className="text-[13px] text-[var(--color-text-faint)] mt-0.5">
             {labelFor(node.type)} · {node.degree} connection{node.degree === 1 ? "" : "s"}
           </div>
         </div>
@@ -108,14 +108,14 @@ export default function NodePeek({
               {evidence && <span className="text-[var(--color-text-faint)]">· {evidence.length}</span>}
             </div>
             {loading && (
-              <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-faint)] py-1">
+              <div className="flex items-center gap-1.5 text-[13px] text-[var(--color-text-faint)] py-1">
                 <Loader2 className="w-3 h-3 animate-spin" /> Reading the evidence…
               </div>
             )}
             {evidence?.slice(0, 12).map((e, i) => (
               <div key={`${e.assetId}-${e.knowledgeDocumentId ?? e.documentId}-${e.page}-${i}`}
                 className="mb-1.5 rounded-lg bg-[var(--color-surface-2)] px-2 py-1.5">
-                <div className="flex items-center gap-1 text-[11px] font-black text-[var(--color-text)]">
+                <div className="flex items-center gap-1 text-[13px] font-semibold text-[var(--color-text)]">
                   <FileText className="w-3 h-3 shrink-0 text-[var(--color-text-faint)]" />
                   <span className="truncate">{isAsset ? e.documentName : e.assetTag}</span>
                   <span className="ml-auto shrink-0 text-[var(--color-text-faint)] font-bold">
@@ -123,7 +123,7 @@ export default function NodePeek({
                   </span>
                 </div>
                 {/* The sentence. This is the entire point of the panel. */}
-                <div className="text-[11px] text-[var(--color-text-muted)] leading-snug mt-0.5 italic">
+                <div className="text-[13px] text-[var(--color-text-muted)] leading-snug mt-0.5 italic">
                   “{e.snippet}”
                 </div>
                 {e.confidence < 0.9 && (
@@ -137,7 +137,7 @@ export default function NodePeek({
         )}
 
         {evidence !== null && evidence.length === 0 && !loading && (isAsset || node.id.startsWith("doc:")) && (
-          <div className="border-t border-[var(--color-border)] pt-2 text-[11px] text-[var(--color-text-faint)] leading-snug">
+          <div className="border-t border-[var(--color-border)] pt-2 text-[13px] text-[var(--color-text-faint)] leading-snug">
             No text mentions indexed yet. Run the mention indexer to derive links
             from what your documents actually say.
           </div>
@@ -155,8 +155,8 @@ export default function NodePeek({
                   className="w-full flex items-start gap-1.5 px-1.5 py-1 rounded-lg hover:bg-[var(--color-surface-2)] text-left group">
                   <span className="mt-1 w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: colorFor(c.type) }} />
                   <span className="flex-1 min-w-0">
-                    <span className="block text-[11px] font-bold text-[var(--color-text)] truncate">{c.label}</span>
-                    {reasons?.get(c.id) && <span className="block text-[11px] text-[var(--color-text-muted)] leading-snug">{reasons.get(c.id)}</span>}
+                    <span className="block text-[13px] font-bold text-[var(--color-text)] truncate">{c.label}</span>
+                    {reasons?.get(c.id) && <span className="block text-[13px] text-[var(--color-text-muted)] leading-snug">{reasons.get(c.id)}</span>}
                   </span>
                   <CornerDownLeft className="mt-0.5 w-3 h-3 shrink-0 text-[var(--color-text-faint)] opacity-0 group-hover:opacity-100" />
                 </button>
@@ -170,31 +170,31 @@ export default function NodePeek({
       <div className="p-3 pt-2 space-y-1.5 shrink-0 border-t border-[var(--color-border)]">
         <div className="flex items-center gap-1.5">
           <button onClick={onGoIn} title="Collapse the map to this node's neighbourhood"
-            className="flex-1 inline-flex items-center justify-center gap-1 text-[11px] font-black text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] rounded-lg px-2 py-1.5">
+            className="flex-1 inline-flex items-center justify-center gap-1 text-[13px] font-semibold text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] rounded-lg px-2 py-1.5">
             <Focus className="w-3.5 h-3.5" /> Go in
           </button>
           <button onClick={onGoOut} disabled={!focused} title="Back to the whole map"
-            className="flex-1 inline-flex items-center justify-center gap-1 text-[11px] font-black text-[var(--color-text)] border border-[var(--color-border)] rounded-lg px-2 py-1.5 hover:bg-[var(--color-surface-2)] disabled:opacity-40">
+            className="flex-1 inline-flex items-center justify-center gap-1 text-[13px] font-semibold text-[var(--color-text)] border border-[var(--color-border)] rounded-lg px-2 py-1.5 hover:bg-[var(--color-surface-2)] disabled:opacity-40">
             <Layers className="w-3.5 h-3.5" /> Go out
           </button>
           <button onClick={onPath} title="Trace how this connects to something else"
-            className="inline-flex items-center justify-center gap-1 text-[11px] font-black text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] rounded-lg px-2 py-1.5">
+            className="inline-flex items-center justify-center gap-1 text-[13px] font-semibold text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] rounded-lg px-2 py-1.5">
             <Crosshair className="w-3.5 h-3.5" />
           </button>
           {onConnect && (
             <button onClick={onConnect} title="Draw a connection: click this node, then the other one"
-              className="inline-flex items-center justify-center gap-1 text-[11px] font-black text-emerald-700 border border-emerald-300 dark:border-emerald-800 rounded-lg px-2 py-1.5 hover:bg-emerald-50 dark:hover:bg-emerald-950/40">
+              className="inline-flex items-center justify-center gap-1 text-[13px] font-semibold text-emerald-700 border border-emerald-300 dark:border-emerald-800 rounded-lg px-2 py-1.5 hover:bg-emerald-50 dark:hover:bg-emerald-950/40">
               <Link2 className="w-3.5 h-3.5" />
             </button>
           )}
         </div>
         <button onClick={onOpen}
-          className="w-full inline-flex items-center justify-center gap-1 text-[11px] font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] rounded-lg px-2 py-1.5">
+          className="w-full inline-flex items-center justify-center gap-1 text-[13px] font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] rounded-lg px-2 py-1.5">
           Open {labelFor(node.type).replace(/s$/, "").toLowerCase()} <ArrowUpRight className="w-3.5 h-3.5" />
         </button>
         {(node.type === "document" || node.type === "asset" || node.type === "unit" || node.type === "project") && (
           <Link href={documentsGraphHref(node.id, node.label)}
-            className="mt-1.5 w-full inline-flex items-center justify-center gap-1 text-[11px] font-black text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] rounded-lg px-2 py-1.5">
+            className="mt-1.5 w-full inline-flex items-center justify-center gap-1 text-[13px] font-semibold text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] rounded-lg px-2 py-1.5">
             <Waypoints className="w-3.5 h-3.5" /> {node.type === "document" ? "Find it on the Documents map" : "Everything filed about it, on the Documents map"}
           </Link>
         )}

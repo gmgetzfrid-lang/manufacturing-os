@@ -73,7 +73,7 @@ export default function EquipmentTagsStrip({
         <span className="text-[13px] font-semibold text-[var(--color-text)]">
           Equipment & Asset Tags
         </span>
-        <span className="text-[11px] text-[var(--color-text-faint)] ml-auto inline-flex items-center gap-1">
+        <span className="text-[13px] text-[var(--color-text-faint)] ml-auto inline-flex items-center gap-1">
           <Info className="w-3 h-3" /> Tap a tag for photos
         </span>
       </div>

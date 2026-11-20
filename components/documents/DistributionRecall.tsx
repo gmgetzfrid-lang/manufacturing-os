@@ -67,7 +67,7 @@ export default function DistributionRecall({
         className="w-full px-3.5 py-2.5 flex items-center gap-2 hover:bg-[var(--color-surface-2)] transition-colors"
       >
         <FileDown className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-        <span className="text-xs font-bold text-[var(--color-text)]">Copies in circulation</span>
+        <span className="text-[13px] font-bold text-[var(--color-text)]">Copies in circulation</span>
         <span className="ml-auto flex items-center gap-1.5">
           {outdated.length > 0 ? (
             <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800">
@@ -85,7 +85,7 @@ export default function DistributionRecall({
       {open && (
         <div className="px-3.5 pb-3 border-t border-[var(--color-border)] pt-2.5 space-y-1 animate-in fade-in slide-in-from-top-1 duration-150">
           {holders.slice(0, 10).map((h) => (
-            <div key={h.userId} className="flex items-center gap-2 text-[11px] py-0.5">
+            <div key={h.userId} className="flex items-center gap-2 text-[13px] py-0.5">
               {h.hasCurrent
                 ? <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0" />
                 : <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />}
@@ -96,19 +96,19 @@ export default function DistributionRecall({
             </div>
           ))}
           {holders.length > 10 && (
-            <div className="text-[11px] text-[var(--color-text-faint)]">…and {holders.length - 10} more</div>
+            <div className="text-[13px] text-[var(--color-text-faint)]">…and {holders.length - 10} more</div>
           )}
 
           {outdated.length > 0 && (
             nudgedCount !== null ? (
-              <div className="mt-1.5 text-[11px] font-bold text-emerald-700 flex items-center gap-1.5">
+              <div className="mt-1.5 text-[13px] font-bold text-emerald-700 flex items-center gap-1.5">
                 <CheckCircle2 className="w-3.5 h-3.5" /> Recall sent to {nudgedCount} {nudgedCount === 1 ? "person" : "people"}
               </div>
             ) : (
               <button
                 onClick={() => void handleNudge()}
                 disabled={nudging}
-                className="mt-1.5 w-full inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-lg text-[11px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] border border-amber-200 transition-colors disabled:opacity-50"
+                className="mt-1.5 w-full inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] border border-amber-200 transition-colors disabled:opacity-50"
               >
                 {nudging ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <BellRing className="w-3.5 h-3.5" />}
                 Recall outdated copies - notify {outdated.length} {outdated.length === 1 ? "person" : "people"}

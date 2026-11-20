@@ -1308,7 +1308,7 @@ export default function FullScreenViewer({
             </span>
             {onCheckout && (
               <button type="button" onClick={() => onCheckout(docRecord)}
-                className="ml-auto shrink-0 h-7 px-2.5 rounded-lg bg-[var(--color-ink-2)] text-[var(--color-text)] hover:bg-[var(--color-ink-line)] text-[12px] font-bold">
+                className="ml-auto shrink-0 h-7 px-2.5 rounded-lg bg-[var(--color-ink-2)] text-[var(--color-text)] hover:bg-[var(--color-ink-line)] text-[13px] font-bold">
                 Open checkout thread
               </button>
             )}
@@ -1348,7 +1348,7 @@ export default function FullScreenViewer({
                   <div className="grid grid-cols-1 gap-1">
                     {STAMPS.map((s) => (
                       <button type="button" key={s.label} onClick={() => addStamp(s.label, s.tone)} className="text-left px-1.5 py-1 rounded-md hover:bg-[var(--color-ink-2)]">
-                        <span className="inline-block px-2 py-0.5 rounded border-2 bg-[var(--color-ink-fg)] text-[11px] font-black tracking-wide" style={{ color: COLOR_HEX[s.tone], borderColor: COLOR_HEX[s.tone] }}>{s.label}</span>
+                        <span className="inline-block px-2 py-0.5 rounded border-2 bg-[var(--color-ink-fg)] text-[13px] font-semibold tracking-wide" style={{ color: COLOR_HEX[s.tone], borderColor: COLOR_HEX[s.tone] }}>{s.label}</span>
                       </button>
                     ))}
                   </div>
@@ -1358,7 +1358,7 @@ export default function FullScreenViewer({
                     <button
                       type="button"
                       onClick={() => stampFileInputRef.current?.click()}
-                      className="text-[12px] font-bold h-7 px-2.5 rounded-lg bg-[var(--color-ink-2)] hover:bg-[var(--color-ink-line)] text-[var(--color-text)]"
+                      className="text-[13px] font-bold h-7 px-2.5 rounded-lg bg-[var(--color-ink-2)] hover:bg-[var(--color-ink-line)] text-[var(--color-text)]"
                     >+ Upload</button>
                     <input
                       ref={stampFileInputRef}
@@ -1424,7 +1424,7 @@ export default function FullScreenViewer({
                 <span className="text-[13px] font-semibold text-[var(--color-text-muted)] ">Width</span>
                 <input type="range" min={1} max={12} value={strokeWidth} onChange={(e) => setStrokeWidth(Number(e.target.value))}
                   className="w-24 h-1 rounded-lg accent-[var(--color-ink-fg)] cursor-pointer" />
-                <span className="text-[12px] tabular-nums text-[var(--color-text)] w-5 text-right">{strokeWidth}</span>
+                <span className="text-[13px] tabular-nums text-[var(--color-text)] w-5 text-right">{strokeWidth}</span>
               </label>
             </div>
 

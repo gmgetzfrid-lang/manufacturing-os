@@ -10,7 +10,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import {
-  Clock, ShieldCheck, ShieldAlert, FileText, Eye, Download as DownloadIcon,
+  Clock, ShieldAlert, FileText, Eye, Download as DownloadIcon,
   Hash, Loader2, Layers, MessageSquare, User, CheckSquare, Stamp,
   Link as LinkIcon, History as HistoryIcon, RotateCcw, GitCompare,
   ArrowUpFromLine, Pencil,
@@ -168,7 +168,7 @@ export default function VersionHistoryPanel({
 
   if (loading) {
     return (
-      <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)] px-3 py-4">
+      <div className="flex items-center gap-2 text-[13px] text-[var(--color-text-muted)] px-3 py-4">
         <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading history…
       </div>
     );
@@ -176,21 +176,21 @@ export default function VersionHistoryPanel({
 
   if (error) {
     return (
-      <p role="alert" className="text-xs text-rose-700 dark:text-rose-300 border-l-2 border-rose-500 pl-3 py-1">{error}</p>
+      <p role="alert" className="text-[13px] text-rose-700 dark:text-rose-300 border-l-2 border-rose-500 pl-3 py-1">{error}</p>
     );
   }
 
   if (versions.length === 0) {
     return (
       <>
-        <div className="text-xs text-[var(--color-text-muted)] px-3 py-4 flex items-center justify-between gap-2">
+        <div className="text-[13px] text-[var(--color-text-muted)] px-3 py-4 flex items-center justify-between gap-2">
           <span className="flex items-center gap-2">
             <HistoryIcon className="w-3.5 h-3.5" /> No revisions recorded yet.
           </span>
           {canRevert && currentUserId && doc.orgId && (
             <button
               onClick={() => setBackfillOpen(true)}
-              className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text)] hover:text-[var(--color-text)] bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] border border-[var(--color-border)] px-2 py-1 rounded"
+              className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-text)] hover:text-[var(--color-text)] bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] border border-[var(--color-border)] px-2 py-1 rounded"
               title="Add a historical revision (does not change current)"
             >
               <ArrowUpFromLine className="w-3 h-3" /> Backfill older
@@ -231,13 +231,13 @@ export default function VersionHistoryPanel({
           {canRevert && currentUserId && doc.orgId && (
             <button
               onClick={() => setBackfillOpen(true)}
-              className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text)] hover:text-[var(--color-text)] bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded"
+              className="inline-flex items-center gap-1 h-8 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
               title="Add a historical revision (does not change current)"
             >
               <ArrowUpFromLine className="w-3 h-3" /> Backfill older
             </button>
           )}
-          <div className="text-[11px] text-[var(--color-text-muted)] font-mono">{versions.length} rev{versions.length === 1 ? "" : "s"}</div>
+          <div className="text-[13px] text-[var(--color-text-muted)] font-display tabular-nums">{versions.length} rev{versions.length === 1 ? "" : "s"}</div>
         </div>
       </div>
 
@@ -247,52 +247,48 @@ export default function VersionHistoryPanel({
           return (
             <div
               key={v.id}
-              className={`rounded-xl border p-3 ${
+              className={`relative rounded-md border p-3 ${
                 isCurrent
-                  ? "border-emerald-300 bg-emerald-50/40"
+                  ? "border-[var(--color-border-strong)] bg-[var(--color-surface)]"
                   : "border-[var(--color-border)] bg-[var(--color-surface)]"
               }`}
             >
               {/* Top row: rev label + status badges + actions */}
               <div className="flex items-start gap-3">
-                <div className={`shrink-0 px-2 py-1 rounded-md font-black text-xs font-mono ${
-                  isCurrent
-                    ? "bg-emerald-600 text-white"
-                    : "bg-slate-200 text-[var(--color-text)]"
-                }`}>
+                <div className="shrink-0 font-display font-semibold text-[17px] leading-6 tabular-nums text-[var(--color-text)]">
                   Rev {v.revisionLabel || "-"}
                 </div>
 
                 <div className="flex-1 min-w-0">
                   <div className="flex flex-wrap items-center gap-1.5">
                     {isCurrent ? (
-                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">
-                        <ShieldCheck className="w-3 h-3" /> Current
+                      <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]">
+                        <span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-released)]" /> Current
                       </span>
                     ) : v.isBranch ? (
                       <span
-                        className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded"
+                        className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded"
                         title="Saved as a branch from an old base. Never made current. See the open items for where it stands."
                       >
                         <ShieldAlert className="w-3 h-3" /> Branch
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">
-                        <ShieldAlert className="w-3 h-3" /> Superseded
+                      <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-muted)]">
+                        <span aria-hidden className="w-2 h-2 rounded-full bg-[var(--color-text-faint)]" /> Superseded
                       </span>
                     )}
                     {v.issueType && (
-                      <span className="text-[11px] font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded">{v.issueType}</span>
+                      <span className="text-[13px] font-semibold text-[var(--color-text)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{v.issueType}</span>
                     )}
                     {v.changeType && (
-                      <span className="text-[11px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{v.changeType}</span>
+                      <span className="text-[13px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{v.changeType}</span>
                     )}
                     {v.revertedFromVersionId && (
-                      <span className="text-[11px] font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded">Revert</span>
+                      <span className="text-[13px] font-semibold text-[var(--color-text)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">Revert</span>
                     )}
                     {v.provenance === "unverified" && (
                       <span
-                        className="text-[11px] font-bold text-red-700 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded"
+                        className="text-[13px] font-semibold text-[var(--state-overdue)]"
                         title="Published with no recorded checkout/download trail and no verified base declaration. Document Control reviews these, like QA receiving inspection."
                       >
                         ⚑ Unverified provenance
@@ -300,7 +296,7 @@ export default function VersionHistoryPanel({
                     )}
                     {v.provenance === "session" && (
                       <span
-                        className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded"
+                        className="text-[13px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded"
                         title="Published from a checkout: full record of where it came from."
                       >
                         Session
@@ -308,7 +304,7 @@ export default function VersionHistoryPanel({
                     )}
                     {v.provenance === "external" && (
                       <span
-                        className="text-[11px] font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded"
+                        className="text-[13px] font-semibold text-[var(--color-text)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded"
                         title="Submitted by an outside company through a project intake link. External work enters through review (or a trusted link's own documents). The submitting company is on the record."
                       >
                         External{v.createdByName ? ` · ${v.createdByName}` : ""}
@@ -316,7 +312,7 @@ export default function VersionHistoryPanel({
                     )}
                     {v.sourceFileKey && (
                       <span
-                        className="text-[11px] font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded"
+                        className="text-[13px] font-semibold text-[var(--color-text)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded"
                         title="The native CAD source file is stored with this revision."
                       >
                         CAD source
@@ -324,10 +320,9 @@ export default function VersionHistoryPanel({
                     )}
                   </div>
 
-                  <div className="mt-1 text-[11px] text-[var(--color-text-muted)] flex items-center gap-2">
-                    <Clock className="w-3 h-3" />
-                    {formatDate(v.createdAt)}
-                    {v.createdByName && <> • by <b className="text-[var(--color-text)]">{v.createdByName}</b></>}
+                  <div className="mt-1 text-[13px] text-[var(--color-text-muted)] flex flex-wrap items-center gap-x-2 gap-y-0.5 min-w-0">
+                    <span className="inline-flex items-center gap-1 whitespace-nowrap"><Clock className="w-3 h-3" />{formatDate(v.createdAt)}</span>
+                    {v.createdByName && <span className="min-w-0 truncate">by <span className="font-semibold text-[var(--color-text)]">{v.createdByName}</span></span>}
                   </div>
                 </div>
 
@@ -381,7 +376,7 @@ export default function VersionHistoryPanel({
 
               {/* Narrative */}
               {v.changeLog && (
-                <div className="mt-2 pl-1 text-[11px] text-[var(--color-text)] flex items-start gap-1.5">
+                <div className="mt-2 pl-1 text-[13px] text-[var(--color-text)] flex items-start gap-1.5">
                   <MessageSquare className="w-3 h-3 mt-0.5 shrink-0 text-[var(--color-text-faint)]" />
                   <span className="whitespace-pre-wrap">{v.changeLog}</span>
                 </div>
@@ -398,10 +393,10 @@ export default function VersionHistoryPanel({
 
               {/* Cross-references */}
               {(v.mocReference || v.sourceFileName) && (
-                <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 pl-1 text-[11px] text-[var(--color-text-muted)]">
+                <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 pl-1 text-[13px] text-[var(--color-text-muted)]">
                   {v.mocReference && (
                     <span className="inline-flex items-center gap-1">
-                      <LinkIcon className="w-3 h-3" /> MOC <b className="text-[var(--color-text)] font-mono">{v.mocReference}</b>
+                      <LinkIcon className="w-3 h-3" /> MOC <b className="text-[var(--color-text)] font-display tabular-nums">{v.mocReference}</b>
                     </span>
                   )}
                   {v.sourceFileName && (
@@ -413,7 +408,7 @@ export default function VersionHistoryPanel({
               )}
 
               {/* Footer: size + hash */}
-              <div className="mt-2 pl-1 flex items-center gap-3 text-[11px] text-[var(--color-text-faint)] font-mono">
+              <div className="mt-2 pl-1 flex items-center gap-3 text-[13px] text-[var(--color-text-faint)] font-display tabular-nums">
                 {typeof v.size === "number" && <span>{(v.size / 1024).toFixed(0)} KB</span>}
                 {v.fileHash && (
                   <span title={`SHA-256: ${v.fileHash}`} className="inline-flex items-center gap-1">
@@ -456,30 +451,30 @@ export default function VersionHistoryPanel({
           onClick={() => { if (!savingLabel) setCorrectTarget(null); }}
         >
           <form
-            className="w-full max-w-sm rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl p-4 animate-in fade-in zoom-in-95"
+            className="w-full max-w-sm rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl p-4 animate-in fade-in zoom-in-95"
             onClick={(e) => e.stopPropagation()}
             onSubmit={(e) => { e.preventDefault(); void saveLabelCorrection(); }}
           >
-            <div className="text-sm font-black text-[var(--color-text)] flex items-center gap-2">
+            <div className="text-sm font-semibold text-[var(--color-text)] flex items-center gap-2">
               <Pencil className="w-4 h-4 text-[var(--color-text-muted)]" /> Correct revision label
             </div>
-            <p className="text-xs text-[var(--color-text-muted)] mt-1">
-              Rev <b className="font-mono">{correctTarget.revisionLabel || "-"}</b>
+            <p className="text-[13px] text-[var(--color-text-muted)] mt-1">
+              Rev <b className="font-display tabular-nums">{correctTarget.revisionLabel || "-"}</b>
               {correctTarget.id === doc.currentVersionId ? " (current)" : ""} gets a new label.
               The correction is audited - old and new label, who, when, and why.
               {correctTarget.id === doc.currentVersionId && " The document's own rev label is updated to match."}
             </p>
-            <label className="block mt-3 text-xs font-bold text-[var(--color-text-muted)]">
+            <label className="block mt-3 text-[13px] font-bold text-[var(--color-text-muted)]">
               New label
               <input
                 autoFocus
                 value={labelDraft}
                 onChange={(e) => setLabelDraft(e.target.value)}
                 placeholder="e.g. 38"
-                className="mt-1 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]"
+                className="mt-1 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-2 text-sm font-display tabular-nums focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]"
               />
             </label>
-            <label className="block mt-2 text-xs font-bold text-[var(--color-text-muted)]">
+            <label className="block mt-2 text-[13px] font-bold text-[var(--color-text-muted)]">
               Why (recommended)
               <input
                 value={reasonDraft}
@@ -489,21 +484,21 @@ export default function VersionHistoryPanel({
               />
             </label>
             {labelError && (
-              <p role="alert" className="mt-2 text-xs text-rose-700 dark:text-rose-300 border-l-2 border-rose-500 pl-2.5">{labelError}</p>
+              <p role="alert" className="mt-2 text-[13px] text-rose-700 dark:text-rose-300 border-l-2 border-rose-500 pl-2.5">{labelError}</p>
             )}
             <div className="mt-3 flex items-center justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setCorrectTarget(null)}
                 disabled={savingLabel}
-                className="px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                className="px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={savingLabel || !labelDraft.trim()}
-                className="px-3 py-1.5 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 text-xs font-bold disabled:opacity-50 inline-flex items-center gap-1.5"
+                className="px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[13px] font-bold disabled:opacity-50 inline-flex items-center gap-1.5"
               >
                 {savingLabel ? <><Loader2 className="w-3 h-3 animate-spin" /> Saving…</> : "Save correction"}
               </button>
@@ -519,7 +514,7 @@ export default function VersionHistoryPanel({
 
 function SignoffBit({ icon, label, name }: { icon: React.ReactNode; label: string; name: string }) {
   return (
-    <span className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-muted)]">
+    <span className="inline-flex items-center gap-1 text-[13px] text-[var(--color-text-muted)]">
       <span className="text-[var(--color-text-faint)]">{icon}</span>
       <span className="font-semibold text-[13px]">{label}</span>
       <span className="text-[var(--color-text)] font-medium">{name}</span>
@@ -531,6 +526,8 @@ function formatDate(ts: unknown): string {
   if (!ts) return "";
   try {
     const d = new Date(ts as string);
-    return d.toLocaleString();
+    if (Number.isNaN(d.getTime())) return String(ts);
+    const sameYear = d.getFullYear() === new Date().getFullYear();
+    return d.toLocaleString("en-US", { month: "short", day: "numeric", ...(sameYear ? {} : { year: "numeric" }), hour: "numeric", minute: "2-digit" });
   } catch { return String(ts); }
 }

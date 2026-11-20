@@ -12,10 +12,15 @@ import {
   ClipboardCheck,
   ShieldCheck,
   Archive,
-  Trash2,} from "lucide-react";
+  Trash2,
+  Folder,
+} from "lucide-react";
 import { LibraryCollection } from "@/types/schema";
 import NodeCover from "@/components/documents/NodeCover";
 import { CardStrip } from "@/components/ui/PageHero";
+
+// Folder name, files, subfolders, menu. On a phone: name (counts under it), menu.
+const LIST_COLS = "grid-cols-[minmax(0,1fr)_40px] sm:grid-cols-[minmax(0,1fr)_96px_104px_40px]";
 
 interface FolderGridProps {
   folders: LibraryCollection[];
@@ -52,7 +57,9 @@ interface FolderGridProps {
   onMoveManyInto?: (ids: string[], targetId: string) => void;
   /** "strip": one row of white cards that keeps going sideways (the
    *  library's folders over the band). "grid" (default): wrapped tiles. */
-  layout?: "grid" | "strip";
+  /** "list": a compact ruled table on one white sheet, one row per
+   *  folder with its file and subfolder counts. */
+  layout?: "grid" | "strip" | "list";
 }
 
 export default function FolderGrid({
@@ -79,6 +86,7 @@ export default function FolderGrid({
   layout = "grid",
 }: FolderGridProps) {
   const strip = layout === "strip";
+  const list = layout === "list";
   // Spring-loaded folders: hovering a tile mid-drag for ~900ms opens it, so
   // deep drops don't need a separate navigation step first.
   const springRef = useRef<{ id: string; timer: ReturnType<typeof setTimeout> } | null>(null);
@@ -230,10 +238,8 @@ export default function FolderGrid({
             <MoreVertical className="w-4 h-4" />
           </button>
         );
-        return (
-        <div
-          key={folder.id}
-          onClick={(e) => {
+        const rowProps = {
+          onClick: (e: React.MouseEvent) => {
             // Ctrl/shift+click SELECTS (Explorer); plain click still opens.
             if (onTileSelect && (e.ctrlKey || e.metaKey || e.shiftKey)) {
               if (e.shiftKey) window.getSelection()?.removeAllRanges();
@@ -241,10 +247,10 @@ export default function FolderGrid({
               return;
             }
             onOpen(folder.id!);
-          }}
-          onContextMenu={(e) => handleContextMenu(e, folder.id!)}
-          draggable={isController && !!onMoveInto}
-          onDragStart={(e) => {
+          },
+          onContextMenu: (e: React.MouseEvent) => handleContextMenu(e, folder.id!),
+          draggable: isController && !!onMoveInto,
+          onDragStart: (e: React.DragEvent<HTMLElement>) => {
             e.dataTransfer.setData("application/x-folder-id", folder.id!);
             // Dragging a SELECTED tile carries the whole selection.
             const ids = selectedIds?.has(folder.id!) && selectedIds.size > 1
@@ -262,9 +268,9 @@ export default function FolderGrid({
             }
             e.dataTransfer.effectAllowed = "move";
             setDraggingId(folder.id!);
-          }}
-          onDragEnd={() => { setDraggingId(null); clearSpring(); }}
-          onDragOver={(e) => {
+          },
+          onDragEnd: () => { setDraggingId(null); clearSpring(); },
+          onDragOver: (e: React.DragEvent<HTMLElement>) => {
             // Spring-load: linger over a tile mid-drag (any payload, files
             // from the OS included) and it opens, so you can drop deeper
             // without a separate navigation trip first.
@@ -282,8 +288,11 @@ export default function FolderGrid({
             // Edge quarters reorder among siblings; the middle moves INSIDE.
             // Windows/macOS both use this split, and it is the only way one
             // drag gesture can mean two things without a mode switch.
+            // (In the list, rows stack, so the top and bottom edges reorder.)
             const r = e.currentTarget.getBoundingClientRect();
-            const frac = (e.clientX - r.left) / Math.max(1, r.width);
+            const frac = list
+              ? (e.clientY - r.top) / Math.max(1, r.height)
+              : (e.clientX - r.left) / Math.max(1, r.width);
             const zone: "into" | "before" | "after" =
               isFolderDrag && onReorder && frac < 0.25 ? "before"
               : isFolderDrag && onReorder && frac > 0.75 ? "after"
@@ -295,12 +304,12 @@ export default function FolderGrid({
             e.preventDefault();
             e.stopPropagation();          // the upload overlay must not fire
             setDropTarget({ id: folder.id!, zone });
-          }}
-          onDragLeave={() => {
+          },
+          onDragLeave: () => {
             setDropTarget((cur) => (cur?.id === folder.id ? null : cur));
             if (springRef.current?.id === folder.id) clearSpring();
-          }}
-          onDrop={(e) => {
+          },
+          onDrop: (e: React.DragEvent<HTMLElement>) => {
             clearSpring();
             if (!acceptsDrag(e)) return;
             e.preventDefault();
@@ -333,7 +342,54 @@ export default function FolderGrid({
                 if (Array.isArray(ids) && ids.length > 0) onDocsDrop(ids, folder.id!);
               } catch { /* malformed payload — ignore the drop */ }
             }
-          }}
+          },
+        };
+        if (list) return (
+          <div
+            key={folder.id}
+            role="row"
+            {...rowProps}
+            className={`group relative grid ${LIST_COLS} items-center gap-x-3 px-4 min-h-12 py-1.5 border-t border-[var(--color-border)] max-sm:[&:nth-child(2)]:border-t-0 cursor-pointer transition-colors ${
+              dropInto ? "bg-[var(--color-surface-2)] ring-2 ring-inset ring-[var(--color-border-strong)]"
+              : dropBefore ? "shadow-[inset_0_3px_0_0_var(--color-text-muted)]"
+              : dropAfter ? "shadow-[inset_0_-3px_0_0_var(--color-text-muted)]"
+              : selectedIds?.has(folder.id!) || contextMenu?.id === folder.id ? "bg-[var(--color-surface-2)]"
+              : "hover:bg-[var(--color-surface-2)]"}`}
+          >
+            {selectedIds?.has(folder.id!) && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--color-text)]" />}
+            {/* The open target is a real button; its click bubbles to the
+                row, which also handles ctrl/shift selection. */}
+            <div role="cell" className="min-w-0">
+              <button type="button" className="w-full min-w-0 flex items-center gap-3 text-left rounded focus-visible:outline-2 focus-visible:outline-offset-2">
+                {folder.color || folder.icon || folder.coverImageUrl ? (
+                  <NodeCover
+                    appearance={{ color: folder.color, icon: folder.icon, coverImageUrl: folder.coverImageUrl, coverTint: folder.coverTint }}
+                    className="w-7 h-7 shrink-0"
+                    rounded="rounded-md"
+                    iconSize="w-3.5 h-3.5"
+                  />
+                ) : (
+                  <Folder className="w-5 h-5 shrink-0 text-[var(--color-text-muted)]" aria-hidden />
+                )}
+                <span className="min-w-0">
+                  <span className="block text-[15px] font-semibold text-[var(--color-text)] truncate select-none">{folder.name}</span>
+                  <span className="sm:hidden block text-[13px] text-[var(--color-text-muted)] truncate select-none">{metaLine(folder, kids)}</span>
+                </span>
+              </button>
+            </div>
+            <div role="cell" className="max-sm:hidden font-display text-[15px] tabular-nums text-[var(--color-text)] text-right">
+              {docTotals?.get(folder.id!) !== undefined ? docTotals.get(folder.id!)!.toLocaleString() : "-"}
+            </div>
+            <div role="cell" className="max-sm:hidden font-display text-[15px] tabular-nums text-right text-[var(--color-text-muted)]">
+              {kids ? kids.toLocaleString() : "-"}
+            </div>
+            <div role="cell" className="flex justify-end">{menuButton}</div>
+          </div>
+        );
+        return (
+        <div
+          key={folder.id}
+          {...rowProps}
           className={strip ? `
             group relative shrink-0 basis-[248px] sm:basis-[280px] flex items-center gap-3 pl-4 pr-2 py-3.5 rounded-[14px] bg-[var(--color-surface)] shadow-[var(--shadow-card)] transition-shadow cursor-pointer
             ${dropInto ? 'ring-2 ring-[var(--color-border-strong)] bg-[var(--color-surface-2)]'
@@ -370,7 +426,7 @@ export default function FolderGrid({
                 />
                 <span className="min-w-0">
                   <span className="block text-[14px] font-bold text-[var(--color-text)] truncate select-none">{folder.name}</span>
-                  <span className="block text-[12px] text-[var(--color-text-muted)] truncate select-none">{metaLine(folder, kids)}</span>
+                  <span className="block text-[13px] text-[var(--color-text-muted)] truncate select-none">{metaLine(folder, kids)}</span>
                 </span>
               </button>
               {menuButton}
@@ -392,7 +448,7 @@ export default function FolderGrid({
 
           <h3 className="text-sm font-bold text-[var(--color-text)] truncate mb-0.5 select-none">{folder.name}</h3>
           <div className="flex items-center justify-between gap-2 min-w-0">
-            <p className="text-[11px] text-[var(--color-text-faint)] font-medium truncate select-none min-w-0">
+            <p className="text-[13px] text-[var(--color-text-faint)] font-medium truncate select-none min-w-0">
               {metaLine(folder, kids)}
             </p>
             {/* Open affordance — appears on hover, keeps the card scannable at rest. */}
@@ -423,6 +479,19 @@ export default function FolderGrid({
       )}
     </>
   );
+  if (list) {
+    return (
+      <div role="table" aria-label="Folders" className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+        <div role="row" className={`max-sm:hidden grid ${LIST_COLS} items-center gap-x-3 px-4 h-10 bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text-muted)]`}>
+          <span role="columnheader">Folder</span>
+          <span role="columnheader" className="text-right">Files</span>
+          <span role="columnheader" className="text-right">Subfolders</span>
+          <span role="columnheader" aria-label="Actions" />
+        </div>
+        {tiles}
+      </div>
+    );
+  }
   return strip
     ? <CardStrip className="!pb-7 -mb-5 pt-0.5 -mt-0.5">{tiles}</CardStrip>
     : <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">{tiles}</div>;

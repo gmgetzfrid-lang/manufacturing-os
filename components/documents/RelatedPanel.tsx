@@ -123,7 +123,7 @@ export default function RelatedPanel({
         <Waypoints className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
         <span className="text-[13px] font-semibold text-[var(--color-text)] flex-1">Related</span>
         <button onClick={() => openRelationshipGraph(documentId)}
-          className="text-[11px] font-bold text-[var(--color-accent-text)] hover:underline">Open graph</button>
+          className="text-[13px] text-[var(--color-accent-text)] hover:underline">Open graph</button>
         {shortLink && (
           <button
             onClick={() => {
@@ -133,7 +133,7 @@ export default function RelatedPanel({
               });
             }}
             title={`Short link anyone in the org can use: ${shortLink}`}
-            className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+            className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
           >
             {copied ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
             /d/{documentNumber}
@@ -143,7 +143,7 @@ export default function RelatedPanel({
 
       {/* Curated pins */}
       {curated === null ? (
-        <div className="text-[11px] text-[var(--color-text-faint)] italic">Loading…</div>
+        <div className="text-[13px] text-[var(--color-text-faint)] italic">Loading…</div>
       ) : (
         <div className="space-y-1">
           {curated.map((r) => (
@@ -153,19 +153,19 @@ export default function RelatedPanel({
                   <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
                   {r.target ? (
                     <Link href={`/documents/${r.target.library_id}?doc=${r.target_document_id}`}
-                      className="flex-1 min-w-0 text-xs font-bold text-[var(--color-text)] hover:text-[var(--color-accent-text)] truncate">
+                      className="flex-1 min-w-0 text-[13px] font-bold text-[var(--color-text)] hover:text-[var(--color-accent-text)] truncate">
                       {r.target.document_number || r.target.title || "Document"}
                       {r.label && <span className="font-normal text-[var(--color-text-muted)]"> · {r.label}</span>}
                     </Link>
                   ) : (
-                    <span className="flex-1 text-xs text-[var(--color-text-faint)] italic">missing document</span>
+                    <span className="flex-1 text-[13px] text-[var(--color-text-faint)] italic">missing document</span>
                   )}
                 </>
               ) : (
                 <>
                   <Globe className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                   <a href={r.url ?? "#"} target="_blank" rel="noreferrer"
-                    className="flex-1 min-w-0 text-xs font-bold text-[var(--color-text)] hover:text-[var(--color-accent-text)] truncate">
+                    className="flex-1 min-w-0 text-[13px] font-bold text-[var(--color-text)] hover:text-[var(--color-accent-text)] truncate">
                     {r.label || r.url}
                   </a>
                 </>
@@ -177,7 +177,7 @@ export default function RelatedPanel({
                     r.evidence?.summary,
                     r.approved_by_name ? `Approved by ${r.approved_by_name}` : null,
                   ].filter(Boolean).join(" · ")}
-                  className="shrink-0 inline-flex items-center gap-0.5 text-[11px] font-black uppercase tracking-wide text-[var(--color-text)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] rounded px-1 py-0.5"
+                  className="shrink-0 inline-flex items-center gap-0.5 text-[13px] font-semibold text-[var(--color-text)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] rounded px-1 py-0.5"
                 >
                   <Sparkles className="w-2.5 h-2.5" /> {r.origin === "system" ? "auto" : "approved"}
                 </span>
@@ -197,11 +197,11 @@ export default function RelatedPanel({
           {canManage && (
             <div className="flex items-center gap-1.5 flex-wrap">
               <button onClick={() => setPickerOpen(true)}
-                className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-dashed border-[var(--color-border-strong)] rounded-lg px-2 py-1">
+                className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-dashed border-[var(--color-border-strong)] rounded-lg px-2 py-1">
                 <Plus className="w-3 h-3" /> Pin document
               </button>
               <button onClick={() => setUrlDraft({ url: "", label: "" })}
-                className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-emerald-700 border border-dashed border-[var(--color-border-strong)] rounded-lg px-2 py-1">
+                className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-text-muted)] hover:text-emerald-700 border border-dashed border-[var(--color-border-strong)] rounded-lg px-2 py-1">
                 <Link2 className="w-3 h-3" /> Pin external link
               </button>
             </div>
@@ -213,14 +213,14 @@ export default function RelatedPanel({
         <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 p-2 space-y-1.5">
           <input value={urlDraft.url} onChange={(e) => setUrlDraft({ ...urlDraft, url: e.target.value })}
             placeholder="https:// … (vendor manual, datasheet, portal)"
-            className="w-full px-2 py-1.5 border border-[var(--color-border-strong)] rounded-lg text-xs" />
+            className="w-full px-2 py-1.5 border border-[var(--color-border-strong)] rounded-lg text-[13px]" />
           <input value={urlDraft.label} onChange={(e) => setUrlDraft({ ...urlDraft, label: e.target.value })}
             placeholder="Label (optional)"
-            className="w-full px-2 py-1.5 border border-[var(--color-border-strong)] rounded-lg text-xs" />
+            className="w-full px-2 py-1.5 border border-[var(--color-border-strong)] rounded-lg text-[13px]" />
           <div className="flex items-center gap-1.5 justify-end">
-            <button onClick={() => setUrlDraft(null)} className="text-[11px] font-bold text-[var(--color-text-muted)] px-2 py-1">Cancel</button>
+            <button onClick={() => setUrlDraft(null)} className="text-[13px] font-bold text-[var(--color-text-muted)] px-2 py-1">Cancel</button>
             <button onClick={() => void addUrl()} disabled={busy || !urlDraft.url.trim()}
-              className="inline-flex items-center gap-1 text-[11px] font-black border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] rounded-lg px-2 py-1 disabled:opacity-50">
+              className="inline-flex items-center gap-1 text-[13px] font-semibold border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] rounded-lg px-2 py-1 disabled:opacity-50">
               {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Pin it
             </button>
           </div>
@@ -239,10 +239,10 @@ export default function RelatedPanel({
                 href={r.document.library_id ? `/documents/${r.document.library_id}?doc=${r.document.id}` : "/documents"}
                 className="flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-[var(--color-surface-2)] transition-colors">
                 <FileText className="w-3 h-3 text-[var(--color-text-faint)] shrink-0" />
-                <span className="flex-1 min-w-0 text-[11px] font-bold text-[var(--color-text)] truncate">
+                <span className="flex-1 min-w-0 text-[13px] font-bold text-[var(--color-text)] truncate">
                   {r.document.document_number || r.document.title || "Document"}
                 </span>
-                <span className="shrink-0 text-[11px] text-[var(--color-text-faint)]">{r.detail ?? r.reason}</span>
+                <span className="shrink-0 text-[13px] text-[var(--color-text-faint)]">{r.detail ?? r.reason}</span>
               </Link>
             ))}
           </div>
@@ -261,20 +261,20 @@ export default function RelatedPanel({
           {proposals.map((p) => (
             <div key={p.id} className="space-y-1">
               <Link href={p.target ? `/documents/${p.target.library_id}?doc=${p.target.id}` : "#"}
-                className="block text-[11px] font-bold text-[var(--color-text)] hover:text-[var(--color-accent-text)] truncate">
+                className="block text-[13px] font-bold text-[var(--color-text)] hover:text-[var(--color-accent-text)] truncate">
                 {p.target?.document_number || p.target?.title || "Document"}
               </Link>
-              <div className="text-[11px] text-[var(--color-text-muted)]">
+              <div className="text-[13px] text-[var(--color-text-muted)]">
                 {p.evidence?.summary} · {proposerLabel(p.proposer, p.evidence)}
               </div>
               {canManage && (
                 <div className="flex items-center gap-1.5">
                   <button onClick={() => void decideProposal(p, true)} disabled={decidingId === p.id}
-                    className="inline-flex items-center gap-1 text-[11px] font-black border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] rounded px-1.5 py-0.5 disabled:opacity-50">
+                    className="inline-flex items-center gap-1 text-[13px] font-semibold border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] rounded px-1.5 py-0.5 disabled:opacity-50">
                     {decidingId === p.id ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Check className="w-2.5 h-2.5" />} Link
                   </button>
                   <button onClick={() => void decideProposal(p, false)} disabled={decidingId === p.id}
-                    className="text-[11px] font-bold text-[var(--color-text-muted)] hover:text-rose-600 px-1 disabled:opacity-50">
+                    className="text-[13px] font-bold text-[var(--color-text-muted)] hover:text-rose-600 px-1 disabled:opacity-50">
                     Not related
                   </button>
                 </div>
@@ -295,18 +295,18 @@ export default function RelatedPanel({
               <Link key={d.id} href={`/documents/${d.library_id}?doc=${d.id}`}
                 className="flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-[var(--color-surface-2)] transition-colors">
                 <CornerDownLeft className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
-                <span className="flex-1 min-w-0 text-[11px] font-bold text-[var(--color-text)] truncate">
+                <span className="flex-1 min-w-0 text-[13px] font-bold text-[var(--color-text)] truncate">
                   {d.document_number || d.title || "Document"}
                 </span>
-                {d.pinned_by && <span className="shrink-0 text-[11px] text-[var(--color-text-faint)]">pinned by {d.pinned_by}</span>}
+                {d.pinned_by && <span className="shrink-0 text-[13px] text-[var(--color-text-faint)]">pinned by {d.pinned_by}</span>}
               </Link>
             ))}
             {backlinks.projects.map((p) => (
               <Link key={p.id} href={`/projects/${p.id}`}
                 className="flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-[var(--color-surface-2)] transition-colors">
                 <Briefcase className="w-3 h-3 text-rose-500 shrink-0" />
-                <span className="flex-1 min-w-0 text-[11px] font-bold text-[var(--color-text)] truncate">{p.name}</span>
-                <span className="shrink-0 text-[11px] text-[var(--color-text-faint)]">project</span>
+                <span className="flex-1 min-w-0 text-[13px] font-bold text-[var(--color-text)] truncate">{p.name}</span>
+                <span className="shrink-0 text-[13px] text-[var(--color-text-faint)]">project</span>
               </Link>
             ))}
           </div>

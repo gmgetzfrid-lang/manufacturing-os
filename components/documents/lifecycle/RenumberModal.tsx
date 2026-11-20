@@ -56,13 +56,13 @@ export default function RenumberModal(props: RenumberModalProps) {
 
   return (
     <div className="fixed inset-0 z-[200] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <form onSubmit={submit} className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
+      <form onSubmit={submit} className="w-full max-w-md bg-[var(--color-surface)] rounded-lg shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface-2)]">
           <div className="flex items-center gap-2">
             <Hash className="w-5 h-5 text-[var(--color-text-muted)]" />
             <div>
-              <h2 className="font-black text-[var(--color-text)]">Renumber Document</h2>
-              <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">Existing revisions and history are preserved.</div>
+              <h2 className="font-semibold text-[var(--color-text)]">Renumber Document</h2>
+              <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">Existing revisions and history are preserved.</div>
             </div>
           </div>
           <button aria-label="Close" type="button" onClick={onCancel} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)]">
@@ -71,14 +71,14 @@ export default function RenumberModal(props: RenumberModalProps) {
         </div>
 
         <div className="p-5 space-y-3">
-          <div className="text-xs text-[var(--color-text-muted)]">
+          <div className="text-[13px] text-[var(--color-text-muted)]">
             Cross-references inside other drawings (callouts like &ldquo;see Sheet 3&rdquo;) won&apos;t auto-update.
             Those live in the PDF content.
           </div>
 
           <label className="block">
             <span className="text-[13px] font-semibold text-[var(--color-text)] ">Current number</span>
-            <div className="mt-1 px-2.5 py-1.5 text-sm font-mono bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded text-[var(--color-text)]">
+            <div className="mt-1 px-2.5 py-1.5 text-sm font-display tabular-nums bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded text-[var(--color-text)]">
               {doc.documentNumber || "(none)"}
             </div>
           </label>
@@ -88,7 +88,7 @@ export default function RenumberModal(props: RenumberModalProps) {
             <input
               value={newNumber}
               onChange={(e) => setNewNumber(e.target.value)}
-              className="mt-1 w-full text-sm font-mono border border-[var(--color-border-strong)] rounded px-2.5 py-1.5"
+              className="mt-1 w-full text-sm font-display tabular-nums border border-[var(--color-border-strong)] rounded px-2.5 py-1.5"
               autoFocus
             />
           </label>
@@ -105,7 +105,7 @@ export default function RenumberModal(props: RenumberModalProps) {
           </label>
 
           {error && (
-            <div className="flex items-start gap-2 text-xs border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
+            <div className="flex items-start gap-2 text-[13px] border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
             </div>
           )}

@@ -87,13 +87,13 @@ export default function ReverseConfirmModal({
 
   return (
     <div className="fixed inset-0 z-[210] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
+      <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-lg shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface-2)]">
           <div className="flex items-center gap-2">
             <Undo2 className="w-5 h-5 text-[var(--color-text)]" />
             <div>
-              <h2 className="font-black text-[var(--color-text)]">Reverse {description.opName}</h2>
-              <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
+              <h2 className="font-semibold text-[var(--color-text)]">Reverse {description.opName}</h2>
+              <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">
                 Originally: {event.summary} · {formatWhen(event.timestamp)}
               </div>
             </div>
@@ -105,7 +105,7 @@ export default function ReverseConfirmModal({
 
         <div className="p-5 space-y-3">
           {/* What will happen */}
-          <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-3 text-xs">
+          <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-3 text-[13px]">
             <div className="flex items-start gap-2">
               <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-[var(--color-text-muted)]" />
               <div>
@@ -118,7 +118,7 @@ export default function ReverseConfirmModal({
           </div>
 
           {/* Compensating-action note */}
-          <div className="text-[11px] text-[var(--color-text-muted)]">
+          <div className="text-[13px] text-[var(--color-text-muted)]">
             We never hard-delete - newly-created docs are parked under <b>Superseded</b> so the audit trail stays intact.
             If derivative work happened on them, it&apos;s preserved under that status.
           </div>
@@ -138,7 +138,7 @@ export default function ReverseConfirmModal({
 
           {/* Result (after reversal completes) */}
           {result && (
-            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs space-y-1">
+            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-[13px] space-y-1">
               <div className="font-bold text-emerald-900 inline-flex items-center gap-1">
                 <Check className="w-3.5 h-3.5" /> Reversal complete
               </div>
@@ -161,7 +161,7 @@ export default function ReverseConfirmModal({
           )}
 
           {error && (
-            <div className="flex items-start gap-2 text-xs border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
+            <div className="flex items-start gap-2 text-[13px] border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
             </div>
           )}

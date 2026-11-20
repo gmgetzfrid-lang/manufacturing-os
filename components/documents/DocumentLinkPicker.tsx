@@ -123,16 +123,16 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
     } catch (e) { setUpError(`It didn't upload: ${(e as Error).message}`); } finally { setCreating(false); }
   };
 
-  const fieldCls = "text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] px-2.5 py-1.5 outline-none focus:border-[var(--color-border-strong)]";
+  const fieldCls = "text-[13px] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] px-2.5 py-1.5 outline-none focus:border-[var(--color-border-strong)]";
 
   return (
     <div className="fixed inset-0 z-[520] flex items-center justify-center bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] p-4" onClick={onClose}>
-      <div className="w-full max-w-xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden flex flex-col max-h-[82vh]" onClick={(e) => e.stopPropagation()}>
+      <div className="w-full max-w-xl bg-[var(--color-surface)] rounded-lg shadow-2xl border border-[var(--color-border)] overflow-hidden flex flex-col max-h-[82vh]" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3">
           <FileText className="w-5 h-5 text-[var(--color-text-muted)]" />
           <div className="flex-1 min-w-0">
             <div className="text-sm font-bold text-[var(--color-text)]">Link a drawing</div>
-            <div className="text-[11px] text-[var(--color-text-muted)]">Reference an existing document, or upload a new one</div>
+            <div className="text-[13px] text-[var(--color-text-muted)]">Reference an existing document, or upload a new one</div>
           </div>
           <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
         </div>
@@ -152,21 +152,21 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
               </select>
               <div className="flex-1 flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-2.5 py-1.5">
                 <Search className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
-                <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by number or title…" className="bg-transparent text-xs text-[var(--color-text)] outline-none w-full min-w-0" />
+                <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by number or title…" className="bg-transparent text-[13px] text-[var(--color-text)] outline-none w-full min-w-0" />
               </div>
             </div>
             <div className="flex-1 overflow-y-auto border-t border-[var(--color-border)]">
               {loading ? (
                 <div className="flex items-center justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-muted)]" /></div>
               ) : visible.length === 0 ? (
-                <div className="text-center py-12 text-xs text-[var(--color-text-muted)]">No documents found.</div>
+                <div className="text-center py-12 text-[13px] text-[var(--color-text-muted)]">No documents found.</div>
               ) : (
                 visible.map((r) => (
                   <button key={r.id} disabled={!!linking} onClick={async () => { setLinking(r.id); try { await onPick(r.id); } finally { setLinking(null); } }} className="group w-full text-left px-5 py-2.5 border-b border-[var(--color-border)]/50 hover:bg-[var(--color-surface-2)] flex items-center gap-3 disabled:opacity-50">
                     <FileText className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
                     <div className="min-w-0 flex-1">
-                      <div className="text-xs font-bold text-[var(--color-text)] truncate">{r.document_number || r.title || r.name || "Document"}</div>
-                      <div className="text-[11px] text-[var(--color-text-muted)] truncate">{r.title || r.name || ""}{r.rev ? ` · Rev ${r.rev}` : ""}</div>
+                      <div className="text-[13px] font-bold text-[var(--color-text)] truncate">{r.document_number || r.title || r.name || "Document"}</div>
+                      <div className="text-[13px] text-[var(--color-text-muted)] truncate">{r.title || r.name || ""}{r.rev ? ` · Rev ${r.rev}` : ""}</div>
                     </div>
                     {linking === r.id ? <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" /> : <Check className="w-4 h-4 text-emerald-600 opacity-60 sm:opacity-0 group-hover:opacity-100 shrink-0" />}
                   </button>
@@ -203,13 +203,13 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
               <label {...pdfDrag.bind} className={`flex items-center gap-3 rounded-lg border-2 border-dashed border-[var(--color-border-strong)] p-3 cursor-pointer hover:bg-[var(--color-surface-2)] ${pdfDrag.ring}`}>
                 <input type="file" accept="application/pdf" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="sr-only" />
                 {pdfDrag.over ? (
-                  <span className="text-xs font-bold text-[var(--color-text)]">{pdfDrag.say}</span>
+                  <span className="text-[13px] font-bold text-[var(--color-text)]">{pdfDrag.say}</span>
                 ) : file ? (
                   <>
                     <FileThumb file={file} size={32} />
                     <span className="min-w-0 flex-1">
-                      <span className="block text-xs font-semibold text-[var(--color-text)] truncate">{file.name}</span>
-                      <span className="block text-[11px] text-[var(--color-text-muted)]">{file.size < 1024 * 1024 ? `${(file.size / 1024).toFixed(0)} KB` : `${(file.size / (1024 * 1024)).toFixed(1)} MB`} · tap to pick another</span>
+                      <span className="block text-[13px] font-semibold text-[var(--color-text)] truncate">{file.name}</span>
+                      <span className="block text-[13px] text-[var(--color-text-muted)]">{file.size < 1024 * 1024 ? `${(file.size / 1024).toFixed(0)} KB` : `${(file.size / (1024 * 1024)).toFixed(1)} MB`} · tap to pick another</span>
                     </span>
                   </>
                 ) : (
@@ -229,10 +229,10 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
               </div>
             </div>
 
-            {upError && <p role="alert" className="border-l-2 border-rose-500 pl-3 text-xs text-rose-700 dark:text-rose-300">{upError}</p>}
+            {upError && <p role="alert" className="border-l-2 border-rose-500 pl-3 text-[13px] text-rose-700 dark:text-rose-300">{upError}</p>}
 
             <div className="flex justify-end pt-1">
-              <button onClick={createAndLink} disabled={creating || !upLibraryId || !file || !docNum.trim()} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-xs font-bold disabled:opacity-40 disabled:cursor-not-allowed">
+              <button onClick={createAndLink} disabled={creating || !upLibraryId || !file || !docNum.trim()} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[13px] font-bold disabled:opacity-40 disabled:cursor-not-allowed">
                 {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Create &amp; link
               </button>
             </div>

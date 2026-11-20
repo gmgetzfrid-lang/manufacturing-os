@@ -2,6 +2,7 @@
 
 import React from "react";
 import { FileText, Folder, Layers, Loader2 } from "lucide-react";
+import { bandSeg, bandSegItem } from "@/components/admin/band";
 
 interface StatusFooterProps {
   docCount: number;
@@ -28,14 +29,14 @@ export default function StatusFooter({
 }: StatusFooterProps) {
   return (
     <div
-      className="h-7 shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface)]/90 flex items-center gap-4 px-4 text-[11px] font-mono text-[var(--color-text-muted)] z-20 max-sm:hidden"
+      className="h-9 shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface)]/90 flex items-center gap-4 px-4 text-[13px] tabular-nums text-[var(--color-text-muted)] z-20 max-sm:hidden"
       style={{ backdropFilter: "blur(12px)" }}
     >
       {/* Words only while something is loading; no "live" light. */}
       {loading && (
         <div className="flex items-center gap-1.5">
           <Loader2 className="w-3 h-3 animate-spin" />
-          <span className="font-bold">Loading…</span>
+          <span>Loading…</span>
         </div>
       )}
 
@@ -50,13 +51,13 @@ export default function StatusFooter({
       </div>
 
       {selectedCount > 0 && (
-        <div className="flex items-center gap-1 text-[var(--color-text)] font-bold">
+        <div className="flex items-center gap-1 text-[var(--color-text)] font-semibold">
           <span>{selectedCount} selected</span>
         </div>
       )}
 
       {stagedCount > 0 && (
-        <div className="flex items-center gap-1 text-[var(--color-text)] font-bold">
+        <div className="flex items-center gap-1 text-[var(--color-text)] font-semibold">
           <Layers className="w-3 h-3" />
           <span>{stagedCount} staged</span>
         </div>
@@ -64,25 +65,23 @@ export default function StatusFooter({
 
       <div className="flex-1" />
 
-      {/* Density toggle */}
-      <div className="flex items-center gap-1 border border-[var(--color-border)] rounded-md p-0.5 bg-[var(--color-surface-2)]" role="group" aria-label="Row spacing">
+      {/* Row spacing */}
+      <div className={`${bandSeg} !p-0.5`} role="group" aria-label="Row spacing">
         <button
+          type="button"
           onClick={() => onDensityChange("compact")}
           aria-pressed={density === "compact"}
-          className={`px-1.5 py-0.5 rounded text-[11px] font-bold transition-colors ${
-            density === "compact" ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-          }`}
+          className={`${bandSegItem(density === "compact")} !h-6 !px-2 !text-[13px]`}
         >
           Compact
         </button>
         <button
+          type="button"
           onClick={() => onDensityChange("comfy")}
           aria-pressed={density === "comfy"}
-          className={`px-1.5 py-0.5 rounded text-[11px] font-bold transition-colors ${
-            density === "comfy" ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-          }`}
+          className={`${bandSegItem(density === "comfy")} !h-6 !px-2 !text-[13px]`}
         >
-          Comfy
+          Roomy
         </button>
       </div>
     </div>

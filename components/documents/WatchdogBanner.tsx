@@ -16,7 +16,7 @@ export default function WatchdogBanner({ suggestions, busyId, onLink, onDismiss,
 }) {
   if (!suggestions.length) return null;
   return (
-    <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] px-4 sm:px-5 py-3">
+    <section className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] px-4 sm:px-5 py-3">
       <div className="py-1 flex items-center justify-between gap-3">
         <h2 className="text-[14px] font-bold text-[var(--color-text)] inline-flex items-center gap-2"><ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" /> {suggestions.length === 1 ? "This looks like it belongs somewhere else" : `${suggestions.length} of these look like they belong somewhere else`}</h2>
         <button aria-label="Dismiss" onClick={onClose} className="p-1 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)]" title="Dismiss"><X className="w-4 h-4" /></button>
@@ -30,10 +30,10 @@ export default function WatchdogBanner({ suggestions, busyId, onLink, onDismiss,
               <div className="text-[var(--color-text-muted)]">{s.reason}</div>
             </div>
             <div className="flex items-center gap-1 shrink-0">
-              <button onClick={() => onLink(s)} disabled={busyId === s.targetId} title="Keeps the file here and also files it there. Nothing moves." className="inline-flex items-center gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] px-2 py-1 text-xs font-bold hover:bg-[var(--color-surface-2)] disabled:opacity-60">
+              <button onClick={() => onLink(s)} disabled={busyId === s.targetId} title="Keeps the file here and also files it there. Nothing moves." className="inline-flex items-center gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] px-2 py-1 text-[13px] font-bold hover:bg-[var(--color-surface-2)] disabled:opacity-60">
                 {busyId === s.targetId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />} Link it there
               </button>
-              <button onClick={() => onDismiss(s)} disabled={busyId === s.targetId} className="rounded-lg px-2 py-1 text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-60">Leave it</button>
+              <button onClick={() => onDismiss(s)} disabled={busyId === s.targetId} className="rounded-lg px-2 py-1 text-[13px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-60">Leave it</button>
             </div>
           </li>
         ))}

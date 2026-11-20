@@ -21,7 +21,7 @@ function ChipInner() {
     <button
       type="button"
       onClick={() => router.push("/graph")}
-      className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-[var(--color-text)] hover:opacity-90 text-[var(--color-surface)] text-[11px] font-black shadow-xl transition-colors"
+      className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-[var(--color-text)] hover:opacity-90 text-[var(--color-surface)] text-[11px] font-semibold shadow-xl transition-colors"
       style={{ animation: "rise 0.3s var(--ease-fluid) both" }}
     >
       <Waypoints className="w-3.5 h-3.5" /> Back to graph

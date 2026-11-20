@@ -135,14 +135,14 @@ export default function DistributionAcks({
       {myPending && (
         <div className="rounded-xl border-2 border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-3 flex items-center gap-3 animate-in fade-in">
           <ClipboardCheck className="w-5 h-5 text-[var(--color-text-muted)] shrink-0" />
-          <div className="flex-1 min-w-0 text-xs text-[var(--color-text)]">
+          <div className="flex-1 min-w-0 text-[13px] text-[var(--color-text)]">
             <b>{myPending.requestedByName || "Document Control"}</b> asked you to confirm you have{" "}
             <b>Rev {myPending.revLabel ?? currentRev ?? "?"}</b> of this document.
           </div>
           <button
             onClick={() => void handleAcknowledge()}
             disabled={acking}
-            className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 shadow disabled:opacity-50"
+            className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-semibold border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] shadow disabled:opacity-50"
           >
             {acking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
             I have this revision
@@ -158,10 +158,10 @@ export default function DistributionAcks({
             className="w-full px-3.5 py-2.5 flex items-center gap-2 hover:bg-[var(--color-surface-2)] transition-colors"
           >
             <ClipboardCheck className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-            <span className="text-xs font-bold text-[var(--color-text)]">Distribution confirmations</span>
+            <span className="text-[13px] font-bold text-[var(--color-text)]">Distribution confirmations</span>
             <span className="ml-auto">
               {acks.length === 0 ? (
-                <span className="text-[11px] font-bold text-[var(--color-text-faint)]">none requested for Rev {currentRev ?? "-"}</span>
+                <span className="text-[13px] font-bold text-[var(--color-text-faint)]">none requested for Rev {currentRev ?? "-"}</span>
               ) : (
                 <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded-full ${
                   confirmed === acks.length ? "bg-emerald-50 text-emerald-700" : "bg-[var(--color-surface-2)] text-[var(--color-text)]"
@@ -186,7 +186,7 @@ export default function DistributionAcks({
                   </div>
                   <div className="space-y-0.5">
                     {acks.map((a) => (
-                      <div key={a.id} className="flex items-center gap-2 text-[11px] py-0.5">
+                      <div key={a.id} className="flex items-center gap-2 text-[13px] py-0.5">
                         {a.acknowledgedAt
                           ? <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0" />
                           : <Clock className="w-3 h-3 text-amber-500 shrink-0" />}
@@ -206,18 +206,18 @@ export default function DistributionAcks({
                 <div className="flex items-center gap-2 pt-1">
                   <button
                     onClick={() => void openPicker()}
-                    className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-[11px] font-bold border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                    className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-[13px] font-bold border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                   >
                     <UserPlus className="w-3 h-3" /> Request confirmations…
                   </button>
                   {acks.some((a) => !a.acknowledgedAt) && (
                     reminded ? (
-                      <span className="text-[11px] font-bold text-emerald-700">Reminder sent ✓</span>
+                      <span className="text-[13px] font-bold text-emerald-700">Reminder sent ✓</span>
                     ) : (
                       <button
                         onClick={() => void handleRemind()}
                         disabled={busy}
-                        className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-[11px] font-bold border border-amber-200 text-amber-700 hover:bg-amber-50 disabled:opacity-50"
+                        className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-[13px] font-bold border border-amber-200 text-amber-700 hover:bg-amber-50 disabled:opacity-50"
                       >
                         <BellRing className="w-3 h-3" /> Remind the unconfirmed
                       </button>
@@ -239,7 +239,7 @@ export default function DistributionAcks({
                   </div>
                   <div className="max-h-40 overflow-y-auto space-y-0.5">
                     {members.map((m) => (
-                      <label key={m.uid} className="flex items-center gap-2 px-1.5 py-1 rounded hover:bg-[var(--color-surface-2)] cursor-pointer text-[11px]">
+                      <label key={m.uid} className="flex items-center gap-2 px-1.5 py-1 rounded hover:bg-[var(--color-surface-2)] cursor-pointer text-[13px]">
                         <input
                           type="checkbox"
                           checked={checked.has(m.uid)}
@@ -253,14 +253,14 @@ export default function DistributionAcks({
                           className="rounded"
                         />
                         <span className="font-bold text-[var(--color-text)]">{m.email?.split("@")[0] ?? m.uid.slice(0, 8)}</span>
-                        {m.role && <span className="text-[11px] text-[var(--color-text-faint)] uppercase">{m.role}</span>}
+                        {m.role && <span className="text-[13px] text-[var(--color-text-faint)]">{m.role}</span>}
                       </label>
                     ))}
                   </div>
                   <button
                     onClick={() => void handleRequest()}
                     disabled={busy || checked.size === 0}
-                    className="w-full inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                    className="w-full inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[13px] font-bold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
                   >
                     {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <ClipboardCheck className="w-3 h-3" />}
                     Ask {checked.size || "…"} {checked.size === 1 ? "person" : "people"} to confirm

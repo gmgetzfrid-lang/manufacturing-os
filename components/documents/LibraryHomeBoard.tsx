@@ -114,7 +114,7 @@ export default function LibraryHomeBoard({
       <div className="mb-5">
         {canEdit && (
           <div className="flex justify-end mb-2">
-            <button onClick={startEditing} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-[var(--color-text-muted)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
+            <button onClick={startEditing} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-bold text-[var(--color-text-muted)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
               <Pencil className="w-3.5 h-3.5" /> Customize home
             </button>
           </div>
@@ -163,25 +163,25 @@ export default function LibraryHomeBoard({
   };
 
   return (
-    <div className="mb-5 rounded-2xl border-2 border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-4">
+    <div className="mb-5 rounded-lg border-2 border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-4">
       <div className="flex items-center justify-between mb-3">
         <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Customizing home</div>
         <div className="flex items-center gap-2">
-          <button onClick={disableHome} disabled={saving} className="px-3 py-1.5 rounded-lg text-xs font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Turn off home</button>
+          <button onClick={disableHome} disabled={saving} className="px-3 py-1.5 rounded-lg text-[13px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Turn off home</button>
           <button onClick={() => setEditing(false)} disabled={saving} className="px-3 py-1.5 rounded-lg text-xs font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-3.5 h-3.5 inline -mt-0.5" /> Cancel</button>
-          <button onClick={save} disabled={saving} className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] disabled:opacity-50" style={{ background: "var(--color-accent)" }}>
+          <button onClick={save} disabled={saving} className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-[13px] font-bold text-[var(--color-accent-fg)] disabled:opacity-50" style={{ background: "var(--color-accent)" }}>
             {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Save
           </button>
         </div>
       </div>
-      {saveErr && <p role="alert" className="mb-3 border-l-2 border-rose-500 pl-3 text-xs text-rose-700 dark:text-rose-300">{saveErr}</p>}
+      {saveErr && <p role="alert" className="mb-3 border-l-2 border-rose-500 pl-3 text-[13px] text-rose-700 dark:text-rose-300">{saveErr}</p>}
 
       {/* add-part palette */}
       <div className="flex flex-wrap gap-1.5 mb-3">
         {(Object.keys(PART_META) as WebPartType[]).map((t) => {
           const M = PART_META[t];
           return (
-            <button key={t} onClick={() => add(t)} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:border-[var(--color-accent)]">
+            <button key={t} onClick={() => add(t)} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:border-[var(--color-accent)]">
               <Plus className="w-3 h-3" /> <M.icon className="w-3.5 h-3.5" /> {M.label}
             </button>
           );
@@ -219,7 +219,7 @@ export default function LibraryHomeBoard({
                 </div>
                 <div className="text-[13px] text-[var(--color-text-faint)] font-semibold mb-1">{M.label} · {(p.width ?? "half")}</div>
                 {p.type === "recentDocs" && (
-                  <label className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
+                  <label className="flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]">
                     Show
                     <input type="number" min={1} max={20} value={p.settings?.count ?? 6}
                       onChange={(e) => update(p.id, { settings: { ...p.settings, count: Math.max(1, Math.min(20, Number(e.target.value) || 6)) } })}
@@ -231,7 +231,7 @@ export default function LibraryHomeBoard({
                   <textarea rows={3} value={p.settings?.body ?? ""}
                     onChange={(e) => update(p.id, { settings: { ...p.settings, body: e.target.value } })}
                     placeholder="Write a notice for everyone who opens this library…"
-                    className="w-full px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] text-xs text-[var(--color-text)] resize-none" />
+                    className="w-full px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text)] resize-none" />
                 )}
               </div>
             );
@@ -262,10 +262,10 @@ function PartGrid({
   return (
     <div className="grid grid-cols-6 gap-4">
       {parts.map((p) => (
-        <section key={p.id} className={`${WIDTH_SPAN[p.width ?? "half"]} rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm overflow-hidden`}>
+        <section key={p.id} className={`${WIDTH_SPAN[p.width ?? "half"]} rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm overflow-hidden`}>
           {p.type === "about" ? (
             <div className="p-5">
-              <h3 className="text-sm font-black text-[var(--color-text)] flex items-center gap-2 mb-2">
+              <h3 className="text-sm font-semibold text-[var(--color-text)] flex items-center gap-2 mb-2">
                 {node.icon ? <NodeIcon name={node.icon} className="w-4 h-4 text-[var(--color-text-muted)]" /> : <Info className="w-4 h-4 text-[var(--color-text-muted)]" />}
                 {p.title || `About ${node.name}`}
               </h3>
@@ -273,7 +273,7 @@ function PartGrid({
             </div>
           ) : p.type === "stats" ? (
             <div className="p-5">
-              <h3 className="text-sm font-black text-[var(--color-text)] mb-3">{p.title || "At a glance"}</h3>
+              <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{p.title || "At a glance"}</h3>
               <div className="grid grid-cols-2 gap-3">
                 <Stat label="Folders" value={folders.length} />
                 <Stat label="Documents" value={documents.length} />
@@ -281,19 +281,19 @@ function PartGrid({
             </div>
           ) : p.type === "text" ? (
             <div className="p-5">
-              {p.title && <h3 className="text-sm font-black text-[var(--color-text)] mb-2">{p.title}</h3>}
+              {p.title && <h3 className="text-sm font-semibold text-[var(--color-text)] mb-2">{p.title}</h3>}
               <p className="text-sm text-[var(--color-text-muted)] whitespace-pre-line">{p.settings?.body || ""}</p>
             </div>
           ) : p.type === "quickFolders" ? (
             <div className="p-5">
-              <h3 className="text-sm font-black text-[var(--color-text)] flex items-center gap-2 mb-3"><FolderOpen className="w-4 h-4 text-[var(--color-text-muted)]" /> {p.title || "Folders"}</h3>
+              <h3 className="text-sm font-semibold text-[var(--color-text)] flex items-center gap-2 mb-3"><FolderOpen className="w-4 h-4 text-[var(--color-text-muted)]" /> {p.title || "Folders"}</h3>
               {rootFolders.length === 0 ? (
-                <p className="text-xs text-[var(--color-text-muted)]">No folders yet.</p>
+                <p className="text-[13px] text-[var(--color-text-muted)]">No folders yet.</p>
               ) : (
                 <div className="flex flex-wrap gap-2">
                   {pickFolders(rootFolders, p.settings?.folderIds).map((f) => (
                     <button key={f.id} onClick={() => onOpenFolder(f.id!)}
-                      className="group inline-flex items-center gap-2 px-3 py-1.5 rounded-2xl border border-[var(--color-border)] hover:border-[var(--color-accent)] hover:bg-[var(--color-surface-2)] text-sm font-semibold text-[var(--color-text)] transition-colors hover-lift">
+                      className="group inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-accent)] hover:bg-[var(--color-surface-2)] text-sm font-semibold text-[var(--color-text)] transition-colors hover-lift">
                       <span className="w-5 h-5 rounded-md grid place-items-center text-white shrink-0 shadow-sm" style={{ background: f.color || "var(--brand-gradient)" }}>
                         <NodeIcon name={f.icon} className="w-3 h-3" />
                       </span>
@@ -307,9 +307,9 @@ function PartGrid({
           ) : (
             // recentDocs
             <div className="p-5">
-              <h3 className="text-sm font-black text-[var(--color-text)] flex items-center gap-2 mb-3"><Clock className="w-4 h-4 text-[var(--color-text-muted)]" /> {p.title || "Recent documents"}</h3>
+              <h3 className="text-sm font-semibold text-[var(--color-text)] flex items-center gap-2 mb-3"><Clock className="w-4 h-4 text-[var(--color-text-muted)]" /> {p.title || "Recent documents"}</h3>
               {recent.length === 0 ? (
-                <p className="text-xs text-[var(--color-text-muted)]">No documents yet.</p>
+                <p className="text-[13px] text-[var(--color-text-muted)]">No documents yet.</p>
               ) : (
                 <ul className="divide-y divide-[var(--color-border)] -my-1">
                   {recent.slice(0, p.settings?.count ?? 6).map((d) => (
@@ -318,7 +318,7 @@ function PartGrid({
                         <FileText className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
                         <span className="min-w-0 flex-1">
                           <span className="block text-sm font-semibold text-[var(--color-text)] truncate">{d.title || d.name || d.documentNumber || "Untitled"}</span>
-                          <span className="block text-[11px] text-[var(--color-text-muted)] truncate">{d.documentNumber}{d.rev ? ` · Rev ${d.rev}` : ""}{d.status ? ` · ${d.status}` : ""}</span>
+                          <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{d.documentNumber}{d.rev ? ` · Rev ${d.rev}` : ""}{d.status ? ` · ${d.status}` : ""}</span>
                         </span>
                       </button>
                     </li>
@@ -336,7 +336,7 @@ function PartGrid({
 function Stat({ label, value }: { label: string; value: number }) {
   return (
     <div className="rounded-xl bg-[var(--color-surface-2)] px-3 py-2.5 flex items-baseline gap-2">
-      <div className="text-[15px] font-black tabular-nums text-[var(--color-text)]">{value}</div>
+      <div className="text-[15px] font-semibold tabular-nums text-[var(--color-text)]">{value}</div>
       <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">{label}</div>
     </div>
   );

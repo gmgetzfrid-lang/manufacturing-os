@@ -21,6 +21,8 @@ import { useToast } from "@/components/providers/ToastProvider";
 import { supabase } from "@/lib/supabase";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
+import MoreMenu, { type MoreItem } from "@/components/ui/MoreMenu";
+import { StatusTag, humanDate } from "@/components/documents/StatusTag";
 import { Button } from "@/components/ui/Button";
 import { Input, Select, Textarea } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
@@ -47,12 +49,6 @@ interface DocHit {
   versionId: string | null;
 }
 
-const TONE_CHIP: Record<string, string> = {
-  slate: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
-  blue: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
-  emerald: "bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900",
-  rose: "bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-900",
-};
 
 export default function TransmittalsPage() {
   const { activeOrgId, uid, userEmail, activeRole } = useRole();
@@ -207,19 +203,24 @@ export default function TransmittalsPage() {
   const received = all.filter((t) => t.status === "acknowledged").length;
   const answer = error && all.length === 0 ? "Transmittals didn't load."
     : all.length === 0 ? "No transmittals yet."
-    : `${all.length.toLocaleString()} transmittal${all.length === 1 ? "" : "s"}${waiting > 0 ? `, ${waiting} waiting on a receipt` : ""}.`;
-  const subBits: string[] = [];
-  if (staleIds.size > 0) subBits.push(`${staleIds.size} went out with a revision that's now old.`);
-  if (drafts > 0) subBits.push(`${drafts} draft${drafts === 1 ? "" : "s"} not issued.`);
-  if (received > 0) subBits.push(`${received} received.`);
-  const answerSub = subBits.length > 0 ? subBits.join(" ") : "Documents issued to others, each with a number, a cover sheet and a receipt.";
+    : waiting > 0 ? `${waiting.toLocaleString()} waiting on a receipt.`
+    : `${all.length.toLocaleString()} transmittal${all.length === 1 ? "" : "s"}.`;
+  const answerSub = "Documents issued to others, each with a number, a cover sheet and a receipt.";
+  // The numbers behind it, in ruled cells.
+  const answerFacts = all.length === 0 ? undefined : [
+    ...(waiting > 0 ? [{ label: "Total", value: all.length.toLocaleString() }] : []),
+    { label: "Old rev out", value: staleIds.size.toLocaleString(), tone: staleIds.size > 0 ? "bad" as const : undefined },
+    { label: "Drafts", value: drafts.toLocaleString() },
+    { label: "Received", value: received.toLocaleString() },
+  ];
 
   return (
     <PageShell width="work">
       <PageHero
-        kicker="Document control · Transmittals"
+        kicker="Document control"
         title={answer}
         sub={answerSub}
+        facts={answerFacts}
         tools={
           <button type="button" onClick={() => void refresh()} disabled={loading} className={heroQuiet} aria-label="Refresh" title="Refresh">
             <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
@@ -231,24 +232,24 @@ export default function TransmittalsPage() {
           </button>
         }
       >
-        <ViewTabs tabs={DOCUMENT_VIEWS} variant="dark" />
+        <ViewTabs tabs={DOCUMENT_VIEWS} />
       </PageHero>
 
       <PageBody>
         {error && (
           <Card>
-            <div role="alert" className={`text-[14px] flex items-start gap-2 ${needsMigration ? "text-amber-800 dark:text-amber-300" : "text-rose-700 dark:text-rose-300"}`}>
-              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+            <div role="alert" className="text-[15px] flex items-start gap-2 text-[var(--color-text)]">
+              <AlertTriangle className={`w-4 h-4 mt-0.5 shrink-0 ${needsMigration ? "text-[var(--state-held)]" : "text-[var(--state-overdue)]"}`} />
               <div>
-                <div className="font-bold">{needsMigration ? "Transmittals aren't set up in this workspace yet" : "Couldn't load the transmittals"}</div>
-                <div className="mt-0.5 text-[13px]">{error}</div>
+                <div className="font-semibold">{needsMigration ? "Transmittals aren't set up in this workspace yet" : "Couldn't load the transmittals"}</div>
+                <div className="mt-0.5 text-[14px] text-[var(--color-text-muted)]">{error}</div>
               </div>
             </div>
           </Card>
         )}
         {highlightId && list && !list.some((t) => t.id === highlightId) && !error && (
           <Card>
-            <p className="text-[14px] text-amber-800 dark:text-amber-300">
+            <p className="text-[15px] text-[var(--color-text)]">
               That transmittal isn&apos;t on this register. It may have been deleted, or it&apos;s in another workspace.
             </p>
           </Card>
@@ -256,83 +257,93 @@ export default function TransmittalsPage() {
 
         {!error && (list?.length ?? 0) === 0 ? (
           <Card>
-            <div className="py-6 text-center">
-              <Send className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-3" />
-              <p className="text-[14px] text-[var(--color-text-muted)] max-w-md mx-auto">
-                A transmittal issues documents to someone outside, at the revision they get, with a cover sheet and a receipt. Use New transmittal to send the first one.
-              </p>
-            </div>
+            <p className="flex items-center gap-2.5 text-[15px] text-[var(--color-text-muted)]">
+              <Send className="w-5 h-5 shrink-0 text-[var(--color-text-faint)]" />
+              Nothing on the register. Use New transmittal to send the first one.
+            </p>
           </Card>
         ) : (list ?? []).length > 0 && (
-          <Card label="Register" pad={false} className="overflow-hidden">
-            <div className="border-t border-[var(--color-border)] divide-y divide-[var(--color-border)]">
-            {(list ?? []).map((t) => {
-              const meta = transmittalStatusMeta(t.status);
-              return (
-                <div key={t.id} data-transmittal-id={t.id} className={`px-4 sm:px-5 py-4 flex flex-wrap items-start gap-x-4 gap-y-2 scroll-mt-24 ${highlightId === t.id ? "bg-[var(--color-surface-2)] shadow-[inset_3px_0_0_0_var(--color-text)]" : ""}`}>
-                  <div className="flex-1 min-w-[200px]">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-mono text-[14px] font-black text-[var(--color-text)]">{t.number}</span>
-                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${TONE_CHIP[meta.tone]}`}>{meta.label}</span>
-                      {t.purpose && <span className="text-[12px] text-[var(--color-text-muted)]">{t.purpose}</span>}
-                      {staleIds.has(t.id) && (
-                        <span className="text-[12px] font-bold text-rose-700 dark:text-rose-300" title="A document on it has a newer revision now. The recipient has an old one.">
-                          They have an old revision
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-[14px] font-semibold text-[var(--color-text)] mt-1">{t.subject || "Document Transmittal"}</div>
-                    <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
-                      {(t.recipientName || t.recipientCompany) && (
-                        <span className="inline-flex items-center gap-1"><User className="w-3 h-3" />{[t.recipientName, t.recipientCompany].filter(Boolean).join(" · ")}</span>
-                      )}
-                      <span className="inline-flex items-center gap-1"><Package className="w-3 h-3" />{t.items.length} doc{t.items.length === 1 ? "" : "s"}</span>
-                      {t.issuedAt && <span>Issued {new Date(t.issuedAt).toLocaleDateString()}</span>}
-                      {t.status === "acknowledged" && t.acknowledgedAt && <span className="text-emerald-700 dark:text-emerald-400">Received {new Date(t.acknowledgedAt).toLocaleDateString()}{t.acknowledgedByName ? ` by ${t.acknowledgedByName}` : ""}{t.acknowledgedVia === "portal" ? ", confirmed by them" : t.acknowledgedVia === "manual" ? ", recorded by us" : ""}</span>}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
-                    <button onClick={() => openTransmittalSheet(t)} title="Open the printable cover sheet" className="inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] text-[13px] font-semibold border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
-                      <Printer className="w-3.5 h-3.5" /> Cover sheet
-                    </button>
-                    {t.portalToken && t.status !== "voided" && (
-                      <button
-                        onClick={() => {
-                          void navigator.clipboard.writeText(transmittalPortalUrl(t.portalToken!));
-                          showToast({ type: "success", title: "Portal link copied", message: `Send it to ${t.recipientName || t.recipientCompany || "the recipient"} - they can download the files and acknowledge receipt themselves.` });
-                        }}
-                        title="Copy the recipient's secure portal link, no account needed on their side"
-                        className="inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] text-[13px] font-semibold border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
-                      >
-                        <LinkIcon className="w-3.5 h-3.5" /> Portal link
-                      </button>
-                    )}
-                    {t.status === "draft" && (
-                      <>
-                        <button onClick={() => openEdit(t)} title="Edit draft" className="inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] text-[13px] font-semibold border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
-                          <Pencil className="w-3.5 h-3.5" /> Edit
-                        </button>
-                        <button onClick={() => doDelete(t)} disabled={busyId === t.id} title="Delete draft" aria-label="Delete draft" className="inline-flex items-center justify-center w-9 h-9 rounded-[10px] border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-rose-600 hover:border-rose-200 transition-colors">
-                          {busyId === t.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-                        </button>
-                      </>
-                    )}
-                    {t.status === "issued" && (
-                      <>
-                        <button onClick={() => doAcknowledge(t)} disabled={busyId === t.id} title="Record that they received it" className="inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] text-[13px] font-semibold border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
-                          {busyId === t.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />} Receipt
-                        </button>
-                        <button onClick={() => doVoid(t)} disabled={busyId === t.id} title="Void (issued in error)" aria-label="Void" className="inline-flex items-center justify-center w-9 h-9 rounded-[10px] border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-rose-600 hover:border-rose-200 transition-colors">
-                          <Ban className="w-3.5 h-3.5" />
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+          <section>
+            <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)] mb-2.5">Register</h2>
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+              <table className="w-full text-[14px]">
+                <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left max-md:hidden">
+                  <tr>
+                    <th className="font-semibold px-4 h-10 w-36">Number</th>
+                    <th className="font-semibold px-4">Subject</th>
+                    <th className="font-semibold px-4 hidden lg:table-cell">To</th>
+                    <th className="font-semibold px-4 text-right w-28">Documents</th>
+                    <th className="font-semibold px-4 w-36">Status</th>
+                    <th className="font-semibold px-4 w-28">Issued</th>
+                    <th className="w-48"><span className="sr-only">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--color-border)]">
+                {(list ?? []).map((t) => {
+                  const meta = transmittalStatusMeta(t.status);
+                  const stale = staleIds.has(t.id);
+                  const to = [t.recipientName, t.recipientCompany].filter(Boolean).join(", ");
+                  const statusTone = t.status === "acknowledged" ? "good" : t.status === "issued" ? "warn" : "none";
+                  const more: MoreItem[] = [
+                    { icon: <Printer className="w-4 h-4" />, label: "Cover sheet", onClick: () => openTransmittalSheet(t) },
+                  ];
+                  if (t.portalToken && t.status !== "voided") more.push({
+                    icon: <LinkIcon className="w-4 h-4" />, label: "Copy portal link",
+                    onClick: () => {
+                      void navigator.clipboard.writeText(transmittalPortalUrl(t.portalToken!));
+                      showToast({ type: "success", title: "Portal link copied", message: `Send it to ${t.recipientName || t.recipientCompany || "the recipient"}. They can download the files and confirm receipt themselves.` });
+                    },
+                  });
+                  if (t.status === "draft") more.push({ icon: <Trash2 className="w-4 h-4" />, label: "Delete draft", tone: "bad", line: true, onClick: () => doDelete(t) });
+                  if (t.status === "issued") more.push({ icon: <Ban className="w-4 h-4" />, label: "Void (issued in error)", tone: "bad", line: true, onClick: () => doVoid(t) });
+                  const small = "inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
+                  return (
+                    <tr key={t.id} data-transmittal-id={t.id} className={`scroll-mt-24 align-top md:align-middle max-md:block max-md:relative ${highlightId === t.id ? "bg-[var(--color-surface-2)]" : "hover:bg-[var(--color-surface-2)]"}`}>
+                      <td className="px-4 pt-3 md:py-3 relative max-md:block">
+                        {(stale || highlightId === t.id) && <span aria-hidden className={`absolute left-0 inset-y-0 w-[3px] ${stale ? "bg-[var(--state-overdue)]" : "bg-[var(--color-text)]"}`} />}
+                        <span className="font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)] whitespace-nowrap">{t.number}</span>
+                        <span className="md:hidden ml-3"><StatusTag tone={statusTone} status={meta.label} /></span>
+                      </td>
+                      <td className="px-4 md:py-3 max-md:block max-md:pr-4 min-w-0">
+                        <div className="font-semibold text-[var(--color-text)]">{t.subject || "Document transmittal"}</div>
+                        <div className="text-[13px] text-[var(--color-text-muted)] flex flex-wrap gap-x-3">
+                          {t.purpose && <span>{t.purpose}</span>}
+                          {stale && <span className="font-semibold text-[var(--state-overdue)]" title="A document on it has a newer revision now. The recipient has an old one.">They have an old revision</span>}
+                          {t.status === "acknowledged" && t.acknowledgedAt && (
+                            <span>Received {humanDate(t.acknowledgedAt)}{t.acknowledgedByName ? ` by ${t.acknowledgedByName}` : ""}{t.acknowledgedVia === "portal" ? ", confirmed by them" : t.acknowledgedVia === "manual" ? ", recorded by us" : ""}</span>
+                          )}
+                          {/* Phone: the facts under the subject. */}
+                          <span className="md:hidden">{to || "No recipient"}</span>
+                          <span className="md:hidden">{t.items.length} doc{t.items.length === 1 ? "" : "s"}</span>
+                          {t.issuedAt && <span className="md:hidden">Issued {humanDate(t.issuedAt)}</span>}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-[var(--color-text)] hidden lg:table-cell">{to || <span className="text-[var(--color-text-muted)]">-</span>}</td>
+                      <td className="px-4 py-3 text-right font-display text-[16px] font-semibold tabular-nums max-md:hidden">{t.items.length}</td>
+                      <td className="px-4 py-3 max-md:hidden"><StatusTag tone={statusTone} status={meta.label} /></td>
+                      <td className="px-4 py-3 whitespace-nowrap max-md:hidden">{t.issuedAt ? humanDate(t.issuedAt) : <span className="text-[var(--color-text-muted)]">-</span>}</td>
+                      <td className="px-3 pb-3 md:py-3 max-md:block">
+                        <div className="flex items-center gap-1.5 md:justify-end">
+                          {t.status === "draft" && (
+                            <button type="button" onClick={() => openEdit(t)} className={small}>
+                              <Pencil className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Edit
+                            </button>
+                          )}
+                          {t.status === "issued" && (
+                            <button type="button" onClick={() => doAcknowledge(t)} disabled={busyId === t.id} title="Record that they received it" className={small}>
+                              {busyId === t.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />} Record receipt
+                            </button>
+                          )}
+                          <MoreMenu items={more} iconOnly label={`More for ${t.number}`} triggerClass="inline-grid place-items-center w-8 h-8 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]" />
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+                </tbody>
+              </table>
             </div>
-          </Card>
+          </section>
         )}
       </PageBody>
 
@@ -493,9 +504,9 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in p-0 sm:p-4" onClick={onClose}>
-      <div className="bg-[var(--color-surface)] w-full sm:max-w-2xl sm:rounded-2xl rounded-t-2xl shadow-2xl max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-[var(--color-surface)] w-full sm:max-w-2xl sm:rounded-lg rounded-t-2xl shadow-2xl max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
-          <h2 className="text-[15px] font-extrabold text-[var(--color-text)] flex items-center gap-2">
+          <h2 className="text-[15px] font-semibold text-[var(--color-text)] flex items-center gap-2">
             <Send className="w-4 h-4 text-[var(--color-text-muted)]" /> {editing ? `Edit ${editing.number}` : "New transmittal"}
           </h2>
           <button aria-label="Close" onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-[var(--color-surface-2)] flex items-center justify-center text-[var(--color-text-faint)] transition-colors"><X className="w-4 h-4" /></button>
@@ -555,10 +566,10 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
                   return (
                     <button key={h.id} onClick={() => addDoc(h)} disabled={added} className="w-full text-left px-3 py-2 hover:bg-[var(--color-surface-2)] transition-colors flex items-center gap-2 disabled:opacity-50">
                       <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
-                      <span className="font-mono text-xs font-bold text-[var(--color-text)]">{h.number}</span>
-                      {h.rev && <span className="text-[11px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1 rounded">R{h.rev}</span>}
-                      {h.title && h.title !== h.number && <span className="text-xs text-[var(--color-text-muted)] truncate">{h.title}</span>}
-                      <span className="ml-auto text-[11px] font-bold text-[var(--color-text)]">{added ? "Added" : "+ Add"}</span>
+                      <span className="font-display tabular-nums text-[13px] font-bold text-[var(--color-text)]">{h.number}</span>
+                      {h.rev && <span className="text-[13px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1 rounded">R{h.rev}</span>}
+                      {h.title && h.title !== h.number && <span className="text-[13px] text-[var(--color-text-muted)] truncate">{h.title}</span>}
+                      <span className="ml-auto text-[13px] font-bold text-[var(--color-text)]">{added ? "Added" : "+ Add"}</span>
                     </button>
                   );
                 })}
@@ -572,9 +583,9 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
                     <DocHoverPreview documentId={it.documentId}>
                       <DocThumb documentId={it.documentId} width={28} />
                     </DocHoverPreview>
-                    <span className="font-mono text-xs font-bold text-[var(--color-text)]">{it.number}</span>
-                    {it.rev && <span className="text-[11px] font-bold bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-muted)] px-1 rounded">R{it.rev}</span>}
-                    {it.title && it.title !== it.number && <span className="text-xs text-[var(--color-text-muted)] truncate">{it.title}</span>}
+                    <span className="font-display tabular-nums text-[13px] font-bold text-[var(--color-text)]">{it.number}</span>
+                    {it.rev && <span className="text-[13px] font-bold bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-muted)] px-1 rounded">R{it.rev}</span>}
+                    {it.title && it.title !== it.number && <span className="text-[13px] text-[var(--color-text-muted)] truncate">{it.title}</span>}
                     <button aria-label="Remove" onClick={() => removeItem(it.documentId)} className="ml-auto text-[var(--color-text-faint)] hover:text-rose-600 transition-colors"><X className="w-3.5 h-3.5" /></button>
                   </li>
                 ))}

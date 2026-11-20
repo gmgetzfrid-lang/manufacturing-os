@@ -102,12 +102,12 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
 
   return (
     <div className="fixed inset-0 z-[520] flex items-center justify-center bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] p-4" onClick={onClose}>
-      <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden" onClick={(e) => e.stopPropagation()}>
+      <div className="w-full max-w-md bg-[var(--color-surface)] rounded-lg shadow-2xl border border-[var(--color-border)] overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3">
           <ClipboardCheck className="w-5 h-5 text-[var(--color-text-muted)]" />
           <div className="flex-1 min-w-0">
             <div className="text-sm font-bold text-[var(--color-text)]">Read &amp; understood</div>
-            <div className="text-[11px] text-[var(--color-text-muted)] truncate">Every issued revision in this {scopeLabel}{name ? ` · ${name}` : ""} must be acknowledged</div>
+            <div className="text-[13px] text-[var(--color-text-muted)] truncate">Every issued revision in this {scopeLabel}{name ? ` · ${name}` : ""} must be acknowledged</div>
           </div>
           <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
         </div>
@@ -123,7 +123,7 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
             {enabled && (
               <>
                 <div className="space-y-1">
-                  <div className="text-[11px] font-bold text-[var(--color-text-muted)]">Named people</div>
+                  <div className="text-[13px] font-bold text-[var(--color-text-muted)]">Named people</div>
                   <div className="flex flex-wrap gap-1">
                     {people.map((p) => (
                       <span key={p.uid} className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-[11px] text-[var(--color-text)]">{p.name || p.email}<button aria-label="Remove" onClick={() => setPeople((prev) => prev.filter((x) => x.uid !== p.uid))}><X className="w-3 h-3" /></button></span>
@@ -140,40 +140,40 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
                 </div>
 
                 <div className="space-y-1">
-                  <div className="text-[11px] font-bold text-[var(--color-text-muted)]">Whole roles</div>
+                  <div className="text-[13px] font-bold text-[var(--color-text-muted)]">Whole roles</div>
                   <div className="flex flex-wrap gap-1">
                     {ALL_ROLES.map((r) => (
-                      <button key={r} onClick={() => toggleRole(r)} className={`px-2 py-0.5 rounded-full text-[11px] font-bold border transition-colors ${roles.includes(r) ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{r}</button>
+                      <button key={r} onClick={() => toggleRole(r)} className={`px-2 py-0.5 rounded-full text-[11px] font-bold border transition-colors ${roles.includes(r) ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{r}</button>
                     ))}
                   </div>
-                  <div className="text-[11px] text-[var(--color-text-muted)]">Role members are resolved to individuals each time a revision is issued.</div>
+                  <div className="text-[13px] text-[var(--color-text-muted)]">Role members are resolved to individuals each time a revision is issued.</div>
                 </div>
 
                 {allTeams.length > 0 && (
                   <div className="space-y-1">
-                    <div className="text-[11px] font-bold text-[var(--color-text-muted)]">Departments (teams)</div>
+                    <div className="text-[13px] font-bold text-[var(--color-text-muted)]">Departments (teams)</div>
                     <div className="flex flex-wrap gap-1">
                       {allTeams.map((t) => (
-                        <button key={t.id} onClick={() => toggleTeam(t.id)} className={`px-2 py-0.5 rounded-full text-[11px] font-bold border transition-colors ${teamIds.includes(t.id) ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{t.name}</button>
+                        <button key={t.id} onClick={() => toggleTeam(t.id)} className={`px-2 py-0.5 rounded-full text-[11px] font-bold border transition-colors ${teamIds.includes(t.id) ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{t.name}</button>
                       ))}
                     </div>
-                    <div className="text-[11px] text-[var(--color-text-muted)]">Department members are resolved to individuals each time a revision is issued.</div>
+                    <div className="text-[13px] text-[var(--color-text-muted)]">Department members are resolved to individuals each time a revision is issued.</div>
                   </div>
                 )}
 
-                <label className="flex items-start gap-2 text-[11px] text-[var(--color-text)] pt-1">
+                <label className="flex items-start gap-2 text-[13px] text-[var(--color-text)] pt-1">
                   <input type="checkbox" checked={hardGate} onChange={(e) => setHardGate(e.target.checked)} className="mt-0.5" />
                   <span>Hard-gate: mark a revision <b>&ldquo;pending acknowledgment&rdquo;</b> until everyone has signed (default is soft: in force at once, with who still owes a signature tracked).</span>
                 </label>
 
-                {nobody && <div className="text-[11px] text-amber-600">Add at least one person, role, or department, or nobody will be asked to sign.</div>}
+                {nobody && <div className="text-[13px] text-amber-600">Add at least one person, role, or department, or nobody will be asked to sign.</div>}
               </>
             )}
 
             <div className="flex justify-between gap-2 pt-2 border-t border-[var(--color-border)]">
-              <button onClick={() => void remove()} disabled={busy || !existing} className="px-3 py-2 rounded-lg text-xs font-bold text-red-600 hover:bg-red-50 disabled:opacity-40">Remove</button>
+              <button onClick={() => void remove()} disabled={busy || !existing} className="px-3 py-2 rounded-lg text-[13px] font-bold text-red-600 hover:bg-red-50 disabled:opacity-40">Remove</button>
               <div className="flex gap-2">
-                <button onClick={onClose} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text-muted)]">Cancel</button>
+                <button onClick={onClose} className="px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text-muted)]">Cancel</button>
                 <button onClick={() => void save()} disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--color-accent)] text-white text-xs font-bold disabled:opacity-50">{busy && <Loader2 className="w-4 h-4 animate-spin" />} Save</button>
               </div>
             </div>

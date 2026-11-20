@@ -154,11 +154,11 @@ export default function ColumnManager(props: {
 
   return (
     <div className="fixed inset-0 z-[70] flex items-start sm:items-center justify-center overflow-y-auto bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in p-4">
-      <div className="w-full max-w-2xl rounded-2xl bg-[var(--color-surface)] shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
+      <div className="w-full max-w-2xl rounded-lg bg-[var(--color-surface)] shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-between">
           <div>
             <div className="text-sm font-bold text-[var(--color-text)]">Library Column Manager</div>
-            <div className="text-xs text-[var(--color-text-muted)]">Add, rename, reorder, hide, or remove columns. Applies to every folder in this library.</div>
+            <div className="text-[13px] text-[var(--color-text-muted)]">Add, rename, reorder, hide, or remove columns. Applies to every folder in this library.</div>
           </div>
           <button aria-label="Close"
             onClick={onClose}
@@ -169,7 +169,7 @@ export default function ColumnManager(props: {
         </div>
 
         {isController && onRenameColumn && (
-          <div className="px-5 py-2 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] text-[11px] text-[var(--color-text)] flex items-start gap-2">
+          <div className="px-5 py-2 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] text-[13px] text-[var(--color-text)] flex items-start gap-2">
             <Pencil className="w-3 h-3 text-[var(--color-text-muted)] mt-0.5 shrink-0" />
             <span>
               <b>Tip:</b> Every column has a <Pencil className="inline w-2.5 h-2.5 align-baseline" /> pencil to rename, including the built-in ones (e.g. <i>Doc No</i> → <i>Sheet No</i>). Renames affect the displayed label only, the underlying data is untouched.
@@ -181,9 +181,9 @@ export default function ColumnManager(props: {
           <div className="px-5 pt-4 pb-3 border-b border-[var(--color-border)]">
             <div className="flex items-center gap-2 mb-1">
               <KeyRound className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-              <span className="text-xs font-bold text-[var(--color-text)]">What makes a document unique in this library?</span>
+              <span className="text-[13px] font-bold text-[var(--color-text)]">What makes a document unique in this library?</span>
             </div>
-            <div className="text-[11px] text-[var(--color-text-muted)] mb-2">
+            <div className="text-[13px] text-[var(--color-text-muted)] mb-2">
               Pick the field(s) that, taken together, must be different for two documents to coexist. Default is just <i>Document Number</i>. Add <i>Sheet</i> to let many sheets share one number. Tick none to turn uniqueness off.
             </div>
             <div className="flex flex-wrap gap-1.5">
@@ -209,7 +209,7 @@ export default function ColumnManager(props: {
 
         <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="border border-[var(--color-border)] rounded-xl p-3">
-            <div className="text-xs font-bold text-[var(--color-text-muted)] mb-2">
+            <div className="text-[13px] font-bold text-[var(--color-text-muted)] mb-2">
               Columns <span className="font-normal text-[var(--color-text-faint)]">- click a row to show / hide it</span>
             </div>
             <div className="space-y-1 max-h-[320px] overflow-auto">
@@ -259,7 +259,7 @@ export default function ColumnManager(props: {
                         <button
                           className={`flex-1 min-w-0 text-left px-3 py-2 rounded-lg border text-sm flex items-center justify-between ${
                             on
-                              ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]"
+                              ? "border-[var(--color-text-muted)] bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm"
                               : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                           } ${isLastVisible ? "opacity-60 cursor-not-allowed" : ""}`}
                           onClick={() => toggle(col.key)}
@@ -294,7 +294,7 @@ export default function ColumnManager(props: {
                 );
               })}
               {renameError && (
-                <div className="mt-3 text-xs border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
+                <div className="mt-3 text-[13px] border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
                   <div className="font-semibold text-[13px] mb-1">Rename failed</div>
                   {renameError}
                 </div>
@@ -304,8 +304,8 @@ export default function ColumnManager(props: {
 
           <div className="border border-[var(--color-border)] rounded-xl p-3">
             <div className="flex items-center justify-between mb-2">
-              <div className="text-xs font-bold text-[var(--color-text-muted)]">Visible order</div>
-              <div className="text-[11px] text-[var(--color-text-faint)]">Drag rows to reorder · arrows still work</div>
+              <div className="text-[13px] font-bold text-[var(--color-text-muted)]">Visible order</div>
+              <div className="text-[13px] text-[var(--color-text-faint)]">Drag rows to reorder · arrows still work</div>
             </div>
             <div className="space-y-1 max-h-[320px] overflow-auto">
               {options.map((col, idx) => {
@@ -339,7 +339,7 @@ export default function ColumnManager(props: {
                         <GripVertical className="h-4 w-4 text-[var(--color-text-faint)] cursor-grab active:cursor-grabbing shrink-0" />
                         <div className="min-w-0">
                           <div className="text-sm font-semibold text-[var(--color-text)] truncate">{col.label}</div>
-                          <div className="text-[11px] text-[var(--color-text-muted)]">{col.key}</div>
+                          <div className="text-[13px] text-[var(--color-text-muted)]">{col.key}</div>
                         </div>
                       </div>
                       <div className="flex items-center gap-1 shrink-0">

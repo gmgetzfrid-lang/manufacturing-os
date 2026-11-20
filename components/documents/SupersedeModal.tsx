@@ -86,17 +86,17 @@ export default function SupersedeModal({
 
   return (
     <div className="fixed inset-0 z-[210] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
+      <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-lg shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="p-2 bg-amber-100 rounded-lg">
             <Layers className="w-5 h-5 text-amber-700" />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-black text-[var(--color-text)] inline-flex items-center gap-1">
+            <div className="text-sm font-semibold text-[var(--color-text)] inline-flex items-center gap-1">
               Supersede Document
               <IsoGuidance topic="supersede" />
             </div>
-            <div className="text-xs text-[var(--color-text-muted)] truncate">
+            <div className="text-[13px] text-[var(--color-text-muted)] truncate">
               {doc.documentNumber || doc.title || doc.name}
             </div>
           </div>
@@ -129,7 +129,7 @@ export default function SupersedeModal({
             <label className="text-[13px] font-semibold text-[var(--color-text)] ">
               Replacement Document Numbers
             </label>
-            <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
+            <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">
               Optional. Add by document number - they must already exist in this library.
             </div>
             <div className="mt-1.5 flex gap-1.5">
@@ -143,7 +143,7 @@ export default function SupersedeModal({
               <button
                 onClick={addReplacement}
                 disabled={!replacementInput.trim()}
-                className="px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-xs font-bold disabled:opacity-40"
+                className="px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[13px] font-bold disabled:opacity-40"
               >
                 <Plus className="w-3.5 h-3.5" />
               </button>
@@ -151,7 +151,7 @@ export default function SupersedeModal({
             {replacements.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {replacements.map((r) => (
-                  <div key={r} className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-amber-50 border border-amber-200 text-xs font-mono text-amber-800">
+                  <div key={r} className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-amber-50 border border-amber-200 text-[13px] font-display tabular-nums text-amber-800">
                     {r}
                     <button
                       onClick={() => removeReplacement(r)}
@@ -165,9 +165,9 @@ export default function SupersedeModal({
               </div>
             )}
             {unresolved.length > 0 && (
-              <div className="mt-2 text-[11px] border-l-2 border-amber-500 pl-3 text-amber-800 dark:text-amber-300">
+              <div className="mt-2 text-[13px] border-l-2 border-amber-500 pl-3 text-amber-800 dark:text-amber-300">
                 <b>Note:</b> these document numbers couldn&apos;t be found in this library and were skipped:&nbsp;
-                <span className="font-mono">{unresolved.join(", ")}</span>
+                <span className="font-display tabular-nums">{unresolved.join(", ")}</span>
               </div>
             )}
           </div>
@@ -183,7 +183,7 @@ export default function SupersedeModal({
           </div>
 
           {error && (
-            <div className="flex items-start gap-2 text-xs border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
+            <div className="flex items-start gap-2 text-[13px] border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
               <span>{error}</span>
             </div>
@@ -191,13 +191,13 @@ export default function SupersedeModal({
         </div>
 
         <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
-          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
             Cancel
           </button>
           <button
             onClick={() => void submit()}
             disabled={busy}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] disabled:opacity-60"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] disabled:opacity-60"
           >
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Layers className="w-3.5 h-3.5" />}
             {busy ? "Saving…" : "Supersede Document"}

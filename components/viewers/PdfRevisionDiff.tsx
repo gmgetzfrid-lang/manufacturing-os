@@ -519,12 +519,12 @@ export default function PdfRevisionDiff({
     <div className="surface-charcoal flex flex-col h-full bg-[var(--color-ink)] text-[var(--color-text)] select-none">
       {/* Header: what the colors mean, then the controls */}
       <div className="min-h-12 border-b border-[var(--color-border)] flex items-center justify-between gap-3 px-4 py-2 shrink-0 flex-wrap">
-        <div className="flex items-center gap-x-4 gap-y-1 text-[12px] flex-wrap text-[var(--color-text)]">
+        <div className="flex items-center gap-x-4 gap-y-1 text-[13px] flex-wrap text-[var(--color-text)]">
           <span className="inline-flex items-center gap-1.5">{swatch(COLOR_UNCHANGED)} Unchanged</span>
           <span className="inline-flex items-center gap-1.5">{swatch(COLOR_REMOVED)} Removed · only in {baseLabel}</span>
           <span className="inline-flex items-center gap-1.5">{swatch(COLOR_ADDED)} Added · only in {compareLabel}</span>
           {regLabel && (
-            <span className="inline-flex items-center gap-1 text-[12px] text-[var(--color-text-muted)]" title="Registration warped the base layer (scale + shift) to line up with the compare layer before diffing">
+            <span className="inline-flex items-center gap-1 text-[13px] text-[var(--color-text-muted)]" title="Registration warped the base layer (scale + shift) to line up with the compare layer before diffing">
               <Crosshair className="w-3 h-3" /> {regLabel}
             </span>
           )}
@@ -630,7 +630,7 @@ export default function PdfRevisionDiff({
 
       {/* Footer: how much changed on this page */}
       {stats && !loading && !error && (
-        <div className="min-h-9 border-t border-[var(--color-border)] flex items-center flex-wrap px-4 py-1.5 text-[12px] tabular-nums shrink-0 gap-x-5 gap-y-0.5 text-[var(--color-text-muted)]">
+        <div className="min-h-9 border-t border-[var(--color-border)] flex items-center flex-wrap px-4 py-1.5 text-[13px] tabular-nums shrink-0 gap-x-5 gap-y-0.5 text-[var(--color-text-muted)]">
           <span className="inline-flex items-center gap-1.5">{swatch(COLOR_ADDED)} {stats.addedPixels.toLocaleString()} px added ({pct(stats.addedPixels)}%)</span>
           <span className="inline-flex items-center gap-1.5">{swatch(COLOR_REMOVED)} {stats.removedPixels.toLocaleString()} px removed ({pct(stats.removedPixels)}%)</span>
           <span className="inline-flex items-center gap-1.5">{swatch(COLOR_UNCHANGED)} {stats.unchangedPixels.toLocaleString()} unchanged</span>

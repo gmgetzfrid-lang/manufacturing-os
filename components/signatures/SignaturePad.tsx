@@ -108,7 +108,7 @@ export default function SignaturePad({ onChange, height = 160, className = "" }:
         )}
       </div>
       <div className="flex justify-end mt-1">
-        <button type="button" onClick={clear} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+        <button type="button" onClick={clear} className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
           <Eraser className="w-3 h-3" /> Clear
         </button>
       </div>

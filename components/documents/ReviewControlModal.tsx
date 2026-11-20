@@ -45,7 +45,7 @@ function PickRow({ orgId, label, people, setPeople, roles, setRoles, allTeams, t
   const toggleRole = (r: Role) => setRoles(roles.includes(r) ? roles.filter((x) => x !== r) : [...roles, r]);
   return (
     <div className="space-y-1">
-      <div className="text-[11px] font-bold text-[var(--color-text-muted)]">{label}</div>
+      <div className="text-[13px] font-bold text-[var(--color-text-muted)]">{label}</div>
       <div className="flex flex-wrap gap-1">
         {people.map((p) => (
           <span key={p.uid} className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-[11px] text-[var(--color-text)]">{p.name || p.email}<button aria-label="Remove" onClick={() => setPeople(people.filter((x) => x.uid !== p.uid))}><X className="w-3 h-3" /></button></span>
@@ -61,16 +61,16 @@ function PickRow({ orgId, label, people, setPeople, roles, setRoles, allTeams, t
       )}
       <div className="flex flex-wrap gap-1">
         {ALL_ROLES.map((r) => (
-          <button key={r} onClick={() => toggleRole(r)} className={`px-2 py-0.5 rounded-full text-[11px] font-bold border transition-colors ${roles.includes(r) ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{r}</button>
+          <button key={r} onClick={() => toggleRole(r)} className={`px-2 py-0.5 rounded-full text-[11px] font-bold border transition-colors ${roles.includes(r) ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{r}</button>
         ))}
       </div>
       {allTeams && teamIds && setTeamIds && allTeams.length > 0 && (
         <>
-          <div className="text-[11px] font-bold text-[var(--color-text-muted)]">Departments</div>
+          <div className="text-[13px] font-bold text-[var(--color-text-muted)]">Departments</div>
           <div className="flex flex-wrap gap-1">
             {allTeams.map((t) => (
               <button key={t.id} onClick={() => setTeamIds(teamIds.includes(t.id) ? teamIds.filter((x) => x !== t.id) : [...teamIds, t.id])}
-                className={`px-2 py-0.5 rounded-full text-[11px] font-bold border transition-colors ${teamIds.includes(t.id) ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{t.name}</button>
+                className={`px-2 py-0.5 rounded-full text-[11px] font-bold border transition-colors ${teamIds.includes(t.id) ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{t.name}</button>
             ))}
           </div>
         </>
@@ -192,12 +192,12 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
 
   return (
     <div className="fixed inset-0 z-[520] flex items-center justify-center bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] p-4" onClick={onClose}>
-      <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+      <div className="w-full max-w-md bg-[var(--color-surface)] rounded-lg shadow-2xl border border-[var(--color-border)] overflow-hidden max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3">
           <ShieldCheck className="w-5 h-5 text-[var(--color-text-muted)]" />
           <div className="flex-1 min-w-0">
             <div className="text-sm font-bold text-[var(--color-text)]">Pre-publish review</div>
-            <div className="text-[11px] text-[var(--color-text-muted)] truncate">Change-control for this {scopeLabel}{name ? ` · ${name}` : ""}</div>
+            <div className="text-[13px] text-[var(--color-text-muted)] truncate">Change-control for this {scopeLabel}{name ? ` · ${name}` : ""}</div>
           </div>
           <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
         </div>
@@ -211,7 +211,7 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
                 and send check-in changes through drafting; procedures release
                 through the owner/publishers. Inherit defers to the parent. */}
             <div>
-              <div className="text-[11px] font-bold text-[var(--color-text-muted)] mb-1">Document class of this {scopeLabel}</div>
+              <div className="text-[13px] font-bold text-[var(--color-text-muted)] mb-1">Document class of this {scopeLabel}</div>
               <div className="flex bg-[var(--color-surface-2)] p-1 rounded-lg">
                 {([
                   { v: "inherit", label: level === "library" ? "Unclassified" : "Inherit" },
@@ -219,12 +219,12 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
                   { v: "procedure", label: "Procedures / text" },
                 ] as const).map((o) => (
                   <button key={o.v} type="button" onClick={() => setDocClassState(o.v)}
-                    className={`flex-1 py-1.5 text-[11px] font-bold rounded-md transition-all ${docClass === o.v ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                    className={`flex-1 py-1.5 text-[13px] font-bold rounded-md transition-all ${docClass === o.v ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
                     {o.label}
                   </button>
                 ))}
               </div>
-              <div className="text-[11px] text-[var(--color-text-muted)] mt-1">
+              <div className="text-[13px] text-[var(--color-text-muted)] mt-1">
                 {docClass === "drawing"
                   ? "PSM applies: a non-minor revision requires its MOC number, and check-in routes redlines to drafting."
                   : docClass === "procedure"
@@ -240,30 +240,30 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
                     <input type="radio" checked={mode === m.value} onChange={() => setMode(m.value)} className="accent-[var(--color-text)]" />
                     <span className="text-sm font-bold text-[var(--color-text)]">{m.label}</span>
                   </div>
-                  <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 ml-6">{m.hint}</div>
+                  <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5 ml-6">{m.hint}</div>
                 </label>
               ))}
             </div>
 
             {gated && (
               <>
-                <div className="text-[11px] text-[var(--color-text-muted)] -mb-1">A Minor/Correction change and a rev from a drafting ticket always skip the gate.</div>
+                <div className="text-[13px] text-[var(--color-text-muted)] -mb-1">A Minor/Correction change and a rev from a drafting ticket always skip the gate.</div>
                 <PickRow orgId={orgId} label="Primary reviewers (must sign off)" people={reviewers} setPeople={setReviewers} roles={reviewerRoles} setRoles={setReviewerRoles} allTeams={allTeams} teamIds={reviewerTeams} setTeamIds={setReviewerTeams} />
                 <PickRow orgId={orgId} label="Alternates (step in if a primary is slow / out)" people={alternates} setPeople={setAlternates} roles={alternateRoles} setRoles={setAlternateRoles} allTeams={allTeams} teamIds={alternateTeams} setTeamIds={setAlternateTeams} />
                 <div className="flex items-center gap-2">
-                  <span className="text-[11px] text-[var(--color-text-muted)]">Activate alternates after</span>
+                  <span className="text-[13px] text-[var(--color-text-muted)]">Activate alternates after</span>
                   <input type="number" min={1} value={timeoutDays} onChange={(e) => setTimeoutDays(Math.max(1, parseInt(e.target.value) || 1))} className="text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 w-16 outline-none focus:border-[var(--color-accent)]" />
-                  <span className="text-[11px] text-[var(--color-text-muted)]">days</span>
+                  <span className="text-[13px] text-[var(--color-text-muted)]">days</span>
                 </div>
                 <PickRow orgId={orgId} label="Extra draft viewers (besides reviewers + owner + DocCtrl)" people={viewers} setPeople={setViewers} roles={viewerRoles} setRoles={setViewerRoles} allTeams={allTeams} teamIds={viewerTeams} setTeamIds={setViewerTeams} />
-                {noReviewers && <div className="text-[11px] text-amber-600">Add at least one primary reviewer (person, role, or department), or a rev can never publish.</div>}
+                {noReviewers && <div className="text-[13px] text-amber-600">Add at least one primary reviewer (person, role, or department), or a rev can never publish.</div>}
               </>
             )}
 
             <div className="flex justify-between gap-2 pt-2 border-t border-[var(--color-border)]">
-              <button onClick={() => void remove()} disabled={busy || !existing} className="px-3 py-2 rounded-lg text-xs font-bold text-red-600 hover:bg-red-50 disabled:opacity-40">Remove</button>
+              <button onClick={() => void remove()} disabled={busy || !existing} className="px-3 py-2 rounded-lg text-[13px] font-bold text-red-600 hover:bg-red-50 disabled:opacity-40">Remove</button>
               <div className="flex gap-2">
-                <button onClick={onClose} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text-muted)]">Cancel</button>
+                <button onClick={onClose} className="px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text-muted)]">Cancel</button>
                 <button onClick={() => void save()} disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--color-accent)] text-white text-xs font-bold disabled:opacity-50">{busy && <Loader2 className="w-4 h-4 animate-spin" />} Save</button>
               </div>
             </div>

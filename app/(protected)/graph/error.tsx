@@ -21,9 +21,9 @@ export default function GraphError({
 
   return (
     <div className="flex h-full items-center justify-center p-6">
-      <div className="w-full max-w-md rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 text-center shadow-sm">
+      <div className="w-full max-w-md rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-6 text-center shadow-sm">
         <AlertTriangle className="mx-auto h-8 w-8 text-amber-500" />
-        <h1 className="mt-3 text-base font-black text-[var(--color-text)]">The graph renderer crashed</h1>
+        <h1 className="mt-3 text-base font-semibold text-[var(--color-text)]">The graph renderer crashed</h1>
         <p className="mt-1 text-sm text-[var(--color-text-muted)]">
           Usually a WebGL hiccup - a lost GPU context or a very large graph in 3D mode.
           Reloading fixes it; if it repeats, switch the graph to 2D mode.

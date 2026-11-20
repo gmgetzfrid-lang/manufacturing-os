@@ -14,7 +14,7 @@ import { useToast } from "@/components/providers/ToastProvider";
 
 import React, { useRef, useState } from "react";
 import {
-  Settings, Zap, Droplet, Box, Activity, Camera, Tag, Loader2,
+  Camera, Tag, Loader2,
 } from "lucide-react";
 import { useAssetByTag, findAssetsByTag, getAssetByTag, listAssetPhotos, invalidateAssetCache, type Asset } from "@/lib/assets";
 import AssetPhotoCarousel from "./AssetPhotoCarousel";
@@ -33,15 +33,6 @@ interface AssetTagChipProps {
   referenceKind?: "photos" | "files";
 }
 
-function getIconByType(type: string) {
-  const t = (type || "").toLowerCase();
-  if (t.includes("pump")) return <Activity className="w-3 h-3" />;
-  if (t.includes("exchanger") || t.includes("heat")) return <Zap className="w-3 h-3" />;
-  if (t.includes("vessel") || t.includes("tank")) return <Box className="w-3 h-3" />;
-  if (t.includes("valve")) return <Droplet className="w-3 h-3" />;
-  if (t.includes("instrument")) return <Zap className="w-3 h-3" />;
-  return <Settings className="w-3 h-3" />;
-}
 
 export default function AssetTagChip({
   tag, type = "Equipment", orgId, userId, canManage = false, size = "compact", referenceKind = "photos",
@@ -115,14 +106,14 @@ function PhotoTagChip({
   };
 
   if (size === "compact") {
-    const baseClasses = "inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold border mr-1 mb-1 whitespace-nowrap shadow-sm transition-all";
+    const baseClasses = "inline-flex items-center h-6 px-1.5 rounded border font-display text-[14px] font-semibold tabular-nums whitespace-nowrap transition-colors";
     let stateClasses: string;
     if (hasPhotos) {
-      stateClasses = "text-[var(--color-text)] border-[var(--color-border)] hover:border-[var(--color-border)] cursor-pointer bg-[var(--color-surface-2)]";
+      stateClasses = "text-[var(--color-text)] border-[var(--color-border)] hover:border-[var(--color-border-strong)] cursor-pointer bg-[var(--color-surface)]";
     } else if (interactive) {
-      stateClasses = "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border)] hover:text-[var(--color-text)] cursor-pointer";
+      stateClasses = "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] cursor-pointer";
     } else {
-      stateClasses = "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]";
+      stateClasses = "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)]";
     }
 
     return (
@@ -146,20 +137,13 @@ function PhotoTagChip({
           }
           className={`${baseClasses} ${stateClasses}`}
         >
-          <span className={hasPhotos ? "text-[var(--color-text-muted)] mr-1" : "text-[var(--color-text-faint)] mr-1"}>
-            {getIconByType(type)}
-          </span>
           <span>{tag}</span>
           {creating ? (
-            <Loader2 className="w-2.5 h-2.5 ml-1.5 animate-spin text-[var(--color-text-muted)]" />
+            <Loader2 className="w-3 h-3 ml-1 animate-spin text-[var(--color-text-muted)]" />
           ) : hasPhotos ? (
-            <span className="ml-1.5 inline-flex items-center gap-0.5 px-1 py-px rounded bg-[var(--color-surface)] text-[var(--color-text)] text-[11px] font-black">
-              <Camera className="w-2.5 h-2.5" />
+            <span className="ml-1 inline-flex items-center gap-0.5 font-sans text-[13px] font-semibold text-[var(--color-text-muted)]">
+              <Camera className="w-3 h-3" />
               {photoCount}
-            </span>
-          ) : interactive ? (
-            <span className="ml-1.5 inline-flex items-center text-[var(--color-text-faint)]">
-              <Camera className="w-2.5 h-2.5" />
             </span>
           ) : null}
         </button>
@@ -207,11 +191,11 @@ function PhotoTagChip({
         <Tag className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
       </div>
       <div className="text-left">
-        <div className="text-xs font-black text-[var(--color-text)]">{tag}</div>
-        <div className="text-[11px] text-[var(--color-text-muted)]">{type}</div>
+        <div className="text-[13px] font-semibold text-[var(--color-text)]">{tag}</div>
+        <div className="text-[13px] text-[var(--color-text-muted)]">{type}</div>
       </div>
       {hasPhotos && (
-        <div className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text)] text-[11px] font-black">
+        <div className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text)] text-[13px] font-semibold">
           <Camera className="w-3 h-3" /> {photoCount}
         </div>
       )}

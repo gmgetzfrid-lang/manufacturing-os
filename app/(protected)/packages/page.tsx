@@ -11,11 +11,13 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
-  Package, Plus, X, Loader2, CheckCircle2, AlertTriangle,
+  Package, Plus, X, Loader2, AlertTriangle,
   RefreshCw, Search, ChevronRight, Archive, Printer,
 } from "lucide-react";
 import { PageShell } from "@/components/ui/PageShell";
-import { PageHero, PageBody, Card, heroPrimary } from "@/components/ui/PageHero";
+import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
+import { StatusTag, humanDate } from "@/components/documents/StatusTag";
+import MoreMenu from "@/components/ui/MoreMenu";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 import { useDraft } from "@/hooks/useDraft";
@@ -47,6 +49,10 @@ export default function PackagesPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [printing, setPrinting] = useState<string | null>(null);
+  // Which packages show their drawings. Packages with a drawing that moved
+  // on start open; the rest start folded.
+  const [openIds, setOpenIds] = useState<Set<string>>(new Set());
+  const [closedIds, setClosedIds] = useState<Set<string>>(new Set());
 
   // Create-modal state
   const [name, setName] = useState("");
@@ -224,28 +230,35 @@ export default function PackagesPage() {
     : staleTotal > 0 ? `${staleTotal} package${staleTotal === 1 ? " has" : "s have"} a drawing that moved on.`
     : `${nPk} package${nPk === 1 ? "" : "s"}, all current.`;
   const answerSub = staleTotal > 0
-    ? `${nPk} open. Check what changed, then refresh the pins before the work starts.`
+    ? "Check what changed, then refresh the pins before the work starts."
     : "A job's drawings, pinned at their revisions. You're told when one moves on.";
+  const driftedDocs = (packages ?? []).reduce((n, p) => n + p.staleCount, 0);
+  const answerFacts = nPk === 0 ? undefined : [
+    { label: "Open", value: nPk.toLocaleString() },
+    { label: "Moved on", value: driftedDocs.toLocaleString(), tone: driftedDocs > 0 ? "warn" as const : undefined },
+    { label: "Pinned", value: (packages ?? []).reduce((n, p) => n + p.docs.length, 0).toLocaleString() },
+  ];
 
   return (
     <PageShell width="work">
       <PageHero
-        kicker="Document control · Work packages"
+        kicker="Document control"
         title={answer}
         sub={answerSub}
+        facts={answerFacts}
         primary={
           <button type="button" onClick={() => setShowCreate(true)} className={heroPrimary}>
             <Plus className="w-4 h-4" /> New package
           </button>
         }
       >
-        <ViewTabs tabs={DOCUMENT_VIEWS} variant="dark" />
+        <ViewTabs tabs={DOCUMENT_VIEWS} />
       </PageHero>
 
       <PageBody>
       {loadErr && (
         <Card>
-          <p role="alert" className="text-[14px] text-rose-700 dark:text-rose-300">Couldn&apos;t load the packages: {loadErr}</p>
+          <p role="alert" className="text-[15px] font-semibold text-[var(--state-overdue)]">Couldn&apos;t load the packages: {loadErr}</p>
         </Card>
       )}
       {packages === null ? (
@@ -253,114 +266,133 @@ export default function PackagesPage() {
       ) : packages.length === 0 ? (
         loadErr ? null : (
         <Card>
-          <div className="py-8 text-center">
-            <Package className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-3" />
-            <p className="text-[14px] text-[var(--color-text-muted)] max-w-sm mx-auto">
-              A package holds the drawings for one job at the revisions they were when you made it. Use New package to bundle the first one.
-            </p>
-          </div>
+          <p className="flex items-center gap-2.5 text-[15px] text-[var(--color-text-muted)]">
+            <Package className="w-5 h-5 shrink-0 text-[var(--color-text-faint)]" />
+            No packages yet. Use New package to bundle the drawings for a job.
+          </p>
         </Card>
         )
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <section>
+          <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)] mb-2.5">Open packages</h2>
+          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+            <table className="w-full text-[15px]">
+              <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left max-md:hidden">
+                <tr>
+                  <th className="font-semibold px-4 h-10">Package</th>
+                  <th className="font-semibold px-4 hidden lg:table-cell">Owner</th>
+                  <th className="font-semibold px-4 w-28">Made</th>
+                  <th className="font-semibold px-4 text-right w-28">Drawings</th>
+                  <th className="font-semibold px-4 w-40">State</th>
+                  <th className="w-[17rem]"><span className="sr-only">Actions</span></th>
+                </tr>
+              </thead>
           {packages.map((pkg) => {
             const stale = pkg.staleCount > 0;
+            const open = openIds.has(pkg.id) || (stale && !closedIds.has(pkg.id));
+            const toggle = () => {
+              if (open) { setOpenIds((s) => { const n = new Set(s); n.delete(pkg.id); return n; }); setClosedIds((s) => new Set(s).add(pkg.id)); }
+              else { setOpenIds((s) => new Set(s).add(pkg.id)); setClosedIds((s) => { const n = new Set(s); n.delete(pkg.id); return n; }); }
+            };
+            const small = "inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
             return (
-              <div
-                key={pkg.id}
-                data-package-id={pkg.id}
-                className={`rounded-2xl overflow-hidden bg-[var(--color-surface)] shadow-[var(--shadow-card)] scroll-mt-24 ${
-                  highlightId === pkg.id ? "ring-2 ring-[var(--color-text)]" : ""
-                }`}
-              >
-                <div className="px-4 sm:px-5 py-3.5 flex items-center gap-2.5 border-b border-[var(--color-border)]">
-                  {stale
-                    ? <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                    : <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />}
-                  <div className="min-w-0 flex-1">
-                    <h2 className="text-[14px] font-bold text-[var(--color-text)] truncate">{pkg.name}</h2>
-                    <div className="text-[12px] text-[var(--color-text-muted)]">
-                      {pkg.ownerName || "-"} · {new Date(pkg.createdAt).toLocaleDateString()} · {pkg.docs.length} doc{pkg.docs.length === 1 ? "" : "s"}
-                    </div>
-                  </div>
-                  <span className={`shrink-0 text-[12px] font-bold ${
-                    stale ? "text-amber-700 dark:text-amber-400" : "text-emerald-700 dark:text-emerald-400"
-                  }`}>
-                    {stale ? `${pkg.staleCount} moved on` : "Current"}
-                  </span>
-                </div>
-
-                <div className="px-2 sm:px-3 py-2 space-y-0.5">
-                  {pkg.docs.map((d) => (
-                    <Link
-                      key={d.id}
-                      href={d.libraryId ? `/documents/${d.libraryId}?doc=${d.documentId}` : "#"}
-                      className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] group"
-                    >
-                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${d.drifted ? "bg-amber-500" : "bg-[var(--color-border-strong)]"}`} />
-                      <span className="text-[13px] font-semibold text-[var(--color-text)] truncate flex-1">{d.docLabel}</span>
-                      {d.drifted ? (
-                        <span className="text-[12px] font-bold text-amber-700 dark:text-amber-400 shrink-0">
-                          pinned Rev {d.pinnedRevLabel ?? "?"}, now Rev {d.currentRev ?? "?"}
-                        </span>
-                      ) : (
-                        <span className="text-[12px] text-[var(--color-text-muted)] shrink-0">Rev {d.pinnedRevLabel ?? "-"}</span>
-                      )}
-                      <ChevronRight className="w-3 h-3 text-[var(--color-text-faint)] opacity-60 sm:opacity-0 group-hover:opacity-100 shrink-0" />
-                    </Link>
-                  ))}
-                </div>
-
-                <div className="px-4 sm:px-5 pb-4 pt-1 flex items-center gap-2">
-                  {/* Print pack: cover sheet + all current drawings, stamped;
-                      pins auto-refresh to match the paper. */}
-                  <button
-                    onClick={() => void handlePrintPack(pkg)}
-                    disabled={printing === pkg.id}
-                    className="inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] text-[13px] font-semibold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-                    title="One PDF: a cover sheet with a scan code, then every drawing at its current revision, stamped. The pins move to match."
-                  >
-                    {printing === pkg.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5" />}
-                    Print pack
-                  </button>
-                  {stale && (
-                    <button
-                      onClick={() => void handleRefresh(pkg)}
-                      disabled={busyId === pkg.id}
-                      className="inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] text-[13px] font-semibold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-                      title="Move every pin to the current revision. Check what changed first."
-                    >
-                      {busyId === pkg.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                      Refresh pins
+              <tbody key={pkg.id} data-package-id={pkg.id} className={`border-t border-[var(--color-border)] first-of-type:border-t-0 scroll-mt-24 ${highlightId === pkg.id ? "bg-[var(--color-surface-2)]" : ""}`}>
+                <tr className="hover:bg-[var(--color-surface-2)] max-md:block max-md:relative">
+                  <td className="px-4 pt-3 md:py-3 relative max-md:block max-md:pr-12">
+                    {(stale || highlightId === pkg.id) && <span aria-hidden className={`absolute left-0 inset-y-0 w-[3px] ${stale ? "bg-[var(--state-held)]" : "bg-[var(--color-text)]"}`} />}
+                    <button type="button" onClick={toggle} aria-expanded={open}
+                      className="inline-flex items-center gap-1.5 text-left font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
+                      <ChevronRight className={`w-4 h-4 shrink-0 text-[var(--color-text-muted)] transition-transform ${open ? "rotate-90" : ""}`} />
+                      {pkg.name}
                     </button>
-                  )}
-                  <button
-                    onClick={() => void handleClose(pkg)}
-                    disabled={busyId === pkg.id}
-                    className="ml-auto inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-                    title="Job done: stop watching"
-                  >
-                    <Archive className="w-3.5 h-3.5" /> Close
-                  </button>
-                </div>
-              </div>
+                    {pkg.description && <div className="pl-[22px] text-[13px] text-[var(--color-text-muted)] truncate max-w-[60ch]">{pkg.description}</div>}
+                    {/* Phone: the facts under the name. */}
+                    <div className="md:hidden pl-[22px] mt-0.5 flex flex-wrap gap-x-3 text-[13px] text-[var(--color-text-muted)]">
+                      <span>{pkg.docs.length} drawing{pkg.docs.length === 1 ? "" : "s"}</span>
+                      <span>{humanDate(pkg.createdAt)}</span>
+                      <StatusTag tone={stale ? "warn" : "good"}>{stale ? `${pkg.staleCount} moved on` : "Current"}</StatusTag>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-[14px] hidden lg:table-cell">{pkg.ownerName || "-"}</td>
+                  <td className="px-4 py-3 text-[14px] whitespace-nowrap max-md:hidden">{humanDate(pkg.createdAt)}</td>
+                  <td className="px-4 py-3 text-right font-display text-[16px] font-semibold tabular-nums max-md:hidden">{pkg.docs.length}</td>
+                  <td className="px-4 py-3 max-md:hidden">
+                    <StatusTag tone={stale ? "warn" : "good"}>{stale ? `${pkg.staleCount} moved on` : "Current"}</StatusTag>
+                  </td>
+                  <td className="px-3 pb-3 md:py-3 max-md:block max-md:pl-[38px]">
+                    <div className="flex items-center gap-1.5 md:justify-end flex-wrap">
+                      {/* Print pack: cover sheet + all current drawings, stamped;
+                          pins auto-refresh to match the paper. */}
+                      <button
+                        type="button"
+                        onClick={() => void handlePrintPack(pkg)}
+                        disabled={printing === pkg.id}
+                        className={small}
+                        title="One PDF: a cover sheet with a scan code, then every drawing at its current revision, stamped. The pins move to match."
+                      >
+                        {printing === pkg.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />}
+                        Print pack
+                      </button>
+                      {stale && (
+                        <button
+                          type="button"
+                          onClick={() => void handleRefresh(pkg)}
+                          disabled={busyId === pkg.id}
+                          className={small}
+                          title="Move every pin to the current revision. Check what changed first."
+                        >
+                          {busyId === pkg.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />}
+                          Refresh pins
+                        </button>
+                      )}
+                      <MoreMenu
+                        iconOnly
+                        label={`More for ${pkg.name}`}
+                        triggerClass="inline-grid place-items-center w-8 h-8 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                        items={[{ icon: <Archive className="w-4 h-4" />, label: busyId === pkg.id ? "Closing…" : "Close package (job done)", onClick: () => { if (busyId !== pkg.id) void handleClose(pkg); } }]}
+                      />
+                    </div>
+                  </td>
+                </tr>
+                {open && pkg.docs.map((d) => (
+                  <tr key={d.id} className="bg-[var(--color-surface-2)]/50 hover:bg-[var(--color-surface-2)] max-md:block">
+                    <td colSpan={6} className="pl-[38px] pr-4 py-2 border-t border-[var(--color-border)] max-md:block">
+                      <Link
+                        href={d.libraryId ? `/documents/${d.libraryId}?doc=${d.documentId}` : "#"}
+                        className="flex items-center gap-3 group"
+                      >
+                        <span className="font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)] group-hover:text-[var(--color-accent-text)] truncate min-w-0">{d.docLabel}</span>
+                        {d.drifted ? (
+                          <span className="text-[13px] font-semibold text-[var(--state-held)] shrink-0 inline-flex items-center gap-1.5">
+                            <AlertTriangle className="w-3.5 h-3.5" />
+                            Pinned Rev {d.pinnedRevLabel ?? "?"}, now Rev {d.currentRev ?? "?"}
+                          </span>
+                        ) : (
+                          <span className="text-[13px] text-[var(--color-text-muted)] shrink-0">Rev <span className="font-display tabular-nums font-semibold text-[var(--color-text)]">{d.pinnedRevLabel ?? "-"}</span></span>
+                        )}
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
             );
           })}
-        </div>
+            </table>
+          </div>
+        </section>
       )}
       </PageBody>
 
       {/* CREATE MODAL */}
       {showCreate && (
         <div className="fixed inset-0 z-[150] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] flex items-center justify-center p-4 animate-in fade-in" role="dialog" aria-modal="true" aria-label="New work package">
-          <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
+          <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-lg shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
             <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
-              <div className="p-2 bg-[var(--color-surface-2)] rounded-lg"><Package className="w-4 h-4 text-[var(--color-text-muted)]" /></div>
               <div className="flex-1">
-                <h2 className="text-[15px] font-extrabold text-[var(--color-text)]">New work package</h2>
+                <h2 className="font-display text-[19px] font-semibold text-[var(--color-text)]">New work package</h2>
                 <div className="text-[13px] text-[var(--color-text-muted)]">Revisions are pinned as of right now.</div>
               </div>
-              <button aria-label="Close" onClick={() => setShowCreate(false)} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+              <button aria-label="Close" onClick={() => setShowCreate(false)} className="w-9 h-9 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
             </div>
 
             <div className="p-5 space-y-4">
@@ -369,13 +401,13 @@ export default function PackagesPage() {
                 onChange={(e) => setName(e.target.value)}
                 placeholder='Job name * (e.g. "E-204 bundle swap")'
                 autoFocus
-                className="w-full h-10 px-3 border border-[var(--color-border-strong)] rounded-[10px] text-base sm:text-[14px] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+                className="w-full h-10 px-3 border border-[var(--color-border-strong)] rounded-md text-base sm:text-[15px] bg-[var(--color-surface)] text-[var(--color-text)] focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none"
               />
               <input
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="One-line scope (optional)"
-                className="w-full h-10 px-3 border border-[var(--color-border-strong)] rounded-[10px] text-base sm:text-[14px] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+                className="w-full h-10 px-3 border border-[var(--color-border-strong)] rounded-md text-base sm:text-[15px] bg-[var(--color-surface)] text-[var(--color-text)] focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none"
               />
 
               <div>
@@ -385,7 +417,7 @@ export default function PackagesPage() {
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                     placeholder="Search drawings by number or title…"
-                    className="w-full h-10 pl-8 pr-3 border border-[var(--color-border-strong)] rounded-[10px] text-base sm:text-[14px] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+                    className="w-full h-10 pl-8 pr-3 border border-[var(--color-border-strong)] rounded-md text-base sm:text-[15px] bg-[var(--color-surface)] text-[var(--color-text)] focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none"
                   />
                 </div>
                 {results.length > 0 && (
@@ -397,8 +429,8 @@ export default function PackagesPage() {
                         className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-[var(--color-surface-2)] text-[13px]"
                       >
                         <Plus className="w-3 h-3 text-[var(--color-text-muted)]" />
-                        <span className="font-bold text-[var(--color-text)]">{r.label}</span>
-                        <span className="ml-auto text-[11px] text-[var(--color-text-faint)]">Rev {r.rev ?? "-"}</span>
+                        <span className="font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)]">{r.label}</span>
+                        <span className="ml-auto text-[13px] text-[var(--color-text-muted)]">Rev {r.rev ?? "-"}</span>
                       </button>
                     ))}
                   </div>
@@ -407,8 +439,8 @@ export default function PackagesPage() {
                   <div className="mt-2 space-y-1">
                     {picked.map((p) => (
                       <div key={p.id} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--color-surface-2)] text-[13px]">
-                        <span className="font-bold text-[var(--color-text)] flex-1 truncate">{p.label}</span>
-                        <span className="text-[11px] text-[var(--color-text-faint)]">pins Rev {p.rev ?? "-"}</span>
+                        <span className="font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)] flex-1 truncate">{p.label}</span>
+                        <span className="text-[13px] text-[var(--color-text-muted)]">Pins Rev {p.rev ?? "-"}</span>
                         <button aria-label="Remove" onClick={() => setPicked((prev) => prev.filter((x) => x.id !== p.id))} className="p-0.5 rounded hover:bg-[var(--color-surface)]">
                           <X className="w-3 h-3 text-[var(--color-text-faint)]" />
                         </button>
@@ -420,11 +452,11 @@ export default function PackagesPage() {
             </div>
 
             <div className="px-5 py-3 border-t border-[var(--color-border)] flex justify-end gap-2">
-              <button onClick={() => setShowCreate(false)} className="h-10 px-4 rounded-xl text-[14px] font-bold border border-[var(--color-border-strong)]">Cancel</button>
+              <button onClick={() => setShowCreate(false)} className={`${heroQuiet} !h-10`}>Cancel</button>
               <button
                 onClick={() => void handleCreate()}
                 disabled={creating || !name.trim() || picked.length === 0}
-                className="inline-flex items-center gap-1.5 h-10 px-4 rounded-xl text-[14px] font-extrabold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
+                className={heroPrimary}
               >
                 {creating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Package className="w-3.5 h-3.5" />}
                 Make the package

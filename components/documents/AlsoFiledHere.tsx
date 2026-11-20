@@ -36,7 +36,7 @@ export default function AlsoFiledHere({ orgId, folderId }: { orgId: string; fold
   }, [orgId, folderId]);
   if (!rows.length) return null;
   return (
-    <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden">
+    <section className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] overflow-hidden">
       <h2 className="px-4 sm:px-5 pt-4 pb-2 text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center gap-2"><Link2 className="w-3.5 h-3.5" /> Also filed here · {rows.length}</h2>
       <ul className="divide-y divide-[var(--color-border)]">
         {rows.map((r) => (

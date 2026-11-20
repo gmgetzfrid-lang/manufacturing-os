@@ -211,7 +211,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
     action?: React.ReactNode;
   }) => (
     <div className="flex items-start gap-3 py-2.5">
-      <span className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-[11px] font-black mt-0.5 ${
+      <span className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-[11px] font-semibold mt-0.5 ${
         state === "done" ? "bg-emerald-500 text-white"
         : state === "review" ? "bg-amber-400 text-amber-950"
         : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border border-[var(--color-border-strong)]"
@@ -220,21 +220,21 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
       </span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs font-black text-[var(--color-text)]">{title}</span>
+          <span className="text-[13px] font-semibold text-[var(--color-text)]">{title}</span>
           {state === "review" && (
-            <span className="text-[11px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">
+            <span className="text-[13px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">
               needs review
             </span>
           )}
         </div>
-        <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">{children}</div>
+        <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{children}</div>
       </div>
       {action && <div className="shrink-0 mt-0.5">{action}</div>}
     </div>
   );
 
   return (
-    <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5"
+    <section className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] p-4 sm:p-5"
       style={{ animation: "rise 0.4s var(--ease-fluid) both" }}>
       <div className="flex items-center gap-2.5 mb-1">
         <span className="w-8 h-8 rounded-[10px] bg-[var(--color-surface-2)] flex items-center justify-center shrink-0">
@@ -245,7 +245,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
           <div className="text-[13px] text-[var(--color-text-muted)]">
             {status?.boundLibrary ? (
               <>
-                Backed by <Link href={`/knowledge/${status.boundLibrary.id}`} className="font-black text-[var(--color-accent-text)] dark:text-[var(--color-text)] hover:underline">{status.boundLibrary.name}</Link>
+                Backed by <Link href={`/knowledge/${status.boundLibrary.id}`} className="text-[var(--color-accent-text)] dark:text-[var(--color-text)] hover:underline">{status.boundLibrary.name}</Link>
                 {" · "}{status.counts.ready} readable{status.counts.pending > 0 ? ` · ${status.counts.pending} indexing` : ""}
                 {" · "}{status.sources.length} watched source{status.sources.length === 1 ? "" : "s"}
               </>
@@ -254,25 +254,25 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
         </div>
         {status?.boundLibrary && status.canManage && (
           <button type="button" onClick={() => void syncNow()} disabled={syncing}
-            className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] disabled:opacity-50 shrink-0">
+            className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] disabled:opacity-50 shrink-0">
             <RefreshCw className={`w-3 h-3 ${syncing ? "animate-spin" : ""}`} /> Sync
           </button>
         )}
       </div>
 
       {error && (
-        <p role="alert" className="mt-1 flex items-start gap-2 border-l-2 border-rose-500 pl-2.5 text-[11px] text-rose-700 dark:text-rose-300">
+        <p role="alert" className="mt-1 flex items-start gap-2 border-l-2 border-rose-500 pl-2.5 text-[13px] text-rose-700 dark:text-rose-300">
           <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
           <span>Couldn&apos;t load this area&apos;s knowledge: {error} <button type="button" onClick={() => void loadStatus()} className="font-bold underline">Try again</button></span>
         </p>
       )}
       {note && (
-        <p role={note.bad ? "alert" : "status"} className={`mt-1 border-l-2 pl-2.5 text-[11px] font-bold ${note.bad ? "border-rose-500 text-rose-700 dark:text-rose-300" : "border-emerald-500 text-emerald-700 dark:text-emerald-300"}`}>
+        <p role={note.bad ? "alert" : "status"} className={`mt-1 border-l-2 pl-2.5 text-[13px] font-bold ${note.bad ? "border-rose-500 text-rose-700 dark:text-rose-300" : "border-emerald-500 text-emerald-700 dark:text-emerald-300"}`}>
           {note.text}
         </p>
       )}
       {countsFailed && (
-        <p className="mt-1 border-l-2 border-amber-500 pl-2.5 text-[11px] text-amber-800 dark:text-amber-300">
+        <p className="mt-1 border-l-2 border-amber-500 pl-2.5 text-[13px] text-amber-800 dark:text-amber-300">
           Couldn&apos;t count every link and marker, so the numbers in step 3 may be low.
         </p>
       )}
@@ -280,8 +280,8 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
       {/* Drift — doc control was reorganized after linking. Said HERE, on
           open, with the fix one click away — never a silent sync surprise. */}
       {hasDrift && drift && (
-        <div className="mt-2 border-l-2 border-amber-500 pl-3 py-0.5 space-y-1.5 text-[11px] text-amber-900 dark:text-amber-300">
-          <div className="font-black flex items-center gap-1.5">
+        <div className="mt-2 border-l-2 border-amber-500 pl-3 py-0.5 space-y-1.5 text-[13px] text-amber-900 dark:text-amber-300">
+          <div className="font-semibold flex items-center gap-1.5">
             <AlertTriangle className="w-3.5 h-3.5" /> Document control changed since this area was linked
           </div>
           {drift.deadSources.map((s) => (
@@ -289,7 +289,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
               <span className="flex-1 min-w-0 truncate">Watched folder no longer exists: <b>{s.sourceName}</b></span>
               {status?.canManage && (
                 <button type="button" onClick={() => void dropDeadSource(s.id)} disabled={syncing}
-                  className="inline-flex items-center gap-1 text-[11px] font-black px-2 py-0.5 rounded-md border border-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/50 disabled:opacity-50">
+                  className="inline-flex items-center gap-1 text-[13px] font-semibold px-2 py-0.5 rounded-md border border-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/50 disabled:opacity-50">
                   <Trash2 className="w-3 h-3" /> Remove link
                 </button>
               )}
@@ -311,7 +311,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
               </span>
               {status?.canManage && (
                 <button type="button" onClick={() => void linkNewMatch(f.id, f.name)} disabled={syncing}
-                  className="inline-flex items-center gap-1 text-[11px] font-black px-2 py-0.5 rounded-md border border-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/50 disabled:opacity-50">
+                  className="inline-flex items-center gap-1 text-[13px] font-semibold px-2 py-0.5 rounded-md border border-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/50 disabled:opacity-50">
                   <Plus className="w-3 h-3" /> Link
                 </button>
               )}
@@ -331,7 +331,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
           state={status === null ? "loading" : knowledgeDone ? "done" : needsReview ? "review" : "todo"}
           action={status?.canManage ? (
             <button type="button" onClick={() => setWizardOpen(true)}
-              className="inline-flex items-center gap-1 h-8 px-3 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 text-[12px] font-bold">
+              className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[13px] font-bold">
               {status?.boundLibrary ? "Review links" : "Set up"} <ChevronRight className="w-3 h-3" />
             </button>
           ) : undefined}>
@@ -343,7 +343,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
           state={status === null || flowCount === null ? "loading" : (flowCount > 0 ? "done" : "todo")}
           action={
             <button type="button" onClick={scrollToFlows}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)]">
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)]">
               Read flows <ChevronRight className="w-3 h-3" />
             </button>
           }>
@@ -351,7 +351,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
             <span><b>{flowCount ?? "…"}</b> process flow{flowCount === 1 ? "" : "s"}</span>
             <span>· <b>{docLinkCount ?? "…"}</b> linked document{docLinkCount === 1 ? "" : "s"}</span>
             <span>· <b>{plotMarkCount ?? "…"}</b> plot marker{plotMarkCount === 1 ? "" : "s"}</span>
-            <Link href="/plot-plans" className="font-bold text-[var(--color-accent-text)] dark:text-[var(--color-text)] hover:underline">Plot plans <ExternalLink className="w-2.5 h-2.5 inline" /></Link>
+            <Link href="/plot-plans" className="text-[var(--color-accent-text)] dark:text-[var(--color-text)] hover:underline">Plot plans <ExternalLink className="w-2.5 h-2.5 inline" /></Link>
           </span>
         </Step>
         <Step n={4} title="Link equipment files to assets"
@@ -516,15 +516,15 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
 
   const sheet = (
     <div role="dialog" aria-modal="true" className="fixed inset-0 z-[700] flex items-start justify-center bg-[var(--color-ink)]/60 pt-[6vh] p-4 overscroll-contain" onClick={onClose}>
-      <div className="w-full max-w-lg max-h-[86vh] flex flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl overflow-hidden"
+      <div className="w-full max-w-lg max-h-[86vh] flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)] shrink-0">
           <Sparkles className="w-4 h-4 text-[var(--color-text-muted)]" />
           <div className="flex-1">
-            <div className="text-sm font-black text-[var(--color-text)]">
+            <div className="text-sm font-semibold text-[var(--color-text)]">
               {bound ? `Review ${unit.label}'s knowledge` : `Set up ${unit.label}'s knowledge`}
             </div>
-            <div className="text-[11px] text-[var(--color-text-muted)]">
+            <div className="text-[13px] text-[var(--color-text-muted)]">
               Pick the folders the AI should watch for this area. Folders matching
               &ldquo;{unit.label}&rdquo; or code {unit.code} are pre-checked.
             </div>
@@ -545,9 +545,9 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
                 <label key={l.id} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-border)] cursor-pointer">
                   <input type="radio" name="area-kl" checked={libChoice === l.id} onChange={() => setLibChoice(l.id)} />
                   <BookOpen className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-                  <span className="text-xs font-bold text-[var(--color-text)]">{l.name}</span>
+                  <span className="text-[13px] font-bold text-[var(--color-text)]">{l.name}</span>
                   {bound?.id === l.id && (
-                    <span className="text-[11px] font-black uppercase px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]">current</span>
+                    <span className="text-[13px] font-semibold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]">current</span>
                   )}
                 </label>
               ))}
@@ -555,7 +555,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
                 <input type="radio" name="area-kl" checked={libChoice === "__new"} onChange={() => setLibChoice("__new")} />
                 <Plus className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                 <input value={newName} onChange={(e) => { setNewName(e.target.value); setLibChoice("__new"); }}
-                  className="flex-1 px-2 py-1 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-xs font-bold"
+                  className="flex-1 px-2 py-1 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[13px] font-bold"
                   placeholder={`${unit.label} Knowledge`} />
               </label>
             </div>
@@ -569,10 +569,10 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
               </div>
               <div className="space-y-1">
                 {status.sources.map((s) => (
-                  <div key={s.id} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[var(--color-surface-2)] text-[11px] text-[var(--color-text-muted)]">
+                  <div key={s.id} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)]">
                     <Check className="w-3 h-3 text-emerald-600 shrink-0" />
                     <span className="flex-1 min-w-0 truncate font-bold">{s.name}</span>
-                    <span className="text-[11px] font-black uppercase">{s.type}</span>
+                    <span className="text-[13px] font-semibold">{s.type}</span>
                   </div>
                 ))}
               </div>
@@ -587,7 +587,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
             {browse === null ? (
               <div className="flex justify-center items-center gap-2 py-4 text-[11px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Loading folders…</div>
             ) : foldersByLib.length === 0 ? (
-              <div className="text-[11px] text-[var(--color-text-muted)]">
+              <div className="text-[13px] text-[var(--color-text-muted)]">
                 No document libraries yet. <Link href="/documents" className="font-bold underline">create them in Documents</Link> first.
               </div>
             ) : (
@@ -596,12 +596,12 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
                   const libWatched = watchedIds.has(libId);
                   return (
                   <div key={libId}>
-                    <label className={`flex items-center gap-2 text-[11px] font-black text-[var(--color-text)] cursor-pointer ${libWatched ? "opacity-50" : ""}`}>
+                    <label className={`flex items-center gap-2 text-[13px] font-semibold text-[var(--color-text)] cursor-pointer ${libWatched ? "opacity-50" : ""}`}>
                       <input type="checkbox" disabled={libWatched}
                         checked={libWatched || checked.has(`library:${libId}`)}
                         onChange={() => toggle(`library:${libId}`)} />
                       <FolderOpen className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {g.libraryName}
-                      <span className="text-[11px] font-bold text-[var(--color-text-faint)] normal-case">
+                      <span className="text-[13px] font-bold text-[var(--color-text-faint)] normal-case">
                         {libWatched ? "(whole library, already watched)" : "(whole library)"}
                       </span>
                     </label>
@@ -612,7 +612,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
                         // covers every folder inside it.
                         const watched = libWatched || watchedIds.has(f.id);
                         return (
-                          <label key={f.id} className={`flex items-center gap-2 text-[11px] cursor-pointer ${watched ? "opacity-50" : ""}`}>
+                          <label key={f.id} className={`flex items-center gap-2 text-[13px] cursor-pointer ${watched ? "opacity-50" : ""}`}>
                             <input type="checkbox" disabled={watched}
                               checked={watched || checked.has(`folder:${f.id}`)}
                               onChange={() => toggle(`folder:${f.id}`)} />
@@ -620,7 +620,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
                               {f.name}
                             </span>
                             {suggestedIds.has(f.id) && !watched && (
-                              <span className="text-[11px] font-black uppercase px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]">
+                              <span className="text-[13px] font-semibold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]">
                                 suggested
                               </span>
                             )}
@@ -628,7 +628,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
                         );
                       })}
                       {g.folders.length === 0 && (
-                        <div className="text-[11px] text-[var(--color-text-faint)]">No folders. Link the whole library above.</div>
+                        <div className="text-[13px] text-[var(--color-text-faint)]">No folders. Link the whole library above.</div>
                       )}
                     </div>
                   </div>
@@ -639,21 +639,21 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
           </div>
 
           {error && (
-            <p role="alert" className="flex items-start gap-2 border-l-2 border-rose-500 pl-2.5 text-[11px] text-rose-700 dark:text-rose-300">
+            <p role="alert" className="flex items-start gap-2 border-l-2 border-rose-500 pl-2.5 text-[13px] text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
             </p>
           )}
         </div>
 
         <div className="px-4 py-3 border-t border-[var(--color-border)] shrink-0 flex items-center gap-2">
-          <span className="flex-1 text-[11px] text-[var(--color-text-muted)]">
+          <span className="flex-1 text-[13px] text-[var(--color-text-muted)]">
             <FileText className="w-3 h-3 inline mr-1" />
             New files, revisions, and deletions inside watched folders sync automatically.
           </span>
-          <button onClick={onClose} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
+          <button onClick={onClose} className="px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
           <button onClick={() => void apply()}
             disabled={busy || (libChoice === "__new" && !newName.trim()) || (checked.size === 0 && !bound)}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 shadow">
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-[13px] font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 shadow">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
             {bound ? "Apply changes" : "Connect this area"}
           </button>

@@ -9,7 +9,8 @@ import {
   Shield,
   Loader2,
   Zap,
-  Check
+  Check,
+  LogIn,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { logCheckoutEvent } from "@/lib/audit";
@@ -246,20 +247,20 @@ const CheckoutInfoPopover = ({
       {/* Header */}
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex justify-between items-center bg-[var(--color-surface-2)]">
         <h4 className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center">
-          <Clock className="w-3.5 h-3.5 mr-1.5 text-[var(--color-text-muted)]" /> Active Session
+          <Clock className="w-3.5 h-3.5 mr-1.5 text-[var(--color-text-muted)]" /> Who has it
         </h4>
         {loading ? <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-faint)]" /> : (
-           <span className="text-[11px] font-mono font-bold bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-0.5 rounded-full border border-[var(--color-border)]">
-             {sessions.length} User{sessions.length !== 1 ? 's' : ''}
+           <span className="text-[13px] font-semibold tabular-nums text-[var(--color-text)]">
+             {sessions.length} {sessions.length !== 1 ? 'people' : 'person'}
            </span>
         )}
       </div>
 
       <div className="p-4 space-y-4 max-h-[300px] overflow-y-auto custom-scrollbar">
         {loading ? (
-          <div className="text-center py-4 text-xs text-[var(--color-text-faint)]">Loading session details...</div>
+          <div className="text-center py-4 text-[13px] text-[var(--color-text-muted)]">Loading…</div>
         ) : sessions.length === 0 ? (
-          <div className="text-center py-4 text-xs text-[var(--color-text-faint)] italic">No active sessions found (Orphaned Lock?)</div>
+          <div className="text-center py-4 text-[13px] text-[var(--color-text-muted)]">No one is working on it now. The lock may be left over.</div>
         ) : (
           <div className="space-y-3">
             {sessions.map(session => (
@@ -268,14 +269,14 @@ const CheckoutInfoPopover = ({
                   <UserAvatar uid={session.userId} name={session.userName} size={24} className="shadow-sm" />
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-center">
-                      <p className="text-xs font-bold text-[var(--color-text)] truncate">{session.userName}</p>
+                      <p className="text-[13px] font-bold text-[var(--color-text)] truncate">{session.userName}</p>
                       {session.userId === docRecord.checkedOutBy && (
                         <span className="flex items-center text-[11px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] px-1.5 py-0.5 rounded-full border border-[var(--color-border)] shadow-sm" title="This person holds the lock, they're the one publishing wins for">
-                          <Lock className="w-2.5 h-2.5 mr-1" /> HOLDS LOCK
+                          <Lock className="w-2.5 h-2.5 mr-1" /> Holds the lock
                         </span>
                       )}
                     </div>
-                    <p className="text-[11px] text-[var(--color-text-faint)] flex items-center mt-0.5">
+                    <p className="text-[13px] text-[var(--color-text-faint)] flex items-center mt-0.5">
                        {session.mode} • {session.startedAt ? timeAgo(toSafeDate(session.startedAt)) : ''}
                     </p>
                   </div>
@@ -288,16 +289,16 @@ const CheckoutInfoPopover = ({
                     </span>
                   )}
                   {session.note ? (
-                    <div className="text-xs text-[var(--color-text)] bg-[var(--color-surface-2)] p-2 rounded-lg border border-[var(--color-border)] italic">
+                    <div className="text-[13px] text-[var(--color-text)] bg-[var(--color-surface-2)] p-2 rounded-lg border border-[var(--color-border)] italic">
                       &ldquo;{session.note}&rdquo;
                     </div>
                   ) : !session.purpose ? (
-                    <div className="text-[11px] text-[var(--color-text-faint)] italic">No stated reason (pre-policy checkout)</div>
+                    <div className="text-[13px] text-[var(--color-text-faint)] italic">No stated reason (pre-policy checkout)</div>
                   ) : null}
                   {(() => {
                     const clock = clockLine(session);
                     return clock ? (
-                      <div className={`text-[11px] font-bold ${clock.overdue ? "text-amber-600" : "text-[var(--color-text-muted)]"}`}>
+                      <div className={`text-[13px] font-bold ${clock.overdue ? "text-amber-600" : "text-[var(--color-text-muted)]"}`}>
                         <Clock className="w-2.5 h-2.5 inline mr-1 -mt-0.5" />{clock.text}
                       </div>
                     ) : null;
@@ -313,7 +314,7 @@ const CheckoutInfoPopover = ({
         {recentPulls.length > 0 && (
           <div className="pt-2 border-t border-dashed border-[var(--color-border)] space-y-0.5">
             {recentPulls.map((p, i) => (
-              <div key={i} className="text-[11px] text-[var(--color-text-faint)]">
+              <div key={i} className="text-[13px] text-[var(--color-text-faint)]">
                 {p.name} {p.kind} · {p.when}
               </div>
             ))}
@@ -325,7 +326,7 @@ const CheckoutInfoPopover = ({
           <button
             onClick={handleReleaseMine}
             disabled={releasing}
-            className="w-full py-2 bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)] rounded-lg text-xs font-bold flex items-center justify-center transition-colors disabled:opacity-50"
+            className="w-full py-2 bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)] rounded-lg text-[13px] font-bold flex items-center justify-center transition-colors disabled:opacity-50"
             title="Ends your session only. If others are still on the checkout, the lock passes to them."
           >
             {releasing ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Check className="w-3.5 h-3.5 mr-1.5" />}
@@ -339,7 +340,7 @@ const CheckoutInfoPopover = ({
              <button
                onClick={handleForceRelease}
                disabled={processing}
-               className="w-full py-2 bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-rose-700 dark:text-rose-400 border border-[var(--color-border)] rounded-lg text-xs font-bold flex items-center justify-center transition-colors disabled:opacity-50"
+               className="w-full py-2 bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-rose-700 dark:text-rose-400 border border-[var(--color-border)] rounded-lg text-[13px] font-bold flex items-center justify-center transition-colors disabled:opacity-50"
              >
                <Shield className="w-3.5 h-3.5 mr-1.5" />
                {processing ? "Releasing…" : "Force release (admin)"}
@@ -351,18 +352,22 @@ const CheckoutInfoPopover = ({
   );
 }
 
-export default function CheckoutStatusCell({ 
-  docRecord, 
+export default function CheckoutStatusCell({
+  docRecord,
   currentUserId,
   currentUserEmail,
   userRole,
-  onCheckout 
-}: { 
-  docRecord: DocumentRecord; 
+  onCheckout,
+  quiet = false,
+}: {
+  docRecord: DocumentRecord;
   currentUserId?: string;
   currentUserEmail?: string;
   userRole?: string | null;
   onCheckout: (doc: DocumentRecord) => void;
+  /** In a table row: a free document shows its buttons only on row hover
+   *  or focus, so the column reads as who has what. */
+  quiet?: boolean;
 }) {
   const [showInfo, setShowInfo] = useState(false);
   const [quickBusy, setQuickBusy] = useState(false);
@@ -404,95 +409,78 @@ export default function CheckoutStatusCell({
     }
   };
 
+  const small = "inline-flex items-center gap-1 h-7 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors whitespace-nowrap";
   if (!isCheckedOut) {
     return (
-      <div className="flex justify-center items-center gap-1">
+      <div className={`flex items-center gap-1 ${quiet ? "opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" : ""}`}>
         <button
+          type="button"
           onClick={(e) => { e.stopPropagation(); onCheckout(docRecord); }}
-          className="group flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[var(--color-surface)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] hover:shadow-sm transition-all text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+          className={small}
         >
-          <Clock className="w-3 h-3 text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)] transition-colors" />
-          <span>Check Out</span>
+          {!quiet && <LogIn className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />}
+          Check out
         </button>
         {/* One-click lightweight tier: friction is why people skip checkout
-            systems — make the honest path the cheapest one. Labeled, not a
+            systems, so the honest path is the cheapest one. Labeled, not a
             mystery icon. */}
         {currentUserId && docRecord.orgId && (
           <button
+            type="button"
             onClick={handleQuickHold}
             disabled={quickBusy}
-            title="One click, no form. Marks you as working on this until end of day, then auto-releases. Upgrade to a full checkout any time."
-            className="group/qh flex items-center gap-1 px-2 py-1.5 rounded-full bg-[var(--color-surface)] border border-[var(--color-border)] hover:border-[var(--color-border)] hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)] transition-all disabled:opacity-50 text-[11px] font-bold"
+            title="Quick hold: one click, no form. Marks you as working on this until end of day, then releases it. Upgrade to a full checkout any time."
+            aria-label="Quick hold until end of day"
+            className={quiet ? `${small} !w-7 !px-0 justify-center` : small}
           >
-            {quickBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
-            {/* Always labeled — an icon-only mystery button defeats the whole
-                point of a friction-free tier. */}
-            <span>Quick hold</span>
+            {quickBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />}
+            {/* Labeled wherever there's room; in a table row the tooltip says it. */}
+            {!quiet && "Quick hold"}
           </button>
         )}
       </div>
     );
   }
 
-  // High Tech Active State
+  // Checked out: who has it, as a quiet tag (waiting color). Click it to
+  // check in or join; the info button says how long and who else.
+  const holder = isLockedByMe ? "You" : (docRecord.checkedOutByName || docRecord.activeCollaborators?.[0] || "Someone");
+  const others = Math.max(0, (docRecord.activeCollaborators?.length ?? 0) - 1);
   return (
-    <div className="flex justify-center items-center gap-2 relative group" ref={containerRef}>
-      
-      <div 
-        onClick={(e) => { e.stopPropagation(); onCheckout(docRecord); }}
-        className={`
-          relative flex items-center pl-1 pr-3 py-1 rounded-full border shadow-sm cursor-pointer transition-all hover:shadow-md hover:scale-[1.02] active:scale-[0.98]
-          ${isLockedByMe 
-            ? 'bg-[var(--color-surface)] border-[var(--color-border-strong)] ring-1 ring-[var(--color-border-strong)]' 
-            : 'bg-[var(--color-surface-2)] border-[var(--color-border)] ring-1 ring-[var(--color-border-strong)]'
-          }
-        `}
-      >
-        {/* (A corner status dot sat here; the words say who has it.) */}
-
-        {/* Avatars */}
-        <div className="flex -space-x-1.5 mr-2">
-          {docRecord.activeCollaborators?.slice(0, 3).map((name, i) => (
-            <UserAvatar
-              key={`${name}-${i}`}
-              name={name}
-              size={24}
-              className={`ring-1 ring-white shadow-sm ${["z-30", "z-20", "z-10"][i]}`}
-            />
-          ))}
-        </div>
-
-        {/* Text Action */}
-        <span className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text)]">
-          {isLockedByMe ? 'Checked out by you' : 'Checked out'}
-        </span>
-      </div>
-
-      {/* Info Button (Hover Trigger) */}
+    <div className="flex items-center gap-1 relative group/co min-w-0" ref={containerRef}>
       <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onCheckout(docRecord); }}
+        title={isLockedByMe ? "Checked out by you. Open to check in." : `Checked out by ${holder}`}
+        className="min-w-0 inline-flex items-center gap-1.5 h-7 px-1.5 -ml-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)]"
+      >
+        <span aria-hidden className="w-2 h-2 rounded-full shrink-0 bg-[var(--state-held)]" />
+        <span className="truncate">{holder}{others > 0 ? ` +${others}` : ""}</span>
+      </button>
+      <button
+        type="button"
         onClick={(e) => { e.stopPropagation(); setShowInfo(!showInfo); }}
-        className={`
-          w-7 h-7 flex items-center justify-center rounded-full transition-all border
-          ${showInfo 
-            ? 'bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]' 
-            : 'bg-[var(--color-surface)] text-[var(--color-text-faint)] border-[var(--color-border)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-muted)] opacity-60 sm:opacity-0 group-hover:opacity-100'
-          }
-        `}
+        aria-label="Checkout details"
+        title="Checkout details"
+        aria-expanded={showInfo}
+        className={`shrink-0 w-7 h-7 grid place-items-center rounded-md transition-colors ${
+          showInfo
+            ? "bg-[var(--color-surface-2)] text-[var(--color-text)]"
+            : `text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] ${quiet ? "opacity-0 group-hover:opacity-100 focus-visible:opacity-100" : ""}`
+        }`}
       >
         <Info className="w-3.5 h-3.5" />
       </button>
 
-      {/* Popover */}
-      {showInfo && 
-        <CheckoutInfoPopover 
-          doc={docRecord} 
-          onClose={() => setShowInfo(false)} 
-          userRole={userRole} 
+      {showInfo &&
+        <CheckoutInfoPopover
+          doc={docRecord}
+          onClose={() => setShowInfo(false)}
+          userRole={userRole}
           currentUserId={currentUserId}
           currentUserEmail={currentUserEmail}
         />
       }
-
     </div>
   );
 }

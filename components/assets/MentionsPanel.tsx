@@ -70,32 +70,32 @@ export default function MentionsPanel({ orgId, assetId, tag }: Props) {
   const total = docs?.reduce((n, d) => n + d.totalMentions, 0) ?? 0;
 
   return (
-    <section className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden">
+    <section className="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] overflow-hidden">
       <div className="px-4 sm:px-5 pt-4 pb-3 border-b border-[var(--color-border)] flex items-center justify-between gap-2">
         <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)] inline-flex items-center gap-2">
           <Link2 className="w-4 h-4" /> Mentioned in
         </h2>
         {docs && docs.length > 0 && (
-          <span className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">
+          <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">
             {total} mention{total === 1 ? "" : "s"} across {docs.length} document{docs.length === 1 ? "" : "s"}
           </span>
         )}
       </div>
 
       {docs === null && !error && (
-        <div className="p-6 flex items-center justify-center text-xs text-[var(--color-text-faint)]">
+        <div className="p-6 flex items-center justify-center text-[13px] text-[var(--color-text-faint)]">
           <Loader2 className="w-4 h-4 animate-spin mr-2" /> Reading the index…
         </div>
       )}
 
       {error && (
-        <div role="alert" className="p-4 text-xs text-rose-700 dark:text-rose-400">Couldn&apos;t load mentions: {error}</div>
+        <div role="alert" className="p-4 text-[13px] text-rose-700 dark:text-rose-400">Couldn&apos;t load mentions: {error}</div>
       )}
 
       {docs !== null && docs.length === 0 && !error && (
-        <div className="p-6 text-center text-xs text-[var(--color-text-faint)] italic">
-          Nothing indexed mentions <span className="font-mono not-italic">{tag}</span> yet.
-          <div className="mt-1 not-italic text-[11px]">
+        <div className="p-6 text-center text-[13px] text-[var(--color-text-faint)] italic">
+          Nothing indexed mentions <span className="font-display tabular-nums not-italic">{tag}</span> yet.
+          <div className="mt-1 not-italic text-[13px]">
             Only documents approved for indexing are read. An Admin can run the mention
             indexer from the graph page.
           </div>
@@ -128,13 +128,13 @@ function DocRow({ doc }: { doc: MentionedDocument }) {
         <div className="flex items-center gap-2">
           {open ? <ChevronDown className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-faint)]" />
                 : <ChevronRight className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-faint)]" />}
-          <span className="text-xs font-bold text-[var(--color-text)] truncate flex-1">{doc.documentName}</span>
-          <span className="text-[11px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded shrink-0">
+          <span className="text-[13px] font-bold text-[var(--color-text)] truncate flex-1">{doc.documentName}</span>
+          <span className="text-[13px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded shrink-0">
             {doc.totalMentions}× · {pageCount} page{pageCount === 1 ? "" : "s"}
           </span>
         </div>
         {!open && lead && (
-          <p className="mt-1 ml-5 text-[11px] text-[var(--color-text-muted)] line-clamp-2 italic">
+          <p className="mt-1 ml-5 text-[13px] text-[var(--color-text-muted)] line-clamp-2 italic">
             <Quote className="inline w-3 h-3 mr-1 -mt-0.5 text-[var(--color-text-faint)]" />
             {lead.snippet}
           </p>
@@ -148,18 +148,18 @@ function DocRow({ doc }: { doc: MentionedDocument }) {
             const body = (
               <>
                 <div className="flex items-center gap-2">
-                  <span className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">
+                  <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">
                     Page {m.page}
                   </span>
-                  <span className="text-[11px] text-[var(--color-text-faint)]">
+                  <span className="text-[13px] text-[var(--color-text-faint)]">
                     {m.count}× · matched &ldquo;{m.matchedText}&rdquo;
                   </span>
                   {m.confidence < 0.9 && (
-                    <span className="text-[11px] font-bold text-amber-700 dark:text-amber-400">unconfirmed</span>
+                    <span className="text-[13px] font-bold text-amber-700 dark:text-amber-400">unconfirmed</span>
                   )}
                   {href && <ExternalLink className="w-3 h-3 text-[var(--color-text-faint)] ml-auto shrink-0" />}
                 </div>
-                <p className="mt-0.5 text-[11px] text-[var(--color-text)] italic">{m.snippet}</p>
+                <p className="mt-0.5 text-[13px] text-[var(--color-text)] italic">{m.snippet}</p>
               </>
             );
             return (

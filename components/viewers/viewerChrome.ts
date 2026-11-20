@@ -20,7 +20,7 @@ export const vKicker =
 
 /** The drawing's name: the one big thing in the chrome. */
 export const vTitle =
-  "font-display truncate text-[24px] sm:text-[30px] leading-[1.05] font-semibold text-[var(--color-text)]";
+  "font-display truncate text-[24px] sm:text-[30px] leading-[1.05] font-semibold tabular-nums text-[var(--color-text)]";
 
 /** A quiet icon button on the charcoal. */
 export const vIcon =
@@ -44,7 +44,7 @@ export const vGroup =
 
 /** The one orange action, sized for the chrome. */
 export const vPrimary =
-  "inline-flex items-center justify-center gap-2 h-10 px-4 shrink-0 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-extrabold hover:bg-[var(--color-accent-hover)] shadow-[0_12px_24px_-12px_var(--color-accent)] disabled:opacity-50 transition-colors";
+  "inline-flex items-center justify-center gap-2 h-10 px-4 shrink-0 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[15px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors";
 
 /** The way out (X), top right. */
 export const vClose =
@@ -52,4 +52,4 @@ export const vClose =
 
 /** A thin line in the chrome that says something about this drawing. */
 export const vNote =
-  "shrink-0 px-4 sm:px-5 py-1.5 flex items-center gap-2 text-[12px] border-b border-[var(--color-border)]";
+  "shrink-0 px-4 sm:px-5 py-1.5 flex items-center gap-2 text-[13px] border-b border-[var(--color-border)]";

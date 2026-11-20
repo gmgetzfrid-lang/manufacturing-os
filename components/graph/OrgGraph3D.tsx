@@ -1064,13 +1064,13 @@ export default function OrgGraph3D({
     >
       {failed && (
         <div className="absolute inset-0 flex items-center justify-center p-6 text-center">
-          <div className="text-xs text-amber-300 max-w-xs">{failed}</div>
+          <div className="text-[13px] text-amber-300 max-w-xs">{failed}</div>
         </div>
       )}
       {pinned && ready && !failed && (
         <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 rounded-full bg-black/40 backdrop-blur px-2 py-1 max-w-[calc(100%-24px)]">
           <button onClick={() => { refitRef.current++; setGapIds(new Set()); onSelect(null); }} className="shrink-0 rounded-full bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold px-2.5 py-0.5">Whole site</button>
-          <span className="text-[11px] text-slate-300 truncate">Drag to turn · scroll toward what you want · click to open · point at a line to see why it exists</span>
+          <span className="text-[13px] text-slate-300 truncate">Drag to turn · scroll toward what you want · click to open · point at a line to see why it exists</span>
         </div>
       )}
       {pinned && ready && !failed && info && (
@@ -1081,9 +1081,9 @@ export default function OrgGraph3D({
       {hover && !linkCard && (
         <div className="absolute z-20 pointer-events-none max-w-[280px] rounded-lg border border-white/15 bg-slate-950/90 px-2.5 py-1.5 text-[11px] text-slate-200 shadow-xl"
           style={{ left: Math.min(hover.x + 14, (mountRef.current?.clientWidth ?? 9999) - 290), top: hover.y + 14 }}>
-          <div className="font-black text-white flex items-center gap-1.5">{hover.color && <span className="w-2 h-2 rounded-full shrink-0" style={{ background: hover.color }} />}<span className="break-words">{hover.title}</span></div>
+          <div className="font-semibold text-white flex items-center gap-1.5">{hover.color && <span className="w-2 h-2 rounded-full shrink-0" style={{ background: hover.color }} />}<span className="break-words">{hover.title}</span></div>
           {hover.lines.map((l, i) => <div key={i} className="text-slate-300 leading-snug">{l}</div>)}
-          {hover.hint && <div className="mt-0.5 text-[11px] text-slate-400">{hover.hint}</div>}
+          {hover.hint && <div className="mt-0.5 text-[13px] text-slate-400">{hover.hint}</div>}
         </div>
       )}
       {linkCard && (
@@ -1103,7 +1103,7 @@ export default function OrgGraph3D({
       )}
       {!ready && !failed && (
         <div className="absolute inset-0 flex items-center justify-center">
-          <div className="text-[11px] font-bold text-slate-400">Building the 3D scene…</div>
+          <div className="text-[13px] font-bold text-slate-400">Building the 3D scene…</div>
         </div>
       )}
     </div>

@@ -21,21 +21,21 @@ export default function RunsPanel({ orgId, onUndone }: { orgId: string; onUndone
     return () => { alive = false; };
   }, [orgId, tick]);
   if (!state) return null;
-  if (!state.available) return <div className="text-[11px] text-amber-700">AI runs are not recorded yet, so they cannot be undone. Apply migration 20261021_ai_boundary_runs.sql.</div>;
+  if (!state.available) return <div className="text-[13px] text-amber-700">AI runs are not recorded yet, so they cannot be undone. Apply migration 20261021_ai_boundary_runs.sql.</div>;
   if (!state.runs.length) return null;
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-2.5 space-y-1.5">
-      <div className="text-[11px] font-black uppercase tracking-wide text-[var(--color-text-muted)] inline-flex items-center gap-1"><History className="w-3 h-3" /> AI runs on drawings</div>
-      {note && <div className="text-[11px] text-emerald-700">{note}</div>}
+      <div className="text-[13px] font-semibold text-[var(--color-text-muted)] inline-flex items-center gap-1"><History className="w-3 h-3" /> AI runs on drawings</div>
+      {note && <div className="text-[13px] text-emerald-700">{note}</div>}
       <ul className="space-y-1">
         {state.runs.map((r) => (
-          <li key={r.runId} className="flex items-center gap-2 text-xs">
+          <li key={r.runId} className="flex items-center gap-2 text-[13px]">
             <div className="min-w-0 flex-1">
               <div className="font-semibold truncate">{r.label ?? "AI run"}</div>
-              <div className="text-[11px] text-[var(--color-text-muted)]">{new Date(r.at).toLocaleString()} · {r.by ?? "someone"} · {r.drawings} drawing{r.drawings === 1 ? "" : "s"} changed</div>
+              <div className="text-[13px] text-[var(--color-text-muted)]">{new Date(r.at).toLocaleString()} · {r.by ?? "someone"} · {r.drawings} drawing{r.drawings === 1 ? "" : "s"} changed</div>
             </div>
             {r.undone
-              ? <span className="text-[11px] text-[var(--color-text-muted)]">undone</span>
+              ? <span className="text-[13px] text-[var(--color-text-muted)]">undone</span>
               : <button disabled={!!busy} onClick={() => {
                   if (!window.confirm(`Undo "${r.label ?? "this run"}"? Equipment columns, links and readings go back to how they were before it. Registry items it created are removed unless someone has since added to them. Anything a person changed later is left alone.`)) return;
                   setBusy(r.runId);

@@ -165,7 +165,7 @@ export default function CompareRevisionsModal({
           </button>
         </div>
         <div className="px-4 sm:px-5 pb-3 flex items-center gap-2 flex-wrap shrink-0 border-b border-[var(--color-border)]">
-          <label className="flex items-center gap-1.5 text-[12px]">
+          <label className="flex items-center gap-1.5 text-[13px]">
             <span className="text-rose-300 font-bold">Base</span>
             <select value={baseId ?? ""} onChange={(e) => pick("base", e.target.value)} className={selectCls} disabled={loading}>
               {versions.map((v) => <option key={v.id} value={v.id}>{optionLabel(v)}</option>)}
@@ -174,14 +174,14 @@ export default function CompareRevisionsModal({
           <button onClick={swap} disabled={!baseId || !compareId} className={vIcon} title="Swap base and compare" aria-label="Swap base and compare">
             <ArrowLeftRight className="w-4 h-4" />
           </button>
-          <label className="flex items-center gap-1.5 text-[12px]">
+          <label className="flex items-center gap-1.5 text-[13px]">
             <span className="text-emerald-300 font-bold">Compare</span>
             <select value={compareId ?? ""} onChange={(e) => pick("compare", e.target.value)} className={selectCls} disabled={loading}>
               {versions.map((v) => <option key={v.id} value={v.id}>{optionLabel(v)}</option>)}
             </select>
           </label>
           {offloadedCount > 0 && (
-            <span className="inline-flex items-center gap-1 text-[12px] text-[var(--color-text-muted)]">
+            <span className="inline-flex items-center gap-1 text-[13px] text-[var(--color-text-muted)]">
               <Archive className="w-3.5 h-3.5" /> {offloadedCount} older revision{offloadedCount === 1 ? " is" : "s are"} in the offline archive, not shown
             </span>
           )}
@@ -192,19 +192,19 @@ export default function CompareRevisionsModal({
           {loading ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center text-[var(--color-text-muted)]">
               <Loader2 className="w-8 h-8 animate-spin text-[var(--color-text-muted)] mb-2" />
-              <span className="text-xs">Loading revisions…</span>
+              <span className="text-[13px]">Loading revisions…</span>
             </div>
           ) : error ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center text-rose-300">
               <AlertTriangle className="w-10 h-10 mb-2 opacity-60" />
               <span className="text-sm font-bold">The revisions didn&apos;t load.</span>
-              <span className="text-xs mt-1 max-w-md text-center text-[var(--color-text-muted)]">{error}</span>
+              <span className="text-[13px] mt-1 max-w-md text-center text-[var(--color-text-muted)]">{error}</span>
             </div>
           ) : versions.length < 2 ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center text-[var(--color-text-muted)] px-8 text-center">
               <GitCompare className="w-10 h-10 mb-3 opacity-40" />
               <span className="text-sm font-bold text-[var(--color-text)]">Need two revisions on the server to compare</span>
-              <span className="text-xs mt-1 max-w-md">
+              <span className="text-[13px] mt-1 max-w-md">
                 {versions.length === 1 ? "Only one revision is available. " : "No revisions with files are available. "}
                 {offloadedCount > 0 && `${offloadedCount} older revision${offloadedCount === 1 ? " was" : "s were"} archived off the server for space - restore from the offline archive to compare against them.`}
               </span>
@@ -212,7 +212,7 @@ export default function CompareRevisionsModal({
           ) : !baseVersion || !compareVersion || !urls ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center text-[var(--color-text-muted)]">
               <Loader2 className="w-8 h-8 animate-spin text-[var(--color-text-muted)] mb-2" />
-              <span className="text-xs">Opening the files…</span>
+              <span className="text-[13px]">Opening the files…</span>
             </div>
           ) : (
             <PdfRevisionDiff

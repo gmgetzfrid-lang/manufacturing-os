@@ -224,7 +224,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
         <div className="px-4 py-2.5 border-b border-slate-800 flex items-center gap-3 bg-slate-900 shrink-0">
           <FileText className="w-4 h-4 text-slate-400 shrink-0" />
           <div className="min-w-0">
-            <div className="text-sm font-bold text-white truncate">{tag} <span className="text-[11px] font-medium text-slate-400">· {type || "Linked drawings"}</span></div>
+            <div className="text-sm font-bold text-white truncate">{tag} <span className="text-[13px] font-medium text-slate-400">· {type || "Linked drawings"}</span></div>
           </div>
           <div className="ml-auto flex items-center gap-2 shrink-0">
             {activeFile && (
@@ -259,15 +259,15 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
               {files.map((f) => (
                 <div key={f.id} className={`group flex items-stretch border-b border-slate-800/60 ${activeId === f.id ? "bg-slate-800" : ""}`}>
                   <button onClick={() => setActiveId(f.id)} aria-current={activeId === f.id ? "true" : undefined} className={`flex-1 min-w-0 text-left px-3 py-2.5 ${activeId === f.id ? "text-white" : "text-slate-300 hover:text-white"}`}>
-                    <div className="text-[11px] font-mono font-bold truncate">{f.document?.document_number || f.document?.title || "Document"}</div>
-                    <div className="text-[11px] text-slate-500 truncate">{f.document?.title || f.document?.name || ""}{f.document?.rev ? ` · Rev ${f.document.rev}` : ""}</div>
+                    <div className="text-[13px] font-display font-semibold tabular-nums truncate">{f.document?.document_number || f.document?.title || "Document"}</div>
+                    <div className="text-[13px] text-slate-500 truncate">{f.document?.title || f.document?.name || ""}{f.document?.rev ? ` · Rev ${f.document.rev}` : ""}</div>
                   </button>
                   {canManage && (
                     <button onClick={() => void handleUnlink(f.id)} title="Remove link" aria-label="Remove link" className="shrink-0 px-2 flex items-center text-slate-500 hover:text-red-400"><Trash2 className="w-3.5 h-3.5" /></button>
                   )}
                 </div>
               ))}
-              {files.length === 0 && <div className="p-4 text-[11px] text-slate-500">No linked drawings yet.</div>}
+              {files.length === 0 && <div className="p-4 text-[13px] text-slate-500">No linked drawings yet.</div>}
             </div>
           )}
 

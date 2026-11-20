@@ -124,10 +124,11 @@ export default function RetentionSection({ doc, orgId, canManage }: {
     finally { setBusy(false); }
   };
 
-  const inp = "text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 outline-none focus:border-[var(--color-border-strong)]";
+  const inp = "text-[13px] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 outline-none focus:border-[var(--color-border-strong)]";
 
   return (
-    <div className={`rounded-xl border p-3 space-y-2.5 bg-[var(--color-surface)] border-[var(--color-border)] ${hold.on ? "border-l-2 border-l-rose-500" : ""}`}>
+    <div className={`relative pt-3 border-t border-[var(--color-border)] space-y-2.5 ${hold.on ? "pl-3" : ""}`}>
+      {hold.on && <span aria-hidden className="absolute left-0 top-3 bottom-0 w-[3px] bg-[var(--state-overdue)]" />}
       <div className="flex items-center gap-2">
         <Archive className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Retention</span>
@@ -139,14 +140,14 @@ export default function RetentionSection({ doc, orgId, canManage }: {
       ) : (
         <>
           {hold.on && (
-            <div className="text-[11px] text-rose-700 dark:text-rose-300">
+            <div className="text-[13px] text-rose-700 dark:text-rose-300">
               <div className="flex items-center gap-1.5 font-bold"><ShieldAlert className="w-3.5 h-3.5" /> Legal hold{hold.matter ? `: ${hold.matter}` : ""}</div>
               {hold.reason && <div className="mt-0.5">{hold.reason}</div>}
               <div className="mt-0.5">It can&apos;t be deleted or disposed of until the hold is released.</div>
             </div>
           )}
 
-          <div className="text-[11px] text-[var(--color-text)]">
+          <div className="text-[13px] text-[var(--color-text)]">
             {eff
               ? <>{describe(eff)} · <span className="text-[var(--color-text-muted)]">from {src === "document" ? "this document" : src === "collection" ? "this folder" : "the library"}</span>{until && <span className="text-[var(--color-text-muted)]"> · until {until.slice(0, 10)}</span>}</>
               : <span className="text-[var(--color-text-muted)]">No retention policy set.</span>}
@@ -169,33 +170,33 @@ export default function RetentionSection({ doc, orgId, canManage }: {
               <div className="flex gap-1">
                 {(["document", "collection", "library"] as Level[]).map((lv) => (
                   <button key={lv} onClick={() => { setScope(lv); prefill(lv); }} disabled={lv === "collection" && !doc.collectionId}
-                    className={`flex-1 px-2 py-1 rounded-lg text-[11px] font-bold disabled:opacity-30 ${scope === lv ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
+                    className={`flex-1 px-2 py-1 rounded-lg text-[13px] font-bold disabled:opacity-30 ${scope === lv ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
                     {lv === "document" ? "This doc" : lv === "collection" ? "This folder" : "Library"}
                   </button>
                 ))}
               </div>
-              <label className="flex items-center gap-2 text-[11px] text-[var(--color-text)]">
+              <label className="flex items-center gap-2 text-[13px] text-[var(--color-text)]">
                 <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Require retention
               </label>
               {enabled && (
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[11px] text-[var(--color-text-muted)]">Retain</span>
+                  <span className="text-[13px] text-[var(--color-text-muted)]">Retain</span>
                   <input type="number" min={1} value={years} onChange={(e) => setYears(Math.max(1, parseInt(e.target.value) || 1))} className={`${inp} w-16`} />
-                  <span className="text-[11px] text-[var(--color-text-muted)]">yrs from</span>
+                  <span className="text-[13px] text-[var(--color-text-muted)]">yrs from</span>
                   <select value={basis} onChange={(e) => setBasis(e.target.value as Basis)} className={inp}>
                     <option value="created">created</option><option value="issued">issued</option><option value="effective">effective</option><option value="superseded">superseded</option>
                   </select>
-                  <span className="text-[11px] text-[var(--color-text-muted)]">then</span>
+                  <span className="text-[13px] text-[var(--color-text-muted)]">then</span>
                   <select value={action} onChange={(e) => setAction(e.target.value as Action)} className={inp}>
                     <option value="review">review</option><option value="archive">archive</option><option value="destroy">destroy</option>
                   </select>
                 </div>
               )}
               <div className="flex justify-between gap-2 pt-1">
-                <button onClick={() => void clearPolicy()} disabled={busy} className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-red-600 hover:bg-red-50 disabled:opacity-50">Remove</button>
+                <button onClick={() => void clearPolicy()} disabled={busy} className="px-2.5 py-1.5 rounded-lg text-[13px] font-bold text-red-600 hover:bg-red-50 disabled:opacity-50">Remove</button>
                 <div className="flex gap-2">
-                  <button onClick={() => setMode("view")} className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-[var(--color-text-muted)]">Cancel</button>
-                  <button onClick={() => void saveEdit()} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 text-[11px] font-bold disabled:opacity-50">{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Save</button>
+                  <button onClick={() => setMode("view")} className="px-2.5 py-1.5 rounded-lg text-[13px] font-bold text-[var(--color-text-muted)]">Cancel</button>
+                  <button onClick={() => void saveEdit()} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[11px] font-bold disabled:opacity-50">{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Save</button>
                 </div>
               </div>
             </div>

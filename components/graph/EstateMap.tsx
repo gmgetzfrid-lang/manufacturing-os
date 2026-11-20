@@ -214,20 +214,20 @@ export default function EstateMap({ nodes, edges, query, selectedId, highlightId
         onOpen={(id) => { const n = graphOf(id); if (n) onOpen(n); }} filedLinks={filedLinks} />
       </div>
       <div className={compact
-        ? "absolute top-2 left-2 right-2 flex items-center gap-1 text-[11px] pointer-events-auto overflow-x-auto no-scrollbar whitespace-nowrap"
-        : "absolute top-2 left-1/2 -translate-x-1/2 flex items-center gap-1 text-[11px] pointer-events-auto max-w-[70%] flex-wrap justify-center"}>
+        ? "absolute top-2 left-2 right-2 flex items-center gap-1 text-[13px] pointer-events-auto overflow-x-auto no-scrollbar whitespace-nowrap"
+        : "absolute top-2 left-1/2 -translate-x-1/2 flex items-center gap-1 text-[13px] pointer-events-auto max-w-[70%] flex-wrap justify-center"}>
         {soleRoot
           ? (rootUp ? <button onClick={rootUp.onUp} title="Up a folder" className="shrink-0 rounded-md border px-2 py-1 font-semibold bg-[var(--color-surface)]/90 border-[var(--color-border)]">↑ {rootUp.label}</button> : null)
-          : <button onClick={() => setFocusId(null)} className={`shrink-0 rounded-md border px-2 py-1 font-semibold ${focusId ? "bg-[var(--color-surface)]/90 border-[var(--color-border)]" : "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent"}`}>Whole estate</button>}
+          : <button onClick={() => setFocusId(null)} className={`shrink-0 rounded-md border px-2 py-1 font-semibold ${focusId ? "bg-[var(--color-surface)]/90 border-[var(--color-border)]" : "bg-[var(--color-surface)] border-[var(--color-text-muted)] ring-1 ring-[var(--color-text-muted)]"}`}>Whole estate</button>}
         {crumbs.map((c, i) => (
           <React.Fragment key={c.id}>
             {(!soleRoot || rootUp || i > 0) && <span className="text-[var(--color-text-faint)]">›</span>}
-            <button onClick={() => setFocusId(c.id)} className={`shrink-0 rounded-md border px-2 py-1 font-semibold ${c.id === focusId ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)]/90 border-[var(--color-border)]"}`}>{c.label}</button>
+            <button onClick={() => setFocusId(c.id)} className={`shrink-0 rounded-md border px-2 py-1 font-semibold ${c.id === focusId ? "bg-[var(--color-surface)] border-[var(--color-text-muted)] ring-1 ring-[var(--color-text-muted)]" : "bg-[var(--color-surface)]/90 border-[var(--color-border)]"}`}>{c.label}</button>
           </React.Fragment>
         ))}
         {compact ? null : !focusId
-          ? <span className="ml-2 text-[var(--color-text-muted)]">operating area › equipment type › equipment › documents · click to go in · Esc to climb out</span>
-          : <span className="ml-2 text-[var(--color-text-muted)]">Esc or ↑ to climb out</span>}
+          ? <span className="ml-2 text-[var(--color-text-muted)] max-md:hidden">Operating area › equipment type › equipment › documents. Click to go in, Esc to climb out.</span>
+          : <span className="ml-2 text-[var(--color-text-muted)] max-md:hidden">Esc or ↑ to climb out</span>}
       </div>
     </div>
   );

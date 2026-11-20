@@ -237,7 +237,7 @@ export default function ActivityThread({
           <MessageSquare className="w-4 h-4 mr-2 text-[var(--color-text-muted)]" />
           {typeof episodeId === "string" && episodeSeq ? `Checkout #${episodeSeq} - Activity` : "Activity"}
           {messages.length > 0 && (
-            <span className="ml-2 text-[11px] font-bold text-[var(--color-text-faint)]">{messages.length}</span>
+            <span className="ml-2 text-[13px] font-bold text-[var(--color-text-faint)]">{messages.length}</span>
           )}
         </h3>
       </div>
@@ -248,7 +248,7 @@ export default function ActivityThread({
           <button
             onClick={askLatest}
             disabled={busy}
-            className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[13px] font-bold bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
             title="Post a quick &ldquo;is this the latest?&rdquo; question"
           >
             <HelpCircle className="w-3 h-3" /> Is this latest?
@@ -256,7 +256,7 @@ export default function ActivityThread({
           {onRequestMarkup && (
             <button
               onClick={onRequestMarkup}
-              className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[13px] font-bold bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
               title="Open the markup request form"
             >
               <FileSignature className="w-3 h-3" /> Request markup
@@ -265,7 +265,7 @@ export default function ActivityThread({
           <button
             onClick={() => setComposerKind((k) => k === "proposal" ? "chat" : "proposal")}
             aria-pressed={composerKind === "proposal"}
-            className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold border ${
+            className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[13px] font-bold border ${
               composerKind === "proposal"
                 ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)]"
                 : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
@@ -280,19 +280,19 @@ export default function ActivityThread({
       {/* Feed */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-3 bg-slate-50/30">
         {loading ? (
-          <div className="text-center text-[var(--color-text-faint)] text-xs mt-10">
+          <div className="text-center text-[var(--color-text-faint)] text-[13px] mt-10">
             <Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Loading the thread…
           </div>
         ) : loadErr ? (
-          <div role="alert" className="text-center text-rose-700 dark:text-rose-300 text-xs mt-10 px-4">
+          <div role="alert" className="text-center text-rose-700 dark:text-rose-300 text-[13px] mt-10 px-4">
             Couldn&apos;t load the thread: {loadErr}
           </div>
         ) : composingDisabled ? (
-          <div className="text-center text-[var(--color-text-faint)] text-xs mt-10 px-4">
+          <div className="text-center text-[var(--color-text-faint)] text-[13px] mt-10 px-4">
             No checkout open. The next checkout starts a new thread. Past ones are in the checkout history.
           </div>
         ) : topLevel.length === 0 ? (
-          <div className="text-center text-[var(--color-text-faint)] text-xs mt-10">
+          <div className="text-center text-[var(--color-text-faint)] text-[13px] mt-10">
             No activity yet. Start by leaving a note for the team.
           </div>
         ) : (
@@ -317,7 +317,7 @@ export default function ActivityThread({
       {/* Composer */}
       <div className="p-3 border-t border-[var(--color-border)] bg-[var(--color-surface)] space-y-2">
         {composingDisabled && (
-          <div className="text-[11px] text-[var(--color-text-faint)] text-center">
+          <div className="text-[13px] text-[var(--color-text-faint)] text-center">
             Check the document out to start a new thread.
           </div>
         )}
@@ -326,7 +326,7 @@ export default function ActivityThread({
             value={proposalTitle}
             onChange={(e) => setProposalTitle(e.target.value)}
             placeholder="Proposal title (optional)"
-            className="w-full px-3 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-xs focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+            className="w-full px-3 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[13px] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
           />
         )}
         <div className="relative">
@@ -348,7 +348,7 @@ export default function ActivityThread({
                 ? "Sketch your proposal here. Team can react in the thread."
                 : "Message the team…"
             }
-            className={`w-full pl-3 pr-10 py-2 rounded-2xl border text-xs outline-none focus:ring-2 resize-none disabled:bg-[var(--color-surface-2)] disabled:cursor-not-allowed ${
+            className={`w-full pl-3 pr-10 py-2 rounded-2xl border text-[13px] outline-none focus:ring-2 resize-none disabled:bg-[var(--color-surface-2)] disabled:cursor-not-allowed ${
               composerKind === "proposal"
                 ? "border-[var(--color-border-strong)] bg-[var(--color-surface)] focus:ring-[var(--color-accent-ring)]"
                 : "border-[var(--color-border)] bg-[var(--color-surface-2)] focus:ring-[var(--color-accent-ring)]"
@@ -358,7 +358,7 @@ export default function ActivityThread({
             onClick={send}
             disabled={!composer.trim() || busy || composingDisabled}
             aria-label={composerKind === "proposal" ? "Post proposal" : "Send message"}
-            className={`absolute right-1.5 ${composerKind === "proposal" ? "bottom-1.5" : "top-1/2 -translate-y-1/2"} p-1.5 rounded-full bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 disabled:opacity-50`}
+            className={`absolute right-1.5 ${composerKind === "proposal" ? "bottom-1.5" : "top-1/2 -translate-y-1/2"} p-1.5 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50`}
             title={composerKind === "proposal" ? "Post proposal" : "Send message"}
           >
             {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
@@ -399,8 +399,8 @@ function MessageRow({ msg, meIsAuthor, replies, onReply, onMarkResolved, isReply
         <div className="text-[13px] font-semibold text-[var(--color-text)] flex items-center gap-1 mb-1">
           <Pencil className="w-3 h-3" /> Handoff · {msg.userName}
         </div>
-        <div className="text-xs text-[var(--color-text)] whitespace-pre-wrap">{msg.text}</div>
-        <div className="text-[11px] text-[var(--color-text-muted)] mt-1.5">{formatTime(msg.createdAt)}</div>
+        <div className="text-[13px] text-[var(--color-text)] whitespace-pre-wrap">{msg.text}</div>
+        <div className="text-[13px] text-[var(--color-text-muted)] mt-1.5">{formatTime(msg.createdAt)}</div>
       </div>
     );
   }
@@ -412,9 +412,9 @@ function MessageRow({ msg, meIsAuthor, replies, onReply, onMarkResolved, isReply
         <div className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center gap-1 mb-1">
           <Zap className="w-3 h-3" /> Proposal · {msg.userName}
         </div>
-        <div className="text-xs font-bold text-[var(--color-text)] mb-1">{title}</div>
-        <div className="text-xs text-[var(--color-text)] whitespace-pre-wrap">{msg.text}</div>
-        <div className="text-[11px] text-[var(--color-text-muted)] mt-1.5">{formatTime(msg.createdAt)}</div>
+        <div className="text-[13px] font-bold text-[var(--color-text)] mb-1">{title}</div>
+        <div className="text-[13px] text-[var(--color-text)] whitespace-pre-wrap">{msg.text}</div>
+        <div className="text-[13px] text-[var(--color-text-muted)] mt-1.5">{formatTime(msg.createdAt)}</div>
       </div>
     );
   }
@@ -427,20 +427,20 @@ function MessageRow({ msg, meIsAuthor, replies, onReply, onMarkResolved, isReply
             <HelpCircle className="w-3 h-3" /> Question · {msg.userName}
           </div>
           {msg.resolvedAt ? (
-            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700">
+            <span className="inline-flex items-center gap-1 text-[13px] font-bold text-emerald-700">
               <CheckCircle2 className="w-3 h-3" /> Resolved
             </span>
           ) : (
-            <button onClick={onMarkResolved} className="text-[11px] font-bold text-[var(--color-text)] hover:underline">
+            <button onClick={onMarkResolved} className="text-[13px] font-bold text-[var(--color-text)] hover:underline">
               Mark resolved
             </button>
           )}
         </div>
-        <div className="text-xs text-[var(--color-text)]">{msg.text}</div>
+        <div className="text-[13px] text-[var(--color-text)]">{msg.text}</div>
         {replies.length > 0 && (
           <div className="mt-2 space-y-1.5 border-l-2 border-[var(--color-border)] pl-3">
             {replies.map((r) => (
-              <div key={r.id} className="text-xs">
+              <div key={r.id} className="text-[13px]">
                 <span className="font-bold text-[var(--color-text)]">{r.userName}: </span>
                 <span className="text-[var(--color-text)]">{r.text}</span>
               </div>
@@ -456,21 +456,21 @@ function MessageRow({ msg, meIsAuthor, replies, onReply, onMarkResolved, isReply
                 onKeyDown={(e) => { if (e.key === "Enter") onSendReply(); }}
                 autoFocus
                 placeholder="Reply…"
-                className="flex-1 px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-xs"
+                className="flex-1 px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[13px]"
               />
               <button
                 onClick={onSendReply}
                 disabled={!replyText.trim() || busy}
-                className="px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[11px] font-bold disabled:opacity-50"
+                className="px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[13px] font-bold disabled:opacity-50"
               >Send</button>
             </div>
           ) : (
-            <button onClick={onReply} className="mt-2 text-[11px] font-bold text-[var(--color-text)] hover:underline">
+            <button onClick={onReply} className="mt-2 text-[13px] font-bold text-[var(--color-text)] hover:underline">
               Reply
             </button>
           )
         )}
-        <div className="text-[11px] text-[var(--color-text-muted)] mt-1.5">{formatTime(msg.createdAt)}</div>
+        <div className="text-[13px] text-[var(--color-text-muted)] mt-1.5">{formatTime(msg.createdAt)}</div>
       </div>
     );
   }
@@ -481,8 +481,8 @@ function MessageRow({ msg, meIsAuthor, replies, onReply, onMarkResolved, isReply
         <div className="text-[13px] font-semibold text-[var(--color-text)] flex items-center gap-1 mb-1">
           <FileSignature className="w-3 h-3" /> Markup request · {msg.userName}
         </div>
-        <div className="text-xs text-[var(--color-text)]">{msg.text}</div>
-        <div className="text-[11px] text-[var(--color-text-muted)] mt-1.5">{formatTime(msg.createdAt)}</div>
+        <div className="text-[13px] text-[var(--color-text)]">{msg.text}</div>
+        <div className="text-[13px] text-[var(--color-text-muted)] mt-1.5">{formatTime(msg.createdAt)}</div>
       </div>
     );
   }
@@ -490,13 +490,13 @@ function MessageRow({ msg, meIsAuthor, replies, onReply, onMarkResolved, isReply
   // chat (default)
   return (
     <div className={`flex flex-col ${meIsAuthor ? "items-end" : "items-start"}`}>
-      <div className={`max-w-[85%] rounded-2xl px-3 py-2 text-xs ${
+      <div className={`max-w-[85%] rounded-2xl px-3 py-2 text-[13px] ${
         meIsAuthor ? "bg-[var(--color-surface-2)] text-[var(--color-text)] rounded-br-sm" : "bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] rounded-bl-sm shadow-sm"
       }`}>
-        {!meIsAuthor && <div className="font-bold text-[11px] mb-0.5 opacity-70">{msg.userName}</div>}
+        {!meIsAuthor && <div className="font-bold text-[13px] mb-0.5 opacity-70">{msg.userName}</div>}
         <div className="whitespace-pre-wrap">{msg.text}</div>
       </div>
-      <div className="text-[11px] text-[var(--color-text-faint)] mt-0.5">{formatTime(msg.createdAt)}</div>
+      <div className="text-[13px] text-[var(--color-text-faint)] mt-0.5">{formatTime(msg.createdAt)}</div>
     </div>
   );
 }

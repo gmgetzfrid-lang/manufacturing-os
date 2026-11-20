@@ -43,7 +43,7 @@ export default function NameReadingStrip({ readings, onChange }: {
   const shown = unsure > 0 || open ? groups.filter((g) => open || g.unsure > 0).slice(0, 6) : groups.slice(0, 1);
 
   return (
-    <div className={`mb-3 rounded-xl border px-3 py-2 text-[11px] ${unsure ? "border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20" : "border-[var(--color-border)] bg-[var(--color-surface-2)]/40"}`}>
+    <div className={`mb-3 rounded-xl border px-3 py-2 text-[13px] ${unsure ? "border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20" : "border-[var(--color-border)] bg-[var(--color-surface-2)]/40"}`}>
       <div className="flex items-center gap-1.5 text-[var(--color-text-muted)]">
         {unsure ? <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" /> : <Wand2 className="w-3.5 h-3.5 shrink-0" />}
         <span className="flex-1">
@@ -62,8 +62,8 @@ export default function NameReadingStrip({ readings, onChange }: {
           <div key={g.shape} className="flex items-center gap-1 flex-wrap">
             {g.example.parts.map((p, i) => (
               <label key={i} className={`relative inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 ${TONE[p.role]} ${p.sure ? "" : "ring-2 ring-amber-400"}`} title={`“${p.text}” is read as ${ROLE_LABEL[p.role]}`}>
-                <span className="font-mono">{p.text}</span>
-                <span className="text-[11px] font-black uppercase opacity-70">{ROLE_LABEL[p.role]}</span>
+                <span className="font-display tabular-nums">{p.text}</span>
+                <span className="text-[13px] font-semibold opacity-70">{ROLE_LABEL[p.role]}</span>
                 <select
                   aria-label={`What “${p.text}” is`}
                   value={p.role}
@@ -74,7 +74,7 @@ export default function NameReadingStrip({ readings, onChange }: {
                 </select>
               </label>
             ))}
-            <span className="text-[11px] text-[var(--color-text-faint)] ml-1">{g.count} file{g.count === 1 ? "" : "s"}{g.unsure ? ` · ${g.unsure} unsure` : ""}</span>
+            <span className="text-[13px] text-[var(--color-text-faint)] ml-1">{g.count} file{g.count === 1 ? "" : "s"}{g.unsure ? ` · ${g.unsure} unsure` : ""}</span>
           </div>
         ))}
       </div>

@@ -33,7 +33,7 @@ const TotalsCtx = createContext<Map<string, number> | undefined>(undefined);
 
 function CountBadge({ n }: { n: number | undefined }) {
   if (n === undefined) return null;
-  return <span className="ml-auto shrink-0 text-[11px] tabular-nums text-[var(--color-text-faint)]" title="Files here, including subfolders">{n.toLocaleString()}</span>;
+  return <span className="ml-auto shrink-0 text-[13px] tabular-nums text-[var(--color-text-faint)]" title="Files here, including subfolders">{n.toLocaleString()}</span>;
 }
 
 interface FolderRailProps {
@@ -134,7 +134,7 @@ function TreeNode({
           className="flex items-center gap-1.5 flex-1 min-w-0 text-left py-0.5"
         >
           <FolderGlyph folder={folder} active={isActive} />
-          <span className="text-xs font-medium truncate">{folder.name}</span>
+          <span className="text-[13px] font-medium truncate">{folder.name}</span>
           <CountBadge n={totals?.get(folder.id!)} />
         </button>
       </div>
@@ -257,7 +257,7 @@ export default function FolderRail({
             <div className="px-3 py-2.5 border-b border-[var(--color-border)] flex items-center justify-between">
               <div>
                 <div className="text-[13px] font-semibold text-[var(--color-text-faint)] ">Library</div>
-                <div className="text-xs font-bold text-[var(--color-text)] truncate max-w-[180px]">{libraryName}</div>
+                <div className="text-[13px] font-bold text-[var(--color-text)] truncate max-w-[180px]">{libraryName}</div>
               </div>
               {isController && (
                 <button
@@ -281,7 +281,7 @@ export default function FolderRail({
                 }`}
               >
                 <Home className="w-3.5 h-3.5 shrink-0" />
-                <span className="text-xs font-medium truncate">{libraryName}</span>
+                <span className="text-[13px] font-medium truncate">{libraryName}</span>
                 <CountBadge n={libraryTotal} />
               </button>
 
@@ -300,7 +300,7 @@ export default function FolderRail({
               </TotalsCtx.Provider>
 
               {folders.length === 0 && (
-                <p className="text-[11px] text-[var(--color-text-faint)] text-center py-6 px-2">No folders yet</p>
+                <p className="text-[13px] text-[var(--color-text-faint)] text-center py-6 px-2">No folders yet</p>
               )}
             </div>
           </div>

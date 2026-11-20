@@ -163,15 +163,15 @@ export default function BackfillVersionModal({
     <div className="fixed inset-0 z-[200] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
       <form
         onSubmit={onSubmit}
-        className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 animate-in fade-in zoom-in-95"
+        className="w-full max-w-2xl bg-[var(--color-surface)] rounded-lg shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 animate-in fade-in zoom-in-95"
       >
         {/* Header */}
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface-2)]">
           <div className="flex items-center gap-2">
             <History className="w-5 h-5 text-[var(--color-text-muted)]" />
             <div>
-              <h2 className="font-black text-[var(--color-text)]">Add an older revision</h2>
-              <div className="text-[11px] text-[var(--color-text-muted)] font-mono">
+              <h2 className="font-semibold text-[var(--color-text)]">Add an older revision</h2>
+              <div className="text-[13px] text-[var(--color-text-muted)] font-display tabular-nums">
                 {doc.documentNumber || doc.title || doc.name} - current is Rev {doc.rev || "-"}
               </div>
             </div>
@@ -182,7 +182,7 @@ export default function BackfillVersionModal({
         </div>
 
         {/* One line so it can't be mistaken for a new revision. */}
-        <p className="px-5 py-2.5 border-b border-[var(--color-border)] text-xs text-[var(--color-text)]">
+        <p className="px-5 py-2.5 border-b border-[var(--color-border)] text-[13px] text-[var(--color-text)]">
           <b>The current revision stays as it is.</b> This adds a past revision to the history.
         </p>
 
@@ -209,7 +209,7 @@ export default function BackfillVersionModal({
                   <FileThumb file={file} />
                   <span className="min-w-0 flex-1">
                     <span className="block text-sm font-semibold text-[var(--color-text)] truncate">{file.name}</span>
-                    <span className="block text-[11px] text-[var(--color-text-muted)]">{file.size < 1024 * 1024 ? `${(file.size / 1024).toFixed(0)} KB` : `${(file.size / (1024 * 1024)).toFixed(1)} MB`} · tap to pick another</span>
+                    <span className="block text-[13px] text-[var(--color-text-muted)]">{file.size < 1024 * 1024 ? `${(file.size / 1024).toFixed(0)} KB` : `${(file.size / (1024 * 1024)).toFixed(1)} MB`} · tap to pick another</span>
                   </span>
                 </div>
               ) : (
@@ -228,7 +228,7 @@ export default function BackfillVersionModal({
                 value={revisionLabel}
                 onChange={(e) => setRevisionLabel(e.target.value)}
                 placeholder="e.g. 0, 1, A, R2"
-                className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-sm font-mono"
+                className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-sm font-display tabular-nums"
               />
             </Field>
             <Field label="Historical Release Date">
@@ -285,7 +285,7 @@ export default function BackfillVersionModal({
           {/* MOC + source filename */}
           <div className="grid grid-cols-2 gap-3">
             <Field label="MOC Reference">
-              <input value={mocReference} onChange={(e) => setMocReference(e.target.value)} className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-sm font-mono" />
+              <input value={mocReference} onChange={(e) => setMocReference(e.target.value)} className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-sm font-display tabular-nums" />
             </Field>
             <Field label="Source CAD Filename">
               <input value={sourceFileName} onChange={(e) => setSourceFileName(e.target.value)} className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-sm font-mono" />
@@ -311,7 +311,7 @@ export default function BackfillVersionModal({
           )}
 
           {error && (
-            <p role="alert" className="border-l-2 border-rose-500 pl-3 text-xs text-rose-700 dark:text-rose-300">{error}</p>
+            <p role="alert" className="border-l-2 border-rose-500 pl-3 text-[13px] text-rose-700 dark:text-rose-300">{error}</p>
           )}
         </div>
 

@@ -62,14 +62,14 @@ export default function RevertConfirmModal({
 
   return (
     <div className="fixed inset-0 z-[210] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
+      <div className="w-full max-w-md bg-[var(--color-surface)] rounded-lg shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="p-2 bg-[var(--color-surface-2)] rounded-lg">
             <RotateCcw className="w-5 h-5 text-[var(--color-text-muted)]" />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-black text-[var(--color-text)]">Revert to Rev {targetVersion.revisionLabel}</div>
-            <div className="text-xs text-[var(--color-text-muted)] truncate">
+            <div className="text-sm font-semibold text-[var(--color-text)]">Revert to Rev {targetVersion.revisionLabel}</div>
+            <div className="text-[13px] text-[var(--color-text-muted)] truncate">
               {doc.documentNumber || doc.title || doc.name} - current is Rev {doc.rev}
             </div>
           </div>
@@ -84,7 +84,7 @@ export default function RevertConfirmModal({
               This will create a <b>new revision</b> on the document that copies the file payload from <b>Rev {targetVersion.revisionLabel}</b>.
               The current revision will be marked superseded but remain in the history.
             </p>
-            <p className="text-xs text-[var(--color-text-muted)]">
+            <p className="text-[13px] text-[var(--color-text-muted)]">
               Reverts never overwrite history - the audit chain stays intact and the action is logged with your reason.
             </p>
           </div>
@@ -111,7 +111,7 @@ export default function RevertConfirmModal({
           </div>
 
           {error && (
-            <div className="flex items-start gap-2 text-xs border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
+            <div className="flex items-start gap-2 text-[13px] border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
               <span>{error}</span>
             </div>
@@ -119,13 +119,13 @@ export default function RevertConfirmModal({
         </div>
 
         <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
-          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
             Cancel
           </button>
           <button
             onClick={() => void submit()}
             disabled={busy}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60"
           >
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
             {busy ? "Reverting…" : "Confirm Revert"}

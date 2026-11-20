@@ -72,10 +72,10 @@ export default function PillCell({
   if (!editing) {
     return (
       <div className={`flex items-start gap-1 min-w-0 ${saving ? "opacity-60" : ""}`}>
-        {/* Pills wrap into multiple rows AND scroll vertically within fixed height */}
+        {/* Pills wrap into rows and scroll inside a fixed height */}
         <div className="flex flex-wrap gap-1 max-h-[52px] overflow-y-auto overflow-x-hidden flex-1 min-w-0 custom-scrollbar pr-1">
           {pills.length === 0 ? (
-            <span className="text-[11px] text-[var(--color-text-faint)] italic select-none leading-5">-</span>
+            <span className="text-[14px] text-[var(--color-text-faint)] select-none leading-6">-</span>
           ) : (
             pills.map((tag) => (
               <AssetTagChip
@@ -90,15 +90,16 @@ export default function PillCell({
           )}
         </div>
 
-        {/* Always-visible edit affordance for authorized users */}
+        {/* Edit, for people who may: an icon button that shows on the row's hover. */}
         {canEdit && (
           <button
+            type="button"
             onClick={(e) => { e.stopPropagation(); setEditing(true); }}
-            className="shrink-0 flex items-center gap-0.5 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] bg-[var(--color-surface-2)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] px-1.5 py-0.5 rounded-full transition-colors mt-0.5"
-            title={`Edit ${label}`}
+            className="shrink-0 w-6 h-6 grid place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
+            title={pills.length === 0 ? `Add ${label}` : `Edit ${label}`}
+            aria-label={pills.length === 0 ? `Add ${label}` : `Edit ${label}`}
           >
-            <Plus className="w-2.5 h-2.5" />
-            {pills.length === 0 ? "Add" : <Pencil className="w-2.5 h-2.5" />}
+            {pills.length === 0 ? <Plus className="w-3.5 h-3.5" /> : <Pencil className="w-3.5 h-3.5" />}
           </button>
         )}
       </div>
@@ -154,7 +155,7 @@ export default function PillCell({
             if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); handleSave(); }
           }}
           placeholder={`Add ${label}…`}
-          className="flex-1 min-w-0 text-[11px] px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-ring)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder-slate-400"
+          className="flex-1 min-w-0 text-[13px] px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-ring)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder-slate-400"
         />
         {input.trim() && (
           <button
@@ -172,7 +173,7 @@ export default function PillCell({
           <Check className="w-3 h-3" />
         </button>
       </div>
-      <p className="text-[11px] text-[var(--color-text-faint)]">Enter to add · Esc to save · commas are kept in the tag (not separators)</p>
+      <p className="text-[13px] text-[var(--color-text-faint)]">Enter to add · Esc to save · commas are kept in the tag (not separators)</p>
     </div>
   );
 }

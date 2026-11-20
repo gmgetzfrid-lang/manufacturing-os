@@ -5,7 +5,6 @@ import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useSt
 import dynamic from "next/dynamic";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { stateStyle, documentState } from "@/lib/stateColors";
 import { useRole } from "@/components/providers/RoleContext";
 import FolderGrid from "@/components/documents/FolderGrid";
 import CustomizeNodeModal from "@/components/documents/CustomizeNodeModal";
@@ -60,13 +59,14 @@ import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 import { tryUpload } from "@/lib/uploadRetry";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
+import { bandInput, bandInputIcon, bandSeg, bandSegItem } from "@/components/admin/band";
+import { StatusTag, docStatusTone, humanDate } from "@/components/documents/StatusTag";
 import { isDocumentCheckedOut } from "@/lib/documentGuards";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import WatchButton from "@/components/ui/WatchButton";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import CommandPalette from "@/components/documents/CommandPalette";
-import DocThumb from "@/components/documents/DocThumb";
 import StatusFooter from "@/components/documents/StatusFooter";
 import InspectorDrawer from "@/components/documents/InspectorDrawer";
 import AssetTagChip from "@/components/assets/AssetTagChip";
@@ -199,11 +199,12 @@ import {
   List as ListIcon,
   Image as ImageIcon,
   Link as LinkIcon,
+  Map as MapIcon,
 } from "lucide-react";
 
 const BUILTIN_COLUMNS = [
   { key: "title", label: "Title" },
-  { key: "documentNumber", label: "Doc No." },
+  { key: "documentNumber", label: "Number" },
   { key: "rev", label: "Rev" },
   { key: "status", label: "Status" },
   { key: "updatedAt", label: "Updated" },
@@ -241,23 +242,6 @@ function docFileExt(d: DocumentRecord): string {
 
 function safeString(v: unknown) {
   return typeof v === "string" ? v : "";
-}
-
-function formatTimestamp(value: unknown) {
-  if (!value) return "-";
-  try {
-    if (typeof (value as { toDate?: () => Date })?.toDate === "function") {
-      return (value as { toDate: () => Date }).toDate().toLocaleDateString();
-    }
-    if (typeof (value as { seconds?: number })?.seconds === "number") {
-      return new Date((value as { seconds: number }).seconds * 1000).toLocaleDateString();
-    }
-    if (value instanceof Date) return value.toLocaleDateString();
-    if (typeof value === "string") return new Date(value).toLocaleDateString();
-    return String(value);
-  } catch {
-    return "-";
-  }
 }
 
 function baseName(filename: string) {
@@ -2123,9 +2107,13 @@ export default function LibraryExplorerPage() {
     const custom = Array.isArray(overrides) && overrides.length ? overrides : library.customColumns ?? [];
     setColumnDefs(custom);
 
-    const defaults = defaultColumnsFromSchema({
+    // The number is what engineers read first: it leads the default columns.
+    const schemaDefaults = defaultColumnsFromSchema({
       customColumns: custom,
     });
+    const defaults = schemaDefaults.includes("documentNumber")
+      ? ["documentNumber", ...schemaDefaults.filter((k) => k !== "documentNumber")]
+      : schemaDefaults;
 
     const unsub = listenEffectiveColumns(
       {
@@ -3173,16 +3161,16 @@ export default function LibraryExplorerPage() {
   const getDefaultColWidth = useCallback((colKey: string): number => {
     if (colKey === "title") return 240;
     if (colKey === "documentNumber") return 140;
-    if (colKey === "rev") return 70;
-    if (colKey === "status") return 100;
-    if (colKey === "updatedAt") return 110;
+    if (colKey === "rev") return 68;
+    if (colKey === "status") return 104;
+    if (colKey === "updatedAt") return 104;
     const def = columnMap.get(colKey);
     if (def?.type === "tags" || def?.isPill) return 180;
     if (def?.type === "date") return 110;
     if (def?.type === "number") return 90;
     if (def?.type === "boolean") return 70;
     if (def?.type === "select") return 130;
-    return 150;
+    return 120;
   }, [columnMap]);
 
   // Returns the effective pixel width for a column (user override or default)
@@ -3257,8 +3245,8 @@ export default function LibraryExplorerPage() {
     if (key === "documentNumber") return docRecord.documentNumber || "-";
     if (key === "rev") return docRecord.rev || "-";
     if (key === "status") return docRecord.status || "-";
-    if (key === "updatedAt") return formatTimestamp(docRecord.updatedAt);
-    if (key === "createdAt") return formatTimestamp(docRecord.createdAt);
+    if (key === "updatedAt") return humanDate(docRecord.updatedAt);
+    if (key === "createdAt") return humanDate(docRecord.createdAt);
     if (key === "size") return formatBytesShort(docSizeBytes(docRecord));
     if (key === "fileType") {
       const ext = docFileExt(docRecord);
@@ -3404,7 +3392,15 @@ export default function LibraryExplorerPage() {
   };
 
   const rowPad = density === "compact" ? "py-2" : "py-3";
-  const headerPad = density === "compact" ? "py-2" : "py-3";
+  const headerPad = "h-10";
+  // The table never squeezes below its columns; the title takes what's left.
+  const CHECKOUT_COL = 144;
+  // Who has it sits right after the status (number, title, rev, status,
+  // checked out by, updated), not off at the far right.
+  const checkoutAfterKey: string | undefined = activeColumns.includes("status") ? "status" : activeColumns[activeColumns.length - 1];
+  const checkoutTh = <th className={`px-3 ${headerPad}`} style={{ width: `${CHECKOUT_COL}px` }}>Checked out by</th>;
+  const tableMinWidth = 36 + activeColumns.reduce((n, k) => n + (k === "title" && !colWidths.title ? 140 : colWidths[k] ?? getDefaultColWidth(k)), 0)
+    + CHECKOUT_COL + 36 + 44;
 
   // Right-click menu for a document row/card. Acts on the whole selection
   // when the clicked item is part of it (the gesture handler guarantees it
@@ -3519,35 +3515,40 @@ export default function LibraryExplorerPage() {
   const answer = totalHere === null ? (currentFolder?.name ?? library.name)
     : totalHere === 0 ? (currentFolderId ? "Nothing filed here yet." : `No ${noun.many} yet.`)
     : `${totalHere.toLocaleString()} ${totalHere === 1 ? noun.one : noun.many}.`;
-  const answerSub = (() => {
-    if (totalHere === null || (loadingDocs && documents.length === 0)) return undefined;
+  // The numbers that back the answer up, in ruled cells: how the documents
+  // filed here stand, how many are checked out, how many folders.
+  const answerStats = (() => {
+    if (totalHere === null || (loadingDocs && documents.length === 0)) return null;
     // Filed directly here and readable; a typed filter doesn't change the answer.
     const list = search.trim() ? documents : filteredDocs;
-    if (list.length === 0) {
+    const by = new Map<string, number>();
+    for (const d of list) if (d.status) by.set(d.status, (by.get(d.status) ?? 0) + 1);
+    const ranked = [...by.entries()].sort((a, b) => b[1] - a[1]);
+    const out = list.filter((d) => isDocumentCheckedOut(d));
+    const mine = out.filter((d) => d.checkedOutBy === uid).length;
+    return { list, ranked, out: out.length, mine, partial: list.length < (totalHere ?? 0) };
+  })();
+  const answerSub = (() => {
+    if (!answerStats) return undefined;
+    if (answerStats.list.length === 0) {
       if (filteredFolders.length > 0) return `In ${filteredFolders.length} folder${filteredFolders.length === 1 ? "" : "s"} below.`;
       return "Drop files anywhere on this page, or use Upload.";
     }
-    const parts: string[] = [];
-    const by = new Map<string, number>();
-    for (const d of list) if (d.status) by.set(d.status, (by.get(d.status) ?? 0) + 1);
-    const word = (st: string) => /^[A-Z][a-z]+( [A-Za-z][a-z]+)*$/.test(st) ? st.toLowerCase() : st;
-    const ranked = [...by.entries()].sort((a, b) => b[1] - a[1]);
-    const partial = list.length < (totalHere ?? 0);
-    if (ranked.length === 1 && ranked[0][1] === list.length) {
-      parts.push(partial ? `${list.length.toLocaleString()} filed here, all ${word(ranked[0][0])}.` : `All ${word(ranked[0][0])}.`);
-    } else if (ranked.length > 0) {
-      const shown = ranked.slice(0, 3).map(([st, n]) => `${n.toLocaleString()} ${word(st)}`);
-      const rest = list.length - ranked.slice(0, 3).reduce((n, [, c]) => n + c, 0);
-      if (rest > 0) shown.push(`${rest.toLocaleString()} other`);
-      parts.push(`${partial ? "Filed here: " : ""}${shown.join(", ")}.`);
+    if (answerStats.mine > 0) return `${answerStats.mine.toLocaleString()} checked out by you.`;
+    return undefined;
+  })();
+  const answerFacts = (() => {
+    if (!answerStats || answerStats.list.length === 0) return undefined;
+    const facts: { label: string; value: string; tone?: "bad" | "warn" | "good" }[] = [];
+    if (answerStats.partial) facts.push({ label: "Filed here", value: answerStats.list.length.toLocaleString() });
+    // Three cells at most, so they sit side by side on a phone too. The
+    // folders have their own table right below.
+    for (const [st, n] of answerStats.ranked.slice(0, 2 - facts.length)) {
+      const tone = docStatusTone(st);
+      facts.push({ label: st, value: n.toLocaleString(), tone: tone === "warn" || tone === "bad" ? tone : undefined });
     }
-    const out = list.filter((d) => isDocumentCheckedOut(d));
-    const mine = out.filter((d) => d.checkedOutBy === uid).length;
-    parts.push(out.length === 0 ? "None checked out."
-      : mine === out.length ? `${mine.toLocaleString()} checked out by you.`
-      : mine > 0 ? `${out.length.toLocaleString()} checked out, ${mine.toLocaleString()} by you.`
-      : `${out.length.toLocaleString()} checked out.`);
-    return parts.join(" ");
+    facts.push({ label: "Checked out", value: answerStats.out.toLocaleString(), tone: answerStats.out > 0 ? "warn" : undefined });
+    return facts;
   })();
   const libMenuItem = "w-full px-3 min-h-10 py-2 text-left text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2.5";
   const upTo = currentFolder?.parentId ? folderMap.get(currentFolder.parentId)?.name ?? "parent folder" : library.name;
@@ -3578,7 +3579,7 @@ export default function LibraryExplorerPage() {
                   <UploadCloud className="w-4 h-4 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
                   <span>
                     <span className="block text-[13px] font-bold">Files…</span>
-                    <span className="block text-[12px] text-[var(--color-text-muted)]">Pick one or many files</span>
+                    <span className="block text-[13px] text-[var(--color-text-muted)]">Pick one or many files</span>
                   </span>
                 </button>
                 <button role="menuitem"
@@ -3587,7 +3588,7 @@ export default function LibraryExplorerPage() {
                   <FolderUp className="w-4 h-4 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
                   <span>
                     <span className="block text-[13px] font-bold">A whole folder…</span>
-                    <span className="block text-[12px] text-[var(--color-text-muted)]">
+                    <span className="block text-[13px] text-[var(--color-text-muted)]">
                       {isController ? "Every subfolder and file keeps its place" : "Its files are added here (folders need Doc Control)"}
                     </span>
                   </span>
@@ -3611,7 +3612,7 @@ export default function LibraryExplorerPage() {
           are added or revised here. */}
       {activeOrgId && uid && (
         <WatchButton orgId={activeOrgId} userId={uid} resourceType="library" resourceId={libraryId} size="sm"
-          className="!w-9 !h-9 !rounded-[10px] border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] hover:!bg-[var(--color-ink-line)]" />
+          className="!w-9 !h-9 !rounded-md border border-[var(--color-border-strong)] !bg-[var(--color-surface)] hover:!bg-[var(--color-surface-2)] !text-[var(--color-text-muted)]" />
       )}
       {/* New folder: creating structure is as basic as adding files.
           Creates inside whatever folder you're viewing. */}
@@ -4011,24 +4012,26 @@ export default function LibraryExplorerPage() {
                 : { href: "/documents", label: "Back to all libraries" }}
               title={answer}
               sub={answerSub}
+              facts={answerFacts}
               tools={libTools}
               primary={uploadPrimary}
             >
               {/* Search everything: results stay on this page. */}
               <form className="relative" role="search" onSubmit={(e) => e.preventDefault()}>
-                <Search className="w-4 h-4 text-[var(--color-ink-muted)] absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <Search className={bandInputIcon} />
                 <input
                   value={find}
                   onChange={(e) => setFind(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Escape") setFind(""); }}
-                  placeholder="Find by number, title, equipment tag (E-22) or words inside"
+                  placeholder="Number, title or tag (E-22)"
+                  title="Number, title, equipment tag (E-22) or words inside"
                   aria-label="Search documents and equipment"
                   data-find-input
-                  className="w-full h-12 pl-11 pr-11 rounded-xl border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] text-white placeholder:text-[var(--color-ink-muted)] text-base sm:text-[15px] focus:outline-none focus:border-[var(--color-ink-muted)] focus:ring-2 focus:ring-[var(--color-accent)]/40 transition-colors"
+                  className={`${bandInput} !pr-11 max-sm:text-base`}
                 />
                 {find && (
                   <button type="button" onClick={() => setFind("")} title="Clear the search" aria-label="Clear the search"
-                    className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 grid place-items-center rounded-lg text-[var(--color-ink-muted)] hover:text-white hover:bg-[var(--color-ink-line)]">
+                    className="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                     <X className="w-4 h-4" />
                   </button>
                 )}
@@ -4039,15 +4042,16 @@ export default function LibraryExplorerPage() {
               {(error || notice) && (
                 <div className="mt-3 space-y-1.5">
                   {error && (
-                    <div role="alert" className="text-[13px] text-rose-300 flex items-start gap-2">
+                    <div role="alert" className="text-[14px] font-semibold text-[var(--state-overdue)] flex items-start gap-2">
                       <span className="flex-1 min-w-0">{error}</span>
-                      <button onClick={() => setError(null)} className="shrink-0 p-1 rounded text-[var(--color-ink-muted)] hover:text-white" aria-label="Dismiss"><X className="w-3.5 h-3.5" /></button>
+                      <button onClick={() => setError(null)} className="shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]" aria-label="Dismiss"><X className="w-3.5 h-3.5" /></button>
                     </div>
                   )}
                   {notice && (
-                    <div role="status" className="text-[13px] text-emerald-300 flex items-start gap-2">
+                    <div role="status" className="text-[14px] text-[var(--color-text)] flex items-start gap-2">
+                      <Check className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-released)]" />
                       <span className="flex-1 min-w-0">{notice}</span>
-                      <button onClick={() => setNotice(null)} className="shrink-0 p-1 rounded text-[var(--color-ink-muted)] hover:text-white" aria-label="Dismiss"><X className="w-3.5 h-3.5" /></button>
+                      <button onClick={() => setNotice(null)} className="shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]" aria-label="Dismiss"><X className="w-3.5 h-3.5" /></button>
                     </div>
                   )}
                 </div>
@@ -4060,7 +4064,7 @@ export default function LibraryExplorerPage() {
                 label={<>Search: “{find.trim()}”</>}
                 action={
                   <button type="button" onClick={() => setFind("")}
-                    className="shrink-0 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                    className="shrink-0 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                     Back to {currentFolder?.name ?? library.name}
                   </button>
                 }
@@ -4080,12 +4084,12 @@ export default function LibraryExplorerPage() {
             {/* Files dropped anywhere on the folders, map or list upload here. */}
             <div
               {...fileDrag.bind}
-              className={`relative flex flex-col gap-4 rounded-2xl transition-shadow ${fileDrag.ring}`}
+              className={`relative flex flex-col gap-4 rounded-lg transition-shadow ${fileDrag.ring}`}
             >
               {fileDrag.over && (
                 // Lit up while files are over it, saying what letting go does.
                 // The line rides in view however long the list below is.
-                <div className="absolute inset-0 z-[35] rounded-2xl bg-[color-mix(in_srgb,var(--color-surface)_82%,transparent)] pointer-events-none" aria-live="polite">
+                <div className="absolute inset-0 z-[35] rounded-lg bg-[color-mix(in_srgb,var(--color-surface)_82%,transparent)] pointer-events-none" aria-live="polite">
                   <div className="sticky top-[38vh] flex flex-col items-center text-center px-4 py-8">
                     <UploadCloud className="w-8 h-8 text-[var(--color-text-muted)] mb-2" />
                     <p className="text-[15px] font-bold text-[var(--color-text)]">
@@ -4096,11 +4100,12 @@ export default function LibraryExplorerPage() {
                 </div>
               )}
 
-              {/* FOLDERS: one row of cards that keeps going sideways. */}
+              {/* FOLDERS: a compact table, one row per folder with its counts. */}
               {filteredFolders.length > 0 && (
-                <nav aria-label="Folders" className="sm:mt-4">
+                <nav aria-labelledby="lib-folders-h">
+                  <h2 id="lib-folders-h" className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)] mb-2.5">Folders</h2>
                   <FolderGrid
-                    layout="strip"
+                    layout="list"
                     folders={filteredFolders}
                     allFolders={folders}
                     docTotals={folderCounts?.totals}
@@ -4130,7 +4135,7 @@ export default function LibraryExplorerPage() {
 
               {/* Curated collections + favorites */}
               {library && activeOrgId && uid && (
-                <div className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden empty:hidden">
+                <div className="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] overflow-hidden empty:hidden">
                 <FavoritesStrip
                   orgId={activeOrgId}
                   userId={uid}
@@ -4225,138 +4230,103 @@ export default function LibraryExplorerPage() {
 
 
               {/* THE MAP: the unit this folder is in, its equipment by type,
-                  and each one's documents. */}
-              {activeOrgId && (
-                <Card pad={false}>
-                  <button type="button" onClick={() => setMapOpen((v) => !v)} aria-expanded={mapOpen}
-                    className="w-full px-4 sm:px-5 py-3.5 flex items-center gap-2 text-left rounded-2xl hover:bg-[var(--color-surface-2)]/60">
-                    <ChevronDown className={`w-3.5 h-3.5 text-[var(--color-text-muted)] transition-transform ${mapOpen ? "" : "-rotate-90"}`} />
-                    <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Map</span>
-                    <span className="text-[13px] text-[var(--color-text-muted)] truncate">
-                      {mapFolder.name} › its files › the equipment on each
-                    </span>
-                  </button>
-                  {mapOpen && (
-                    <div className="px-4 sm:px-5 pb-4">
-                      {/* The map follows the list: this folder, its files, the
-                          equipment on each. A file opens right here, full
-                          size; closing it leaves the folder as it was. */}
-                      <FindMap orgId={activeOrgId} unit={folderUnitCode} assetId={null} className="h-[340px]"
-                        folder={mapFolder} onFolder={(id) => setCurrentFolderId(id)}
-                        onUnit={(code) => void openUnitFolder(code)} onPickAsset={searchAsset}
-                        onDoc={(d) => {
-                          const hit = documents.find((x) => x.id === d.id);
-                          if (hit) { setSelectedDoc(hit); setShowFullScreen(true); } else setPeekDocId(d.id);
-                        }} />
-                    </div>
-                  )}
+                  and each one's documents. Opened from the list's toolbar. */}
+              {activeOrgId && mapOpen && (
+                <Card
+                  label={<>Map <span className="font-sans text-[14px] font-normal text-[var(--color-text-muted)]">{mapFolder.name}, its files and the equipment on each</span></>}
+                  action={
+                    <button type="button" onClick={() => setMapOpen(false)} className={heroQuiet}>
+                      <X className="w-4 h-4" /> Hide map
+                    </button>
+                  }
+                >
+                  {/* The map follows the list: this folder, its files, the
+                      equipment on each. A file opens right here, full
+                      size; closing it leaves the folder as it was. */}
+                  <FindMap orgId={activeOrgId} unit={folderUnitCode} assetId={null} className="h-[340px]"
+                    folder={mapFolder} onFolder={(id) => setCurrentFolderId(id)}
+                    onUnit={(code) => void openUnitFolder(code)} onPickAsset={searchAsset}
+                    onDoc={(d) => {
+                      const hit = documents.find((x) => x.id === d.id);
+                      if (hit) { setSelectedDoc(hit); setShowFullScreen(true); } else setPeekDocId(d.id);
+                    }} />
                 </Card>
               )}
 
-            {/* THE LIST */}
-            <div
-              className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden flex flex-col min-h-[420px] relative focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-strong)]"
-              tabIndex={0}
-              onKeyDown={handleExplorerKeyDown}
-              aria-label="Documents"
-            >
-              {/* DOCUMENTS SECTION */}
-              <div className="flex-1 flex flex-col">
-                {/* Advisory: someone else has live edit work on a doc I'm
-                    also editing (edit×edit only — views never trigger it). */}
-                {activeOrgId && uid && (
-                  <div className="px-4 pt-2">
-                    <EditOverlapBanner
-                      orgId={activeOrgId}
-                      currentUserId={uid}
-                      currentUserName={userEmail?.split("@")[0] ?? null}
-                    />
-                  </div>
-                )}
-                {docStreamProgress !== null && (
-                  <div className="px-4 py-1.5 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] text-[11px] text-[var(--color-text)] flex items-center gap-2">
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                    Loading the rest of this folder… <b>{docStreamProgress.toLocaleString()}</b> so far. Sorting covers everything once done.
-                  </div>
-                )}
-                {docFetchHitCap && !loadingDocs && docStreamProgress === null && (
-                  <div className="mx-4 mt-2 border-l-2 border-amber-500 pl-3 py-0.5 text-xs text-amber-800 dark:text-amber-300">
-                    Showing the first <b>10,000</b> documents, newest first. This folder holds more: filter or open a subfolder to narrow it.
-                  </div>
-                )}
-                <div className="px-4 sm:px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3 flex-wrap">
-                  <h2 className="flex items-baseline gap-2 shrink-0 min-w-0">
-                    <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">{noun.many === "documents" ? "Documents" : library.name}</span>
-                    <span className="text-[13px] text-[var(--color-text-muted)] tabular-nums"
-                      title="Documents filed directly in this folder">{filteredDocs.length.toLocaleString()} here</span>
-                    {folderCounts && (() => {
-                      const below = currentFolderId ? folderCounts.totals.get(currentFolderId) ?? 0 : folderCounts.libraryTotal;
-                      return below > (folderCounts.direct.get(currentFolderId ?? null) ?? 0) ? (
-                        <span className="text-[13px] text-[var(--color-text-muted)] tabular-nums"
-                          title={currentFolderId ? "Everything in this folder, including all subfolders" : "Every document in this library"}>
-                          · {below.toLocaleString()} {currentFolderId ? "incl. subfolders" : "in library"}
-                        </span>
-                      ) : null;
-                    })()}
-                  </h2>
+            {/* THE LIST: its heading and tools on the panel, the table on one
+                white sheet. */}
+            <section aria-labelledby="lib-docs-h" className="min-w-0">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-2 mb-2.5 min-h-9">
+                <h2 id="lib-docs-h" className="flex items-baseline gap-2 min-w-0 mr-auto">
+                  <span className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">{noun.many === "documents" ? "Documents" : library.name}</span>
+                  <span className="text-[14px] text-[var(--color-text-muted)] tabular-nums"
+                    title="Documents filed directly in this folder">{filteredDocs.length.toLocaleString()} here</span>
+                  {folderCounts && (() => {
+                    const below = currentFolderId ? folderCounts.totals.get(currentFolderId) ?? 0 : folderCounts.libraryTotal;
+                    return below > (folderCounts.direct.get(currentFolderId ?? null) ?? 0) && below !== filteredDocs.length ? (
+                      <span className="max-sm:hidden text-[14px] text-[var(--color-text-muted)] tabular-nums"
+                        title={currentFolderId ? "Everything in this folder, including all subfolders" : "Every document in this library"}>
+                        {below.toLocaleString()} {currentFolderId ? "with subfolders" : "in library"}
+                      </span>
+                    ) : null;
+                  })()}
+                </h2>
 
-                  {/* Live filter — typing instantly narrows the table to just the
-                      matching files (acts like autocomplete). Matches the number,
-                      title, sheet #, rev, status and any custom column value. */}
-                  <div className="relative flex-1 min-w-[12rem] max-w-md">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-faint)] pointer-events-none" />
-                    <input
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
-                      placeholder="Filter this folder: number, title, sheet, any field"
-                      aria-label="Filter this folder"
-                      className="w-full h-9 pl-8 pr-8 text-base sm:text-[13px] rounded-[10px] border border-transparent bg-[var(--color-surface-2)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/40 focus:bg-[var(--color-surface)] focus:border-[var(--color-border-strong)] transition-shadow"
-                    />
-                    {search && (
-                      <button
-                        onClick={() => setSearch("")}
-                        title="Clear filter"
-                        className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-colors"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    )}
+                {loadingUpload && (
+                  <div className="flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    {uploadProgress
+                      ? `Uploading ${uploadProgress.done} of ${uploadProgress.total}…`
+                      : "Preparing upload…"}
                   </div>
+                )}
 
-                  <div className="flex items-center gap-2 shrink-0">
-                    {loadingUpload && (
-                      <div className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        {uploadProgress
-                          ? `Uploading ${uploadProgress.done} of ${uploadProgress.total}…`
-                          : "Preparing upload…"}
-                      </div>
-                    )}
-                    {/* Layout switcher — Details / List / Grid / Thumbnails.
-                        Same selection, same gestures, different geometry. */}
-                    <div className="hidden md:inline-flex items-center rounded-[10px] bg-[var(--color-surface-2)] p-0.5" role="group" aria-label="Layout">
-                      {([
-                        { key: "details" as ExplorerLayout, icon: <TableIcon className="w-3.5 h-3.5" />, label: "Details" },
-                        { key: "list" as ExplorerLayout, icon: <ListIcon className="w-3.5 h-3.5" />, label: "List" },
-                        { key: "grid" as ExplorerLayout, icon: <LayoutGrid className="w-3.5 h-3.5" />, label: "Grid" },
-                        { key: "thumbs" as ExplorerLayout, icon: <ImageIcon className="w-3.5 h-3.5" />, label: "Thumbnails" },
-                      ]).map((opt) => (
-                        <button
-                          key={opt.key}
-                          onClick={() => setDocLayout(opt.key)}
-                          title={opt.label}
-                          aria-label={opt.label}
-                          aria-pressed={docLayout === opt.key}
-                          className={`w-8 h-8 grid place-items-center rounded-lg transition-colors ${
-                            docLayout === opt.key
-                              ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm"
-                              : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                          }`}
-                        >
-                          {opt.icon}
-                        </button>
-                      ))}
-                    </div>
+                {/* Live filter: typing instantly narrows the table to the
+                    matching files. Matches the number, title, sheet, rev,
+                    status and any custom column value. */}
+                <div className="relative max-sm:order-last max-sm:basis-full sm:w-72">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)] pointer-events-none" />
+                  <input
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Filter this folder"
+                    aria-label="Filter this folder by number, title, sheet or any field"
+                    title="Number, title, sheet or any field"
+                    className="w-full h-9 pl-9 pr-8 text-base sm:text-[14px] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
+                  />
+                  {search && (
+                    <button
+                      onClick={() => setSearch("")}
+                      title="Clear filter"
+                      aria-label="Clear filter"
+                      className="absolute right-1 top-1/2 -translate-y-1/2 w-7 h-7 grid place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Layout switcher: Details / List / Grid / Thumbnails.
+                    Same selection, same gestures, different geometry. */}
+                <div className={`${bandSeg} max-md:!hidden`} role="group" aria-label="Layout">
+                  {([
+                    { key: "details" as ExplorerLayout, icon: <TableIcon className="w-4 h-4" />, label: "Details" },
+                    { key: "list" as ExplorerLayout, icon: <ListIcon className="w-4 h-4" />, label: "List" },
+                    { key: "grid" as ExplorerLayout, icon: <LayoutGrid className="w-4 h-4" />, label: "Grid" },
+                    { key: "thumbs" as ExplorerLayout, icon: <ImageIcon className="w-4 h-4" />, label: "Thumbnails" },
+                  ]).map((opt) => (
+                    <button
+                      key={opt.key}
+                      onClick={() => setDocLayout(opt.key)}
+                      title={opt.label}
+                      aria-label={opt.label}
+                      aria-pressed={docLayout === opt.key}
+                      className={`${bandSegItem(docLayout === opt.key)} !px-2`}
+                    >
+                      {opt.icon}
+                    </button>
+                  ))}
+                </div>
                     {/* View defaults — save the current presentation (layout +
                         sort + columns + density) for THIS library/folder.
                         Everyone can save a personal default; controllers can
@@ -4367,49 +4337,46 @@ export default function LibraryExplorerPage() {
                         title="View defaults for this folder"
                         aria-haspopup="menu"
                         aria-expanded={viewMenuOpen}
-                        className={`inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] text-[13px] font-semibold border transition-all ${
-                          viewMenuOpen
-                            ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]"
-                            : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
-                        }`}
+                        aria-label="View defaults for this folder"
+                        className={`${heroQuiet} ${viewMenuOpen ? "!bg-[var(--color-surface-2)]" : ""}`}
                       >
-                        {savingSortDefault ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
+                        {savingSortDefault ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-4 h-4" />}
                         <span className="hidden lg:inline">View</span>
-                        <ChevronDown className="w-3 h-3" />
+                        <ChevronDown className="w-3.5 h-3.5" />
                       </button>
                       {viewMenuOpen && (
                         <>
                           <div className="fixed inset-0 z-40" onClick={() => setViewMenuOpen(false)} />
                           <div className="absolute right-0 top-full mt-1.5 z-50 w-72 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl shadow-xl py-2">
                             <div className="px-3 pb-2 border-b border-[var(--color-border)]">
-                              <div className="text-[11px] font-black text-[var(--color-text)]">
+                              <div className="text-[13px] font-semibold text-[var(--color-text)]">
                                 {currentFolder ? `Folder: ${currentFolder.name}` : `Library: ${library?.name ?? ""}`}
                               </div>
-                              <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 leading-snug">
+                              <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5 leading-snug">
                                 Current: {docLayout === "details" ? "Details" : docLayout === "list" ? "List" : docLayout === "grid" ? "Grid" : "Thumbnails"} · sorted by {sortLabelFor(sortKey)} ({sortDir === "asc" ? "ascending" : "descending"})
                                 {isFolderDefaultSort ? " · saved default sort" : ""}
                               </div>
                             </div>
                             <button
                               onClick={() => { setViewMenuOpen(false); void saveViewDefault("user"); }}
-                              className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                              className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                             >
                               <Pin className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                               <span className="flex-1">
                                 Set as <b>my</b> default here
-                                <span className="block text-[11px] font-normal text-[var(--color-text-muted)]">Only you: wins over the org default</span>
+                                <span className="block text-[13px] font-normal text-[var(--color-text-muted)]">Only you: wins over the org default</span>
                               </span>
                               {viewDefaults.hasUserRow && <Check className="w-3.5 h-3.5 text-emerald-600" />}
                             </button>
                             {isController && (
                               <button
                                 onClick={() => { setViewMenuOpen(false); void saveViewDefault("org"); }}
-                                className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                               >
                                 <Shield className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                                 <span className="flex-1">
                                   Set as <b>org-wide</b> default here
-                                  <span className="block text-[11px] font-normal text-[var(--color-text-muted)]">Everyone opens this folder like this</span>
+                                  <span className="block text-[13px] font-normal text-[var(--color-text-muted)]">Everyone opens this folder like this</span>
                                 </span>
                                 {viewDefaults.hasOrgRow && <Check className="w-3.5 h-3.5 text-emerald-600" />}
                               </button>
@@ -4417,12 +4384,12 @@ export default function LibraryExplorerPage() {
                             {viewDefaults.hasUserRow && (
                               <button
                                 onClick={() => { setViewMenuOpen(false); void clearMyViewDefault(); }}
-                                className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-[13px] font-semibold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
                               >
                                 <X className="w-3.5 h-3.5" />
                                 <span className="flex-1">
                                   Clear my default (use org&apos;s)
-                                  <span className="block text-[11px] font-normal">Removes your saved layout, sort AND column setup here</span>
+                                  <span className="block text-[13px] font-normal">Removes your saved layout, sort AND column setup here</span>
                                 </span>
                               </button>
                             )}
@@ -4430,9 +4397,45 @@ export default function LibraryExplorerPage() {
                         </>
                       )}
                     </div>
-                  </div>
-                </div>
+                  {activeOrgId && (
+                    <button type="button" onClick={() => setMapOpen((v) => !v)} aria-expanded={mapOpen}
+                      className={`${heroQuiet} ${mapOpen ? "!bg-[var(--color-surface-2)]" : ""}`}
+                      title={`Map: ${mapFolder.name}, its files and the equipment on each`}>
+                      <MapIcon className="w-4 h-4" />
+                      <span className="max-sm:hidden">{mapOpen ? "Hide map" : "Map"}</span>
+                    </button>
+                  )}
+              </div>
 
+            <div
+              className="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] overflow-hidden flex flex-col min-h-[320px] relative focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-strong)]"
+              tabIndex={0}
+              onKeyDown={handleExplorerKeyDown}
+              aria-label="Documents"
+            >
+              <div className="flex-1 flex flex-col">
+                {/* Advisory: someone else has live edit work on a doc I'm
+                    also editing (edit×edit only — views never trigger it). */}
+                {activeOrgId && uid && (
+                  <div className="px-4 pt-2 empty:hidden">
+                    <EditOverlapBanner
+                      orgId={activeOrgId}
+                      currentUserId={uid}
+                      currentUserName={userEmail?.split("@")[0] ?? null}
+                    />
+                  </div>
+                )}
+                {docStreamProgress !== null && (
+                  <div className="px-4 py-1.5 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] text-[13px] text-[var(--color-text)] flex items-center gap-2">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    Loading the rest of this folder… <b>{docStreamProgress.toLocaleString()}</b> so far. Sorting covers everything once done.
+                  </div>
+                )}
+                {docFetchHitCap && !loadingDocs && docStreamProgress === null && (
+                  <div className="mx-4 mt-2 border-l-2 border-amber-500 pl-3 py-0.5 text-[13px] text-amber-800 dark:text-amber-300">
+                    Showing the first <b>10,000</b> documents, newest first. This folder holds more: filter or open a subfolder to narrow it.
+                  </div>
+                )}
                 {!loadingDocs && filteredDocs.length === 0 && filteredFolders.length === 0 ? (
                   /* INTERACTIVE EMPTY STATE */
                   <div className="flex-1 flex flex-col items-center justify-center p-12">
@@ -4445,33 +4448,36 @@ export default function LibraryExplorerPage() {
                   </div>
                 ) : (
                   <>
-                  {/* MOBILE CARD LIST — the table is unusable on a phone, so
-                      below md we render tappable cards of the same docs. */}
-                  <div className="md:hidden flex-1 overflow-y-auto divide-y divide-[var(--color-border)]">
+                  {/* PHONE: stacked rows of the same docs. Line 1 the number and
+                      its status, line 2 the title, rev and date. */}
+                  <div className="md:hidden flex-1 divide-y divide-[var(--color-border)]">
                     {loadingDocs && sortedDocs.length === 0 ? (
                       <LoadingBlock what="documents" />
                     ) : sortedDocs.length === 0 ? (
-                      <div className="text-center text-xs text-[var(--color-text-faint)] py-8">No documents.</div>
-                    ) : sortedDocs.map((doc) => (
-                      <button
-                        key={doc.id}
-                        onClick={() => setSelectedDoc(doc)}
-                        className="w-full text-left px-4 py-3 active:bg-[var(--color-surface-2)] flex items-start gap-3"
-                      >
-                        <DocThumb documentId={doc.id} width={40} className="mt-0.5" />
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-[14px] font-bold text-[var(--color-text)] truncate flex-1">{doc.documentNumber || doc.title || doc.name || "-"}</span>
-                            {doc.rev && <span className="text-[11px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded shrink-0">Rev {doc.rev}</span>}
-                          </div>
-                          {doc.title && doc.documentNumber && doc.title !== doc.documentNumber && <div className="text-[13px] text-[var(--color-text-muted)] truncate mt-0.5">{doc.title}</div>}
-                          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                            {doc.status && <span className={`text-[11px] font-bold uppercase px-1.5 py-0.5 rounded border ${stateStyle(documentState(doc.status)).pill}`}>{doc.status}</span>}
-                            {doc.checkedOutBy && <span className="text-[11px] font-bold text-[var(--color-text)]">Checked out{doc.checkedOutByName ? ` · ${doc.checkedOutByName}` : ""}</span>}
-                          </div>
-                        </div>
-                      </button>
-                    ))}
+                      <div className="text-center text-[14px] text-[var(--color-text-muted)] py-8">No documents match.</div>
+                    ) : sortedDocs.map((doc) => {
+                      const out = isDocumentCheckedOut(doc);
+                      const showTitle = !!doc.title && !!doc.documentNumber && doc.title !== doc.documentNumber;
+                      return (
+                        <button
+                          key={doc.id}
+                          onClick={() => setSelectedDoc(doc)}
+                          className="w-full text-left px-4 py-3 active:bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] block"
+                        >
+                          <span className="flex items-center gap-3">
+                            <span className="flex-1 min-w-0 truncate font-display text-[17px] leading-snug font-semibold tabular-nums text-[var(--color-text)]">{doc.documentNumber || doc.title || doc.name || "-"}</span>
+                            {doc.status && <StatusTag status={doc.status} className="shrink-0" />}
+                          </span>
+                          <span className="mt-0.5 flex items-center gap-x-3 text-[13px] text-[var(--color-text-muted)] min-w-0">
+                            {showTitle && <span className="truncate min-w-0">{doc.title}</span>}
+                            <span className="shrink-0">Rev <span className="font-display tabular-nums font-semibold text-[var(--color-text)]">{doc.rev || "-"}</span></span>
+                            {out
+                              ? <span className="shrink-0 font-semibold text-[var(--state-held)] truncate">Checked out{doc.checkedOutBy === uid ? " by you" : doc.checkedOutByName ? ` by ${doc.checkedOutByName}` : ""}</span>
+                              : <span className="shrink-0">{humanDate(doc.updatedAt)}</span>}
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                   {/* DESKTOP — Details table, or the List/Grid/Thumbnails
                       layouts. Same docs, same selection, same gestures. */}
@@ -4511,8 +4517,8 @@ export default function LibraryExplorerPage() {
                     onClick={(e) => { if (e.target === e.currentTarget) clearSelection(); }}
                     onMouseDown={handleMarqueeMouseDown}
                   >
-                    <table className="w-full text-left text-sm table-fixed min-w-[640px]">
-                      <thead className="border-b border-[var(--color-border)] text-[13px] text-[var(--color-text-muted)] font-semibold ">
+                    <table className="w-full text-left text-[14px] table-fixed" style={{ minWidth: tableMinWidth }}>
+                      <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] font-semibold">
                         <tr>
                           <th className={`px-3 ${headerPad}`} style={{ width: "36px" }}>
                             <input
@@ -4523,7 +4529,7 @@ export default function LibraryExplorerPage() {
                               className="w-3.5 h-3.5 rounded accent-[var(--color-text)] cursor-pointer"
                             />
                           </th>
-                          {activeColumns.map((colKey) => {
+                          {activeColumns.map((colKey) => <React.Fragment key={colKey}>{((): React.ReactNode => {
                             const builtinLabel = BUILTIN_COLUMNS.find((c) => c.key === colKey)?.label
                               ?? OPTIONAL_BUILTIN_COLUMNS.find((c) => c.key === colKey)?.label;
                             const overrideLabel = library?.columnLabelOverrides?.[colKey];
@@ -4534,7 +4540,8 @@ export default function LibraryExplorerPage() {
                               <th
                                 key={colKey}
                                 className={`relative px-2 ${headerPad} cursor-pointer hover:bg-[var(--color-surface-2)] select-none transition-colors group ${dropCol === colKey && dragCol && dragCol !== colKey ? (activeColumns.indexOf(dragCol) < activeColumns.indexOf(colKey) ? "shadow-[inset_-3px_0_0_0_var(--color-accent)]" : "shadow-[inset_3px_0_0_0_var(--color-accent)]") : ""} ${dragCol === colKey ? "opacity-50" : ""}`}
-                                style={width ? { width } : undefined}
+                                // The title takes whatever width is left, unless it was resized.
+                                style={width && !(colKey === "title" && !isResized) ? { width } : undefined}
                                 onClick={() => handleSort(colKey)}
                                 // Drag a header onto another to move it there; saved to your view.
                                 onDragOver={(e) => { if (!dragCol || !e.dataTransfer.types.includes("application/x-doc-column")) return; e.preventDefault(); e.dataTransfer.dropEffect = "move"; if (dropCol !== colKey) setDropCol(colKey); }}
@@ -4562,7 +4569,7 @@ export default function LibraryExplorerPage() {
                                       ? <ChevronUp className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
                                       : <ChevronDown className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
                                   ) : (
-                                    <ArrowUpDown className="w-3 h-3 text-slate-300 group-hover:text-[var(--color-text-muted)] shrink-0" />
+                                    <ArrowUpDown className="w-3 h-3 text-[var(--color-text-faint)] opacity-0 group-hover:opacity-100 shrink-0" />
                                   )}
                                 </div>
 
@@ -4575,24 +4582,23 @@ export default function LibraryExplorerPage() {
                                     onClick={(e) => e.stopPropagation()}
                                     title={isResized ? "Drag to resize · double-click to reset" : "Drag to resize column"}
                                     style={{ touchAction: "none" }}
-                                    className="absolute top-0 right-0 h-full w-2.5 cursor-col-resize flex items-center justify-center group/grip z-10 hover:bg-[var(--color-surface-2)]"
+                                    className="absolute top-0 right-0 h-full w-2.5 cursor-col-resize flex items-center justify-center group/grip z-10"
                                   >
-                                    <div className={`h-2/3 w-[3px] rounded-full transition-colors ${
-                                      isResized ? "bg-[var(--color-text-muted)]" : "bg-slate-400 group-hover/grip:bg-[var(--color-text-muted)]"
+                                    <div className={`h-1/2 w-[2px] rounded-full transition-colors ${
+                                      isResized ? "bg-[var(--color-border-strong)]" : "bg-[var(--color-border)] group-hover:bg-[var(--color-border-strong)] group-hover/grip:bg-[var(--color-text-muted)]"
                                     }`} />
                                   </div>
                                 )}
                               </th>
                             );
-                          })}
-                          <th className={`px-2 ${headerPad} text-center`} style={{ width: "200px" }}>Checkout</th>
-                          <th className={`px-2 ${headerPad} text-center`} style={{ width: "36px" }} title="Reference Stack">
-                            <Layers className="w-3 h-3 inline text-slate-300" />
+                          })()}{colKey === checkoutAfterKey && checkoutTh}</React.Fragment>)}
+                          {!checkoutAfterKey && checkoutTh}
+                          <th className={`px-2 ${headerPad} text-center`} style={{ width: "36px" }} title="Reference stack">
+                            <Layers className="w-3.5 h-3.5 inline text-[var(--color-text-faint)]" aria-label="Reference stack" />
                           </th>
                           <th className={`px-2 ${headerPad} text-center print:hidden`} style={{ width: "44px" }}>
                             <ColumnHeaderMenu onAdd={handleAddColumnClick} isController={isController} />
                           </th>
-                          <th style={{ width: "36px" }} />
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[var(--color-border)]">
@@ -4604,7 +4610,7 @@ export default function LibraryExplorerPage() {
                           </tr>
                         ) : sortedDocs.length === 0 ? (
                           <tr>
-                            <td colSpan={activeColumns.length + 5} className="px-6 py-10 text-center text-[var(--color-text-faint)] text-sm italic">
+                            <td colSpan={activeColumns.length + 5} className="px-6 py-10 text-center text-[var(--color-text-muted)] text-[14px]">
                               No documents match your search.
                             </td>
                           </tr>
@@ -4616,6 +4622,18 @@ export default function LibraryExplorerPage() {
                             // selecting) — must be VISIBLE or ctrl+space
                             // toggles a row the user can't identify.
                             const isKeyFocused = selFocusId === docRecord.id;
+                            const checkoutTd = (
+                              <td className={`px-3 ${rowPad}`}>
+                                <CheckoutStatusCell
+                                  quiet
+                                  docRecord={docRecord}
+                                  currentUserId={uid ?? undefined}
+                                  currentUserEmail={userEmail ?? undefined}
+                                  userRole={activeRole}
+                                  onCheckout={openCheckout}
+                                />
+                              </td>
+                            );
                             return (
                               <tr
                                 key={docRecord.id}
@@ -4630,14 +4648,15 @@ export default function LibraryExplorerPage() {
                                     ? "bg-[var(--color-surface-2)]"
                                     : isFocused
                                     ? "bg-[var(--color-surface-2)]"
-                                    : "hover:bg-slate-50/60"
+                                    : "hover:bg-[var(--color-surface-2)]"
                                 } ${isKeyFocused ? "outline outline-1 -outline-offset-1 outline-[var(--color-border-strong)]" : ""} ${cutDocIds.has(docRecord.id!) ? "opacity-50" : ""}`}
                               >
-                                {/* Left edge accent on selected row */}
-                                {(isRowSelected || isFocused) && (
-                                  <td className="absolute left-0 top-0 bottom-0 w-0.5 p-0 bg-[var(--color-text)]" />
-                                )}
-                                <td className={`px-3 ${rowPad}`} onClick={(e) => toggleSelectDoc(docRecord.id!, e)}>
+                                <td className={`relative px-3 ${rowPad}`} onClick={(e) => toggleSelectDoc(docRecord.id!, e)}>
+                                  {/* Left edge on the selected row (inside the cell, so it
+                                      never takes a column of its own). */}
+                                  {(isRowSelected || isFocused) && (
+                                    <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--color-text)]" />
+                                  )}
                                   <input
                                     type="checkbox"
                                     checked={isRowSelected}
@@ -4645,7 +4664,7 @@ export default function LibraryExplorerPage() {
                                     className="w-3.5 h-3.5 rounded accent-[var(--color-text)] cursor-pointer"
                                   />
                                 </td>
-                                {activeColumns.map((colKey) => {
+                                {activeColumns.map((colKey) => <React.Fragment key={colKey}>{((): React.ReactNode => {
                                   const def = columnMap.get(colKey);
                                   const isPillCol = def && (def.type === "tags" || def.isPill);
 
@@ -4718,34 +4737,24 @@ export default function LibraryExplorerPage() {
                                     return (
                                       <td key={colKey} className={`px-3 ${rowPad}`}>
                                         <div className="min-w-0">
-                                          <div className="text-sm font-semibold text-[var(--color-text)] truncate leading-tight">
-                                            {docRecord.title || docRecord.name || "Untitled"}
-                                          </div>
                                           {!hasSeparateDocNum && docRecord.documentNumber && (
-                                            <div className="text-[11px] font-mono text-[var(--color-text-faint)] truncate mt-0.5">
+                                            <div className="font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)] truncate leading-tight">
                                               {docRecord.documentNumber}
                                             </div>
                                           )}
+                                          <div className={`truncate leading-tight ${hasSeparateDocNum || !docRecord.documentNumber ? "text-[14px] text-[var(--color-text)]" : "text-[13px] text-[var(--color-text-muted)] mt-0.5"}`}>
+                                            {docRecord.title || docRecord.name || "Untitled"}
+                                          </div>
                                         </div>
                                       </td>
                                     );
                                   }
 
-                                  // Status pill rendering
+                                  // Status: a quiet tag, the dot carries the state.
                                   if (colKey === "status") {
-                                    const s = docRecord.status || "-";
-                                    const tone =
-                                      s === "Issued" ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                                      : s === "Draft" ? "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]"
-                                      : s === "Superseded" ? "bg-amber-50 text-amber-700 border-amber-200"
-                                      : s === "Void" || s === "Archived" ? "bg-red-50 text-red-700 border-red-200"
-                                      : s === "Locked" ? "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]"
-                                      : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]";
                                     return (
                                       <td key={colKey} className={`px-3 ${rowPad}`}>
-                                        <span className={`inline-flex items-center text-[11px] font-bold border px-1.5 py-0.5 rounded-md ${tone}`}>
-                                          {s}
-                                        </span>
+                                        <StatusTag status={docRecord.status || "-"} />
                                       </td>
                                     );
                                   }
@@ -4771,48 +4780,52 @@ export default function LibraryExplorerPage() {
                                               }}
                                               onBlur={() => { if (!savingDocNum) void saveInlineDocNumber(docRecord.id!, editingDocNumValue); }}
                                               disabled={savingDocNum}
-                                              className={`w-full text-xs font-mono px-1.5 py-0.5 rounded border ${editingDocNumError ? "border-red-400 bg-red-50" : "border-[var(--color-border-strong)] bg-[var(--color-surface-2)]"} focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-ring)]`}
+                                              aria-label="Document number"
+                                              className={`w-full font-display text-[15px] font-semibold tabular-nums px-1.5 py-0.5 rounded border ${editingDocNumError ? "border-[var(--state-overdue)]" : "border-[var(--color-border-strong)]"} bg-[var(--color-surface)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/40`}
                                             />
                                             {savingDocNum && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-muted)] shrink-0" />}
                                           </div>
                                         ) : (
-                                          <button
-                                            type="button"
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              setEditingDocNumId(docRecord.id!);
-                                              setEditingDocNumValue(docRecord.documentNumber || "");
-                                              setEditingDocNumError(null);
-                                            }}
-                                            className="w-full text-left text-xs font-mono text-[var(--color-text)] truncate hover:bg-[var(--color-surface-2)] hover:text-[var(--color-accent-hover)] px-1 -mx-1 rounded transition-colors"
-                                            title="Click to rename"
-                                          >
-                                            {docRecord.documentNumber || "-"}
-                                          </button>
+                                          <div className="flex items-center gap-1 min-w-0">
+                                            {/* The number opens the document (the click is the row's). */}
+                                            <button
+                                              type="button"
+                                              className="min-w-0 truncate text-left font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)] rounded focus-visible:outline-2"
+                                              title={`Open ${docRecord.documentNumber || "this document"}`}
+                                            >
+                                              {docRecord.documentNumber || "-"}
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setEditingDocNumId(docRecord.id!);
+                                                setEditingDocNumValue(docRecord.documentNumber || "");
+                                                setEditingDocNumError(null);
+                                              }}
+                                              className="shrink-0 w-7 h-7 grid place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                                              title="Rename the number"
+                                              aria-label={`Rename ${docRecord.documentNumber || "the number"}`}
+                                            >
+                                              <Pencil className="w-3.5 h-3.5" />
+                                            </button>
+                                          </div>
                                         )}
                                         {isEditing && editingDocNumError && (
-                                          <div className="text-[11px] text-red-600 mt-0.5 max-w-[20ch] leading-tight">{editingDocNumError}</div>
+                                          <div className="text-[13px] text-[var(--state-overdue)] mt-0.5 max-w-[20ch] leading-tight">{editingDocNumError}</div>
                                         )}
                                       </td>
                                     );
                                   }
 
-                                  // Generic cell — truncate to prevent overflow
+                                  // Generic cell: truncate to prevent overflow. Revs read as identifiers.
                                   return (
-                                    <td key={colKey} className={`px-3 ${rowPad} text-[var(--color-text)] text-xs truncate`}>
+                                    <td key={colKey} className={`px-3 ${rowPad} text-[var(--color-text)] text-[14px] truncate ${colKey === "rev" ? "font-display text-[15px] font-semibold tabular-nums" : ""}`}>
                                       <div className="truncate">{renderDocCell(docRecord, colKey)}</div>
                                     </td>
                                   );
-                                })}
-                                <td className={`px-2 ${rowPad}`}>
-                                  <CheckoutStatusCell
-                                    docRecord={docRecord}
-                                    currentUserId={uid ?? undefined}
-                                    currentUserEmail={userEmail ?? undefined}
-                                    userRole={activeRole}
-                                    onCheckout={openCheckout}
-                                  />
-                                </td>
+                                })()}{colKey === checkoutAfterKey && checkoutTd}</React.Fragment>)}
+                                {!checkoutAfterKey && checkoutTd}
                                 <td className={`px-2 ${rowPad} text-center`}>
                                   {(() => {
                                     const isStaged = stagedDocs.some((d) => d.id === docRecord.id);
@@ -4822,11 +4835,13 @@ export default function LibraryExplorerPage() {
                                         className={`p-1 rounded-md transition-all ${
                                           isStaged
                                             ? "text-[var(--color-surface)] bg-[var(--color-text)] ring-1 ring-[var(--color-border-strong)] opacity-100"
-                                            : "text-slate-300 hover:text-[var(--color-accent-hover)] hover:bg-[var(--color-surface-2)] opacity-60 sm:opacity-0 group-hover:opacity-100"
+                                            : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] opacity-60 sm:opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
                                         }`}
-                                        title={isStaged ? "Remove from Reference Stack" : "Add to Reference Stack"}
+                                        title={isStaged ? "Remove from reference stack" : "Add to reference stack"}
+                                        aria-label={isStaged ? "Remove from reference stack" : "Add to reference stack"}
+                                        aria-pressed={isStaged}
                                       >
-                                        <Layers className="w-3 h-3" />
+                                        <Layers className="w-3.5 h-3.5" />
                                       </button>
                                     );
                                   })()}
@@ -4834,13 +4849,13 @@ export default function LibraryExplorerPage() {
                                 <td className={`px-2 ${rowPad} text-center`}>
                                   <button
                                     onClick={(e) => { e.stopPropagation(); setSelectedDoc(docRecord); setShowMetadataEditor(true); }}
-                                    className="text-slate-300 hover:text-[var(--color-text)] p-1 rounded-md hover:bg-[var(--color-surface-2)] transition-all opacity-60 sm:opacity-0 group-hover:opacity-100"
+                                    className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] p-1 rounded-md hover:bg-[var(--color-surface-2)] transition-all opacity-60 sm:opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
                                     title="Edit metadata"
+                                    aria-label="Edit metadata"
                                   >
-                                    <Pencil className="w-3 h-3" />
+                                    <FileText className="w-3.5 h-3.5" />
                                   </button>
                                 </td>
-                                <td />
                               </tr>
                             );
                           })
@@ -4854,6 +4869,7 @@ export default function LibraryExplorerPage() {
                 )}
               </div>
             </div>
+            </section>
             </div>
 
             </div>
@@ -4941,17 +4957,17 @@ export default function LibraryExplorerPage() {
       {/* Folder selection bar — ctrl/shift-click tiles, then act on them all. */}
       {isController && selectedFolderIds.size > 0 && selectedDocIds.size === 0 && (
         <div className={`fixed left-1/2 -translate-x-1/2 z-40 ${stagedDocs.length > 0 ? "bottom-16" : "bottom-10"}`}>
-          <div className="flex items-center gap-2 px-4 py-2.5 bg-slate-900/95 text-white rounded-2xl shadow-2xl border border-slate-700/60"
+          <div className="flex items-center gap-2 px-4 py-2.5 bg-slate-900/95 text-white rounded-lg shadow-2xl border border-slate-700/60"
             style={{ backdropFilter: "blur(20px) saturate(200%)" }}>
-            <span className="text-xs font-bold">{selectedFolderIds.size} folder{selectedFolderIds.size === 1 ? "" : "s"} selected</span>
+            <span className="text-[13px] font-bold">{selectedFolderIds.size} folder{selectedFolderIds.size === 1 ? "" : "s"} selected</span>
             <div className="h-4 w-px bg-slate-700 mx-1" />
             <button onClick={() => setSelectedFolderIds(new Set())}
-              className="px-2.5 py-1 text-[11px] font-bold text-slate-300 hover:text-white hover:bg-slate-700/60 rounded-lg transition-colors">
+              className="px-2.5 py-1 text-[13px] font-bold text-slate-300 hover:text-white hover:bg-slate-700/60 rounded-lg transition-colors">
               Deselect
             </button>
             <button
               onClick={() => setDeleteFolders([...selectedFolderIds].map((x) => ({ id: x, name: folderMap.get(x)?.name ?? "Folder" })))}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold text-rose-300 hover:text-white hover:bg-rose-600/80 rounded-lg transition-colors"
+              className="flex items-center gap-1.5 px-2.5 py-1 text-[13px] font-bold text-rose-300 hover:text-white hover:bg-rose-600/80 rounded-lg transition-colors"
               title="Delete the selected folders (Delete key)">
               <Trash2 className="w-3 h-3" /> Delete…
             </button>
@@ -4969,21 +4985,21 @@ export default function LibraryExplorerPage() {
         style={{ transitionTimingFunction: "cubic-bezier(0.34, 1.56, 0.64, 1)" }}
       >
         <div
-          className="flex items-center gap-2 px-4 py-2.5 bg-slate-900/95 text-white rounded-2xl shadow-2xl border border-slate-700/60"
+          className="flex items-center gap-2 px-4 py-2.5 bg-slate-900/95 text-white rounded-lg shadow-2xl border border-slate-700/60"
           style={{ backdropFilter: "blur(20px) saturate(200%)" }}
         >
-          <span className="text-xs font-bold">{selectedDocIds.size} selected</span>
+          <span className="text-[13px] font-bold">{selectedDocIds.size} selected</span>
           <div className="h-4 w-px bg-slate-700 mx-1" />
           <button
             onClick={() => setSelectedDocIds(new Set())}
-            className="px-2.5 py-1 text-[11px] font-bold text-slate-300 hover:text-white hover:bg-slate-700/60 rounded-lg transition-colors"
+            className="px-2.5 py-1 text-[13px] font-bold text-slate-300 hover:text-white hover:bg-slate-700/60 rounded-lg transition-colors"
           >
             Deselect
           </button>
           {/* One orange (Move, unless the stack's Open shows), two quiet, the rest under More. */}
           <button
             onClick={() => setShowBulkMoveModal(true)}
-            className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold rounded-lg transition-all active:scale-95 ${stagedDocs.length > 0
+            className={`flex items-center gap-1.5 px-2.5 py-1 text-[13px] font-bold rounded-lg transition-all active:scale-95 ${stagedDocs.length > 0
               // The stack's Open is the orange one while the stack shows.
               ? "text-slate-200 hover:text-white hover:bg-slate-700/60"
               : "bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)]"}`}
@@ -4993,20 +5009,20 @@ export default function LibraryExplorerPage() {
           </button>
           <button
             onClick={handleStageSelected}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold text-slate-200 hover:text-white hover:bg-slate-700/60 rounded-lg transition-colors"
+            className="flex items-center gap-1.5 px-2.5 py-1 text-[13px] font-bold text-slate-200 hover:text-white hover:bg-slate-700/60 rounded-lg transition-colors"
             title="Add to the reference stack to read side by side"
           >
             <Layers className="w-3 h-3" /> Stage
           </button>
           <button
             onClick={() => setShowBulkCheckout(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold text-slate-200 hover:text-white hover:bg-slate-700/60 rounded-lg transition-colors"
+            className="flex items-center gap-1.5 px-2.5 py-1 text-[13px] font-bold text-slate-200 hover:text-white hover:bg-slate-700/60 rounded-lg transition-colors"
             title="Check out the selected documents, on their own or to a project"
           >
             <Briefcase className="w-3 h-3" /> Check out
           </button>
           {bulkDeleting && (
-            <span className="flex items-center gap-1.5 px-2 text-[11px] font-bold text-rose-300">
+            <span className="flex items-center gap-1.5 px-2 text-[13px] font-bold text-rose-300">
               <Loader2 className="w-3 h-3 animate-spin" /> Deleting {bulkDeleting.done} of {bulkDeleting.total}…
             </span>
           )}
@@ -5015,7 +5031,7 @@ export default function LibraryExplorerPage() {
               <button
                 onClick={() => setBulkMoreOpen((v) => !v)}
                 aria-haspopup="menu" aria-expanded={bulkMoreOpen}
-                className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-slate-200 hover:text-white hover:bg-slate-700/60 rounded-lg transition-colors"
+                className="flex items-center gap-1 px-2.5 py-1 text-[13px] font-bold text-slate-200 hover:text-white hover:bg-slate-700/60 rounded-lg transition-colors"
               >
                 <MoreHorizontal className="w-3.5 h-3.5" /> More
               </button>
@@ -5025,16 +5041,16 @@ export default function LibraryExplorerPage() {
                   {/* Opens upward: the bar sits at the bottom of the screen. */}
                   <div role="menu" className="absolute right-0 bottom-full mb-2 z-50 w-48 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-xl py-1">
                     <button role="menuitem" onClick={() => { setBulkMoreOpen(false); setShowBulkEdit(true); }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs font-semibold hover:bg-[var(--color-surface-2)]">
+                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-[13px] font-semibold hover:bg-[var(--color-surface-2)]">
                       <Pencil className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Edit fields on all
                     </button>
                     <button role="menuitem" onClick={() => { setBulkMoreOpen(false); void handleBulkArchive(); }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs font-semibold hover:bg-[var(--color-surface-2)]">
+                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-[13px] font-semibold hover:bg-[var(--color-surface-2)]">
                       <Archive className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Archive
                     </button>
                     <div className="my-1 h-px bg-[var(--color-border)]" />
                     <button role="menuitem" onClick={() => { setBulkMoreOpen(false); void handleBulkDelete(); }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs font-semibold text-rose-700 dark:text-rose-400 hover:bg-[var(--color-surface-2)]">
+                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-[13px] font-semibold text-rose-700 dark:text-rose-400 hover:bg-[var(--color-surface-2)]">
                       <Trash2 className="w-3.5 h-3.5" /> Delete…
                     </button>
                   </div>
@@ -5242,15 +5258,15 @@ export default function LibraryExplorerPage() {
                 // file area can be far below the screen, which made this read
                 // as a frozen page.
                 <div className="fixed inset-0 z-[250] flex items-center justify-center bg-slate-900/40 backdrop-blur-[2px] p-4">
-                  <div className="w-full max-w-sm rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl p-5 text-center">
+                  <div className="w-full max-w-sm rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl p-5 text-center">
                     <Loader2 className="w-8 h-8 text-[var(--color-text-muted)] animate-spin mx-auto mb-3" />
-                    <p className="text-base font-black text-[var(--color-text)]">Reading your folder…</p>
+                    <p className="text-base font-semibold text-[var(--color-text)]">Reading your folder…</p>
                     <p className="text-sm text-[var(--color-text)] mt-1">
                       <b>{readingDrop.toLocaleString()}</b> file{readingDrop === 1 ? "" : "s"} found
                     </p>
                     <ReadingHint startedAt={readingStartRef.current} />
                     <button onClick={() => { readingCancelledRef.current = true; setReadingDrop(null); }}
-                      className="mt-3 px-3 py-1.5 rounded-lg text-xs font-bold border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
+                      className="mt-3 px-3 py-1.5 rounded-lg text-[13px] font-bold border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
                       Cancel
                     </button>
                   </div>
@@ -5460,7 +5476,7 @@ export default function LibraryExplorerPage() {
                 className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm"
                 autoFocus
               />
-              {folderErr && <p role="alert" className="mt-2 text-xs text-rose-700 dark:text-rose-300">{folderErr}</p>}
+              {folderErr && <p role="alert" className="mt-2 text-[13px] text-rose-700 dark:text-rose-300">{folderErr}</p>}
             </ModalBody>
             <ModalFooter>
               <Button type="button" variant="secondary" onClick={() => setCreatingFolder(false)}>Cancel</Button>
@@ -5478,13 +5494,13 @@ export default function LibraryExplorerPage() {
             onClose={() => setTrashFolders(null)} />
             <div className="max-h-80 overflow-y-auto p-3 space-y-1.5">
               {trashFolders.length === 0 ? (
-                <div className="text-center text-xs text-[var(--color-text-faint)] py-8">Nothing in the trash.</div>
+                <div className="text-center text-[13px] text-[var(--color-text-faint)] py-8">Nothing in the trash.</div>
               ) : trashFolders.map((f) => (
                 <div key={f.id} className="flex items-center gap-3 px-3 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/40">
                   <Trash2 className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <div className="text-xs font-bold text-[var(--color-text)] truncate">{f.name}</div>
-                    <div className="text-[11px] text-[var(--color-text-muted)] truncate">
+                    <div className="text-[13px] font-bold text-[var(--color-text)] truncate">{f.name}</div>
+                    <div className="text-[13px] text-[var(--color-text-muted)] truncate">
                       {f.pathNames.length > 1 ? `${f.pathNames.slice(0, -1).join(" / ")} · ` : ""}
                       deleted {new Date(f.deletedAt).toLocaleDateString()} · purges {new Date(f.purgeAt).toLocaleDateString()}
                     </div>
@@ -5492,7 +5508,7 @@ export default function LibraryExplorerPage() {
                   <button
                     onClick={() => void restoreFromTrash(f.id)}
                     disabled={trashBusy === f.id}
-                    className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-all"
+                    className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[13px] font-bold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-all"
                   >
                     {trashBusy === f.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <ArchiveRestore className="w-3 h-3" />}
                     Restore
@@ -5516,7 +5532,7 @@ export default function LibraryExplorerPage() {
                 className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm"
                 autoFocus
               />
-              {folderErr && <p role="alert" className="mt-2 text-xs text-rose-700 dark:text-rose-300">{folderErr}</p>}
+              {folderErr && <p role="alert" className="mt-2 text-[13px] text-rose-700 dark:text-rose-300">{folderErr}</p>}
             </ModalBody>
             <ModalFooter>
               <Button type="button" variant="secondary" onClick={() => setRenameFolderId(null)}>Cancel</Button>
@@ -5595,10 +5611,10 @@ function LibraryNumberingModal({ orgId, libraryId, onClose }: {
                   className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
               </div>
             </div>
-            <div className="text-xs text-[var(--color-text-muted)]">
-              Next issued number: <span className="font-mono font-black text-[var(--color-text)]">{preview}</span>
+            <div className="text-[13px] text-[var(--color-text-muted)]">
+              Next issued number: <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{preview}</span>
             </div>
-            {err && <p role="alert" className="text-xs text-rose-700 dark:text-rose-300">{err}</p>}
+            {err && <p role="alert" className="text-[13px] text-rose-700 dark:text-rose-300">{err}</p>}
           </div>
         )}
         <ModalFooter>
@@ -5622,7 +5638,7 @@ function ReadingHint({ startedAt }: { startedAt: number }) {
   }, []);
   const secs = Math.max(0, Math.round((now - startedAt) / 1000));
   return (
-    <div className="mt-2 text-[11px] text-[var(--color-text-muted)]">
+    <div className="mt-2 text-[13px] text-[var(--color-text-muted)]">
       <div>{secs}s. The upload window opens once every file is found.</div>
       {secs >= 15 && (
         <p className="mt-2 text-left border-l-2 border-amber-500 pl-2.5 text-amber-800 dark:text-amber-300">

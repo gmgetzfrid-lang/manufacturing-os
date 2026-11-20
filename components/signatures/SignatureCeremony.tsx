@@ -94,7 +94,7 @@ export default function SignatureCeremony({
   const tabBtn = (m: "draw" | "type", label: string, Icon: typeof TypeIcon) => (
     <button
       onClick={() => switchMode(m)}
-      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${mode === m ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}
+      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-bold border transition-colors ${mode === m ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}
     >
       <Icon className="w-3.5 h-3.5" /> {label}
     </button>
@@ -102,10 +102,10 @@ export default function SignatureCeremony({
 
   return (
     <div role="dialog" aria-modal="true" aria-label="Electronic signature" className="fixed inset-0 z-[500] bg-[var(--color-ink)]/60 flex items-start sm:items-center justify-center p-4 overflow-y-auto" onClick={() => !busy && onCancel()}>
-      <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl my-4" onClick={(e) => e.stopPropagation()}>
+      <div className="w-full max-w-md bg-[var(--color-surface)] rounded-lg shadow-2xl my-4" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-5 py-4 border-b border-[var(--color-border)]">
           <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
-          <h2 className="text-sm font-black text-[var(--color-text)] flex-1">Electronic signature</h2>
+          <h2 className="text-sm font-semibold text-[var(--color-text)] flex-1">Electronic signature</h2>
           <button onClick={() => !busy && onCancel()} aria-label="Close" className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
 
@@ -118,7 +118,7 @@ export default function SignatureCeremony({
                   <button
                     key={it}
                     onClick={() => setIntent(it)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${intent === it ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}
+                    className={`px-3 py-1.5 rounded-lg text-[13px] font-bold border transition-colors ${intent === it ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}
                   >
                     {it}
                   </button>
@@ -155,7 +155,7 @@ export default function SignatureCeremony({
                 style={{ fontFamily: "cursive", fontSize: "1.15rem" }}
                 autoFocus
               />
-              {typed.length > 0 && !nameMatches && <p className="text-[11px] text-rose-600 mt-1">Must match your account name exactly: {signerName}</p>}
+              {typed.length > 0 && !nameMatches && <p className="text-[13px] text-rose-600 mt-1">Must match your account name exactly: {signerName}</p>}
             </div>
           )}
 
@@ -176,18 +176,18 @@ export default function SignatureCeremony({
                 className={`w-full h-11 px-3 rounded-lg border bg-[var(--color-surface)] text-[var(--color-text)] outline-none focus:ring-2 ${reauthError ? "border-rose-300 focus:ring-rose-300/40" : "border-[var(--color-border)] focus:ring-[var(--color-accent-ring)]"}`}
               />
               {reauthError
-                ? <p className="text-[11px] text-rose-600 mt-1">{reauthError}</p>
-                : <p className="text-[11px] text-[var(--color-text-faint)] mt-1">Asked each time you sign, so nobody can sign from your unlocked screen.</p>}
+                ? <p className="text-[13px] text-rose-600 mt-1">{reauthError}</p>
+                : <p className="text-[13px] text-[var(--color-text-faint)] mt-1">Asked each time you sign, so nobody can sign from your unlocked screen.</p>}
             </div>
           )}
           {reauth !== "loading" && reauth?.method === "sso" && !reauth.fresh && (
             <div className="border-l-2 border-amber-500 pl-3">
-              <p className="text-xs text-amber-800 dark:text-amber-300">
+              <p className="text-[13px] text-amber-800 dark:text-amber-300">
                 Signing needs a recent sign-in. Sign in with Microsoft again, then finish signing. You&apos;ll come straight back here.
               </p>
               <button
                 onClick={() => void reauthWithProvider()}
-                className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-xs font-bold hover:bg-[var(--color-surface-2)]"
+                className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[13px] font-bold hover:bg-[var(--color-surface-2)]"
               >
                 <KeyRound className="w-3.5 h-3.5" /> Re-authenticate with Microsoft
               </button>

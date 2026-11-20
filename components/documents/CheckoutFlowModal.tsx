@@ -623,20 +623,20 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
 
   return (
     <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center overflow-y-auto bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] p-4 animate-in fade-in">
-      <div className={`bg-[var(--color-surface)] w-full rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden flex flex-col md:flex-row animate-in fade-in zoom-in-95 ${isIdle ? "max-w-xl max-h-[88vh]" : "max-w-4xl h-[80vh]"}`}>
+      <div className={`bg-[var(--color-surface)] w-full rounded-lg shadow-2xl border border-[var(--color-border)] overflow-hidden flex flex-col md:flex-row animate-in fade-in zoom-in-95 ${isIdle ? "max-w-xl max-h-[88vh]" : "max-w-4xl h-[80vh]"}`}>
 
         {/* LEFT: SESSION & ACTIONS */}
-        <div className={`flex-1 flex flex-col bg-[var(--color-surface-2)] ${isIdle ? "" : "border-r border-[var(--color-border)]"}`}>
+        <div className={`flex-1 flex flex-col ${isIdle ? "bg-[var(--color-surface)]" : "bg-[var(--color-surface-2)] border-r border-[var(--color-border)]"}`}>
           <div className="px-6 py-4 border-b border-[var(--color-border)] flex justify-between items-center bg-[var(--color-surface)]">
             <div>
-              <h2 className="text-[15px] font-extrabold text-[var(--color-text)]">{mySession ? "Check in" : "Check out"}</h2>
-              <p className="text-xs text-[var(--color-text-muted)] truncate max-w-[200px]">{document.title}</p>
+              <h2 className="font-display text-[19px] font-semibold text-[var(--color-text)]">{mySession ? "Check in" : "Check out"} <span className="tabular-nums">{document.documentNumber || document.title}</span></h2>
+              {document.documentNumber && document.title && document.title !== document.documentNumber && <p className="text-[13px] text-[var(--color-text-muted)] truncate max-w-[320px]">{document.title}</p>}
             </div>
             {/* Close button must be visible on every breakpoint — previously
                 md:hidden on desktop meant a user who just wanted to PEEK at
                 their own checkout had no way out without committing to a
                 check-in action. */}
-            <button aria-label="Close" onClick={onClose} title="Close" className="p-2 rounded-lg hover:bg-[var(--color-surface-2)]"><X className="w-5 h-5" /></button>
+            <button aria-label="Close" onClick={onClose} title="Close" className="w-9 h-9 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-5 h-5" /></button>
           </div>
 
           <div className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -664,10 +664,10 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                       <div className="min-w-0 flex-1">
                         <div className="flex justify-between items-start">
                           <p className="text-sm font-bold text-[var(--color-text)]">{s.userName}</p>
-                          <span className="text-[11px] bg-[var(--color-surface)] border border-[var(--color-border)] px-2 py-0.5 rounded-full text-[var(--color-text-muted)] uppercase">{s.mode}</span>
+                          <span className="text-[13px] bg-[var(--color-surface)] border border-[var(--color-border)] px-2 py-0.5 rounded-full text-[var(--color-text-muted)]">{s.mode}</span>
                         </div>
-                        {s.note && <p className="text-xs text-[var(--color-text-muted)] mt-1 italic">&ldquo;{s.note}&rdquo;</p>}
-                        <p className="text-[11px] text-[var(--color-text-faint)] mt-2 flex items-center">
+                        {s.note && <p className="text-[13px] text-[var(--color-text-muted)] mt-1 italic">&ldquo;{s.note}&rdquo;</p>}
+                        <p className="text-[13px] text-[var(--color-text-faint)] mt-2 flex items-center">
                           <Clock className="w-3 h-3 mr-1" /> Checked out {formatSince(s.startedAt)}
                         </p>
                       </div>
@@ -679,7 +679,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
             )}
 
             {/* ACTION AREA */}
-            <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-5 shadow-sm">
+            <div className={isIdle ? "" : "bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-5"}>
               {/* Until the sessions load we can't tell check-out from check-in. */}
               {loadErr ? (
                 <p role="alert" className="border-l-2 border-rose-500 pl-3 text-sm text-rose-700 dark:text-rose-300">{loadErr}</p>
@@ -704,12 +704,12 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                 // CHECK OUT FLOW (Start New Session or Recover)
                 <div className="space-y-4">
                   {isOrphaned ? (
-                    <div className="flex items-center gap-2 p-3 bg-[var(--color-surface-2)] text-[var(--color-text)] rounded-lg text-xs">
+                    <div className="flex items-center gap-2 p-3 bg-[var(--color-surface-2)] text-[var(--color-text)] rounded-lg text-[13px]">
                       <RefreshCw className="w-4 h-4 shrink-0" />
                       <span><strong>Out of sync:</strong> you&apos;re shown as holding this document, but your session was lost. Check out again to keep working, or release the lock if you&apos;re done.</span>
                     </div>
                   ) : (
-                    <h3 className="text-sm font-bold text-[var(--color-text)]">Check out this document</h3>
+                    null
                   )}
 
                   {/* The friction-free tier, offered here too — whoever opens
@@ -722,7 +722,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                       className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] text-left transition-colors disabled:opacity-50"
                     >
                       {quickBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-muted)] shrink-0" /> : <Zap className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />}
-                      <span className="text-[11px] text-[var(--color-text)]">
+                      <span className="text-[13px] text-[var(--color-text)]">
                         <b>Just for today?</b> Quick hold: no questions, releases tonight.
                       </span>
                     </button>
@@ -731,14 +731,14 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                   {/* THE WHOLE DEFAULT FORM: what + why. Everything else is
                       behind Options — the honest path must be the cheap one. */}
                   <div>
-                    <label className="text-xs font-bold text-[var(--color-text-muted)] uppercase mb-1 block">What are you doing? <span className="text-rose-500">*</span></label>
+                    <label className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1 block">What are you doing? <span className="text-rose-500">*</span></label>
                     <div className="grid grid-cols-2 gap-1.5">
                       {CHECKOUT_PURPOSES.map((p) => (
                         <button
                           key={p}
                           type="button"
                           onClick={() => setPurposeCategory(p)}
-                          className={`px-2.5 py-2 rounded-lg text-xs font-bold border text-left transition-all ${
+                          className={`px-2.5 py-2 rounded-lg text-[13px] font-bold border text-left transition-all ${
                             purposeCategory === p
                               ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)] shadow"
                               : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
@@ -751,7 +751,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                   </div>
 
                   <div>
-                    <label className="text-xs font-bold text-[var(--color-text-muted)] uppercase mb-1 block">In a few words, why? <span className="text-rose-500">*</span></label>
+                    <label className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1 block">In a few words, why? <span className="text-rose-500">*</span></label>
                     <input
                       ref={noteInputRef}
                       value={note}
@@ -759,7 +759,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                       placeholder="e.g. Updating pump specs per MOC-2026-014..."
                       className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
                     />
-                    <div className="text-[11px] text-[var(--color-text-muted)] mt-1">
+                    <div className="text-[13px] text-[var(--color-text-muted)] mt-1">
                       Shown to everyone who looks at this document while you have it out.
                     </div>
                   </div>
@@ -769,7 +769,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                   <button
                     type="button"
                     onClick={() => setShowOptions((v) => !v)}
-                    className="w-full flex items-center justify-between px-3 py-2 rounded-lg border border-dashed border-[var(--color-border-strong)] text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-slate-400 transition-colors"
+                    className="w-full flex items-center justify-between px-3 py-2 rounded-lg border border-dashed border-[var(--color-border-strong)] text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-slate-400 transition-colors"
                   >
                     <span>
                       {projectChoice === "adhoc"
@@ -785,26 +785,26 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                   <div className="space-y-4 animate-in fade-in slide-in-from-top-1 duration-150">
                   {/* PROJECT PICKER ─────────────────────────────────────── */}
                   <div>
-                    <label className="text-xs font-bold text-[var(--color-text-muted)] uppercase mb-1 block flex items-center gap-1.5">
+                    <label className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1 block flex items-center gap-1.5">
                       <Briefcase className="w-3.5 h-3.5" /> Project
                     </label>
                     <div className="flex bg-[var(--color-surface-2)] p-1 rounded-lg mb-2">
                       <button
                         onClick={() => setProjectChoice("adhoc")}
-                        className={`flex-1 py-1.5 text-[11px] font-bold rounded-md transition-all ${projectChoice === "adhoc" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
+                        className={`flex-1 py-1.5 text-[13px] font-bold rounded-md transition-all ${projectChoice === "adhoc" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
                       >
                         Ad-hoc
                       </button>
                       <button
                         onClick={() => setProjectChoice("existing")}
                         disabled={projects.length === 0}
-                        className={`flex-1 py-1.5 text-[11px] font-bold rounded-md transition-all ${projectChoice === "existing" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"} disabled:opacity-40 disabled:cursor-not-allowed`}
+                        className={`flex-1 py-1.5 text-[13px] font-bold rounded-md transition-all ${projectChoice === "existing" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"} disabled:opacity-40 disabled:cursor-not-allowed`}
                       >
                         Existing
                       </button>
                       <button
                         onClick={() => setProjectChoice("new")}
-                        className={`flex-1 py-1.5 text-[11px] font-bold rounded-md transition-all ${projectChoice === "new" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
+                        className={`flex-1 py-1.5 text-[13px] font-bold rounded-md transition-all ${projectChoice === "new" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
                       >
                         New Project
                       </button>
@@ -822,8 +822,8 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                             <button
                               key={opt.v}
                               onClick={() => setAdhocDuration(opt.v)}
-                              className={`flex-1 py-1 text-[11px] font-bold rounded transition-colors ${
-                                adhocDuration === opt.v ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                              className={`flex-1 py-1 text-[13px] font-bold rounded transition-colors ${
+                                adhocDuration === opt.v ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                               }`}
                             >
                               {opt.label}
@@ -866,12 +866,12 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                             value={newProjectMoc}
                             onChange={(e) => setNewProjectMoc(e.target.value)}
                             placeholder="MOC ref (optional)"
-                            className="px-2.5 py-1.5 border border-[var(--color-border)] rounded-md text-xs"
+                            className="px-2.5 py-1.5 border border-[var(--color-border)] rounded-md text-[13px]"
                           />
                           <select
                             value={newProjectVisibility}
                             onChange={(e) => setNewProjectVisibility(e.target.value as "public" | "private")}
-                            className="px-2.5 py-1.5 border border-[var(--color-border)] rounded-md text-xs bg-[var(--color-surface)]"
+                            className="px-2.5 py-1.5 border border-[var(--color-border)] rounded-md text-[13px] bg-[var(--color-surface)]"
                           >
                             <option value="public">Public (visible to all)</option>
                             <option value="private">Private (members only)</option>
@@ -883,7 +883,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
 
                   {projectChoice !== "adhoc" && (
                     <div>
-                      <label className="text-xs font-bold text-[var(--color-text-muted)] uppercase mb-1 block">Expected release (optional)</label>
+                      <label className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1 block">Expected release (optional)</label>
                       <input
                         type="date"
                         value={expectedReleaseAt ? expectedReleaseAt.slice(0, 10) : ""}
@@ -896,7 +896,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                   )}
 
                   {activeSessions.length > 0 && !isOrphaned && (
-                    <p className="border-l-2 border-amber-500 pl-3 text-xs text-amber-800 dark:text-amber-300 flex items-start">
+                    <p className="border-l-2 border-amber-500 pl-3 text-[13px] text-amber-800 dark:text-amber-300 flex items-start">
                       <AlertTriangle className="w-4 h-4 mr-2 shrink-0 mt-0.5" />
                       Others are working on this file. Talk in the thread first.
                     </p>
@@ -913,7 +913,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                     const StepMark = ({ done, n }: { done: boolean; n: string }) =>
                       done
                         ? <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                        : <span className="w-3.5 h-3.5 shrink-0 rounded-full border border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text-muted)] inline-flex items-center justify-center">{n}</span>;
+                        : <span className="w-3.5 h-3.5 shrink-0 rounded-full border border-[var(--color-border-strong)] text-[11px] font-semibold text-[var(--color-text-muted)] inline-flex items-center justify-center">{n}</span>;
                     const buttonLabel = processing ? "Working…"
                       : !purposeDone ? "Pick a purpose to continue"
                       : !noteDone ? (noteLen === 0 ? "Add a few words on why" : `Add ${5 - noteLen} more character${5 - noteLen === 1 ? "" : "s"}`)
@@ -922,7 +922,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                     return (
                       <div className="space-y-2">
                         {!ready && (
-                          <div className="flex items-center gap-4 text-[11px] text-[var(--color-text-muted)]">
+                          <div className="flex items-center gap-4 text-[13px] text-[var(--color-text-muted)]">
                             <span className={`flex items-center gap-1.5 ${purposeDone ? "text-emerald-700" : ""}`}>
                               <StepMark done={purposeDone} n="1" /> What you&apos;re doing
                             </span>

@@ -53,17 +53,17 @@ export default function OriginSection({ doc, orgId, canManage }: {
   // Internal + non-manager + not editing → stay quiet (internal is the default).
   if (!loading && origin !== "external" && !editing && !canManage) return null;
 
-  const inp = "text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 outline-none focus:border-[var(--color-border-strong)]";
+  const inp = "text-[13px] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 outline-none focus:border-[var(--color-border-strong)]";
 
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 space-y-2">
+    <div className="pt-3 border-t border-[var(--color-border)] first:border-t-0 first:pt-0 space-y-2">
       <div className="flex items-center gap-2">
         <Globe className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Origin</span>
         {!loading && !editing && (
           <div className="ml-auto flex items-center gap-2">
-            {origin === "external" ? <OriginBadge origin="external" source={source} reference={reference} edition={edition} /> : <span className="text-[11px] text-[var(--color-text-muted)]">Internal</span>}
-            {canManage && <button onClick={() => setEditing(true)} className="text-[11px] font-bold text-[var(--color-accent-text)] hover:underline">Edit</button>}
+            {origin === "external" ? <OriginBadge origin="external" source={source} reference={reference} edition={edition} /> : <span className="text-[13px] text-[var(--color-text-muted)]">Internal</span>}
+            {canManage && <button onClick={() => setEditing(true)} className="text-[13px] text-[var(--color-accent-text)] hover:underline">Edit</button>}
           </div>
         )}
       </div>
@@ -74,7 +74,7 @@ export default function OriginSection({ doc, orgId, canManage }: {
         <div className="space-y-2">
           <div className="flex gap-1">
             {(["internal", "external"] as const).map((o) => (
-              <button key={o} onClick={() => setOrigin(o)} className={`flex-1 px-2 py-1 rounded-lg text-[11px] font-bold ${origin === o ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>{o === "internal" ? "Internal" : "External origin"}</button>
+              <button key={o} onClick={() => setOrigin(o)} className={`flex-1 px-2 py-1 rounded-lg text-[13px] font-bold ${origin === o ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>{o === "internal" ? "Internal" : "External origin"}</button>
             ))}
           </div>
           {origin === "external" && (
@@ -86,12 +86,12 @@ export default function OriginSection({ doc, orgId, canManage }: {
             </div>
           )}
           <div className="flex justify-end gap-2">
-            <button onClick={() => { setEditing(false); void load(); }} className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-[var(--color-text-muted)]">Cancel</button>
-            <button onClick={() => void save()} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 text-[11px] font-bold disabled:opacity-50">{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Save</button>
+            <button onClick={() => { setEditing(false); void load(); }} className="px-2.5 py-1.5 rounded-lg text-[13px] font-bold text-[var(--color-text-muted)]">Cancel</button>
+            <button onClick={() => void save()} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[11px] font-bold disabled:opacity-50">{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Save</button>
           </div>
         </div>
       ) : origin === "external" && (edition || url) ? (
-        <div className="text-[11px] text-[var(--color-text-muted)]">
+        <div className="text-[13px] text-[var(--color-text-muted)]">
           {edition && <span>Edition {edition}</span>}
           {url && <>{edition ? " · " : ""}<a href={url} target="_blank" rel="noopener noreferrer" className="text-[var(--color-accent-text)] hover:underline">source</a></>}
         </div>

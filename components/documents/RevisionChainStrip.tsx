@@ -43,18 +43,18 @@ export default function RevisionChainStrip({ documentId, refreshKey }: RevisionC
 
   if (loading) {
     return (
-      <div className="flex items-center gap-2 text-[11px] text-[var(--color-text-muted)] px-2 py-3">
+      <div className="flex items-center gap-2 text-[13px] text-[var(--color-text-muted)] px-2 py-3">
         <Loader2 className="w-3 h-3 animate-spin" /> Loading revision chain…
       </div>
     );
   }
-  if (error) return <div className="text-[11px] text-red-600 px-2 py-2">{error}</div>;
+  if (error) return <div className="text-[13px] text-red-600 px-2 py-2">{error}</div>;
   if (chain.length === 0) return null;
 
   return (
     <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl p-3">
       <div className="text-[13px] font-semibold text-[var(--color-text)] mb-2">
-        Revision Chain
+        Revision chain
       </div>
       <div className="flex items-center gap-1 overflow-x-auto pb-1">
         {chain.map((node, idx) => (
@@ -75,14 +75,14 @@ function ChainNode({ node }: { node: RevisionChainNode }) {
   const Icon = node.isCurrent ? CheckCircle2 : isRevert ? Rewind : GitBranch;
 
   const wrapper = node.isCurrent
-    ? "bg-emerald-600 text-white border-emerald-700"
+    ? "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-text-muted)] ring-1 ring-[var(--color-text-muted)]"
     : isRevert
       ? "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]"
       : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border-strong)]";
 
   return (
     <div
-      className={`shrink-0 inline-flex items-center gap-1.5 border ${wrapper} rounded-md px-2 py-1 text-[11px] font-mono font-bold`}
+      className={`shrink-0 inline-flex items-center gap-1.5 border ${wrapper} rounded-md px-2 py-1 text-[13px] font-display font-semibold tabular-nums`}
       title={tooltipFor(node)}
     >
       <Icon className="w-3 h-3" />
@@ -98,7 +98,7 @@ function tooltipFor(n: RevisionChainNode): string {
   if (n.changeType) parts.push(n.changeType);
   if (n.createdByName) parts.push(`by ${n.createdByName}`);
   if (n.releasedAt) {
-    try { parts.push(new Date(n.releasedAt).toLocaleDateString()); } catch { /* ignore */ }
+    try { parts.push(new Date(n.releasedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })); } catch { /* ignore */ }
   }
   if (n.mocReference) parts.push(`MOC ${n.mocReference}`);
   if (n.changeLog) parts.push(n.changeLog);

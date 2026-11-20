@@ -99,12 +99,12 @@ export default function DuplicateUploadsModal({
   return (
     <div className="fixed inset-0 z-[300] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] flex items-end sm:items-center justify-center p-0 sm:p-4"
       onMouseDown={(e) => { if (e.target === e.currentTarget && !running) onClose(); }}>
-      <div className="w-full max-w-xl bg-[var(--color-surface)] rounded-t-2xl sm:rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden flex flex-col max-h-[90dvh]">
+      <div className="w-full max-w-xl bg-[var(--color-surface)] rounded-t-2xl sm:rounded-lg shadow-2xl border border-[var(--color-border)] overflow-hidden flex flex-col max-h-[90dvh]">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-start gap-3">
           <div className="p-2 rounded-lg bg-amber-100 dark:bg-amber-950/40"><Copy className="w-5 h-5 text-amber-700 dark:text-amber-400" /></div>
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-black text-[var(--color-text)]">Clean up uploads</div>
-            <div className="text-xs text-[var(--color-text-muted)] mt-0.5">
+            <div className="text-sm font-semibold text-[var(--color-text)]">Clean up uploads</div>
+            <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">
               Files uploaded more than once into the same folder, and entries whose file never attached.
             </div>
           </div>
@@ -140,19 +140,19 @@ export default function DuplicateUploadsModal({
                 <b className="text-amber-700 dark:text-amber-400">{dupIds.length.toLocaleString()} extra cop{dupIds.length === 1 ? "y" : "ies"}</b>.
               </p>
               )}
-              {files > 0 && <ul className="mt-3 rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] text-xs max-h-72 overflow-auto">
+              {files > 0 && <ul className="mt-3 rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] text-[13px] max-h-72 overflow-auto">
                 {groups.slice(0, 200).map((g) => (
                   <li key={g.key} className="px-3 py-2 flex items-center gap-2 min-w-0">
                     <span className="min-w-0 flex-1">
                       <span className="block font-mono truncate text-[var(--color-text)]" title={g.name}>{g.name}</span>
-                      <span className="block text-[11px] text-[var(--color-text-faint)] truncate">{folderName(g.folderId)}</span>
+                      <span className="block text-[13px] text-[var(--color-text-faint)] truncate">{folderName(g.folderId)}</span>
                     </span>
-                    <span className="shrink-0 font-black text-amber-700 dark:text-amber-400">×{g.extras.length + 1}</span>
+                    <span className="shrink-0 font-semibold text-amber-700 dark:text-amber-400">×{g.extras.length + 1}</span>
                   </li>
                 ))}
                 {groups.length > 200 && <li className="px-3 py-2 text-[var(--color-text-faint)]">+{groups.length - 200} more files</li>}
               </ul>}
-              <p className="mt-3 text-[11px] text-[var(--color-text-muted)]">
+              <p className="mt-3 text-[13px] text-[var(--color-text-muted)]">
                 The first good upload of each file is kept; the later copies (numbered -2, -3…) and the entries with no file are permanently deleted.
               </p>
             </>
@@ -161,17 +161,17 @@ export default function DuplicateUploadsModal({
 
         <div className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
           {running && (
-            <span className="mr-auto text-[11px] font-bold text-[var(--color-text)] inline-flex items-center gap-1.5">
+            <span className="mr-auto text-[13px] font-bold text-[var(--color-text)] inline-flex items-center gap-1.5">
               <Loader2 className="w-3.5 h-3.5 animate-spin" /> {running.done.toLocaleString()} of {running.total.toLocaleString()} removed…
             </span>
           )}
           <button onClick={onClose} disabled={!!running}
-            className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-40">
+            className="px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-40">
             {result || nothing ? "Close" : "Cancel"}
           </button>
           {!result && !nothing && (
             <button onClick={() => void removeExtras()} disabled={!!running}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-black text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50">
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-[13px] font-semibold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50">
               {running ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
               Clean up {extras.length.toLocaleString()} entr{extras.length === 1 ? "y" : "ies"}
             </button>

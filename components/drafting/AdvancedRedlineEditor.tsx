@@ -639,7 +639,7 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
           <p className={`${vNote} text-[var(--color-text)]`}>
             <RotateCcw className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" />
             <span className="min-w-0">Your marks from last time are back. They were kept on this device.</span>
-            <button type="button" onClick={() => void startOver()} className="ml-auto shrink-0 h-7 px-2.5 rounded-lg bg-[var(--color-ink-2)] hover:bg-[var(--color-ink-line)] text-[12px] font-bold">Start over</button>
+            <button type="button" onClick={() => void startOver()} className="ml-auto shrink-0 h-7 px-2.5 rounded-lg bg-[var(--color-ink-2)] hover:bg-[var(--color-ink-line)] text-[13px] font-bold">Start over</button>
             <button type="button" onClick={() => setRestoredSeen(true)} aria-label="Dismiss" className="shrink-0 w-7 h-7 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]"><X className="w-3.5 h-3.5" /></button>
           </p>
         ) : null}

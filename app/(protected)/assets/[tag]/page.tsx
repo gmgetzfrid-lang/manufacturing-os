@@ -9,7 +9,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { MapPin, FileText, AlertOctagon, Lock, RefreshCw, ImageIcon, Printer, Loader2, QrCode } from "lucide-react";
+import { MapPin, AlertOctagon, RefreshCw, Printer, Loader2, QrCode } from "lucide-react";
 import MoreMenu from "@/components/ui/MoreMenu";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import SignedImg from "@/components/assets/SignedImg";
@@ -22,7 +22,7 @@ import AliasPanel from "@/components/assets/AliasPanel";
 import MentionsPanel from "@/components/assets/MentionsPanel";
 import EstatePanel from "@/components/assets/EstatePanel";
 import WorkHistoryPanel from "@/components/assets/WorkHistoryPanel";
-import { stateStyle, documentState } from "@/lib/stateColors";
+import { StatusTag } from "@/components/documents/StatusTag";
 
 interface HubDoc {
   id: string; number: string; title: string; rev: string | null;
@@ -105,7 +105,7 @@ export default function AssetHubPage() {
   if (loading && docs.length === 0 && !asset) {
     return (
       <PageShell width="work">
-        <PageHero kicker="Equipment" title={<span className="font-mono">{tag}</span>} size="md" overlap={false}
+        <PageHero kicker="Equipment" title={<span className="font-display tabular-nums">{tag}</span>} size="md" overlap={false}
           back={{ href: "/admin/assets", label: "Back to operating areas" }} />
         <LoadingBlock what={tag || "the equipment"} />
       </PageShell>
@@ -153,10 +153,15 @@ export default function AssetHubPage() {
   };
 
   // The answer: what state this equipment's paperwork is in.
-  const answer = error && docs.length === 0 ? <>{tag}: couldn&apos;t load its documents.</>
-    : heldCount > 0 ? <>{tag}: {heldCount} document{heldCount === 1 ? "" : "s"} on hold.</>
-    : docCount === 0 ? <>{tag}: no documents yet.</>
-    : <>{tag}: {docCount} document{docCount === 1 ? "" : "s"}, none on hold.</>;
+  // The equipment tag is the answer engineers read; the numbers sit beside it.
+  const answer = <span className="tabular-nums">{tag}</span>;
+  const outCount = docs.filter((d) => !!d.checkedOutByName).length;
+  const answerFacts = error && docs.length === 0 ? undefined : [
+    { label: "Documents", value: docCount.toLocaleString() },
+    { label: "On hold", value: heldCount.toLocaleString(), tone: heldCount > 0 ? "bad" as const : undefined },
+    { label: "Checked out", value: outCount.toLocaleString(), tone: outCount > 0 ? "warn" as const : undefined },
+    ...(photos.length > 0 ? [{ label: "Photos", value: photos.length.toLocaleString() }] : []),
+  ];
   const backHref = asset?.unit_code ? `/admin/assets?unit=${encodeURIComponent(asset.unit_code)}` : "/admin/assets";
 
   return (
@@ -164,13 +169,12 @@ export default function AssetHubPage() {
         <PageHero
           kicker={<>Operating areas{asset?.unit_code ? ` · Unit ${asset.unit_code}` : ""} · {tag}</>}
           back={{ href: backHref, label: "Back to operating areas" }}
-          size="md"
           title={answer}
+          facts={answerFacts}
           sub={
             <>
-              {asset?.description || (asset ? "Registered asset" : "Not in the equipment list. Showing documents tagged with it.")}
-              {asset?.location && <> · <MapPin className="inline w-3.5 h-3.5 -mt-0.5" /> {asset.location}</>}
-              {photos.length > 0 && <> · {photos.length} photo{photos.length === 1 ? "" : "s"}</>}
+              {error && docs.length === 0 ? "Its documents didn't load." : asset?.description || (asset ? "Registered equipment" : "Not in the equipment list. Showing documents tagged with it.")}
+              {asset?.location && <span className="ml-3 whitespace-nowrap"><MapPin className="inline w-3.5 h-3.5 -mt-0.5" /> {asset.location}</span>}
             </>
           }
           tools={
@@ -206,55 +210,89 @@ export default function AssetHubPage() {
 
         <PageBody>
         {/* Documents */}
-        <Card pad={false} className="overflow-hidden"
-          label={<span className="inline-flex items-center gap-2"><FileText className="w-4 h-4" /> Controlled documents · {docCount}</span>}>
+        <section className="min-w-0">
+          <div className="flex items-baseline gap-2 mb-2.5">
+            <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Controlled documents</h2>
+            <span className="text-[14px] text-[var(--color-text-muted)] tabular-nums">{docCount.toLocaleString()}</span>
+          </div>
           {(packNote || error || (partError && !error)) && (
-            <div className="px-4 sm:px-5 pb-3 space-y-1.5">
+            <div className="mb-3 space-y-1.5">
               {packNote && (
-                <p role="status" className={`text-[13px] ${packNote.startsWith("Pack failed") || packNote.startsWith("Label failed") ? "text-red-700 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400"}`}>
+                <p role="status" className={`text-[14px] ${packNote.startsWith("Pack failed") || packNote.startsWith("Label failed") ? "font-semibold text-[var(--state-overdue)]" : "text-[var(--color-text)]"}`}>
                   {packNote}
                 </p>
               )}
               {error && (
-                <p role="alert" className="text-[13px] text-red-700 dark:text-red-400">
+                <p role="alert" className="text-[14px] font-semibold text-[var(--state-overdue)]">
                   Couldn&apos;t load the documents: {error}{" "}
-                  <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
+                  <button type="button" onClick={() => void refresh()} className="font-normal text-[var(--color-accent-text)] hover:underline">Try again</button>
                 </p>
               )}
               {partError && !error && (
-                <p role="alert" className="text-[13px] text-amber-800 dark:text-amber-300">
+                <p role="alert" className="text-[14px] text-[var(--color-text)]">
                   {partError}{" "}
-                  <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
+                  <button type="button" onClick={() => void refresh()} className="text-[var(--color-accent-text)] hover:underline">Try again</button>
                 </p>
               )}
             </div>
           )}
+          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
           {docs.length === 0 ? (
-            <div className="px-4 py-8 border-t border-[var(--color-border)] text-center text-[14px] text-[var(--color-text-muted)]">No controlled documents are tagged to {tag} yet.</div>
+            <p className="px-4 py-4 text-[15px] text-[var(--color-text-muted)]">No controlled documents are tagged to {tag} yet.</p>
           ) : (
-            <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
-              {docs.slice(0, docLimit).map((d) => (
-                <li key={d.id}>
-                  <Link href={d.libraryId ? `/documents/${d.libraryId}?doc=${d.id}` : "/documents"} className="flex items-center gap-3 px-4 sm:px-5 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors">
-                    <span className="font-mono text-[14px] font-bold text-[var(--color-text)] truncate flex-1">{d.number}{d.title && d.title !== d.number ? <span className="font-sans font-normal text-[var(--color-text-muted)]"> · {d.title}</span> : ""}</span>
-                    {d.rev && <span className="text-[12px] text-[var(--color-text-muted)] shrink-0">Rev {d.rev}</span>}
-                    {d.status && <span className={`text-[11px] font-bold uppercase px-1.5 py-0.5 rounded border shrink-0 ${stateStyle(documentState(d.status)).pill}`}>{d.status}</span>}
-                    {(holdsByDoc.get(d.id) ?? 0) > 0 && <span className="text-[12px] font-bold text-rose-700 dark:text-rose-400 inline-flex items-center gap-0.5 shrink-0"><AlertOctagon className="w-3.5 h-3.5" /> On hold</span>}
-                    {d.checkedOutByName && <span className="text-[12px] font-semibold text-[var(--color-text)] inline-flex items-center gap-0.5 shrink-0"><Lock className="w-3 h-3" />{d.checkedOutByName}</span>}
-                  </Link>
-                </li>
-              ))}
-            </ul>
+            <table className="w-full text-[14px]">
+              <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left max-sm:hidden">
+                <tr>
+                  <th className="font-semibold px-4 h-10">Number</th>
+                  <th className="font-semibold px-4 hidden md:table-cell">Title</th>
+                  <th className="font-semibold px-4 w-20">Rev</th>
+                  <th className="font-semibold px-4 w-36">Status</th>
+                  <th className="font-semibold px-4 w-40 hidden lg:table-cell">Checked out by</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--color-border)]">
+              {docs.slice(0, docLimit).map((d) => {
+                const held = (holdsByDoc.get(d.id) ?? 0) > 0;
+                const href = d.libraryId ? `/documents/${d.libraryId}?doc=${d.id}` : "/documents";
+                return (
+                  <tr key={d.id} className="hover:bg-[var(--color-surface-2)] max-sm:block">
+                    <td className="px-4 py-2.5 relative max-sm:block">
+                      {held && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />}
+                      <span className="flex items-center gap-3">
+                        <Link href={href} className="flex-1 min-w-0 truncate font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{d.number}</Link>
+                        {/* Phone: status at right, the rest under it. */}
+                        <span className="sm:hidden shrink-0">{held ? <StatusTag tone="bad" colored>On hold</StatusTag> : d.status ? <StatusTag status={d.status} /> : null}</span>
+                      </span>
+                      <span className="sm:hidden mt-0.5 flex gap-x-3 text-[13px] text-[var(--color-text-muted)] min-w-0">
+                        {d.title && d.title !== d.number && <span className="truncate min-w-0">{d.title}</span>}
+                        {d.rev && <span className="shrink-0">Rev <span className="font-display tabular-nums font-semibold text-[var(--color-text)]">{d.rev}</span></span>}
+                        {d.checkedOutByName && <span className="shrink-0 font-semibold text-[var(--state-held)]">Out: {d.checkedOutByName}</span>}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-[var(--color-text-muted)] hidden md:table-cell max-w-0 truncate">{d.title && d.title !== d.number ? d.title : ""}</td>
+                    <td className="px-4 py-2.5 font-display text-[15px] font-semibold tabular-nums max-sm:hidden">{d.rev || "-"}</td>
+                    <td className="px-4 py-2.5 max-sm:hidden">
+                      {held ? <StatusTag tone="bad" colored>On hold</StatusTag> : d.status ? <StatusTag status={d.status} /> : <span className="text-[var(--color-text-muted)]">-</span>}
+                    </td>
+                    <td className="px-4 py-2.5 hidden lg:table-cell">
+                      {d.checkedOutByName ? <span className="inline-flex items-center gap-1.5 font-semibold"><span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-held)]" />{d.checkedOutByName}</span> : ""}
+                    </td>
+                  </tr>
+                );
+              })}
+              </tbody>
+            </table>
           )}
           {docs.length > docLimit && (
-            <div className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] flex items-center justify-between text-[13px]">
-              <span className="text-[var(--color-text-muted)]">{docLimit} of {docs.length} shown</span>
-              <button type="button" onClick={() => setDocLimit((n) => n + 50)} className="font-bold text-[var(--color-accent-text)] hover:underline">
+            <div className="px-4 py-3 border-t border-[var(--color-border)] flex items-center justify-between text-[14px]">
+              <span className="text-[var(--color-text-muted)] tabular-nums">{docLimit} of {docs.length.toLocaleString()} shown</span>
+              <button type="button" onClick={() => setDocLimit((n) => n + 50)} className={heroQuiet}>
                 Show {Math.min(50, docs.length - docLimit)} more
               </button>
             </div>
           )}
-        </Card>
+          </div>
+        </section>
 
         {/* Every job done on it, across projects, and what was learned. */}
         {asset?.id && activeOrgId && (
@@ -287,10 +325,10 @@ export default function AssetHubPage() {
 
         {/* Photos */}
         {photos.length > 0 && (
-          <Card label={<span className="inline-flex items-center gap-2"><ImageIcon className="w-4 h-4" /> Photos · {photos.length}</span>}>
+          <Card label={<>Photos <span className="font-sans text-[14px] font-normal text-[var(--color-text-muted)] tabular-nums">{photos.length}</span></>}>
             <div className="flex flex-wrap gap-2">
               {photos.slice(0, 12).map((p) => (
-                <div key={p.id} className="w-24 h-24 rounded-lg bg-[var(--color-surface-2)] flex items-center justify-center text-[11px] text-[var(--color-text-faint)] overflow-hidden" title={p.caption || ""}>
+                <div key={p.id} className="w-24 h-24 rounded-md bg-[var(--color-surface-2)] flex items-center justify-center text-[13px] text-[var(--color-text-muted)] overflow-hidden" title={p.caption || ""}>
                   <SignedImg path={p.file_url} alt={p.caption || `${tag} photo`} className="w-full h-full object-cover" placeholder={<span className="px-1 text-center truncate">{p.caption || "Photo"}</span>} />
                 </div>
               ))}

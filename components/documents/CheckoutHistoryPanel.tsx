@@ -199,11 +199,11 @@ export default function CheckoutHistoryPanel({ orgId, documentId, activeEpisodeI
       {open && (
         <div className="border-t border-[var(--color-border)]">
           {loading ? (
-            <div className="p-4 text-center text-xs text-[var(--color-text-faint)]">
+            <div className="p-4 text-center text-[13px] text-[var(--color-text-faint)]">
               <Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Loading register…
             </div>
           ) : !hasAnything ? (
-            <div className="p-4 text-center text-xs text-[var(--color-text-faint)] italic">
+            <div className="p-4 text-center text-[13px] text-[var(--color-text-faint)] italic">
               No previous checkouts on record for this document.
             </div>
           ) : (
@@ -216,9 +216,9 @@ export default function CheckoutHistoryPanel({ orgId, documentId, activeEpisodeI
                       onClick={() => void expand(ep.id, ep)}
                       className="w-full px-5 py-2.5 flex items-center gap-3 text-left hover:bg-[var(--color-surface-2)]"
                     >
-                      <span className="text-[11px] font-black text-[var(--color-text)] font-mono shrink-0">#{ep.seq}</span>
+                      <span className="text-[13px] font-semibold text-[var(--color-text)] font-display tabular-nums shrink-0">#{ep.seq}</span>
                       <span className="flex-1 min-w-0">
-                        <span className="block text-xs font-bold text-[var(--color-text)] truncate">
+                        <span className="block text-[13px] font-bold text-[var(--color-text)] truncate">
                           {ep.openedByName || "Unknown"} · {fmtRange(ep.openedAt, ep.closedAt)}
                         </span>
                       </span>
@@ -243,7 +243,7 @@ export default function CheckoutHistoryPanel({ orgId, documentId, activeEpisodeI
                     className="w-full px-5 py-2.5 flex items-center gap-3 text-left hover:bg-[var(--color-surface-2)]"
                   >
                     <AlarmClock className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
-                    <span className="flex-1 text-xs font-bold text-[var(--color-text-muted)]">
+                    <span className="flex-1 text-[13px] font-bold text-[var(--color-text-muted)]">
                       Earlier activity <span className="font-medium text-[var(--color-text-faint)]">(before checkout records, {legacyCount} item{legacyCount === 1 ? "" : "s"})</span>
                     </span>
                     {expandedId === "__legacy__"
@@ -266,7 +266,7 @@ export default function CheckoutHistoryPanel({ orgId, documentId, activeEpisodeI
 function EpisodeDetailView({ detail, loading }: { detail: EpisodeDetail | null; loading: boolean }) {
   if (loading || !detail) {
     return (
-      <div className="px-5 py-3 bg-[var(--color-surface-2)] text-center text-[11px] text-[var(--color-text-faint)] border-t border-[var(--color-border)]">
+      <div className="px-5 py-3 bg-[var(--color-surface-2)] text-center text-[13px] text-[var(--color-text-faint)] border-t border-[var(--color-border)]">
         <Loader2 className="w-3.5 h-3.5 animate-spin inline mr-2" /> Opening record…
       </div>
     );
@@ -279,7 +279,7 @@ function EpisodeDetailView({ detail, loading }: { detail: EpisodeDetail | null; 
           <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Participants</div>
           <div className="space-y-1">
             {detail.sessions.map((s) => (
-              <div key={s.id} className="flex items-start gap-2 text-[11px]">
+              <div key={s.id} className="flex items-start gap-2 text-[13px]">
                 <User className="w-3 h-3 text-[var(--color-text-faint)] mt-0.5 shrink-0" />
                 <div className="min-w-0">
                   <span className="font-bold text-[var(--color-text)]">{s.userName || "Unknown"}</span>
@@ -315,7 +315,7 @@ function EpisodeDetailView({ detail, loading }: { detail: EpisodeDetail | null; 
           <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Revisions published</div>
           <div className="space-y-1">
             {detail.versions.map((v) => (
-              <div key={v.id} className="flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
+              <div key={v.id} className="flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]">
                 <FileText className="w-3 h-3 text-emerald-500 shrink-0" />
                 <span className="font-bold text-[var(--color-text)]">Rev {v.revisionLabel || "?"}</span>
                 <span>by {v.createdByName || "unknown"}</span>
@@ -332,11 +332,11 @@ function EpisodeDetailView({ detail, loading }: { detail: EpisodeDetail | null; 
           <MessageSquare className="w-3 h-3" /> Conversation ({detail.messages.length})
         </div>
         {detail.messages.length === 0 ? (
-          <div className="text-[11px] text-[var(--color-text-faint)] italic">No messages in this checkout.</div>
+          <div className="text-[13px] text-[var(--color-text-faint)] italic">No messages in this checkout.</div>
         ) : (
           <div className="space-y-1 max-h-56 overflow-y-auto pr-1">
             {detail.messages.map((m) => (
-              <div key={m.id} className="text-[11px] leading-snug">
+              <div key={m.id} className="text-[13px] leading-snug">
                 {m.kind === "system" ? (
                   <div className="text-[var(--color-text-faint)] italic flex items-start gap-1.5">
                     <Shield className="w-3 h-3 mt-0.5 shrink-0" />
@@ -346,7 +346,7 @@ function EpisodeDetailView({ detail, loading }: { detail: EpisodeDetail | null; 
                   <div className="text-[var(--color-text)]">
                     <span className="font-bold">{m.userName || "Unknown"}</span>
                     {m.kind !== "chat" && (
-                      <span className="ml-1 text-[11px] font-bold uppercase text-[var(--color-text-faint)]">[{m.kind}]</span>
+                      <span className="ml-1 text-[13px] font-semibold text-[var(--color-text-faint)]">[{m.kind}]</span>
                     )}
                     <span>: {m.text}</span>
                     <span className="text-slate-300"> · {fmtShort(m.createdAt)}</span>

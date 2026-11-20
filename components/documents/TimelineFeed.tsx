@@ -44,7 +44,7 @@ function isReversible(event: TimelineEvent): boolean {
 export default function TimelineFeed({ events, showScope = true, emptyMessage = "No history yet.", onReverseRequest }: TimelineFeedProps) {
   if (events.length === 0) {
     return (
-      <div className="text-xs text-[var(--color-text-muted)] py-8 text-center border border-dashed border-[var(--color-border)] rounded-xl">
+      <div className="text-[13px] text-[var(--color-text-muted)] py-8 text-center border border-dashed border-[var(--color-border)] rounded-xl">
         {emptyMessage}
       </div>
     );
@@ -139,8 +139,8 @@ function TimelineRow({ event, showScope, onReverseRequest }: { event: TimelineEv
       <div className="flex-1 min-w-0 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-3 shadow-sm">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
-            <div className="text-xs font-bold text-[var(--color-text)]">{event.summary}</div>
-            <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 flex items-center gap-2 flex-wrap">
+            <div className="text-[13px] font-bold text-[var(--color-text)]">{event.summary}</div>
+            <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5 flex items-center gap-2 flex-wrap">
               <span>{formatTime(event.timestamp)}</span>
               {(event.userName || event.userEmail) && (
                 <>
@@ -153,7 +153,7 @@ function TimelineRow({ event, showScope, onReverseRequest }: { event: TimelineEv
               </span>
             </div>
             {showScope && event.scope && (event.scope.plantName || event.scope.unitName || event.scope.systemName) && (
-              <div className="mt-1.5 flex items-center gap-1 text-[11px] text-[var(--color-text-muted)]">
+              <div className="mt-1.5 flex items-center gap-1 text-[13px] text-[var(--color-text-muted)]">
                 {event.scope.plantName && <ScopeChip label={event.scope.plantName} tone="blue" />}
                 {event.scope.unitName && <ScopeChip label={event.scope.unitName} tone="purple" />}
                 {event.scope.systemName && <ScopeChip label={event.scope.systemName} tone="emerald" />}
@@ -163,7 +163,7 @@ function TimelineRow({ event, showScope, onReverseRequest }: { event: TimelineEv
           {reversible && (
             <button
               onClick={() => onReverseRequest?.(event)}
-              className="shrink-0 inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-1 rounded"
+              className="shrink-0 inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-1 rounded"
               title="Reverse this operation (audit-preserving)"
             >
               <Undo2 className="w-3 h-3" /> Reverse
@@ -173,7 +173,7 @@ function TimelineRow({ event, showScope, onReverseRequest }: { event: TimelineEv
 
         {/* Inline details for version events: change log */}
         {event.kind === "version" && event.details && typeof event.details.changeLog === "string" && event.details.changeLog && (
-          <div className="mt-2 text-[11px] text-[var(--color-text-muted)] whitespace-pre-wrap border-t border-[var(--color-border)] pt-2 flex items-start gap-1.5">
+          <div className="mt-2 text-[13px] text-[var(--color-text-muted)] whitespace-pre-wrap border-t border-[var(--color-border)] pt-2 flex items-start gap-1.5">
             <FileText className="w-3 h-3 mt-0.5 shrink-0 text-[var(--color-text-faint)]" />
             <span>{event.details.changeLog as string}</span>
           </div>
@@ -192,7 +192,7 @@ function ScopeChip({ label, tone }: { label: string; tone: "blue" | "purple" | "
     : tone === "purple" ? "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]"
     : "bg-emerald-50 text-emerald-700 border-emerald-200";
   return (
-    <span className={`inline-flex items-center gap-1 ${toneClass} border px-1.5 py-0.5 rounded font-mono`}>
+    <span className={`inline-flex items-center gap-1 ${toneClass} border px-1.5 py-0.5 rounded font-display tabular-nums`}>
       <Layers className="w-2.5 h-2.5" /> {label}
     </span>
   );
@@ -202,6 +202,7 @@ function formatTime(ts: string): string {
   try {
     const d = new Date(ts);
     if (isNaN(d.getTime())) return "-";
-    return d.toLocaleString();
+    const sameYear = d.getFullYear() === new Date().getFullYear();
+    return d.toLocaleString("en-US", { month: "short", day: "numeric", ...(sameYear ? {} : { year: "numeric" }), hour: "numeric", minute: "2-digit" });
   } catch { return "-"; }
 }

@@ -32,6 +32,8 @@ import CustomizeNodeModal, { type CustomizeValue } from "@/components/documents/
 import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
+import { bandInput, bandInputIcon } from "@/components/admin/band";
+import HelpTooltip from "@/components/ui/HelpTooltip";
 import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 
 type UiLibrary = LibraryConfig & {
@@ -236,25 +238,15 @@ export default function DocumentsHomePage() {
 
   const emptyState = (
     <Card>
-      <div className="flex items-start gap-4">
-        <div className="h-10 w-10 rounded-xl bg-[var(--color-surface-2)] text-[var(--color-text-muted)] flex items-center justify-center shrink-0">
-          <Library className="h-5 w-5" />
-        </div>
-
+      <div className="flex items-start gap-3">
+        <Library className="h-5 w-5 mt-0.5 shrink-0 text-[var(--color-text-muted)]" />
         <div className="flex-1">
-          <h2 className="text-[14px] font-bold text-[var(--color-text)]">No libraries you can open</h2>
-          <p className="text-[14px] text-[var(--color-text-muted)] mt-1">
+          <h2 className="text-[15px] font-semibold text-[var(--color-text)]">No libraries you can open</h2>
+          <p className="text-[15px] text-[var(--color-text-muted)] mt-0.5">
             {isController
-              ? "There are no libraries configured yet. Create your first library in the Library Admin panel."
-              : "You don't currently have access to any controlled libraries. Contact Doc Control or an Admin to grant access."}
+              ? "Create the first one in Library admin."
+              : "Only Doc Control or an Admin can give you access."}
           </p>
-
-          {/* Library Admin is the band's orange action for controllers. */}
-          {!isController && (
-            <p className="mt-3 text-[14px] font-semibold text-[var(--color-text)]">
-              Only Doc Control or an Admin can give access.
-            </p>
-          )}
         </div>
       </div>
     </Card>
@@ -269,64 +261,88 @@ export default function DocumentsHomePage() {
     startTransition(() => { router.push(`/documents/${id}`); });
   };
 
-  // One line per library: what it is, how many documents, who can read it.
+  // One row per library: what it is, how many documents, who can read it.
+  // The whole row opens it; the name is the real link.
   const libraryRows = (list: UiLibrary[]) => (
-    <div>
-      <div className="grid grid-cols-[minmax(0,1fr)_auto_2rem] sm:grid-cols-[minmax(0,1fr)_auto_7.5rem_2rem] items-center gap-3 px-4 sm:px-5 pb-2 border-b border-[var(--color-border)] text-[13px] font-semibold text-[var(--color-text-muted)]">
-        <span>Library</span><span className="text-right">Documents</span><span className="hidden sm:block">Access</span><span />
-      </div>
-      {list.map((lib) => {
-        const isPending = pendingLibId === lib._id;
-        const menuOpen = menuOpenForLibId === lib._id;
-        const n = libCounts.get(lib._id!);
-        return (
-          <div key={lib._id} role="link" tabIndex={0} data-doc-lib={lib._id}
-            onClick={() => { if (!menuOpen) openLib(lib._id!); }}
-            onKeyDown={(e) => { if (e.key === "Enter") openLib(lib._id!); }}
-            className={`group grid grid-cols-[minmax(0,1fr)_auto_2rem] sm:grid-cols-[minmax(0,1fr)_auto_7.5rem_2rem] items-center gap-3 px-4 sm:px-5 py-3 border-b last:border-b-0 last:rounded-b-2xl border-[var(--color-border)] cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors ${isPending ? "opacity-60" : ""}`}>
-            <span className="flex items-center gap-3 min-w-0">
-              <NodeCover appearance={{ color: lib.color, icon: lib.icon, coverImageUrl: lib.coverImageUrl, coverTint: lib.coverTint }}
-                className="w-9 h-9 shrink-0" rounded="rounded-[9px]" iconSize="w-4 h-4" />
-              <span className="min-w-0">
-                <span className="flex items-center gap-1.5 text-[14px] font-bold text-[var(--color-text)]">
-                  <span className="truncate">{lib.name}</span>
-                  {isPending && <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin text-[var(--color-text-faint)]" />}
-                </span>
-                {lib.description && <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{lib.description}</span>}
-              </span>
-            </span>
-            <span className="text-right text-[14px] font-semibold tabular-nums text-[var(--color-text)]">{n != null ? n.toLocaleString() : ""}</span>
-            <span className="hidden sm:inline-flex items-center gap-1 text-[13px] text-[var(--color-text-muted)]">
-              {!lib._canRead && !isController ? <><AlertTriangle className="w-3 h-3 text-amber-600" /> No access</>
-                : lib._isPublicRead ? <><Eye className="w-3 h-3" /> Public read</> : <><Lock className="w-3 h-3" /> Controlled</>}
-            </span>
-            <span className="flex justify-end">
-              {isController ? (
-                <LibraryAdminMenu inline
-                  libId={lib._id!}
-                  libName={lib.name}
-                  open={menuOpen}
-                  onToggle={() => setMenuOpenForLibId(menuOpen ? null : lib._id!)}
-                  onClose={() => setMenuOpenForLibId(null)}
-                  onCustomize={() => setCustomizeLib(lib)}
-                  deleting={deletingLibId === lib._id}
-                  onDelete={async () => {
-                    setDeletingLibId(lib._id!);
-                    try {
-                      const { error } = await supabase.from("libraries").delete().eq("id", lib._id!);
-                      if (error) { await appAlert({ message: `Delete failed: ${error.message}`, tone: "danger" }); return; }
-                      setLibraries((arr) => arr.filter((l) => l._id !== lib._id));
-                    } finally {
-                      setDeletingLibId(null);
-                      setMenuOpenForLibId(null);
-                    }
-                  }}
-                />
-              ) : <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)]" />}
-            </span>
-          </div>
-        );
-      })}
+    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+      <table className="w-full text-[15px]">
+        <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left max-sm:hidden">
+          <tr>
+            <th className="font-semibold px-4 h-10">Library</th>
+            <th className="font-semibold px-4 text-right w-32">Documents</th>
+            <th className="font-semibold px-4 w-48">Access</th>
+            <th className="w-14"><span className="sr-only">Actions</span></th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-[var(--color-border)]">
+          {list.map((lib) => {
+            const isPending = pendingLibId === lib._id;
+            const menuOpen = menuOpenForLibId === lib._id;
+            const n = libCounts.get(lib._id!);
+            const custom = !!(lib.color || lib.icon || lib.coverImageUrl);
+            const access = !lib._canRead && !isController
+              ? <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--state-held)]"><AlertTriangle className="w-3.5 h-3.5" /> No access</span>
+              : lib._isPublicRead ? <span className="inline-flex items-center gap-1.5"><Eye className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Everyone can read</span>
+              : <span className="inline-flex items-center gap-1.5"><Lock className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Controlled</span>;
+            return (
+              <tr key={lib._id} data-doc-lib={lib._id}
+                onClick={() => { if (!menuOpen) openLib(lib._id!); }}
+                className={`group cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors ${isPending ? "opacity-60" : ""}`}>
+                <td className="px-4 py-3">
+                  <span className="flex items-center gap-3 min-w-0">
+                    {custom
+                      ? <NodeCover appearance={{ color: lib.color, icon: lib.icon, coverImageUrl: lib.coverImageUrl, coverTint: lib.coverTint }}
+                          className="w-8 h-8 shrink-0" rounded="rounded-md" iconSize="w-4 h-4" />
+                      : <Library className="w-5 h-5 shrink-0 text-[var(--color-text-muted)]" aria-hidden />}
+                    <span className="min-w-0">
+                      <span className="flex items-center gap-1.5">
+                        <Link href={`/documents/${lib._id}`}
+                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); openLib(lib._id!); }}
+                          className="truncate font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
+                          {lib.name}
+                        </Link>
+                        {isPending && <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin text-[var(--color-text-faint)]" />}
+                      </span>
+                      {lib.description && <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{lib.description}</span>}
+                      {/* Phone: the facts under the name. */}
+                      <span className="sm:hidden flex items-center gap-3 mt-0.5 text-[13px] text-[var(--color-text-muted)]">
+                        {n != null && <span><span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{n.toLocaleString()}</span> documents</span>}
+                        {access}
+                      </span>
+                    </span>
+                  </span>
+                </td>
+                <td className="px-4 py-3 text-right font-display text-[17px] font-semibold tabular-nums text-[var(--color-text)] max-sm:hidden">{n != null ? n.toLocaleString() : ""}</td>
+                <td className="px-4 py-3 text-[14px] text-[var(--color-text)] whitespace-nowrap max-sm:hidden">{access}</td>
+                <td className="pr-3 py-3 text-right">
+                  {isController ? (
+                    <LibraryAdminMenu inline
+                      libId={lib._id!}
+                      libName={lib.name}
+                      open={menuOpen}
+                      onToggle={() => setMenuOpenForLibId(menuOpen ? null : lib._id!)}
+                      onClose={() => setMenuOpenForLibId(null)}
+                      onCustomize={() => setCustomizeLib(lib)}
+                      deleting={deletingLibId === lib._id}
+                      onDelete={async () => {
+                        setDeletingLibId(lib._id!);
+                        try {
+                          const { error } = await supabase.from("libraries").delete().eq("id", lib._id!);
+                          if (error) { await appAlert({ message: `Delete failed: ${error.message}`, tone: "danger" }); return; }
+                          setLibraries((arr) => arr.filter((l) => l._id !== lib._id));
+                        } finally {
+                          setDeletingLibId(null);
+                          setMenuOpenForLibId(null);
+                        }
+                      }}
+                    />
+                  ) : <ChevronRight className="w-4 h-4 inline text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)]" />}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 
@@ -338,10 +354,18 @@ export default function DocumentsHomePage() {
     : countsIn && totalDocs > 0 ? `${totalDocs.toLocaleString()} document${totalDocs === 1 ? "" : "s"}.`
     : `${nLibs}.`;
   const answerSub = libraries.length === 0
-    ? (error ? "Refresh to try again. If it keeps happening, ask an Admin to check your access to this workspace." : isController ? "Set one up in Library Admin." : "You don't have access to a controlled library yet.")
-    : countsIn && totalDocs > 0 ? `In ${nLibs}${orgName ? ` at ${orgName}` : ""}.`
-    : countsIn ? `Nothing filed yet${orgName ? ` at ${orgName}` : ""}.`
+    ? (error ? "Refresh to try again. If it keeps happening, ask an Admin to check your access to this workspace." : isController ? "Set one up in Library admin." : "You don't have access to a controlled library yet.")
+    : countsIn && totalDocs === 0 ? `Nothing filed yet${orgName ? ` at ${orgName}` : ""}.`
     : orgName ?? undefined;
+  // The numbers behind it: libraries, documents, how many are controlled.
+  const controlled = libraries.filter((l) => !l._isPublicRead).length;
+  const docsAnswer = countsIn && totalDocs > 0;
+  const answerFacts = libraries.length === 0 ? undefined : [
+    ...(docsAnswer ? [{ label: "Libraries", value: libraries.length.toLocaleString() }] : []),
+    ...(countsIn && !docsAnswer ? [{ label: "Documents", value: totalDocs.toLocaleString() }] : []),
+    { label: "Controlled", value: controlled.toLocaleString() },
+    { label: "Open to all", value: (libraries.length - controlled).toLocaleString() },
+  ];
 
   return (
     <PageShell width="full" className="max-w-[1500px]">
@@ -349,6 +373,7 @@ export default function DocumentsHomePage() {
         kicker="Document control"
         title={answer}
         sub={answerSub}
+        facts={answerFacts}
         tools={
           <button
             onClick={async () => {
@@ -369,21 +394,22 @@ export default function DocumentsHomePage() {
           </Link>
         ) : undefined}
       >
-        <ViewTabs tabs={DOCUMENT_VIEWS} variant="dark" />
-        <form role="search" onSubmit={(e) => e.preventDefault()} className="relative mt-3">
-          <Search className="w-4 h-4 text-[var(--color-ink-muted)] absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" />
+        <ViewTabs tabs={DOCUMENT_VIEWS} />
+        <form role="search" onSubmit={(e) => e.preventDefault()} className="relative mt-4">
+          <Search className={bandInputIcon} />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Escape") setSearch(""); }}
-            placeholder="Find by equipment tag (E-22), drawing number or words inside"
+            placeholder="Number, tag (E-22) or words inside"
+            title="Equipment tag (E-22), drawing number or words inside"
             aria-label="Search documents and equipment"
             data-find-input
-            className="w-full h-12 pl-11 pr-11 rounded-xl border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] text-white placeholder:text-[var(--color-ink-muted)] text-base sm:text-[15px] focus:outline-none focus:border-[var(--color-ink-muted)] focus:ring-2 focus:ring-[var(--color-accent)]/40"
+            className={`${bandInput} !pr-11 max-sm:text-base`}
           />
           {search && (
             <button aria-label="Clear search" type="button" onClick={() => setSearch("")} title="Clear the search"
-              className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 grid place-items-center rounded-lg text-[var(--color-ink-muted)] hover:text-white hover:bg-[var(--color-ink-line)]">
+              className="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
               <X className="w-4 h-4" />
             </button>
           )}
@@ -391,48 +417,44 @@ export default function DocumentsHomePage() {
       </PageHero>
 
       <PageBody>
-        {/* The list (or the search) on the left; the map beside it, always. */}
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(380px,44%)] items-start">
-          <div className="min-w-0 space-y-4">
-            {searching ? (
-              <>
-                {filtered.length > 0 && (
-                  <Card label="Libraries" pad={false}>
-                    {libraryRows(filtered)}
-                  </Card>
-                )}
-                <Card label={<>Search: “{search.trim()}”</>}>
-                  <FindPanel orgId={activeOrgId} f={finder} unit={null} hideMap
-                    onOpenFolder={(fo) => router.push(`/documents/${fo.libraryId}?folderId=${fo.id}`)}
-                    onOpenHref={(href) => router.push(href)} />
-                </Card>
-              </>
-            ) : libraries.length === 0 ? (error ? (
-              <Card>
-                <p role="alert" className="text-[14px] text-rose-700 dark:text-rose-300 flex items-center gap-2 font-semibold">
-                  <AlertTriangle className="h-4 w-4" /> {error}
-                </p>
-              </Card>
-            ) : emptyState) : (
-              <Card label="Libraries" pad={false} className="pb-1">
-                {libraryRows(libraries)}
-              </Card>
+        {/* The libraries (or the search), full width; the map under them. */}
+        {searching ? (
+          <>
+            {filtered.length > 0 && (
+              <section>
+                <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)] mb-2.5">Libraries</h2>
+                {libraryRows(filtered)}
+              </section>
             )}
-          </div>
-
-          {/* On a phone the map leads, so it is never a scroll away. */}
-          <Card label="Map" className="min-w-0 order-first lg:order-none lg:sticky lg:top-4">
-            <FindMap orgId={activeOrgId} unit={searching ? ms.unit : null}
-              assetId={searching ? ms.assetId : null} docs={searching ? ms.docs : null} candidates={searching ? ms.candidates : undefined}
-              onPickAsset={(id, tag) => {
-                if (searching && finder.quick?.equipment.some((e) => e.id === id)) finder.pick(id);
-                else { setSearch(tag); finder.pickWhenFound(id); }
-              }}
-              onUnit={(code) => void openUnitFolder(code)}
-              className="h-64 lg:h-[calc(100vh-16rem)] lg:min-h-[26rem]" />
-            <p className="mt-2 text-[13px] text-[var(--color-text-muted)]">Tap a unit to open its drawings, a piece of equipment to see its documents, a document to open it here.</p>
+            <Card label={<>Search: “{search.trim()}”</>}>
+              <FindPanel orgId={activeOrgId} f={finder} unit={null} hideMap
+                onOpenFolder={(fo) => router.push(`/documents/${fo.libraryId}?folderId=${fo.id}`)}
+                onOpenHref={(href) => router.push(href)} />
+            </Card>
+          </>
+        ) : libraries.length === 0 ? (error ? (
+          <Card>
+            <p role="alert" className="text-[15px] text-[var(--state-overdue)] flex items-center gap-2 font-semibold">
+              <AlertTriangle className="h-4 w-4" /> {error}
+            </p>
           </Card>
-        </div>
+        ) : emptyState) : (
+          <section>
+            <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)] mb-2.5">Libraries</h2>
+            {libraryRows(libraries)}
+          </section>
+        )}
+
+        <Card label={<>Map <HelpTooltip>Tap a unit to open its drawings, a piece of equipment to see its documents, a document to open it here.</HelpTooltip></>} className="min-w-0">
+          <FindMap orgId={activeOrgId} unit={searching ? ms.unit : null}
+            assetId={searching ? ms.assetId : null} docs={searching ? ms.docs : null} candidates={searching ? ms.candidates : undefined}
+            onPickAsset={(id, tag) => {
+              if (searching && finder.quick?.equipment.some((e) => e.id === id)) finder.pick(id);
+              else { setSearch(tag); finder.pickWhenFound(id); }
+            }}
+            onUnit={(code) => void openUnitFolder(code)}
+            className="h-72 lg:h-[420px]" />
+        </Card>
       </PageBody>
 
       {customizeLib && (
@@ -483,36 +505,39 @@ function LibraryAdminMenu({
       <button
         onClick={(e) => { e.stopPropagation(); onToggle(); }}
         title="Library admin"
-        className={`p-1.5 rounded-md transition-colors ${open ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}
+        aria-label={`Library admin: ${libName}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className={`w-8 h-8 grid place-items-center rounded-md transition-colors ${open ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}
       >
         <MoreVertical className="w-4 h-4" />
       </button>
       {open && (
         <>
           <div className="fixed inset-0 z-[5]" onClick={(e) => { e.stopPropagation(); onClose(); }} />
-          <div className="absolute right-0 top-full mt-1 w-52 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg overflow-hidden z-[10] animate-in fade-in zoom-in-95 duration-150 origin-top-right">
+          <div className="absolute right-0 top-full mt-1 w-56 text-left bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg overflow-hidden z-[10] animate-in fade-in zoom-in-95 duration-150 origin-top-right">
             <div className="px-3 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
               <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Admin</div>
-              <div className="text-xs font-bold text-[var(--color-text)] truncate">{libName}</div>
+              <div className="text-[14px] font-semibold text-[var(--color-text)] truncate">{libName}</div>
             </div>
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onClose(); onCustomize(); }}
-              className="w-full text-left flex items-center gap-2 px-3 py-2 text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+              className="w-full text-left flex items-center gap-2 px-3 py-2 text-[14px] font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
             >
               <Palette className="w-3.5 h-3.5" /> Customize appearance
             </button>
             <Link
               href={`/admin/libraries?lib=${libId}`}
               onClick={(e) => { e.stopPropagation(); onClose(); }}
-              className="flex items-center gap-2 px-3 py-2 text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+              className="flex items-center gap-2 px-3 py-2 text-[14px] font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
             >
               <Settings className="w-3.5 h-3.5" /> Configure (name, columns)
             </Link>
             <Link
               href={`/admin/permissions?lib=${libId}`}
               onClick={(e) => { e.stopPropagation(); onClose(); }}
-              className="flex items-center gap-2 px-3 py-2 text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+              className="flex items-center gap-2 px-3 py-2 text-[14px] font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
             >
               <KeyRound className="w-3.5 h-3.5" /> Permissions
             </Link>
@@ -524,7 +549,7 @@ function LibraryAdminMenu({
                 onDelete();
               }}
               disabled={deleting}
-              className="w-full text-left flex items-center gap-2 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-50 border-t border-[var(--color-border)] disabled:opacity-50"
+              className="w-full text-left flex items-center gap-2 px-3 py-2 text-[14px] font-medium text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)] border-t border-[var(--color-border)] disabled:opacity-50"
             >
               {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
               {deleting ? "Deleting…" : "Delete library"}

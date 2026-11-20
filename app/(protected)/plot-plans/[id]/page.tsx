@@ -168,24 +168,24 @@ export default function PlotPlanBoard() {
   const back = { href: "/plot-plans", label: "Back to plot plans" };
   if (loading) return (
     <PageShell width="full">
-      <PageHero kicker="Operating areas · Map" title="Plot plan" back={back} size="md" overlap={false} />
+      <PageHero kicker="Operating areas" title="Plot plan" back={back} size="md" overlap={false} />
       <LoadingBlock what="the plot plan" />
     </PageShell>
   );
   if (loadError || !plan) {
     return (
       <PageShell width="full">
-        <PageHero kicker="Operating areas · Map" back={back} size="md"
+        <PageHero kicker="Operating areas" back={back} size="md"
           title={loadError ? "Couldn't load this plot plan." : "Plot plan not found."} />
         <PageBody>
           <Card>
             {loadError ? (
-              <p role="alert" className="text-[14px] text-red-700 dark:text-red-400">
+              <p role="alert" className="text-[15px] font-semibold text-[var(--state-overdue)]">
                 Couldn&apos;t load this plot plan: {loadError}{" "}
-                <button type="button" onClick={() => void load()} className="font-bold underline">Try again</button>
+                <button type="button" onClick={() => void load()} className="font-normal text-[var(--color-accent-text)] hover:underline">Try again</button>
               </p>
             ) : (
-              <p className="text-[14px] text-[var(--color-text-muted)]">It may have been deleted. <Link href="/plot-plans" className="font-bold underline">See all plot plans</Link></p>
+              <p className="text-[15px] text-[var(--color-text-muted)]">It may have been deleted. <Link href="/plot-plans" className="text-[var(--color-accent-text)] hover:underline">See all plot plans</Link></p>
             )}
           </Card>
         </PageBody>
@@ -198,19 +198,24 @@ export default function PlotPlanBoard() {
   // The answer: where the equipment on this drawing stands.
   const total = markers.length;
   const answer = total === 0 ? "Nothing placed yet."
-    : counts.blocked > 0 ? `${counts.blocked} blocked, ${counts.completed} of ${total} done.`
+    : counts.blocked > 0 ? `${counts.blocked} blocked.`
     : counts.completed === total ? `All ${total} done.`
     : `${counts.completed} of ${total} done.`;
+  const facts = total === 0 ? undefined : [
+    ...(counts.blocked > 0 ? [{ label: "Done", value: `${counts.completed} of ${total}` }] : []),
+    { label: "Markers", value: total.toLocaleString() },
+  ];
   const cancelEdit = () => { setMarkers(plan.markers); setDirty(false); setEditing(false); setPlacingAssetId(null); };
 
   return (
     <PageShell width="full">
       <PageHero
-        kicker={<>Operating areas · Map · {plan.name}</>}
+        kicker={<>Operating areas / {plan.name}</>}
         back={back}
         size="md"
         title={answer}
-        sub={<>{total} marker{total === 1 ? "" : "s"} on {plan.name}{dirty ? <> · <span className="font-semibold text-amber-300">unsaved changes</span></> : ""}</>}
+        facts={facts}
+        sub={<>{plan.name}{dirty ? <span className="ml-3 font-semibold text-[var(--state-held)]">Unsaved changes</span> : null}</>}
         tools={isController ? (editing ? (
           <button type="button" onClick={cancelEdit} className={heroQuiet}><X className="w-4 h-4" /> Cancel</button>
         ) : (
@@ -223,9 +228,9 @@ export default function PlotPlanBoard() {
         {/* Legend: how many markers sit in each state. */}
         <ul className="flex items-center gap-x-4 gap-y-2 flex-wrap" aria-label="Marker states">
           {WHITEBOARD_STATES.map((st) => (
-            <li key={st} className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-ink-fg)]">
+            <li key={st} className="inline-flex items-center gap-1.5 text-[14px] font-semibold text-[var(--color-text)]">
               <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: STATE_CONFIG[st].hex }} />
-              {STATE_CONFIG[st].label} <span className="text-[var(--color-ink-muted)]">{counts[st]}</span>
+              {STATE_CONFIG[st].label} <span className="font-display tabular-nums text-[var(--color-text-muted)]">{counts[st]}</span>
             </li>
           ))}
         </ul>
@@ -241,9 +246,9 @@ export default function PlotPlanBoard() {
               <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">Place an asset</div>
               <div className="relative">
                 <Search className="w-3.5 h-3.5 text-[var(--color-text-faint)] absolute left-2.5 top-1/2 -translate-y-1/2" />
-                <input value={pickerSearch} onChange={(e) => setPickerSearch(e.target.value)} aria-label="Search equipment" placeholder="Search equipment…" className="w-full h-9 pl-8 pr-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-[13px] outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]" />
+                <input value={pickerSearch} onChange={(e) => setPickerSearch(e.target.value)} aria-label="Search equipment" placeholder="Search equipment…" className="w-full h-9 pl-8 pr-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[14px] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40" />
               </div>
-              {placingAssetId && <div className="mt-2 text-[12px] font-semibold text-[var(--color-text)] bg-[var(--color-surface-2)] rounded px-2 py-1">Now tap the drawing to place {assetById.get(placingAssetId)?.tag}.</div>}
+              {placingAssetId && <div className="mt-2 text-[13px] font-semibold text-[var(--color-text)] bg-[var(--color-surface-2)] rounded px-2 py-1">Now tap the drawing to place {assetById.get(placingAssetId)?.tag}.</div>}
             </div>
             <div className="flex-1 overflow-y-auto p-2 space-y-1">
               {pickerAssets.length === 0 ? (
@@ -253,10 +258,11 @@ export default function PlotPlanBoard() {
                   key={a.id}
                   onClick={() => setPlacingAssetId(a.id)}
                   type="button"
-                  className={`w-full text-left px-2.5 py-2 rounded-lg text-[13px] flex items-center gap-2 transition ${placingAssetId === a.id ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "hover:bg-[var(--color-surface-2)] text-[var(--color-text)]"}`}
+                  aria-pressed={placingAssetId === a.id}
+                  className={`relative w-full text-left px-2.5 py-2 rounded-md text-[14px] flex items-center gap-2 transition ${placingAssetId === a.id ? "bg-[var(--color-surface-2)] text-[var(--color-text)] ring-1 ring-[var(--color-border-strong)]" : "hover:bg-[var(--color-surface-2)] text-[var(--color-text)]"}`}
                 >
                   <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: STATE_CONFIG[(a.whiteboard_state ?? "pending") as WhiteboardState].hex }} />
-                  <span className="font-mono font-bold truncate">{a.tag}</span>
+                  <span className="font-display text-[15px] font-semibold tabular-nums truncate">{a.tag}</span>
                   <MapPin className="w-3 h-3 ml-auto opacity-40" />
                 </button>
               ))}
@@ -271,7 +277,7 @@ export default function PlotPlanBoard() {
             onClick={onBoardClick}
             onPointerMove={onBoardPointerMove}
             onPointerUp={onBoardPointerUp}
-            className={`relative inline-block max-w-full rounded-xl overflow-hidden shadow-[var(--shadow-card)] bg-[var(--color-surface)] ${editing && placingAssetId ? "cursor-crosshair" : ""}`}
+            className={`relative inline-block max-w-full rounded-md overflow-hidden border border-[var(--color-border)] bg-[var(--color-surface)] ${editing && placingAssetId ? "cursor-crosshair" : ""}`}
             style={{ touchAction: editing ? "none" : "auto" }}
           >
             {plan.imagePath ? (
@@ -295,7 +301,7 @@ export default function PlotPlanBoard() {
                   className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-md flex items-center justify-center ${editing ? "cursor-move" : "cursor-pointer hover:scale-110"} transition-transform`}
                   style={{ left: `${m.xPct}%`, top: `${m.yPct}%`, width: 22, height: 22, backgroundColor: hex }}
                 >
-                  {state === "blocked" && <span className="text-white text-[11px] font-black leading-none">!</span>}
+                  {state === "blocked" && <span className="text-white text-[13px] font-semibold leading-none">!</span>}
                 </button>
               );
             })}
@@ -307,12 +313,12 @@ export default function PlotPlanBoard() {
           <div className="md:w-72 shrink-0 border-t md:border-t-0 md:border-l border-[var(--color-border)] p-5">
             <div className="flex items-center gap-2 mb-2">
               <div className="text-[13px] font-semibold text-[var(--color-text-muted)] flex-1">On this drawing</div>
-              <button type="button" onClick={() => setSelectedMarker(null)} aria-label="Close" className="w-9 h-9 grid place-items-center rounded-[10px] bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
+              <button type="button" onClick={() => setSelectedMarker(null)} aria-label="Close" className="w-9 h-9 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
             </div>
-            <div className="text-[30px] leading-none font-black tracking-[-0.02em] text-[var(--color-text)] break-words mb-2">{selAsset.tag}</div>
-            {selAsset.description && <p className="text-[13px] text-[var(--color-text-muted)] mb-3">{selAsset.description}</p>}
+            <div className="font-display text-[30px] leading-none font-semibold tabular-nums text-[var(--color-text)] break-words mb-2">{selAsset.tag}</div>
+            {selAsset.description && <p className="text-[14px] text-[var(--color-text-muted)] mb-3">{selAsset.description}</p>}
             <div className="mb-3">
-              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border ${STATE_CONFIG[(selAsset.whiteboard_state ?? "pending") as WhiteboardState].chip}`}>
+              <span className="inline-flex items-center gap-1.5 text-[14px] font-semibold text-[var(--color-text)]">
                 <span className="w-2 h-2 rounded-full" style={{ backgroundColor: STATE_CONFIG[(selAsset.whiteboard_state ?? "pending") as WhiteboardState].hex }} />
                 {STATE_CONFIG[(selAsset.whiteboard_state ?? "pending") as WhiteboardState].label}
               </span>
@@ -322,11 +328,11 @@ export default function PlotPlanBoard() {
                 Advance to {STATE_CONFIG[nextState((selAsset.whiteboard_state ?? "pending") as WhiteboardState)].label} <ChevronRight className="w-4 h-4" />
               </button>
               {selAsset.whiteboard_state !== "blocked" && (
-                <button type="button" onClick={() => setBlocked(selAsset)} className="w-full inline-flex items-center justify-center gap-1.5 h-10 px-3 rounded-xl border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-400 text-[13px] font-bold hover:bg-rose-50 dark:hover:bg-rose-950/30">
+                <button type="button" onClick={() => setBlocked(selAsset)} className={`${heroQuiet} !h-10 w-full !text-[var(--state-overdue)]`}>
                   Mark blocked
                 </button>
               )}
-              <Link href={`/assets/${encodeURIComponent(selAsset.tag)}`} className="w-full inline-flex items-center justify-center gap-1.5 h-10 px-3 rounded-xl border border-[var(--color-border)] text-[var(--color-text)] text-[13px] font-bold hover:bg-[var(--color-surface-2)]">
+              <Link href={`/assets/${encodeURIComponent(selAsset.tag)}`} className={`${heroQuiet} !h-10 w-full`}>
                 Open asset <ExternalLink className="w-3.5 h-3.5" />
               </Link>
             </div>
@@ -336,8 +342,8 @@ export default function PlotPlanBoard() {
         {/* Selected marker actions (edit mode → remove) */}
         {editing && selectedMarker && (
           <div className="md:w-60 shrink-0 border-t md:border-t-0 md:border-l border-[var(--color-border)] p-5">
-            <div className="text-[14px] font-bold text-[var(--color-text)] mb-2">{assetById.get(selectedMarker)?.tag}</div>
-            <button type="button" onClick={() => removeMarker(selectedMarker)} className="w-full h-10 px-3 rounded-xl border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-400 text-[13px] font-bold hover:bg-rose-50 dark:hover:bg-rose-950/30">Remove marker</button>
+            <div className="font-display text-[19px] font-semibold tabular-nums text-[var(--color-text)] mb-2">{assetById.get(selectedMarker)?.tag}</div>
+            <button type="button" onClick={() => removeMarker(selectedMarker)} className={`${heroQuiet} !h-10 w-full !text-[var(--state-overdue)]`}>Remove marker</button>
           </div>
         )}
       </div>

@@ -55,7 +55,7 @@ export default function ColumnHeaderMenu({ onAdd, isController }: ColumnHeaderMe
         title="Add Column"
       >
         <Plus className="w-4 h-4" />
-        <span className="ml-2 text-xs font-bold uppercase hidden sm:inline">Add Column</span>
+        <span className="ml-2 text-[13px] font-semibold hidden sm:inline">Add Column</span>
       </button>
 
       {isOpen && (
@@ -82,7 +82,7 @@ export default function ColumnHeaderMenu({ onAdd, isController }: ColumnHeaderMe
           </div>
           <div className="border-t border-[var(--color-border)] p-2 bg-[var(--color-surface-2)]">
              <button 
-               className="w-full text-center text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent-hover)] py-1"
+               className="w-full text-center text-[13px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent-hover)] py-1"
                onClick={() => { onAdd('text'); setIsOpen(false); }} // Should trigger full wizard step 1 ideally, but text is fine default
              >
                More...

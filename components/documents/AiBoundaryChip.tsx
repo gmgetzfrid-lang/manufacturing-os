@@ -56,7 +56,7 @@ export default function AiBoundaryChip({
   if (!inSource) {
     return (
       <span title="This document isn't in any library or folder linked as a knowledge source, so AI features cannot read it."
-        className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-faint)]">
+        className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-text-faint)]">
         <EyeOff className="w-3 h-3" /> Not AI-readable
       </span>
     );
@@ -97,7 +97,7 @@ export default function AiBoundaryChip({
         : excluded ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
       {excluded ? "Held from AI" : "AI-readable"}
     </button>
-    {failed && <span className="text-[11px] font-bold text-rose-600" title={failed}>failed</span>}
+    {failed && <span className="text-[13px] font-bold text-rose-600" title={failed}>failed</span>}
     </span>
   );
 }
