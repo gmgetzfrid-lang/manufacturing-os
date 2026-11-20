@@ -482,15 +482,15 @@ function AssetsPageInner() {
                           return next;
                         })}
                         className="flex items-center gap-2.5 text-left flex-1 min-w-0 min-h-9">
-                        <ChevronDown className={`w-4 h-4 shrink-0 text-[var(--color-text-muted)] transition-transform ${open ? "" : "-rotate-90"}`} />
+                        <ChevronDown className={`w-4 h-4 shrink-0 text-[var(--color-main)] transition-transform ${open ? "" : "-rotate-90"}`} />
                         <span className="min-w-0">
                           <span className="flex items-center gap-2 flex-wrap">
-                            <span className="font-display text-[17px] font-semibold text-[var(--color-text)]">{g.name}</span>
-                            <span className="text-[14px] text-[var(--color-text-muted)] tabular-nums">{badgeText(g.list.length)}</span>
+                            <span className="font-display text-[17px] font-semibold text-[var(--color-heading)]">{g.name}</span>
+                            <span className="ui-count is-solid">{badgeText(g.list.length)}</span>
                             {cb && (
                               <span className="text-[13px] text-[var(--color-text-muted)]"
                                 title={`Site Codebook equipment-type code ${cb.code}`}>
-                                Code <span className="font-display font-semibold text-[var(--color-text)]">{cb.code}</span>{cb.prefixes.length > 0 ? `, tags ${cb.prefixes.join(", ")}` : ""}
+                                Code <span className="ui-id">{cb.code}</span>{cb.prefixes.length > 0 ? `, tags ${cb.prefixes.join(", ")}` : ""}
                               </span>
                             )}
                           </span>
@@ -565,12 +565,12 @@ function AssetsPageInner() {
                     <td className={`${tbl.td} relative`}>
                       <RowEdge tone="warn" />
                       <button type="button" onClick={(e) => { e.stopPropagation(); setUnitFilter(code); }} className="text-left">
-                        <span className="font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)] mr-2">{code}</span>
+                        <span className="ui-tag mr-2">{code}</span>
                         <span className="font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">Unknown unit</span>
                         <span className="block text-[13px] text-[var(--color-text-muted)]">Not in the Site Codebook yet</span>
                       </button>
                     </td>
-                    <td className={`${tbl.td} text-right font-display text-[16px] font-semibold tabular-nums`}>{n}</td>
+                    <td className={`${tbl.td} text-right`}><span className="ui-count">{n}</span></td>
                     <td className={`${tbl.td} max-sm:hidden`} colSpan={canEditLinks ? 4 : 3} />
                   </tr>
                 ))}
@@ -583,7 +583,7 @@ function AssetsPageInner() {
                         <span className="block text-[13px] font-normal text-[var(--color-text-muted)]">Waiting to be filed</span>
                       </button>
                     </td>
-                    <td className={`${tbl.td} text-right font-display text-[16px] font-semibold tabular-nums text-[var(--state-held)]`}>{unitCounts.unassigned.toLocaleString()}</td>
+                    <td className={`${tbl.td} text-right`}><span className="ui-count is-warn">{unitCounts.unassigned.toLocaleString()}</span></td>
                     <td className={`${tbl.td} max-sm:hidden`} colSpan={canEditLinks ? 4 : 3} />
                   </tr>
                 )}
@@ -752,15 +752,21 @@ function UnitRow({ summary, onOpen, onEdit }: {
     <tr onClick={onOpen} className={`${tbl.tr} cursor-pointer max-sm:grid max-sm:grid-cols-[1fr_auto_auto]`}>
       <td className={`${tbl.td} max-sm:col-span-1`}>
         <button type="button" onClick={(e) => { e.stopPropagation(); onOpen(); }} className="text-left group">
-          <span className="font-display text-[16px] font-semibold tabular-nums text-[var(--color-text-muted)] mr-2">{unit.code}</span>
+          <span className="ui-tag mr-2">{unit.code}</span>
           <span className="font-semibold text-[var(--color-text)] group-hover:text-[var(--color-accent-text)]">{unit.label}</span>
         </button>
         <span className="sm:hidden block text-[13px] text-[var(--color-text-muted)]">{plural(count, "piece")}{needPhotos > 0 ? `, ${needPhotos} without photos` : ""}</span>
       </td>
-      <td className={`${tbl.td} max-sm:hidden text-right font-display text-[16px] font-semibold tabular-nums`}>{count}</td>
-      <td className={`${tbl.td} max-sm:hidden text-right font-display text-[16px] font-semibold tabular-nums ${needPhotos > 0 ? "text-[var(--state-held)]" : "text-[var(--color-text-muted)]"}`}>{needPhotos}</td>
-      <td className={`${tbl.td} max-lg:hidden text-[14px] text-[var(--color-text-muted)]`}>{topTypes.map(([name, n]) => `${name} ${n}`).join(", ")}</td>
-      <td className={`${tbl.td} max-md:hidden text-right tabular-nums text-[var(--color-text-muted)]`}>{links.length}</td>
+      <td className={`${tbl.td} max-sm:hidden text-right`}><span className="ui-count">{count}</span></td>
+      <td className={`${tbl.td} max-sm:hidden text-right`}>{needPhotos > 0 ? <span className="ui-count is-warn">{needPhotos}</span> : <span className="text-[14px] text-[var(--color-text-faint)]">0</span>}</td>
+      <td className={`${tbl.td} max-lg:hidden`}>
+        <span className="flex flex-wrap gap-1">
+          {topTypes.map(([name, n]) => (
+            <span key={name} className="ui-tag !font-sans !text-[13px]">{name} <span className="font-display font-bold tabular-nums opacity-75">{n}</span></span>
+          ))}
+        </span>
+      </td>
+      <td className={`${tbl.td} max-md:hidden text-right`}>{links.length > 0 ? <span className="ui-count">{links.length}</span> : <span className="text-[14px] text-[var(--color-text-faint)]">0</span>}</td>
       {onEdit && (
         <td className={`${tbl.td} text-right`}>
           <button
@@ -804,9 +810,9 @@ function UnitResources({ orgId, unitCode, links, canEdit, onChanged }: {
           <div key={l.id} className="group relative">
             <Link
               href={`/documents/${l.libraryId}${l.folderId ? `?folderId=${l.folderId}` : ""}`}
-              className="flex items-center gap-2.5 pl-3 pr-8 py-2.5 rounded-xl bg-[var(--color-surface-2)] hover:bg-[var(--color-border)] transition-colors h-full"
+              className="flex items-center gap-2.5 pl-2 pr-8 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-main)] hover:bg-[var(--color-accent-soft)] transition-colors h-full"
             >
-              <FolderOpen className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
+              <span className="ui-icon-tile is-sm" aria-hidden><FolderOpen className="w-4 h-4" /></span>
               <div className="min-w-0">
                 <div className="text-[14px] font-semibold text-[var(--color-text)] truncate">{l.label}</div>
                 <div className="text-[12px] text-[var(--color-text-muted)] truncate">
@@ -1189,23 +1195,31 @@ function AssetTable({
           return (
             <tr key={a.id} className={`${tbl.tr} max-sm:grid max-sm:grid-cols-[64px_1fr_auto]`}>
               <td className="pl-4 pr-1 py-2">
-                <button type="button" onClick={() => onOpen(a)} aria-label={`Open ${a.tag}`} className="block w-14 h-10 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] overflow-hidden relative">
+                <button type="button" onClick={() => onOpen(a)} aria-label={`Open ${a.tag}`} className="block w-14 h-10 rounded border border-[var(--color-border)] bg-[var(--color-accent-soft)] overflow-hidden relative">
                   {coverUrl
                     ? <SignedImg path={coverUrl} alt={a.tag} className="absolute inset-0 w-full h-full object-cover" />
-                    : <ImageIcon className="w-4 h-4 m-auto absolute inset-0 text-[var(--color-text-faint)]" />}
+                    : <ImageIcon className="w-4 h-4 m-auto absolute inset-0 text-[var(--color-main)]" />}
                 </button>
               </td>
               <td className={`${tbl.td} min-w-0`}>
-                <button type="button" onClick={() => onOpen(a)} className="font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)] text-left">
-                  {a.tag}
-                </button>
+                <span className="flex items-center gap-2">
+                  <button type="button" onClick={() => onOpen(a)} className="ui-id text-[16px] text-left">
+                    {a.tag}
+                  </button>
+                  <Link href={`/assets/${encodeURIComponent(a.tag)}`} title={`${a.tag}: its documents, work and photos`}
+                    className="ui-tag !h-6 !font-sans !text-[12.5px]">Documents</Link>
+                </span>
                 <div className="md:hidden text-[13px] text-[var(--color-text-muted)] truncate max-w-[40ch]">{[type?.name, a.description].filter(Boolean).join(", ")}</div>
               </td>
-              {showType && <td className={`${tbl.td} max-md:hidden text-[var(--color-text-muted)]`}>{type?.name ?? "Uncategorized"}</td>}
+              {showType && <td className={`${tbl.td} max-md:hidden`}>{type ? <span className="ui-tag !font-sans">{type.name}</span> : <span className="ui-pill is-muted">Uncategorized</span>}</td>}
               <td className={`${tbl.td} max-md:hidden text-[var(--color-text)]`}><span className="line-clamp-1 max-w-[44ch]">{a.description ?? ""}</span></td>
               <td className={`${tbl.td} max-lg:hidden text-[14px] text-[var(--color-text-muted)]`}>{a.location ?? ""}</td>
               <td className={`${tbl.td} max-sm:hidden whitespace-nowrap`}>
-                {count === 0 ? <StatusTag tone="warn">None</StatusTag> : <span className="tabular-nums text-[var(--color-text)]">{count}</span>}
+                {count === 0
+                  ? (onAddPhotos
+                    ? <button type="button" onClick={() => onAddPhotos(a)} className="ui-pill is-warn hover:brightness-95" title={`Add photos to ${a.tag}`}><Camera className="w-3.5 h-3.5" /> None, add</button>
+                    : <StatusTag tone="warn">None</StatusTag>)
+                  : <button type="button" onClick={() => onOpen(a)} className="ui-tag !font-sans" title={`See ${count} photo${count === 1 ? "" : "s"} of ${a.tag}`}><Camera className="w-3.5 h-3.5" /> {count}</button>}
               </td>
               <td className={`${tbl.td} text-right`}>
                 {/* Always visible: a hover-only button doesn't exist on a
@@ -1728,9 +1742,9 @@ function AddUnitModal({ orgId, userId, existingCodes, onClose, onCreated }: {
       <div className="w-full max-w-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl p-5 space-y-3"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2">
-          <Factory className="w-4 h-4 text-[var(--color-text-muted)]" />
+          <span className="ui-icon-tile is-sm" aria-hidden><Factory className="w-4 h-4" /></span>
           <div className="flex-1">
-            <div className="text-[14px] font-semibold text-[var(--color-text)]">New operating area</div>
+            <div className="font-display text-[17px] font-semibold text-[var(--color-heading)]">New operating area</div>
             <div className="text-[12px] text-[var(--color-text-muted)]">
               Saved in your Site Codebook, where the whole app reads units from.
             </div>
@@ -1828,9 +1842,9 @@ function AddCategoryModal({ orgId, userId, existingTypeCodes, onClose, onCreated
       <div className="w-full max-w-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl p-5 space-y-3"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2">
-          <Tag className="w-4 h-4 text-[var(--color-text-muted)]" />
+          <span className="ui-icon-tile is-sm" aria-hidden><Tag className="w-4 h-4" /></span>
           <div className="flex-1">
-            <div className="text-[14px] font-semibold text-[var(--color-text)]">New equipment category</div>
+            <div className="font-display text-[17px] font-semibold text-[var(--color-heading)]">New equipment category</div>
             <div className="text-[12px] text-[var(--color-text-muted)]">
               A section in every operating area. Add its tag prefix and new equipment sorts itself.
             </div>

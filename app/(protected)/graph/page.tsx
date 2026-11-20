@@ -687,12 +687,12 @@ function GraphPageInner() {
             <div className="absolute top-2 left-3 flex flex-col items-start gap-2 max-h-[calc(100%-1rem)] z-10">
               <button onClick={() => setInsightsOpen((v) => !v)}
                 aria-expanded={insightsOpen}
-                className={`inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] text-[14px] font-semibold text-[var(--color-text)] shadow-sm ${
-                  insightsOpen ? "bg-[var(--color-surface-2)]" : "bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"
+                className={`inline-flex items-center gap-1.5 h-9 pl-1.5 pr-2 rounded-md border text-[14px] font-semibold shadow-sm ${
+                  insightsOpen ? "bg-[var(--color-accent-soft)] border-[var(--color-main)] text-[var(--color-accent-text)]" : "bg-[var(--color-surface)] border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                 }`}>
-                <Lightbulb className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Insights
+                <span className={`ui-icon-tile is-sm !w-6 !h-6 ${insightsOpen ? "is-solid" : ""}`} aria-hidden><Lightbulb className="w-3.5 h-3.5" /></span> Insights
                 {insights && insights.orphans.length > 0 && (
-                  <span className="ml-0.5 tabular-nums text-[var(--color-text-muted)]">
+                  <span className="ui-count is-warn" title={`${insights.orphans.length} orphans`}>
                     {badgeText(insights.orphans.length)}
                   </span>
                 )}
@@ -710,9 +710,9 @@ function GraphPageInner() {
                         onClick={() => { setInsightTab(t.key); if (t.key === "orphans") patchSettings({ hideUnlinked: false }); }}
                         aria-pressed={insightTab === t.key}
                         className={`flex-1 inline-flex items-center justify-center gap-1 px-2 py-2 text-[13px] font-semibold ${
-                          insightTab === t.key ? "text-[var(--color-text)] border-b-2 border-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                          insightTab === t.key ? "text-[var(--color-accent-text)] border-b-[3px] border-[var(--color-main)] bg-[var(--color-accent-soft)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                         }`}>
-                        <t.icon className={`w-3.5 h-3.5 ${t.tone}`} /> {t.label} <span className="tabular-nums font-normal">{t.count}</span>
+                        <t.icon className={`w-3.5 h-3.5 ${t.tone}`} /> {t.label} <span className={`ui-count !h-5 !min-w-5 !px-1.5 !text-[12px] ${insightTab === t.key ? "is-solid" : ""}`}>{t.count}</span>
                       </button>
                     ))}
                   </div>
@@ -756,7 +756,7 @@ function GraphPageInner() {
                               className="w-full flex items-center gap-1.5 px-1.5 py-1 rounded-lg hover:bg-[var(--color-surface-2)] text-left">
                               <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: NODE_COLORS[h.node.type] }} />
                               <span className="flex-1 min-w-0 text-[13px] font-semibold text-[var(--color-text)] truncate">{h.node.label}</span>
-                              <span className="shrink-0 text-[13px] tabular-nums font-semibold text-[var(--color-text)]">{h.degree}</span>
+                              <span className="shrink-0 ui-count !h-5 !text-[12px]">{h.degree}</span>
                             </button>
                           ))}
                         </>

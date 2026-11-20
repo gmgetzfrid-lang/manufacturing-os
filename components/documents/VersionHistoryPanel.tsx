@@ -216,8 +216,9 @@ export default function VersionHistoryPanel({
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between px-1">
-        <div className="text-[13px] font-semibold text-[var(--color-text)] flex items-center gap-1.5">
-          <Layers className="w-3 h-3" /> Version History
+        <div className="font-display text-[16px] font-semibold text-[var(--color-heading)] flex items-center gap-2">
+          <span className="ui-icon-tile is-sm" aria-hidden><Layers className="w-4 h-4" /></span> Version history
+          <span className="ui-count font-sans" title={`${versions.length} revision${versions.length === 1 ? "" : "s"}`}>{versions.length}</span>
           <HelpTooltip>
             Every revision of this document, newest first. Each row links to its file, SHA-256 hash,
             and the engineering signoffs (Drawn / Checked / Approved) captured at release.
@@ -237,7 +238,6 @@ export default function VersionHistoryPanel({
               <ArrowUpFromLine className="w-3 h-3" /> Backfill older
             </button>
           )}
-          <div className="text-[13px] text-[var(--color-text-muted)] font-display tabular-nums">{versions.length} rev{versions.length === 1 ? "" : "s"}</div>
         </div>
       </div>
 
@@ -247,75 +247,72 @@ export default function VersionHistoryPanel({
           return (
             <div
               key={v.id}
-              className={`relative rounded-md border p-3 ${
+              className={`relative rounded-md border p-3 overflow-hidden ${
                 isCurrent
-                  ? "border-[var(--color-border-strong)] bg-[var(--color-surface)]"
+                  ? "border-[color-mix(in_srgb,var(--color-main)_30%,transparent)] bg-[var(--color-accent-soft)]"
                   : "border-[var(--color-border)] bg-[var(--color-surface)]"
               }`}
             >
+              {isCurrent && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--color-main)]" />}
               {/* Top row: rev label + status badges + actions */}
               <div className="flex items-start gap-3">
-                <div className="shrink-0 font-display font-semibold text-[17px] leading-6 tabular-nums text-[var(--color-text)]">
-                  Rev {v.revisionLabel || "-"}
+                <div className={`shrink-0 ui-id text-[18px] leading-6 ${isCurrent ? "!text-[var(--color-main)]" : ""}`}>
+                  <span className="font-sans text-[13px] font-normal text-[var(--color-text-muted)] mr-1">Rev</span>{v.revisionLabel || "-"}
                 </div>
 
                 <div className="flex-1 min-w-0">
                   <div className="flex flex-wrap items-center gap-1.5">
                     {isCurrent ? (
-                      <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]">
-                        <span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-released)]" /> Current
-                      </span>
+                      <span className="ui-pill is-solid">Current</span>
                     ) : v.isBranch ? (
                       <span
-                        className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded"
+                        className="ui-pill is-warn"
                         title="Saved as a branch from an old base. Never made current. See the open items for where it stands."
                       >
                         <ShieldAlert className="w-3 h-3" /> Branch
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-muted)]">
-                        <span aria-hidden className="w-2 h-2 rounded-full bg-[var(--color-text-faint)]" /> Superseded
-                      </span>
+                      <span className="ui-pill is-muted">Superseded</span>
                     )}
                     {v.issueType && (
-                      <span className="text-[13px] font-semibold text-[var(--color-text)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{v.issueType}</span>
+                      <span className="ui-tag !h-6 !font-sans !text-[13px]">{v.issueType}</span>
                     )}
                     {v.changeType && (
-                      <span className="text-[13px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{v.changeType}</span>
+                      <span className="ui-tag !h-6 !font-sans !text-[13px]">{v.changeType}</span>
                     )}
                     {v.revertedFromVersionId && (
-                      <span className="text-[13px] font-semibold text-[var(--color-text)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">Revert</span>
+                      <span className="ui-pill is-muted"><RotateCcw className="w-3 h-3" /> Revert</span>
                     )}
                     {v.provenance === "unverified" && (
                       <span
-                        className="text-[13px] font-semibold text-[var(--state-overdue)]"
+                        className="ui-pill is-bad"
                         title="Published with no recorded checkout/download trail and no verified base declaration. Document Control reviews these, like QA receiving inspection."
                       >
-                        ⚑ Unverified provenance
+                        <ShieldAlert className="w-3 h-3" /> Unverified provenance
                       </span>
                     )}
                     {v.provenance === "session" && (
                       <span
-                        className="text-[13px] font-bold text-[var(--state-released)] bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] px-1.5 py-0.5 rounded"
+                        className="ui-pill is-good"
                         title="Published from a checkout: full record of where it came from."
                       >
-                        Session
+                        From a checkout
                       </span>
                     )}
                     {v.provenance === "external" && (
                       <span
-                        className="text-[13px] font-semibold text-[var(--color-text)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded"
+                        className="ui-pill"
                         title="Submitted by an outside company through a project intake link. External work enters through review (or a trusted link's own documents). The submitting company is on the record."
                       >
-                        External{v.createdByName ? ` · ${v.createdByName}` : ""}
+                        External{v.createdByName ? `: ${v.createdByName}` : ""}
                       </span>
                     )}
                     {v.sourceFileKey && (
                       <span
-                        className="text-[13px] font-semibold text-[var(--color-text)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded"
+                        className="ui-tag !h-6 !font-sans !text-[13px]"
                         title="The native CAD source file is stored with this revision."
                       >
-                        CAD source
+                        <FileText className="w-3 h-3" /> CAD source
                       </span>
                     )}
                   </div>
@@ -329,16 +326,16 @@ export default function VersionHistoryPanel({
                 <div className="flex items-center gap-1 shrink-0">
                   <button
                     onClick={() => onOpenVersion(v)}
-                    title="Open this revision in the viewer"
-                    className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-accent-hover)] hover:bg-[var(--color-surface-2)]"
+                    title="Open this revision in the viewer" aria-label={`Open Rev ${v.revisionLabel || ""}`}
+                    className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-main)] hover:bg-[var(--color-surface)]"
                   >
                     <Eye className="w-3.5 h-3.5" />
                   </button>
                   {!isCurrent && currentVersion && currentVersion.id !== v.id && (
                     <button
                       onClick={() => setDiffBaseVersion(v)}
-                      title={`Compare Rev ${v.revisionLabel} with current revision`}
-                      className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-accent-hover)] hover:bg-[var(--color-surface-2)]"
+                      title={`Compare Rev ${v.revisionLabel} with current revision`} aria-label={`Compare Rev ${v.revisionLabel} with current`}
+                      className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-main)] hover:bg-[var(--color-surface)]"
                     >
                       <GitCompare className="w-3.5 h-3.5" />
                     </button>
@@ -346,8 +343,8 @@ export default function VersionHistoryPanel({
                   <button
                     onClick={() => void handleDownload(v)}
                     disabled={downloadingId === v.id || !currentUserId}
-                    title="Download this revision (uncontrolled stamp)"
-                    className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-accent-hover)] hover:bg-[var(--color-surface-2)] disabled:opacity-40"
+                    title="Download this revision (uncontrolled stamp)" aria-label={`Download Rev ${v.revisionLabel || ""}`}
+                    className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-main)] hover:bg-[var(--color-surface)] disabled:opacity-40"
                   >
                     {downloadingId === v.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <DownloadIcon className="w-3.5 h-3.5" />}
                   </button>
@@ -355,8 +352,8 @@ export default function VersionHistoryPanel({
                   {canRevert && currentUserId && doc.orgId && doc.libraryId && v.reviewState !== "in_review" && (
                     <button
                       onClick={() => openCorrect(v)}
-                      title={`Correct the revision label (currently "${v.revisionLabel || "-"}") - audited`}
-                      className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-accent-hover)] hover:bg-[var(--color-surface-2)]"
+                      title={`Correct the revision label (currently "${v.revisionLabel || "-"}") - audited`} aria-label={`Correct the label of Rev ${v.revisionLabel || ""}`}
+                      className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-main)] hover:bg-[var(--color-surface)]"
                     >
                       <Pencil className="w-3.5 h-3.5" />
                     </button>
@@ -365,8 +362,8 @@ export default function VersionHistoryPanel({
                   {canRevert && !isCurrent && onRevertVersion && (
                     <button
                       onClick={() => onRevertVersion(v)}
-                      title="Revert document to this revision"
-                      className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-accent-hover)] hover:bg-[var(--color-surface-2)]"
+                      title="Revert document to this revision" aria-label={`Revert to Rev ${v.revisionLabel || ""}`}
+                      className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-main)] hover:bg-[var(--color-surface)]"
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
                     </button>
@@ -396,7 +393,7 @@ export default function VersionHistoryPanel({
                 <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 pl-1 text-[13px] text-[var(--color-text-muted)]">
                   {v.mocReference && (
                     <span className="inline-flex items-center gap-1">
-                      <LinkIcon className="w-3 h-3" /> MOC <b className="text-[var(--color-text)] font-display tabular-nums">{v.mocReference}</b>
+                      <LinkIcon className="w-3 h-3" /> MOC <b className="ui-id">{v.mocReference}</b>
                     </span>
                   )}
                   {v.sourceFileName && (

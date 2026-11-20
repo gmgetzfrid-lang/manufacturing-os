@@ -14,7 +14,7 @@ import { useToast } from "@/components/providers/ToastProvider";
 
 import React, { useRef, useState } from "react";
 import {
-  Camera, Tag, Loader2,
+  Settings, Zap, Droplet, Box, Activity, Camera, Tag, Loader2, Plus,
 } from "lucide-react";
 import { useAssetByTag, findAssetsByTag, getAssetByTag, listAssetPhotos, invalidateAssetCache, type Asset } from "@/lib/assets";
 import AssetPhotoCarousel from "./AssetPhotoCarousel";
@@ -33,6 +33,22 @@ interface AssetTagChipProps {
   referenceKind?: "photos" | "files";
 }
 
+/** The equipment type's icon. The column's type word decides it when it
+ *  names one (pump, exchanger, vessel, valve, instrument); otherwise the
+ *  tag's letter does (P pump, E exchanger, V/D/T vessel); else a gear. */
+function getIconByType(type: string, tag = "") {
+  const t = (type || "").toLowerCase();
+  if (t.includes("pump")) return <Activity className="w-3 h-3" />;
+  if (t.includes("exchanger") || t.includes("heat")) return <Zap className="w-3 h-3" />;
+  if (t.includes("vessel") || t.includes("tank")) return <Box className="w-3 h-3" />;
+  if (t.includes("valve")) return <Droplet className="w-3 h-3" />;
+  if (t.includes("instrument")) return <Zap className="w-3 h-3" />;
+  const lead = (tag.trim().match(/^[A-Za-z]+/)?.[0] ?? "").toUpperCase();
+  if (lead === "P") return <Activity className="w-3 h-3" />;
+  if (lead === "E") return <Zap className="w-3 h-3" />;
+  if (lead === "V" || lead === "D" || lead === "T") return <Box className="w-3 h-3" />;
+  return <Settings className="w-3 h-3" />;
+}
 
 export default function AssetTagChip({
   tag, type = "Equipment", orgId, userId, canManage = false, size = "compact", referenceKind = "photos",
@@ -100,50 +116,104 @@ function PhotoTagChip({
     }
   };
 
+  // Finds the equipment record for the camera button when it isn't cached
+  // yet. Never adds equipment; says why when it can't be found.
+  const resolveAsset = async (): Promise<Asset | null> => {
+    if (asset) return asset;
+    if (!orgId) return null;
+    setCreating(true);
+    try {
+      const hits = await findAssetsByTag(orgId, tag);
+      const found = hits.length === 1 ? hits[0] : await getAssetByTag(orgId, tag);
+      if (!found) {
+        showToast({ type: "info", title: hits.length > 1 ? `${tag} is on ${hits.length} units` : `${tag} isn't in the equipment list`,
+          message: hits.length > 1 ? "Open it from its unit in Operating areas." : "Admins add equipment in Operating areas, under its unit." });
+        return null;
+      }
+      setCreatedAsset(found);
+      return found;
+    } catch (err) {
+      showToast({ type: "error", title: `Couldn't open ${tag}`, message: (err as Error).message });
+      return null;
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  // The camera inside the pill: the carousel when it has photos, the
+  // uploader for people who add them when it has none.
+  const onCamera = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!interactive) return;
+    if (hasPhotos) {
+      if (await resolveAsset()) setCarouselOpen(true);
+      return;
+    }
+    if (canManage && (await resolveAsset())) setUploaderOpen(true);
+  };
+
   const expandToFullScreen = () => {
     setPopoverOpen(false);
     setCarouselOpen(true);
   };
 
   if (size === "compact") {
-    // A compact text tag: the number in the condensed face and the brand's
-    // link color, no box; a camera count when it has photos.
-    const baseClasses = "inline-flex items-center h-6 font-display text-[14px] font-semibold tabular-nums whitespace-nowrap transition-colors";
-    const stateClasses = interactive
-      ? "text-[var(--color-accent-text)] hover:underline underline-offset-2 cursor-pointer disabled:cursor-wait"
-      : "text-[var(--color-text)]";
+    // A pill with buttons in it: the type icon and the tag (opens the quick
+    // look, or the asset), then, behind a hairline, a camera: the photo count
+    // that opens the carousel, or "+" to add photos for people who may.
+    const tagTitle = !interactive
+      ? tag
+      : creating
+        ? `Loading ${tag}…`
+        : hasPhotos
+          ? `Quick look at ${tag}`
+          : cachedAsset && canManage
+            ? `Add photos to ${tag}`
+            : `Open ${tag}`;
+    const showCamera = interactive && (hasPhotos || canManage);
+    const seg = "h-full inline-flex items-center gap-1 transition-colors hover:bg-[var(--color-main)] hover:text-white focus-visible:outline-2 focus-visible:-outline-offset-2 disabled:cursor-wait";
+
+    if (!interactive) {
+      return (
+        <span className="ui-tag tabular-nums">
+          <span className="text-[var(--color-main)]" aria-hidden>{getIconByType(type, tag)}</span>
+          {tag}
+        </span>
+      );
+    }
 
     return (
       <>
-        <button
-          ref={buttonRef}
-          onClick={onClick}
-          disabled={!interactive || creating}
-          title={
-            !interactive
-              ? tag
-              : creating
-                ? `Loading ${tag}…`
-                : hasPhotos
-                  ? `Quick look: ${photoCount} photo${photoCount === 1 ? "" : "s"} of ${tag}`
-                  : cachedAsset
-                    ? `Add photos to ${tag}`
-                    : canManage
-                      ? `Open ${tag} to add photos`
-                      : tag
-          }
-          className={`${baseClasses} ${stateClasses}`}
-        >
-          <span>{tag}</span>
-          {creating ? (
-            <Loader2 className="w-3 h-3 ml-1 animate-spin text-[var(--color-text-muted)]" />
-          ) : hasPhotos ? (
-            <span className="ml-1 inline-flex items-center gap-0.5 font-sans text-[13px] font-semibold text-[var(--color-text-muted)]">
-              <Camera className="w-3 h-3" />
-              {photoCount}
+        <span className="ui-tag tabular-nums !p-0 !gap-0 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+          <button
+            ref={buttonRef}
+            type="button"
+            onClick={onClick}
+            disabled={creating}
+            title={tagTitle}
+            aria-label={tagTitle}
+            className={`group/tag ${seg} pl-1.5 ${showCamera ? "pr-1.5" : "pr-2"}`}
+          >
+            <span className="text-[var(--color-main)] group-hover/tag:text-white" aria-hidden>
+              {creating ? <Loader2 className="w-3 h-3 animate-spin" /> : getIconByType(type, tag)}
             </span>
-          ) : null}
-        </button>
+            <span>{tag}</span>
+          </button>
+          {showCamera && (
+            <button
+              type="button"
+              onClick={(e) => void onCamera(e)}
+              disabled={creating}
+              title={hasPhotos ? `See ${photoCount} photo${photoCount === 1 ? "" : "s"} of ${tag}` : `Add photos to ${tag}`}
+              aria-label={hasPhotos ? `See ${photoCount} photo${photoCount === 1 ? "" : "s"} of ${tag}` : `Add photos to ${tag}`}
+              className={`${seg} px-1.5 border-l border-[color-mix(in_srgb,var(--color-main)_22%,transparent)] font-sans text-[12px] font-bold`}
+            >
+              <Camera className="w-3 h-3" aria-hidden />
+              {hasPhotos ? photoCount : <Plus className="w-2.5 h-2.5 -ml-0.5" aria-hidden />}
+            </button>
+          )}
+        </span>
 
         {popoverOpen && asset && (
           <AssetPhotoPopover
@@ -184,17 +254,17 @@ function PhotoTagChip({
       disabled={!interactive}
       className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] shadow-sm hover:shadow-md hover:border-[var(--color-border)] transition-all"
     >
-      <div className="p-1.5 bg-[var(--color-surface-2)] rounded-md">
-        <Tag className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-      </div>
+      <span className="ui-icon-tile is-sm">
+        <Tag className="w-3.5 h-3.5" />
+      </span>
       <div className="text-left">
-        <div className="text-[13px] font-semibold text-[var(--color-text)]">{tag}</div>
+        <div className="ui-id text-[15px]">{tag}</div>
         <div className="text-[13px] text-[var(--color-text-muted)]">{type}</div>
       </div>
       {hasPhotos && (
-        <div className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text)] text-[13px] font-semibold">
+        <span className="ml-2 ui-count gap-1">
           <Camera className="w-3 h-3" /> {photoCount}
-        </div>
+        </span>
       )}
     </button>
   );

@@ -21,6 +21,7 @@ import {
   Palette,
   ChevronRight,
   X,
+  Map as MapIcon,
 } from "lucide-react";
 import { useFind } from "@/components/find/useFind";
 import FindPanel, { findMapState } from "@/components/find/FindPanel";
@@ -239,7 +240,7 @@ export default function DocumentsHomePage() {
   const emptyState = (
     <Card>
       <div className="flex items-start gap-3">
-        <Library className="h-5 w-5 mt-0.5 shrink-0 text-[var(--color-text-muted)]" />
+        <span className="ui-icon-tile" aria-hidden><Library className="h-5 w-5" /></span>
         <div className="flex-1">
           <h2 className="text-[15px] font-semibold text-[var(--color-text)]">No libraries you can open</h2>
           <p className="text-[15px] text-[var(--color-text-muted)] mt-0.5">
@@ -281,9 +282,9 @@ export default function DocumentsHomePage() {
             const n = libCounts.get(lib._id!);
             const custom = !!(lib.color || lib.icon || lib.coverImageUrl);
             const access = !lib._canRead && !isController
-              ? <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--state-held)]"><AlertTriangle className="w-3.5 h-3.5" /> No access</span>
-              : lib._isPublicRead ? <span className="inline-flex items-center gap-1.5"><Eye className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Everyone can read</span>
-              : <span className="inline-flex items-center gap-1.5"><Lock className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Controlled</span>;
+              ? <span className="ui-pill is-warn"><AlertTriangle className="w-3.5 h-3.5" /> No access</span>
+              : lib._isPublicRead ? <span className="ui-pill is-muted"><Eye className="w-3.5 h-3.5" /> Everyone can read</span>
+              : <span className="ui-pill"><Lock className="w-3.5 h-3.5" /> Controlled</span>;
             return (
               <tr key={lib._id} data-doc-lib={lib._id}
                 onClick={() => { if (!menuOpen) openLib(lib._id!); }}
@@ -292,13 +293,13 @@ export default function DocumentsHomePage() {
                   <span className="flex items-center gap-3 min-w-0">
                     {custom
                       ? <NodeCover appearance={{ color: lib.color, icon: lib.icon, coverImageUrl: lib.coverImageUrl, coverTint: lib.coverTint }}
-                          className="w-8 h-8 shrink-0" rounded="rounded-md" iconSize="w-4 h-4" />
-                      : <Library className="w-5 h-5 shrink-0 text-[var(--color-text-muted)]" aria-hidden />}
+                          className="w-9 h-9 shrink-0" rounded="rounded-lg" iconSize="w-[18px] h-[18px]" />
+                      : <span className="ui-icon-tile" aria-hidden><Library className="w-[18px] h-[18px]" /></span>}
                     <span className="min-w-0">
                       <span className="flex items-center gap-1.5">
                         <Link href={`/documents/${lib._id}`}
                           onClick={(e) => { e.preventDefault(); e.stopPropagation(); openLib(lib._id!); }}
-                          className="truncate font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
+                          className="truncate text-[16px] font-semibold text-[var(--color-text)] group-hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">
                           {lib.name}
                         </Link>
                         {isPending && <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin text-[var(--color-text-faint)]" />}
@@ -306,13 +307,13 @@ export default function DocumentsHomePage() {
                       {lib.description && <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{lib.description}</span>}
                       {/* Phone: the facts under the name. */}
                       <span className="sm:hidden flex items-center gap-3 mt-0.5 text-[13px] text-[var(--color-text-muted)]">
-                        {n != null && <span><span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{n.toLocaleString()}</span> documents</span>}
+                        {n != null && <span className="inline-flex items-center gap-1"><span className="ui-count">{n.toLocaleString()}</span> documents</span>}
                         {access}
                       </span>
                     </span>
                   </span>
                 </td>
-                <td className="px-4 py-3 text-right font-display text-[17px] font-semibold tabular-nums text-[var(--color-text)] max-sm:hidden">{n != null ? n.toLocaleString() : ""}</td>
+                <td className="px-4 py-3 text-right max-sm:hidden">{n != null ? <span className={`ui-count ${n > 0 ? "" : "!bg-[var(--color-surface-2)] !text-[var(--color-text-muted)]"}`}>{n.toLocaleString()}</span> : ""}</td>
                 <td className="px-4 py-3 text-[14px] text-[var(--color-text)] whitespace-nowrap max-sm:hidden">{access}</td>
                 <td className="pr-3 py-3 text-right">
                   {isController ? (
@@ -422,7 +423,10 @@ export default function DocumentsHomePage() {
           <>
             {filtered.length > 0 && (
               <section>
-                <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)] mb-2.5">Libraries</h2>
+                <h2 className="flex items-center gap-2.5 font-display text-[19px] leading-tight font-semibold text-[var(--color-heading)] mb-2.5">
+                  <span className="ui-icon-tile is-sm is-solid" aria-hidden><Library className="w-4 h-4" /></span>
+                  Libraries <span className="ui-count is-solid font-sans">{filtered.length}</span>
+                </h2>
                 {libraryRows(filtered)}
               </section>
             )}
@@ -440,12 +444,15 @@ export default function DocumentsHomePage() {
           </Card>
         ) : emptyState) : (
           <section>
-            <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)] mb-2.5">Libraries</h2>
+            <h2 className="flex items-center gap-2.5 font-display text-[19px] leading-tight font-semibold text-[var(--color-heading)] mb-2.5">
+              <span className="ui-icon-tile is-sm is-solid" aria-hidden><Library className="w-4 h-4" /></span>
+              Libraries <span className="ui-count is-solid font-sans">{libraries.length}</span>
+            </h2>
             {libraryRows(libraries)}
           </section>
         )}
 
-        <Card label={<>Map <HelpTooltip>Tap a unit to open its drawings, a piece of equipment to see its documents, a document to open it here.</HelpTooltip></>} className="min-w-0">
+        <Card label={<span className="inline-flex items-center gap-2.5 text-[var(--color-heading)]"><span className="ui-icon-tile is-sm is-solid" aria-hidden><MapIcon className="w-4 h-4" /></span>Map <HelpTooltip>Tap a unit to open its drawings, a piece of equipment to see its documents, a document to open it here.</HelpTooltip></span>} className="min-w-0">
           <FindMap orgId={activeOrgId} unit={searching ? ms.unit : null}
             assetId={searching ? ms.assetId : null} docs={searching ? ms.docs : null} candidates={searching ? ms.candidates : undefined}
             onPickAsset={(id, tag) => {

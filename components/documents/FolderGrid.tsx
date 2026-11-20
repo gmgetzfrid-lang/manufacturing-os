@@ -353,10 +353,11 @@ export default function FolderGrid({
               dropInto ? "bg-[var(--color-surface-2)] ring-2 ring-inset ring-[var(--color-border-strong)]"
               : dropBefore ? "shadow-[inset_0_3px_0_0_var(--color-text-muted)]"
               : dropAfter ? "shadow-[inset_0_-3px_0_0_var(--color-text-muted)]"
-              : selectedIds?.has(folder.id!) || contextMenu?.id === folder.id ? "bg-[var(--color-surface-2)]"
+              : selectedIds?.has(folder.id!) ? "bg-[var(--color-accent-soft)]"
+              : contextMenu?.id === folder.id ? "bg-[var(--color-surface-2)]"
               : "hover:bg-[var(--color-surface-2)]"}`}
           >
-            {selectedIds?.has(folder.id!) && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--color-text)]" />}
+            {selectedIds?.has(folder.id!) && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--color-main)]" />}
             {/* The open target is a real button; its click bubbles to the
                 row, which also handles ctrl/shift selection. */}
             <div role="cell" className="min-w-0">
@@ -369,19 +370,21 @@ export default function FolderGrid({
                     iconSize="w-3.5 h-3.5"
                   />
                 ) : (
-                  <Folder className="w-5 h-5 shrink-0 text-[var(--color-text-muted)]" aria-hidden />
+                  <span className="ui-icon-tile is-sm" aria-hidden><Folder className="w-4 h-4" /></span>
                 )}
                 <span className="min-w-0">
-                  <span className="block text-[15px] font-semibold text-[var(--color-text)] truncate select-none">{folder.name}</span>
+                  <span className="block text-[15px] font-semibold text-[var(--color-text)] group-hover:text-[var(--color-accent-text)] truncate select-none">{folder.name}</span>
                   <span className="sm:hidden block text-[13px] text-[var(--color-text-muted)] truncate select-none">{metaLine(folder, kids)}</span>
                 </span>
               </button>
             </div>
-            <div role="cell" className="max-sm:hidden font-display text-[15px] tabular-nums text-[var(--color-text)] text-right">
-              {docTotals?.get(folder.id!) !== undefined ? docTotals.get(folder.id!)!.toLocaleString() : "-"}
+            <div role="cell" className="max-sm:hidden text-right">
+              {docTotals?.get(folder.id!) !== undefined && docTotals.get(folder.id!)! > 0
+                ? <span className="ui-count">{docTotals.get(folder.id!)!.toLocaleString()}</span>
+                : <span className="text-[14px] text-[var(--color-text-faint)]">-</span>}
             </div>
-            <div role="cell" className="max-sm:hidden font-display text-[15px] tabular-nums text-right text-[var(--color-text-muted)]">
-              {kids ? kids.toLocaleString() : "-"}
+            <div role="cell" className="max-sm:hidden font-display text-[15px] font-semibold tabular-nums text-right text-[var(--color-text)]">
+              {kids ? kids.toLocaleString() : <span className="font-sans font-normal text-[14px] text-[var(--color-text-faint)]">-</span>}
             </div>
             <div role="cell" className="flex justify-end">{menuButton}</div>
           </div>

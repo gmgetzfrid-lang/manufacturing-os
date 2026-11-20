@@ -10,11 +10,11 @@ import { History, Loader2, Lightbulb } from "lucide-react";
 import { loadEquipmentHistory, type EquipmentHistory, type HistoryJob } from "@/lib/equipmentHistory";
 import { fmtInTz } from "@/lib/scheduleTz";
 
-const STATUS: Record<string, { word: string; cls: string }> = {
-  completed: { word: "Done", cls: "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)]" },
-  in_progress: { word: "Under way", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)]" },
-  on_hold: { word: "On hold", cls: "bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] text-[var(--state-held)]" },
-  blocked: { word: "Blocked", cls: "bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)]" },
+const STATUS: Record<string, { word: string; pill: string }> = {
+  completed: { word: "Done", pill: "is-good" },
+  in_progress: { word: "Under way", pill: "" },
+  on_hold: { word: "On hold", pill: "is-warn" },
+  blocked: { word: "Blocked", pill: "is-bad" },
 };
 
 export default function WorkHistoryPanel({ orgId, assetId, code, tag, unitCode }: { orgId: string; assetId: string; code?: string | null; tag?: string | null; unitCode?: string | null }) {
@@ -42,10 +42,15 @@ export default function WorkHistoryPanel({ orgId, assetId, code, tag, unitCode }
   return (
     <section className="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] overflow-hidden">
       <div className="px-4 sm:px-5 pt-4 pb-3 border-b border-[var(--color-border)] flex items-center justify-between gap-2">
-        <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)] inline-flex items-center gap-2">
-          <History className="w-4 h-4" /> Work history
+        <h2 className="font-display text-[17px] font-semibold text-[var(--color-heading)] inline-flex items-center gap-2.5">
+          <span className="ui-icon-tile is-sm" aria-hidden><History className="w-4 h-4" /></span> Work history
         </h2>
-        {ready && data && <span className="text-[13px] text-[var(--color-text-muted)]">{jobs.length} work order{jobs.length === 1 ? "" : "s"} · {byProject.size} project{byProject.size === 1 ? "" : "s"}</span>}
+        {ready && data && (
+          <span className="flex items-center gap-3 text-[13px] text-[var(--color-text-muted)]">
+            <span className="inline-flex items-center gap-1.5"><span className="ui-count">{jobs.length}</span> work order{jobs.length === 1 ? "" : "s"}</span>
+            <span className="inline-flex items-center gap-1.5"><span className="ui-count">{byProject.size}</span> project{byProject.size === 1 ? "" : "s"}</span>
+          </span>
+        )}
       </div>
       {!ready ? (
         <div className="px-4 py-4 flex items-center gap-2 text-[12.5px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Reading the jobs…</div>
@@ -59,18 +64,18 @@ export default function WorkHistoryPanel({ orgId, assetId, code, tag, unitCode }
         <ul className="divide-y divide-[var(--color-border)]">
           {[...byProject.entries()].map(([pid, js]) => (
             <li key={pid} className="px-4 py-3 space-y-1.5">
-              <Link href={`/projects/${pid}?tab=work`} className="text-[14px] font-bold text-[var(--color-text)] hover:underline">{js[0].projectName}</Link>
+              <Link href={`/projects/${pid}?tab=work`} className="text-[15px] font-semibold text-[var(--color-accent-text)] hover:underline">{js[0].projectName}</Link>
               <ul className="space-y-1.5">
                 {js.map((j) => {
-                  const st = j.cancelled ? { word: "Cancelled", cls: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" } : STATUS[j.status] ?? { word: "Not started", cls: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" };
+                  const st = j.cancelled ? { word: "Cancelled", pill: "is-muted" } : STATUS[j.status] ?? { word: "Not started", pill: "is-muted" };
                   const did = span(j.actualStart, j.actualFinish, j.tz);
                   const plan = span(j.plannedStart, j.plannedFinish, j.tz);
                   return (
                     <li key={j.taskId} className="text-[13px]">
                       <div className="flex flex-wrap items-baseline gap-x-2">
-                        {j.wo && <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">WO {j.wo}</span>}
+                        {j.wo && <span className="ui-id text-[14px]">WO {j.wo}</span>}
                         <span className="font-semibold text-[var(--color-text)] break-words">{j.name}</span>
-                        <span className={`rounded px-1.5 py-px text-[13px] font-semibold ${st.cls}`}>{st.word}</span>
+                        <span className={`ui-pill ${st.pill}`}>{st.word}</span>
                       </div>
                       <div className="text-[var(--color-text-muted)]">
                         {[j.steps ? `${j.stepsDone} of ${j.steps} steps done` : `${j.pct}%`, did ? `worked ${did}` : null, plan ? `planned ${plan}` : null].filter(Boolean).join(" · ")}

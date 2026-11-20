@@ -9,7 +9,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { MapPin, AlertOctagon, RefreshCw, Printer, Loader2, QrCode } from "lucide-react";
+import { MapPin, AlertOctagon, RefreshCw, Printer, Loader2, QrCode, FileText, Camera } from "lucide-react";
 import MoreMenu from "@/components/ui/MoreMenu";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import SignedImg from "@/components/assets/SignedImg";
@@ -211,9 +211,10 @@ export default function AssetHubPage() {
         <PageBody>
         {/* Documents */}
         <section className="min-w-0">
-          <div className="flex items-baseline gap-2 mb-2.5">
-            <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Controlled documents</h2>
-            <span className="text-[14px] text-[var(--color-text-muted)] tabular-nums">{docCount.toLocaleString()}</span>
+          <div className="flex items-center gap-2.5 mb-2.5">
+            <span className="ui-icon-tile is-sm is-solid" aria-hidden><FileText className="w-4 h-4" /></span>
+            <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-heading)]">Controlled documents</h2>
+            <span className="ui-count is-solid">{docCount.toLocaleString()}</span>
           </div>
           {(packNote || error || (partError && !error)) && (
             <div className="mb-3 space-y-1.5">
@@ -259,13 +260,13 @@ export default function AssetHubPage() {
                     <td className="px-4 py-2.5 relative max-sm:block">
                       {held && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />}
                       <span className="flex items-center gap-3">
-                        <Link href={href} className="flex-1 min-w-0 truncate font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{d.number}</Link>
+                        <Link href={href} className="ui-id flex-1 min-w-0 truncate text-[16px]">{d.number}</Link>
                         {/* Phone: status at right, the rest under it. */}
                         <span className="sm:hidden shrink-0">{held ? <StatusTag tone="bad" colored>On hold</StatusTag> : d.status ? <StatusTag status={d.status} /> : null}</span>
                       </span>
                       <span className="sm:hidden mt-0.5 flex gap-x-3 text-[13px] text-[var(--color-text-muted)] min-w-0">
                         {d.title && d.title !== d.number && <span className="truncate min-w-0">{d.title}</span>}
-                        {d.rev && <span className="shrink-0">Rev <span className="font-display tabular-nums font-semibold text-[var(--color-text)]">{d.rev}</span></span>}
+                        {d.rev && <span className="shrink-0">Rev <span className="ui-id">{d.rev}</span></span>}
                         {d.checkedOutByName && <span className="shrink-0 font-semibold text-[var(--state-held)]">Out: {d.checkedOutByName}</span>}
                       </span>
                     </td>
@@ -275,7 +276,7 @@ export default function AssetHubPage() {
                       {held ? <StatusTag tone="bad" colored>On hold</StatusTag> : d.status ? <StatusTag status={d.status} /> : <span className="text-[var(--color-text-muted)]">-</span>}
                     </td>
                     <td className="px-4 py-2.5 hidden lg:table-cell">
-                      {d.checkedOutByName ? <span className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[13px] font-semibold whitespace-nowrap leading-[18px] bg-[color-mix(in_srgb,var(--state-held)_16%,transparent)] text-[var(--state-held)]">{d.checkedOutByName}</span> : ""}
+                      {d.checkedOutByName ? <span className="ui-pill is-warn">{d.checkedOutByName}</span> : ""}
                     </td>
                   </tr>
                 );
@@ -325,7 +326,7 @@ export default function AssetHubPage() {
 
         {/* Photos */}
         {photos.length > 0 && (
-          <Card label={<>Photos <span className="font-sans text-[14px] font-normal text-[var(--color-text-muted)] tabular-nums">{photos.length}</span></>}>
+          <Card label={<span className="inline-flex items-center gap-2.5 text-[var(--color-heading)]"><span className="ui-icon-tile is-sm is-solid" aria-hidden><Camera className="w-4 h-4" /></span>Photos <span className="ui-count is-solid font-sans">{photos.length}</span></span>}>
             <div className="flex flex-wrap gap-2">
               {photos.slice(0, 12).map((p) => (
                 <div key={p.id} className="w-24 h-24 rounded-md bg-[var(--color-surface-2)] flex items-center justify-center text-[13px] text-[var(--color-text-muted)] overflow-hidden" title={p.caption || ""}>

@@ -267,14 +267,17 @@ export default function PackagesPage() {
         loadErr ? null : (
         <Card>
           <p className="flex items-center gap-2.5 text-[15px] text-[var(--color-text-muted)]">
-            <Package className="w-5 h-5 shrink-0 text-[var(--color-text-faint)]" />
+            <span className="ui-icon-tile" aria-hidden><Package className="w-5 h-5" /></span>
             No packages yet. Use New package to bundle the drawings for a job.
           </p>
         </Card>
         )
       ) : (
         <section>
-          <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)] mb-2.5">Open packages</h2>
+          <h2 className="flex items-center gap-2.5 font-display text-[19px] leading-tight font-semibold text-[var(--color-heading)] mb-2.5">
+            <span className="ui-icon-tile is-sm is-solid" aria-hidden><Package className="w-4 h-4" /></span>
+            Open packages <span className="ui-count is-solid font-sans">{packages.length}</span>
+          </h2>
           <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
             <table className="w-full text-[15px]">
               <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left max-md:hidden">
@@ -296,26 +299,26 @@ export default function PackagesPage() {
             };
             const small = "inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
             return (
-              <tbody key={pkg.id} data-package-id={pkg.id} className={`border-t border-[var(--color-border)] first-of-type:border-t-0 scroll-mt-24 ${highlightId === pkg.id ? "bg-[var(--color-surface-2)]" : ""}`}>
+              <tbody key={pkg.id} data-package-id={pkg.id} className={`border-t border-[var(--color-border)] first-of-type:border-t-0 scroll-mt-24 ${highlightId === pkg.id ? "bg-[var(--color-accent-soft)]" : ""}`}>
                 <tr className="hover:bg-[var(--color-surface-2)] max-md:block max-md:relative">
                   <td className="px-4 pt-3 md:py-3 relative max-md:block max-md:pr-12">
-                    {(stale || highlightId === pkg.id) && <span aria-hidden className={`absolute left-0 inset-y-0 w-[3px] ${stale ? "bg-[var(--state-held)]" : "bg-[var(--color-text)]"}`} />}
+                    {(stale || highlightId === pkg.id) && <span aria-hidden className={`absolute left-0 inset-y-0 w-[3px] ${stale ? "bg-[var(--state-held)]" : "bg-[var(--color-main)]"}`} />}
                     <button type="button" onClick={toggle} aria-expanded={open}
                       className="inline-flex items-center gap-1.5 text-left font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
-                      <ChevronRight className={`w-4 h-4 shrink-0 text-[var(--color-text-muted)] transition-transform ${open ? "rotate-90" : ""}`} />
+                      <ChevronRight className={`w-4 h-4 shrink-0 text-[var(--color-main)] transition-transform ${open ? "rotate-90" : ""}`} />
                       {pkg.name}
                     </button>
                     {pkg.description && <div className="pl-[22px] text-[13px] text-[var(--color-text-muted)] truncate max-w-[60ch]">{pkg.description}</div>}
                     {/* Phone: the facts under the name. */}
                     <div className="md:hidden pl-[22px] mt-0.5 flex flex-wrap gap-x-3 text-[13px] text-[var(--color-text-muted)]">
-                      <span>{pkg.docs.length} drawing{pkg.docs.length === 1 ? "" : "s"}</span>
+                      <span className="inline-flex items-center gap-1"><span className="ui-count !h-5 !text-[12px]">{pkg.docs.length}</span> drawing{pkg.docs.length === 1 ? "" : "s"}</span>
                       <span>{humanDate(pkg.createdAt)}</span>
                       <StatusTag tone={stale ? "warn" : "good"}>{stale ? `${pkg.staleCount} moved on` : "Current"}</StatusTag>
                     </div>
                   </td>
                   <td className="px-4 py-3 text-[14px] hidden lg:table-cell">{pkg.ownerName || "-"}</td>
                   <td className="px-4 py-3 text-[14px] whitespace-nowrap max-md:hidden">{humanDate(pkg.createdAt)}</td>
-                  <td className="px-4 py-3 text-right font-display text-[16px] font-semibold tabular-nums max-md:hidden">{pkg.docs.length}</td>
+                  <td className="px-4 py-3 text-right max-md:hidden"><span className="ui-count">{pkg.docs.length}</span></td>
                   <td className="px-4 py-3 max-md:hidden">
                     <StatusTag tone={stale ? "warn" : "good"}>{stale ? `${pkg.staleCount} moved on` : "Current"}</StatusTag>
                   </td>
@@ -330,7 +333,7 @@ export default function PackagesPage() {
                         className={small}
                         title="One PDF: a cover sheet with a scan code, then every drawing at its current revision, stamped. The pins move to match."
                       >
-                        {printing === pkg.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />}
+                        {printing === pkg.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5 text-[var(--color-main)]" />}
                         Print pack
                       </button>
                       {stale && (
@@ -341,7 +344,7 @@ export default function PackagesPage() {
                           className={small}
                           title="Move every pin to the current revision. Check what changed first."
                         >
-                          {busyId === pkg.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />}
+                          {busyId === pkg.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 text-[var(--color-main)]" />}
                           Refresh pins
                         </button>
                       )}
@@ -361,14 +364,14 @@ export default function PackagesPage() {
                         href={d.libraryId ? `/documents/${d.libraryId}?doc=${d.documentId}` : "#"}
                         className="flex items-center gap-3 group"
                       >
-                        <span className="font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)] group-hover:text-[var(--color-accent-text)] truncate min-w-0">{d.docLabel}</span>
+                        <span className="ui-id text-[15px] group-hover:underline underline-offset-2 truncate min-w-0">{d.docLabel}</span>
                         {d.drifted ? (
-                          <span className="text-[13px] font-semibold text-[var(--state-held)] shrink-0 inline-flex items-center gap-1.5">
+                          <span className="ui-pill is-warn shrink-0">
                             <AlertTriangle className="w-3.5 h-3.5" />
                             Pinned Rev {d.pinnedRevLabel ?? "?"}, now Rev {d.currentRev ?? "?"}
                           </span>
                         ) : (
-                          <span className="text-[13px] text-[var(--color-text-muted)] shrink-0">Rev <span className="font-display tabular-nums font-semibold text-[var(--color-text)]">{d.pinnedRevLabel ?? "-"}</span></span>
+                          <span className="ui-pill is-good shrink-0">Rev {d.pinnedRevLabel ?? "-"}</span>
                         )}
                       </Link>
                     </td>
@@ -428,9 +431,9 @@ export default function PackagesPage() {
                         onClick={() => { setPicked((prev) => [...prev, r]); setQuery(""); }}
                         className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-[var(--color-surface-2)] text-[13px]"
                       >
-                        <Plus className="w-3 h-3 text-[var(--color-text-muted)]" />
-                        <span className="font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)]">{r.label}</span>
-                        <span className="ml-auto text-[13px] text-[var(--color-text-muted)]">Rev {r.rev ?? "-"}</span>
+                        <Plus className="w-3 h-3 text-[var(--color-main)]" />
+                        <span className="ui-id text-[15px]">{r.label}</span>
+                        <span className="ml-auto ui-pill !h-5 !px-2 !text-[12px]">Rev {r.rev ?? "-"}</span>
                       </button>
                     ))}
                   </div>
@@ -439,10 +442,10 @@ export default function PackagesPage() {
                   <div className="mt-2 space-y-1">
                     {picked.map((p) => (
                       <div key={p.id} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--color-surface-2)] text-[13px]">
-                        <span className="font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)] flex-1 truncate">{p.label}</span>
-                        <span className="text-[13px] text-[var(--color-text-muted)]">Pins Rev {p.rev ?? "-"}</span>
-                        <button aria-label="Remove" onClick={() => setPicked((prev) => prev.filter((x) => x.id !== p.id))} className="p-0.5 rounded hover:bg-[var(--color-surface)]">
-                          <X className="w-3 h-3 text-[var(--color-text-faint)]" />
+                        <span className="ui-id text-[15px] flex-1 truncate">{p.label}</span>
+                        <span className="ui-pill !h-5 !px-2 !text-[12px]">Pins Rev {p.rev ?? "-"}</span>
+                        <button aria-label={`Remove ${p.label}`} onClick={() => setPicked((prev) => prev.filter((x) => x.id !== p.id))} className="w-7 h-7 grid place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--state-overdue)] hover:bg-[var(--color-surface)]">
+                          <X className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     ))}

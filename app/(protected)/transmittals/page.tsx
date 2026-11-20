@@ -258,13 +258,16 @@ export default function TransmittalsPage() {
         {!error && (list?.length ?? 0) === 0 ? (
           <Card>
             <p className="flex items-center gap-2.5 text-[15px] text-[var(--color-text-muted)]">
-              <Send className="w-5 h-5 shrink-0 text-[var(--color-text-faint)]" />
+              <span className="ui-icon-tile" aria-hidden><Send className="w-5 h-5" /></span>
               Nothing on the register. Use New transmittal to send the first one.
             </p>
           </Card>
         ) : (list ?? []).length > 0 && (
           <section>
-            <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)] mb-2.5">Register</h2>
+            <h2 className="flex items-center gap-2.5 font-display text-[19px] leading-tight font-semibold text-[var(--color-heading)] mb-2.5">
+              <span className="ui-icon-tile is-sm is-solid" aria-hidden><Send className="w-4 h-4" /></span>
+              Register <span className="ui-count is-solid font-sans">{(list ?? []).length}</span>
+            </h2>
             <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
               <table className="w-full text-[14px]">
                 <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left max-md:hidden">
@@ -298,17 +301,17 @@ export default function TransmittalsPage() {
                   if (t.status === "issued") more.push({ icon: <Ban className="w-4 h-4" />, label: "Void (issued in error)", tone: "bad", line: true, onClick: () => doVoid(t) });
                   const small = "inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
                   return (
-                    <tr key={t.id} data-transmittal-id={t.id} className={`scroll-mt-24 align-top md:align-middle max-md:block max-md:relative ${highlightId === t.id ? "bg-[var(--color-surface-2)]" : "hover:bg-[var(--color-surface-2)]"}`}>
+                    <tr key={t.id} data-transmittal-id={t.id} className={`scroll-mt-24 align-top md:align-middle max-md:block max-md:relative ${highlightId === t.id ? "bg-[var(--color-accent-soft)]" : "hover:bg-[var(--color-surface-2)]"}`}>
                       <td className="px-4 pt-3 md:py-3 relative max-md:block">
-                        {(stale || highlightId === t.id) && <span aria-hidden className={`absolute left-0 inset-y-0 w-[3px] ${stale ? "bg-[var(--state-overdue)]" : "bg-[var(--color-text)]"}`} />}
-                        <span className="font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)] whitespace-nowrap">{t.number}</span>
+                        {(stale || highlightId === t.id) && <span aria-hidden className={`absolute left-0 inset-y-0 w-[3px] ${stale ? "bg-[var(--state-overdue)]" : "bg-[var(--color-main)]"}`} />}
+                        <span className="ui-id text-[16px] whitespace-nowrap">{t.number}</span>
                         <span className="md:hidden ml-3"><StatusTag tone={statusTone} status={meta.label} /></span>
                       </td>
                       <td className="px-4 md:py-3 max-md:block max-md:pr-4 min-w-0">
                         <div className="font-semibold text-[var(--color-text)]">{t.subject || "Document transmittal"}</div>
-                        <div className="text-[13px] text-[var(--color-text-muted)] flex flex-wrap gap-x-3">
-                          {t.purpose && <span>{t.purpose}</span>}
-                          {stale && <span className="font-semibold text-[var(--state-overdue)]" title="A document on it has a newer revision now. The recipient has an old one.">They have an old revision</span>}
+                        <div className="mt-0.5 text-[13px] text-[var(--color-text-muted)] flex flex-wrap items-center gap-x-3 gap-y-1">
+                          {t.purpose && <span className="ui-tag !h-6 !font-sans !text-[13px]">{t.purpose}</span>}
+                          {stale && <span className="ui-pill is-bad" title="A document on it has a newer revision now. The recipient has an old one.">They have an old revision</span>}
                           {t.status === "acknowledged" && t.acknowledgedAt && (
                             <span>Received {humanDate(t.acknowledgedAt)}{t.acknowledgedByName ? ` by ${t.acknowledgedByName}` : ""}{t.acknowledgedVia === "portal" ? ", confirmed by them" : t.acknowledgedVia === "manual" ? ", recorded by us" : ""}</span>
                           )}
@@ -319,19 +322,19 @@ export default function TransmittalsPage() {
                         </div>
                       </td>
                       <td className="px-4 py-3 text-[var(--color-text)] hidden lg:table-cell">{to || <span className="text-[var(--color-text-muted)]">-</span>}</td>
-                      <td className="px-4 py-3 text-right font-display text-[16px] font-semibold tabular-nums max-md:hidden">{t.items.length}</td>
+                      <td className="px-4 py-3 text-right max-md:hidden"><span className="ui-count">{t.items.length}</span></td>
                       <td className="px-4 py-3 max-md:hidden"><StatusTag tone={statusTone} status={meta.label} /></td>
                       <td className="px-4 py-3 whitespace-nowrap max-md:hidden">{t.issuedAt ? humanDate(t.issuedAt) : <span className="text-[var(--color-text-muted)]">-</span>}</td>
                       <td className="px-3 pb-3 md:py-3 max-md:block">
                         <div className="flex items-center gap-1.5 md:justify-end">
                           {t.status === "draft" && (
                             <button type="button" onClick={() => openEdit(t)} className={small}>
-                              <Pencil className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Edit
+                              <Pencil className="w-3.5 h-3.5 text-[var(--color-main)]" /> Edit
                             </button>
                           )}
                           {t.status === "issued" && (
                             <button type="button" onClick={() => doAcknowledge(t)} disabled={busyId === t.id} title="Record that they received it" className={small}>
-                              {busyId === t.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />} Record receipt
+                              {busyId === t.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5 text-[var(--state-released)]" />} Record receipt
                             </button>
                           )}
                           <MoreMenu items={more} iconOnly label={`More for ${t.number}`} triggerClass="inline-grid place-items-center w-8 h-8 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]" />
@@ -506,8 +509,8 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in p-0 sm:p-4" onClick={onClose}>
       <div className="bg-[var(--color-surface)] w-full sm:max-w-2xl sm:rounded-lg rounded-t-2xl shadow-2xl max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
-          <h2 className="text-[15px] font-semibold text-[var(--color-text)] flex items-center gap-2">
-            <Send className="w-4 h-4 text-[var(--color-text-muted)]" /> {editing ? `Edit ${editing.number}` : "New transmittal"}
+          <h2 className="font-display text-[19px] font-semibold text-[var(--color-heading)] flex items-center gap-2.5">
+            <span className="ui-icon-tile is-sm" aria-hidden><Send className="w-4 h-4" /></span> {editing ? `Edit ${editing.number}` : "New transmittal"}
           </h2>
           <button aria-label="Close" onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-[var(--color-surface-2)] flex items-center justify-center text-[var(--color-text-faint)] transition-colors"><X className="w-4 h-4" /></button>
         </div>
@@ -565,11 +568,11 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
                   const added = items.some((i) => i.documentId === h.id);
                   return (
                     <button key={h.id} onClick={() => addDoc(h)} disabled={added} className="w-full text-left px-3 py-2 hover:bg-[var(--color-surface-2)] transition-colors flex items-center gap-2 disabled:opacity-50">
-                      <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
-                      <span className="font-display tabular-nums text-[13px] font-bold text-[var(--color-text)]">{h.number}</span>
-                      {h.rev && <span className="text-[13px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1 rounded">R{h.rev}</span>}
+                      <FileText className="w-3.5 h-3.5 text-[var(--color-main)] shrink-0" />
+                      <span className="ui-id text-[15px]">{h.number}</span>
+                      {h.rev && <span className="ui-pill !h-5 !px-2 !text-[12px]">Rev {h.rev}</span>}
                       {h.title && h.title !== h.number && <span className="text-[13px] text-[var(--color-text-muted)] truncate">{h.title}</span>}
-                      <span className="ml-auto text-[13px] font-bold text-[var(--color-text)]">{added ? "Added" : "+ Add"}</span>
+                      <span className={`ml-auto shrink-0 ${added ? "ui-pill is-good" : "ui-tag !font-sans"}`}>{added ? "Added" : "+ Add"}</span>
                     </button>
                   );
                 })}
@@ -583,10 +586,10 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
                     <DocHoverPreview documentId={it.documentId}>
                       <DocThumb documentId={it.documentId} width={28} />
                     </DocHoverPreview>
-                    <span className="font-display tabular-nums text-[13px] font-bold text-[var(--color-text)]">{it.number}</span>
-                    {it.rev && <span className="text-[13px] font-bold bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-muted)] px-1 rounded">R{it.rev}</span>}
+                    <span className="ui-id text-[15px]">{it.number}</span>
+                    {it.rev && <span className="ui-pill !h-5 !px-2 !text-[12px]">Rev {it.rev}</span>}
                     {it.title && it.title !== it.number && <span className="text-[13px] text-[var(--color-text-muted)] truncate">{it.title}</span>}
-                    <button aria-label="Remove" onClick={() => removeItem(it.documentId)} className="ml-auto text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] transition-colors"><X className="w-3.5 h-3.5" /></button>
+                    <button aria-label={`Remove ${it.number}`} onClick={() => removeItem(it.documentId)} className="ml-auto w-7 h-7 grid place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--state-overdue)] hover:bg-[var(--color-surface)] transition-colors"><X className="w-3.5 h-3.5" /></button>
                   </li>
                 ))}
               </ul>

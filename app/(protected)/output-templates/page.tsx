@@ -107,7 +107,10 @@ export default function OutputTemplatesPage() {
         </Card>
       ) : (
         <section>
-          <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)] mb-2.5">Templates</h2>
+          <h2 className="flex items-center gap-2.5 font-display text-[19px] leading-tight font-semibold text-[var(--color-heading)] mb-2.5">
+            <span className="ui-icon-tile is-sm is-solid" aria-hidden><FileText className="w-4 h-4" /></span>
+            Templates <span className="ui-count is-solid font-sans">{templates.length}</span>
+          </h2>
           <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
             <table className="w-full text-[15px]">
               <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left max-md:hidden">
@@ -124,31 +127,31 @@ export default function OutputTemplatesPage() {
                 <tr key={t.id} className="hover:bg-[var(--color-surface-2)] max-md:block">
                   <td className="px-4 pt-3 md:py-3 max-md:block">
                     <div className="flex items-center gap-2.5 min-w-0">
-                      {t.kind === "xlsx" ? <Table2 className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" /> : <FileText className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" />}
-                      <span className="font-semibold text-[var(--color-text)] truncate">{t.name}</span>
+                      <span className="ui-icon-tile is-sm" aria-hidden>{t.kind === "xlsx" ? <Table2 className="w-4 h-4" /> : <FileText className="w-4 h-4" />}</span>
+                      <span className="text-[16px] font-semibold text-[var(--color-text)] truncate">{t.name}</span>
                     </div>
                     {!t.templateFileKey ? (
-                      <div className="pl-[26px] inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]"><span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-held)]" />Needs a template file</div>
-                    ) : t.description && <div className="pl-[26px] text-[13px] text-[var(--color-text-muted)] truncate max-w-[60ch]">{t.description}</div>}
+                      <div className="pl-[38px] mt-0.5"><span className="ui-pill is-warn">Needs a template file</span></div>
+                    ) : t.description && <div className="pl-[38px] text-[13px] text-[var(--color-text-muted)] truncate max-w-[60ch]">{t.description}</div>}
                     {/* Phone: the facts under the name. */}
-                    <div className="md:hidden pl-[26px] mt-0.5 flex flex-wrap gap-x-3 text-[13px] text-[var(--color-text-muted)]">
+                    <div className="md:hidden pl-[38px] mt-0.5 flex flex-wrap gap-x-3 text-[13px] text-[var(--color-text-muted)]">
                       <span>{MODE_LABEL[t.mode] ?? t.mode}</span>
                       <span>{t.placeholders.length} fill point{t.placeholders.length === 1 ? "" : "s"}</span>
                     </div>
                   </td>
                   <td className="px-4 py-3 text-[14px] max-md:hidden">
-                    {MODE_LABEL[t.mode] ?? t.mode}
+                    <span className="ui-tag !font-sans">{MODE_LABEL[t.mode] ?? t.mode}</span>
                     {t.placeholders.some((p) => p.kind === "ai") && (
-                      <span className="block text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1"><Sparkles className="w-3 h-3" /> AI-written sections</span>
+                      <span className="mt-1 flex text-[13px] text-[var(--color-text-muted)] items-center gap-1"><Sparkles className="w-3 h-3" /> AI-written sections</span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-right font-display text-[16px] font-semibold tabular-nums max-md:hidden">{t.placeholders.length}</td>
-                  <td className="px-4 py-3 text-right font-display text-[16px] font-semibold tabular-nums hidden lg:table-cell">{t.exampleFiles.length}</td>
-                  <td className="px-3 pb-3 md:py-3 max-md:block max-md:pl-[42px]">
+                  <td className="px-4 py-3 text-right max-md:hidden"><span className="ui-count">{t.placeholders.length}</span></td>
+                  <td className="px-4 py-3 text-right hidden lg:table-cell"><span className="ui-count">{t.exampleFiles.length}</span></td>
+                  <td className="px-3 pb-3 md:py-3 max-md:block max-md:pl-[54px]">
                     <div className="flex items-center gap-1.5 md:justify-end flex-wrap">
                       <button type="button" onClick={() => setGenerating(t)} disabled={!t.templateFileKey}
                         className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 disabled:cursor-not-allowed">
-                        <Sparkles className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Generate
+                        <Sparkles className="w-3.5 h-3.5 text-[var(--color-main)]" /> Generate
                       </button>
                       {isController && (
                         <>
@@ -174,7 +177,7 @@ export default function OutputTemplatesPage() {
 
       {generations.length > 0 && (
         <section>
-          <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)] mb-2.5 inline-flex items-center gap-2"><History className="w-4 h-4 text-[var(--color-text-muted)]" /> Recent production</h2>
+          <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-heading)] mb-2.5 flex items-center gap-2.5"><span className="ui-icon-tile is-sm is-solid" aria-hidden><History className="w-4 h-4" /></span> Recent production <span className="ui-count is-solid font-sans">{generations.length}</span></h2>
           <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
             <table className="w-full text-[14px]">
               <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left max-md:hidden">
@@ -196,12 +199,12 @@ export default function OutputTemplatesPage() {
                       {g.documentCount} document{g.documentCount === 1 ? "" : "s"}{g.filedCount > 0 ? `, ${g.filedCount} filed` : ""}, {new Date(g.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
                     </span>
                   </td>
-                  <td className="px-4 py-2.5 text-right font-display text-[15px] font-semibold tabular-nums max-md:hidden">{g.documentCount}</td>
+                  <td className="px-4 py-2.5 text-right max-md:hidden"><span className="ui-count">{g.documentCount}</span></td>
                   <td className="px-4 py-2.5 text-[var(--color-text-muted)] hidden lg:table-cell truncate max-w-0">{g.sourceName ?? "-"}</td>
                   <td className="px-4 py-2.5 hidden lg:table-cell">{g.createdBy ?? "-"}</td>
                   <td className="px-4 py-2.5 max-md:hidden">
                     {g.filedCount > 0
-                      ? <span className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[13px] font-semibold whitespace-nowrap leading-[18px] bg-[color-mix(in_srgb,var(--state-released)_14%,transparent)] text-[var(--state-released)]">{g.filedCount} filed</span>
+                      ? <span className="ui-pill is-good">{g.filedCount} filed</span>
                       : <span className="text-[var(--color-text-muted)]">-</span>}
                   </td>
                   <td className="px-4 py-2.5 text-[var(--color-text-muted)] whitespace-nowrap max-md:hidden">

@@ -11,7 +11,7 @@ import Link from "next/link";
 import {
   KeyRound, Search, AlertTriangle, Lock,
   Layers, AlarmClock,
-  ExternalLink, Network, Tag, ChevronDown,
+  ExternalLink, Network, Tag, ChevronDown, FolderKanban,
 } from "lucide-react";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, Card } from "@/components/ui/PageHero";
@@ -307,7 +307,7 @@ export default function CheckoutsPage() {
         ) : filtered.length === 0 ? (
           <Card>
             <p className="flex items-center gap-2.5 text-[15px] text-[var(--color-text-muted)]">
-              <KeyRound className="w-5 h-5 shrink-0 text-[var(--color-text-faint)]" />
+              <span className="ui-icon-tile" aria-hidden><KeyRound className="w-5 h-5" /></span>
               {rows.length === 0 ? "No one has a document checked out." : "No checkouts match your filters."}
             </p>
           </Card>
@@ -327,7 +327,8 @@ function ProjectGroup({ project, items }: { project: Project | null; items: Chec
   return (
     <section className="min-w-0">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-2.5">
-        <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)] min-w-0">
+        <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-heading)] min-w-0 inline-flex items-center gap-2.5 self-center">
+          <span className="ui-icon-tile is-sm is-solid" aria-hidden>{project ? <FolderKanban className="w-4 h-4" /> : <KeyRound className="w-4 h-4" />}</span>
           {project ? (
             <Link href={`/projects/${project.id}`} className="hover:text-[var(--color-accent-text)] hover:underline underline-offset-4">
               {project.name}
@@ -339,14 +340,14 @@ function ProjectGroup({ project, items }: { project: Project | null; items: Chec
             <>
               {project.ownerUserName && <span>{project.ownerUserName}</span>}
               {project.visibility === "private" && <Lock className="w-3 h-3" aria-label="Private" />}
-              {project.status && <span className="capitalize">{String(project.status).replace(/_/g, " ")}</span>}
+              {project.status && <span className="ui-pill is-muted capitalize">{String(project.status).replace(/_/g, " ")}</span>}
             </>
           ) : (
             <span>Release on their own after 24 hours</span>
           )}
         </span>
-        <span className="ml-auto text-[14px] text-[var(--color-text-muted)] tabular-nums">
-          {items.length} file{items.length === 1 ? "" : "s"}
+        <span className="ml-auto self-center text-[14px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
+          <span className="ui-count is-solid">{items.length}</span> file{items.length === 1 ? "" : "s"}
         </span>
       </div>
       <CheckoutsTable items={items} />
@@ -387,7 +388,7 @@ function CheckoutRow({ row, showProject }: { row: CheckoutWithContext; showProje
   const isAdhoc = !row.projectId;
   const href = `/documents/${row.libraryId}?doc=${row.documentId}`;
   const release = isStale
-    ? <span className="font-semibold text-[var(--state-overdue)] inline-flex items-center gap-1"><AlarmClock className="w-3.5 h-3.5" /> Was due {formatRelative(row.expectedReleaseAt as Timestamp)}</span>
+    ? <span className="ui-pill is-bad"><AlarmClock className="w-3.5 h-3.5" /> Was due {formatRelative(row.expectedReleaseAt as Timestamp)}</span>
     : row.expectedReleaseAt ? <span>Due {formatRelative(row.expectedReleaseAt as Timestamp)}</span>
     : isAdhoc && row.autoExpiresAt ? <span>Releases {formatRelative(row.autoExpiresAt)}</span>
     : <span className="text-[var(--color-text-muted)]">At check-in</span>;
@@ -397,7 +398,7 @@ function CheckoutRow({ row, showProject }: { row: CheckoutWithContext; showProje
     <tr className="hover:bg-[var(--color-surface-2)] transition-colors max-sm:block max-sm:relative">
       <td className="px-4 py-3 relative max-sm:block max-sm:pr-14">
         {isStale && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />}
-        <Link href={href} className="font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
+        <Link href={href} className="ui-id text-[16px]">
           {row.docNumber || "-"}
         </Link>
         {sub && (
@@ -411,9 +412,13 @@ function CheckoutRow({ row, showProject }: { row: CheckoutWithContext; showProje
           {release}
         </div>
       </td>
-      <td className="px-4 py-3 text-[var(--color-text-muted)] hidden lg:table-cell">{row.libraryName || "-"}</td>
+      <td className="px-4 py-3 hidden lg:table-cell">
+        {row.libraryName
+          ? <Link href={`/documents/${row.libraryId}`} className="ui-tag !font-sans" title={`Open ${row.libraryName}`}>{row.libraryName}</Link>
+          : <span className="text-[var(--color-text-muted)]">-</span>}
+      </td>
       <td className="px-4 py-3 font-semibold text-[var(--color-text)] max-sm:hidden whitespace-nowrap">{row.userName}</td>
-      <td className="px-4 py-3 hidden md:table-cell">{MODE_LABEL[row.mode] ?? row.mode}</td>
+      <td className="px-4 py-3 hidden md:table-cell"><span className={`ui-pill ${row.mode === "view" ? "is-muted" : ""}`}>{MODE_LABEL[row.mode] ?? row.mode}</span></td>
       <td className="px-4 py-3 whitespace-nowrap max-sm:hidden">{formatRelative(row.startedAt)}</td>
       <td className="px-4 py-3 whitespace-nowrap max-sm:hidden">{release}</td>
       {showProject && (
@@ -426,7 +431,7 @@ function CheckoutRow({ row, showProject }: { row: CheckoutWithContext; showProje
       <td className="pr-3 py-3 text-right max-sm:absolute max-sm:right-1 max-sm:top-1.5">
         <Link
           href={href}
-          className="inline-grid w-9 h-9 place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
+          className="inline-grid w-9 h-9 place-items-center rounded-md text-[var(--color-main)] hover:bg-[var(--color-accent-soft)] transition-colors"
           title="Open the document"
           aria-label={`Open ${row.docNumber || "the document"}`}
         >
@@ -477,13 +482,13 @@ function ConsolidationPanel({
   return (
     <section className="min-w-0">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2.5 min-h-8">
-        <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)] inline-flex items-center gap-2">
-          <Network className="w-4 h-4 text-[var(--state-held)] shrink-0" />
+        <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-heading)] inline-flex items-center gap-2.5">
+          <span className="ui-icon-tile is-sm is-solid" aria-hidden><Network className="w-4 h-4" /></span>
           Checkouts that overlap
         </h2>
-        <span className="text-[14px] text-[var(--color-text-muted)]">
-          {assetCount > 0 && <span className="mr-3">{assetCount} on the same equipment</span>}
-          {scopeCount > 0 && <span>{scopeCount} in the same unit or system</span>}
+        <span className="text-[14px] text-[var(--color-text-muted)] inline-flex items-center gap-3">
+          {assetCount > 0 && <span className="inline-flex items-center gap-1.5"><span className="ui-count is-warn">{assetCount}</span> on the same equipment</span>}
+          {scopeCount > 0 && <span className="inline-flex items-center gap-1.5"><span className="ui-count is-warn">{scopeCount}</span> in the same unit or system</span>}
         </span>
         <button
           type="button"
@@ -529,8 +534,8 @@ function OverlapCard({
 
   const heading =
     overlap.kind === "asset"
-      ? <><Tag className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Equipment <span className="font-display text-[16px] font-semibold tabular-nums">{overlap.assetTag}</span></>
-      : <><Layers className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {overlap.level === "system" ? "System" : "Unit"} <span className="font-display text-[16px] font-semibold">{overlap.scopeName}</span></>;
+      ? <><span className="ui-icon-tile is-sm" aria-hidden><Tag className="w-4 h-4" /></span> Equipment <Link href={`/assets/${encodeURIComponent(overlap.assetTag)}`} className="ui-tag" title={`Open ${overlap.assetTag}`}>{overlap.assetTag}</Link></>
+      : <><span className="ui-icon-tile is-sm" aria-hidden><Layers className="w-4 h-4" /></span> {overlap.level === "system" ? "System" : "Unit"} <span className="ui-tag">{overlap.scopeName}</span></>;
 
   return (
     <div className="px-4 sm:px-5 py-3">
@@ -549,7 +554,7 @@ function OverlapCard({
                      : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-60"
             }`}
           >
-            {nudged ? <span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-released)]" /> : <Send className="w-3.5 h-3.5" />} {nudged ? "Heads-up sent" : nudging ? "Sending…" : "Send a heads-up"}
+            {nudged ? <span className="ui-pill is-good">Heads-up sent</span> : <><Send className="w-3.5 h-3.5" /> {nudging ? "Sending…" : "Send a heads-up"}</>}
           </button>
         )}
       </div>
@@ -557,7 +562,9 @@ function OverlapCard({
         {involved.map((c) => (
           <div key={c.id} className="flex items-center gap-2 text-[14px] text-[var(--color-text)]">
             <Lock className="w-3 h-3 text-[var(--color-text-faint)] shrink-0" />
-            <span className="font-display text-[15px] font-semibold tabular-nums shrink-0">{c.docNumber || "-"}</span>
+            {c.libraryId && c.documentId
+              ? <Link href={`/documents/${c.libraryId}?doc=${c.documentId}`} className="ui-id text-[15px] shrink-0">{c.docNumber || "-"}</Link>
+              : <span className="ui-id text-[15px] shrink-0">{c.docNumber || "-"}</span>}
             <span className="truncate flex-1 min-w-0">{c.docTitle || "(untitled)"}</span>
             <span className="text-[var(--color-text-muted)]">{c.userName || c.userId.slice(0, 8)}</span>
             {c.libraryId && c.documentId && (

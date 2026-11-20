@@ -99,9 +99,9 @@ export default function PlotPlansPage() {
         ) : plans.length === 0 ? (
           <Card>
             <div className="flex items-start gap-3">
-              <MapIcon className="w-5 h-5 mt-0.5 shrink-0 text-[var(--color-text-muted)]" />
+              <span className="ui-icon-tile" aria-hidden><MapIcon className="w-5 h-5" /></span>
               <div>
-                <h2 className="text-[15px] font-semibold text-[var(--color-text)]">Start with one drawing</h2>
+                <h2 className="font-display text-[17px] font-semibold text-[var(--color-heading)]">Start with one drawing</h2>
                 <p className="mt-0.5 text-[15px] text-[var(--color-text-muted)]">Upload a plot plan, P&amp;ID or unit layout, then place markers on its equipment.</p>
               </div>
             </div>
@@ -122,20 +122,20 @@ export default function PlotPlansPage() {
               {plans.map((p) => (
                 <tr key={p.id} className="hover:bg-[var(--color-surface-2)] cursor-pointer" onClick={() => router.push(`/plot-plans/${p.id}`)}>
                   <td className="pl-4 pr-2 py-2.5 w-[112px] sm:w-[128px]">
-                    <div className="w-24 aspect-video rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-center overflow-hidden">
+                    <div className="w-24 aspect-video rounded border border-[var(--color-border)] bg-[var(--color-accent-soft)] text-[var(--color-main)] flex items-center justify-center overflow-hidden">
                       {p.imagePath ? (
                         <SignedPlotImage path={p.imagePath} alt="" className="w-full h-full object-cover" />
                       ) : (
-                        <ImageIcon className="w-5 h-5 text-[var(--color-text-faint)]" />
+                        <ImageIcon className="w-5 h-5" />
                       )}
                     </div>
                   </td>
                   <td className="px-4 py-2.5 max-sm:pl-1">
-                    <Link href={`/plot-plans/${p.id}`} onClick={(e) => e.stopPropagation()} className="font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{p.name}</Link>
+                    <Link href={`/plot-plans/${p.id}`} onClick={(e) => e.stopPropagation()} className="text-[16px] font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{p.name}</Link>
                     {p.description && <div className="text-[13px] text-[var(--color-text-muted)] truncate max-w-[60ch]">{p.description}</div>}
-                    <div className="sm:hidden text-[13px] text-[var(--color-text-muted)]">{plural(p.markers.length, "marker")}</div>
+                    <div className="sm:hidden mt-0.5 text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1"><span className="ui-count !h-5 !text-[12px]">{p.markers.length.toLocaleString()}</span> {p.markers.length === 1 ? "marker" : "markers"}</div>
                   </td>
-                  <td className="px-4 py-2.5 text-right font-display text-[17px] font-semibold tabular-nums max-sm:hidden">{p.markers.length.toLocaleString()}</td>
+                  <td className="px-4 py-2.5 text-right max-sm:hidden"><span className={`ui-count ${p.markers.length === 0 ? "!bg-[var(--color-surface-2)] !text-[var(--color-text-muted)]" : ""}`}>{p.markers.length.toLocaleString()}</span></td>
                   <td className="px-4 py-2.5 text-[14px] hidden md:table-cell">{humanDate(p.createdAt)}</td>
                   <td className="pr-3 py-2.5 text-right">
                     {isController && (

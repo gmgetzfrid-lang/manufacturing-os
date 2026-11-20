@@ -70,9 +70,9 @@ export default function AliasPanel({
 
   return (
     <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5 space-y-2.5">
-      <div className="flex items-center gap-2 text-[var(--color-text-muted)]">
-        <Tags className="w-4 h-4" />
-        <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)]">Also known as</h2>
+      <div className="flex items-center gap-2">
+        <h2 className="font-display text-[17px] font-semibold text-[var(--color-heading)] inline-flex items-center gap-2.5"><span className="ui-icon-tile is-sm" aria-hidden><Tags className="w-4 h-4" /></span> Also known as</h2>
+        {rows.length > 0 && <span className="ui-count">{rows.length}</span>}
       </div>
       <p className="text-[13px] text-[var(--color-text-muted)]">
         Nicknames, old tags before a renumber, vendor names.
@@ -90,14 +90,14 @@ export default function AliasPanel({
             return (
               <span key={a.id}
                 title={`${ALIAS_ORIGIN_LABELS[a.origin] ?? a.origin}${a.created_by_name ? ` · ${a.created_by_name}` : ""}`}
-                className="group inline-flex items-center gap-1 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] pl-2 pr-1 py-0.5 text-[13px] font-bold text-[var(--color-text)]">
-                <Icon className="w-3 h-3 text-[var(--color-text-faint)]" />
+                className="group ui-tag !pr-0.5">
+                <Icon className="w-3 h-3 opacity-70" />
                 {a.alias}
                 {canManage && (
                   <button onClick={() => void remove(a)}
                     aria-label={`Remove alias ${a.alias}`}
-                    className="p-0.5 rounded-full text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] opacity-50 group-hover:opacity-100">
-                    <X className="w-2.5 h-2.5" />
+                    className="w-5 h-5 grid place-items-center rounded hover:text-[var(--state-overdue)] hover:bg-[var(--color-surface)]">
+                    <X className="w-3 h-3" />
                   </button>
                 )}
               </span>
@@ -117,7 +117,7 @@ export default function AliasPanel({
             className="flex-1 min-w-0 h-9 px-2.5 border border-[var(--color-border-strong)] rounded-lg text-[13px] bg-[var(--color-surface)]"
           />
           <button onClick={() => void add()} disabled={busy || !draft.trim()}
-            className="inline-flex items-center gap-1 h-9 px-3 rounded-lg text-[13px] font-bold text-[var(--color-surface)] bg-[var(--color-text)] hover:opacity-90 disabled:opacity-50">
+            className="inline-flex items-center gap-1 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Teach
           </button>
         </div>

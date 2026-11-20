@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, Send, GitBranch, GitCompare, Wrench, Check, Package, ChevronRight } from "lucide-react";
+import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, Send, GitBranch, GitCompare, Wrench, Check, Package, ChevronRight, Tag, Users, ClipboardCheck, Hand, StickyNote } from "lucide-react";
 import NextLink from "next/link";
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
@@ -19,6 +19,7 @@ import AiBoundaryChip from "@/components/documents/AiBoundaryChip";
 import DistributionRecall from "@/components/documents/DistributionRecall";
 import DistributionAcks from "@/components/documents/DistributionAcks";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
+import AssetTagChip from "@/components/assets/AssetTagChip";
 import ReviewSection from "@/components/documents/ReviewSection";
 import AckSection from "@/components/documents/AckSection";
 import ReviewGateSection from "@/components/documents/ReviewGateSection";
@@ -265,6 +266,8 @@ export default function InspectorPanel({
     }
   };
   const [compareOpen, setCompareOpen] = useState(false);
+  // Which document's equipment pills are showing in full ("+N" pressed).
+  const [allTagsFor, setAllTagsFor] = useState<string | null>(null);
 
   // Ownership grant (Phase 2): the document's effective owner may manage it —
   // publish/supersede/archive/edit — even without a controller role or library
@@ -339,11 +342,14 @@ export default function InspectorPanel({
   // The big line is the item's number; the title shows under it when it says more.
   const bigName = selectedDoc.documentNumber || title;
   const showTitle = !!selectedDoc.documentNumber && title.trim() !== selectedDoc.documentNumber.trim();
-  const statusDot = { good: "var(--state-released)", warn: "var(--state-held)", bad: "var(--state-overdue)", none: "var(--color-text-faint)" }[docStatusTone(selectedDoc.status)];
+  const statusPill = { good: "ui-pill is-good", warn: "ui-pill is-warn", bad: "ui-pill is-bad", none: "ui-pill is-muted" }[docStatusTone(selectedDoc.status)];
   const sheetRaw = meta.sheet ?? selectedDoc.sheetNumber;
   const sheet = sheetRaw == null || sheetRaw === "" ? null : String(sheetRaw);
-  const tags = collectTagGroups(selectedDoc.metadata as Record<string, unknown> | null, customColumns).flatMap((g) => g.tags);
-  const tagLine = tags.length === 0 ? null : tags.length <= 3 ? tags.join(", ") : `${tags.slice(0, 3).join(", ")} +${tags.length - 3} more`;
+  // Equipment as pills you can press (photos, linked drawings): four, then "+N".
+  const tags = collectTagGroups(selectedDoc.metadata as Record<string, unknown> | null, customColumns)
+    .flatMap((g) => g.tags.map((t) => ({ tag: t, label: g.label, referenceKind: g.referenceKind })));
+  const allTags = allTagsFor === (selectedDoc.id ?? "");
+  const shownTags = allTags ? tags : tags.slice(0, 4);
 
   return (
     <div className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-300">
@@ -351,29 +357,33 @@ export default function InspectorPanel({
       {/* HEADER: a title block. The drawing number big, then ruled cells
           for its rev, status, who has it and when it last changed. ──── */}
       <div>
-        <h2 className="font-display text-[32px] sm:text-[40px] leading-[1.02] font-semibold tabular-nums tracking-[-0.01em] text-[var(--color-text)] break-words">
+        <h2 className="font-display text-[34px] sm:text-[44px] leading-[1.02] font-bold tabular-nums tracking-[-0.01em] text-[var(--color-heading)] break-words">
           {bigName}
         </h2>
         {showTitle && (
           <p className="mt-1.5 text-[15px] text-[var(--color-text)] break-words">{title}</p>
         )}
         <dl className="mt-4 grid grid-cols-2 sm:grid-cols-4 border-y border-[var(--color-border-strong)]">
-          <div className="py-2.5 pr-3 min-w-0">
-            <dt className="text-[13px] text-[var(--color-text-muted)]">Rev</dt>
-            <dd className="mt-0.5 font-display text-[22px] leading-tight font-semibold tabular-nums text-[var(--color-text)] truncate">{selectedDoc.rev || "-"}</dd>
+          {/* Rev: the cell that matters most, on the brand tint. */}
+          <div className="py-2.5 px-3 min-w-0 bg-[var(--color-accent-soft)] border-l-[3px] border-[var(--color-main)]">
+            <dt className="text-[13px] text-[var(--color-accent-text)]">Rev</dt>
+            <dd className="mt-0.5 font-display text-[26px] leading-[1.05] font-bold tabular-nums text-[var(--color-main)] truncate">{selectedDoc.rev || "-"}</dd>
           </div>
           <div className="py-2.5 px-3 border-l border-[var(--color-border-strong)] min-w-0">
             <dt className="text-[13px] text-[var(--color-text-muted)]">Status</dt>
-            <dd className="mt-0.5 flex items-center gap-1.5 font-display text-[19px] leading-[1.16] font-semibold text-[var(--color-text)] min-w-0">
-              <span aria-hidden className="w-2 h-2 rounded-full shrink-0" style={{ background: statusDot }} />
-              <span className="truncate">{selectedDoc.status || "None"}</span>
+            <dd className="mt-1 min-w-0">
+              <span className={`${statusPill} !h-7 !px-3 !text-[15px] max-w-full`}>
+                <span className="truncate">{selectedDoc.status || "None"}</span>
+              </span>
             </dd>
           </div>
-          <div className="py-2.5 sm:px-3 pr-3 max-sm:border-t sm:border-l border-[var(--color-border-strong)] min-w-0">
+          <div className="py-2.5 px-3 max-sm:border-t sm:border-l border-[var(--color-border-strong)] min-w-0">
             <dt className="text-[13px] text-[var(--color-text-muted)]">Checked out</dt>
-            <dd className={`mt-0.5 font-display text-[19px] leading-[1.16] font-semibold truncate ${isCheckedOut ? "text-[var(--state-held)]" : "text-[var(--color-text)]"}`}
+            <dd className="mt-1 min-w-0"
               title={isCheckedOut ? `Checked out by ${checkedOutByMe ? "you" : selectedDoc.checkedOutByName || "someone else"}` : undefined}>
-              {isCheckedOut ? (checkedOutByMe ? "You" : selectedDoc.checkedOutByName || "Yes") : "No"}
+              {isCheckedOut
+                ? <span className="ui-pill is-warn !h-7 !px-3 !text-[15px] max-w-full"><Lock className="w-3.5 h-3.5 shrink-0" /><span className="truncate">{checkedOutByMe ? "You" : selectedDoc.checkedOutByName || "Yes"}</span></span>
+                : <span className="font-display text-[19px] leading-7 font-semibold text-[var(--color-text)]">No</span>}
             </dd>
           </div>
           <div className="py-2.5 pl-3 max-sm:border-t border-l border-[var(--color-border-strong)] min-w-0">
@@ -381,13 +391,26 @@ export default function InspectorPanel({
             <dd className="mt-0.5 font-display text-[19px] leading-[1.16] font-semibold tabular-nums text-[var(--color-text)] truncate">{humanDate(selectedDoc.updatedAt)}</dd>
           </div>
         </dl>
-        {(sheet || tagLine || selectedDoc.effectiveDate) && (
-          <div className="mt-2.5 flex flex-wrap items-center gap-x-5 gap-y-1 text-[14px]">
+        {(sheet || tags.length > 0 || selectedDoc.effectiveDate) && (
+          <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-[14px]">
             {sheet && (
-              <span><span className="text-[var(--color-text-muted)]">Sheet</span> <span className="font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)]">{sheet}</span></span>
+              <span className="inline-flex items-center gap-1.5"><span className="text-[var(--color-text-muted)]">Sheet</span> <span className="ui-id text-[16px]">{sheet}</span></span>
             )}
-            {tagLine && (
-              <span className="min-w-0"><span className="text-[var(--color-text-muted)]">Equipment</span> <span className="font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)]">{tagLine}</span></span>
+            {tags.length > 0 && (
+              <span className="min-w-0 inline-flex flex-wrap items-center gap-1">
+                <span className="text-[var(--color-text-muted)] mr-1">Equipment</span>
+                {shownTags.map((t, i) => (
+                  <AssetTagChip key={`${t.tag}-${i}`} tag={t.tag} type={t.label} referenceKind={t.referenceKind}
+                    orgId={orgId ?? selectedDoc.orgId ?? undefined} userId={uid || undefined} canManage={canManageAssets || isOwner} />
+                ))}
+                {tags.length > 4 && (
+                  <button type="button" className="ui-tag is-more tabular-nums" aria-expanded={allTags}
+                    onClick={() => setAllTagsFor(allTags ? null : selectedDoc.id ?? "")}
+                    title={allTags ? "Show fewer" : `Show ${tags.slice(4).map((t) => t.tag).join(", ")}`}>
+                    {allTags ? "Less" : `+${tags.length - 4}`}
+                  </button>
+                )}
+              </span>
             )}
             {selectedDoc.effectiveDate && <EffectivePill effectiveDate={selectedDoc.effectiveDate} />}
           </div>
@@ -535,6 +558,7 @@ export default function InspectorPanel({
         <PanelSection
           id="relationships"
           title="Equipment and related documents"
+          icon={<Tag className="w-4 h-4" />}
           summary={(() => {
             // Cheap synchronous count for the collapsed header — equipment tags
             // come straight from metadata; impact/related counts load on open.
@@ -543,8 +567,8 @@ export default function InspectorPanel({
               customColumns,
             ).reduce((n, g) => n + g.tags.length, 0);
             return tagCount > 0
-              ? <span>
-                  {tagCount} equipment tag{tagCount === 1 ? "" : "s"}
+              ? <span className="inline-flex items-center gap-1.5">
+                  <span className="ui-count">{tagCount}</span> equipment tag{tagCount === 1 ? "" : "s"}
                 </span>
               : undefined;
           })()}
@@ -607,12 +631,21 @@ export default function InspectorPanel({
         <PanelSection
           id="distribution"
           title="Who has a copy"
-          summary={distSummary && (distSummary.issued > 0 || distSummary.ackTotal > 0)
-            ? <span>
-                {distSummary.issued > 0 ? `${distSummary.issued}${distSummary.issuedCapped ? "+" : ""} issued` : ""}
-                {distSummary.issued > 0 && distSummary.ackTotal > 0 ? " · " : ""}
-                {distSummary.ackTotal > 0 ? `${distSummary.ackDone}/${distSummary.ackTotal} confirmed` : ""}
-              </span>
+          icon={<Users className="w-4 h-4" />}
+          summary={(distSummary && (distSummary.issued > 0 || distSummary.ackTotal > 0)) || staleHolderCount > 0
+            ? <>
+                {staleHolderCount > 0 && (
+                  <span className="inline-flex items-center gap-1.5"><span className="ui-count is-warn">{staleHolderCount}</span> on an old rev</span>
+                )}
+                {distSummary && distSummary.issued > 0 && (
+                  <span className="inline-flex items-center gap-1.5"><span className="ui-count">{distSummary.issued}{distSummary.issuedCapped ? "+" : ""}</span> issued</span>
+                )}
+                {distSummary && distSummary.ackTotal > 0 && (
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className={`ui-count ${distSummary.ackDone >= distSummary.ackTotal ? "" : "is-warn"}`}>{distSummary.ackDone}/{distSummary.ackTotal}</span> confirmed
+                  </span>
+                )}
+              </>
             : undefined}
         >
           <div className="flex items-center gap-2 flex-wrap">
@@ -666,7 +699,7 @@ export default function InspectorPanel({
       )}
 
       {/* HISTORY & ACTIVITY — the revision record plus the audit tail. */}
-      <PanelSection id="history" title="Revisions and activity">
+      <PanelSection id="history" title="Revisions and activity" icon={<History className="w-4 h-4" />}>
         {/* The deep views live HERE, nested — not as a duplicate top-level
             button showing the same list through a second door. */}
         <div className="flex flex-wrap gap-2">
@@ -727,6 +760,7 @@ export default function InspectorPanel({
         <PanelSection
           id="compliance"
           title="Review and sign-off"
+          icon={<ClipboardCheck className="w-4 h-4" />}
           summary={
             <>
               <ReviewPill nextReviewDate={selectedDoc.nextReviewDate} compact />
@@ -773,12 +807,13 @@ export default function InspectorPanel({
         <PanelSection
           id="checkout"
           title="Checkout"
+          icon={<LogIn className="w-4 h-4" />}
           summary={isCheckedOut
-            ? <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--color-text)]">
-                <span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-held)]" />
+            ? <span className="ui-pill is-warn">
+                <Lock className="w-3 h-3" />
                 {checkedOutByMe ? "Checked out by you" : `Checked out by ${selectedDoc.checkedOutByName || "someone"}`}
               </span>
-            : undefined}
+            : <span className="ui-pill is-muted">Not checked out</span>}
         >
         <CheckoutStatusCell
           docRecord={selectedDoc}
@@ -807,7 +842,7 @@ export default function InspectorPanel({
           Manage drawer. Collapsed: zero chrome on a healthy document. Once a
           hold is active this disappears and the ALERTS zone takes over. */}
       {selectedDoc.id && selectedDoc.orgId && uid && activeHoldCount === 0 && (canManageAssets || isOwner) && (
-        <PanelSection id="placehold" title="Holds">
+        <PanelSection id="placehold" title="Holds" icon={<Hand className="w-4 h-4" />}>
           <HoldStrip
             documentId={selectedDoc.id}
             orgId={selectedDoc.orgId}
@@ -824,7 +859,7 @@ export default function InspectorPanel({
 
       {/* MANAGE & LIFECYCLE — admin/owner actions behind one header. */}
       {canManage && (
-        <PanelSection id="manage" title="Manage">
+        <PanelSection id="manage" title="Manage" icon={<Wrench className="w-4 h-4" />}>
           {/* Unified lifecycle entry-point (Rev-Up, Split, Merge, Renumber, etc.) */}
           {selectedDoc.id && selectedDoc.orgId && selectedDoc.libraryId && uid && (
             <button
@@ -925,7 +960,8 @@ export default function InspectorPanel({
       )}
 
       {/* FILE DETAILS ───────────────────────────────────────────────── */}
-      <PanelSection id="filedetails" title="File details">
+      <PanelSection id="filedetails" title="File details" icon={<FileText className="w-4 h-4" />}
+        summary={ext ? <span className="ui-tag !h-6">.{ext}</span> : undefined}>
         <div className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2 text-[14px]">
           <div className="text-[var(--color-text-muted)]">Type</div>
           <div className="text-[var(--color-text)] truncate" title={fileType}>{ext ? `.${ext}` : fileType}</div>
@@ -950,7 +986,7 @@ export default function InspectorPanel({
 
       {/* QUICK NOTES — drop ad-hoc context anywhere (collapsed by default) */}
       {selectedDoc.id && selectedDoc.orgId && uid && (
-        <PanelSection id="quicknote" title="Quick note">
+        <PanelSection id="quicknote" title="Quick note" icon={<StickyNote className="w-4 h-4" />}>
           <QuickNoteComposer
             orgId={selectedDoc.orgId}
             userId={uid}
@@ -1044,16 +1080,16 @@ function TransmittalTrail({ orgId, documentId, currentRev }: { orgId: string; do
           const stale = !!(r.rev && currentRev && r.rev !== currentRev);
           return (
             <li key={r.id} className="flex items-center gap-2 text-[13px] flex-wrap">
-              <NextLink href={`/transmittals?t=${r.id}`} className="font-display text-[15px] tabular-nums text-[var(--color-accent-text)] hover:underline">{r.number}</NextLink>
+              <NextLink href={`/transmittals?t=${r.id}`} className="ui-id text-[15px]">{r.number}</NextLink>
               <span className="text-[var(--color-text-muted)]">
                 Rev {r.rev ?? "-"} · {r.purpose ?? "-"} · to {r.recipient}
                 {r.issuedAt ? ` · ${humanDate(r.issuedAt)}` : ""}
               </span>
               {r.status === "acknowledged"
-                ? <span className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[13px] font-semibold whitespace-nowrap leading-[18px] bg-[color-mix(in_srgb,var(--state-released)_14%,transparent)] text-[var(--state-released)]">Received</span>
-                : <span className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[13px] font-semibold whitespace-nowrap leading-[18px] bg-[color-mix(in_srgb,var(--state-held)_16%,transparent)] text-[var(--state-held)]">Not confirmed yet</span>}
+                ? <span className="ui-pill is-good">Received</span>
+                : <span className="ui-pill is-warn">Not confirmed yet</span>}
               {stale && (
-                <span className="text-[13px] font-semibold text-[var(--state-overdue)]" title={`They have Rev ${r.rev}. Current is Rev ${currentRev}.`}>
+                <span className="ui-pill is-bad" title={`They have Rev ${r.rev}. Current is Rev ${currentRev}.`}>
                   Has an old rev
                 </span>
               )}
@@ -1069,9 +1105,11 @@ function TransmittalTrail({ orgId, documentId, currentRev }: { orgId: string; do
 // ─── One line per section ────────────────────────────────────────────────
 // A plain row (name, what's in it, ›) that opens in place. Remembers whether
 // it was left open, per section, like the rest of the inspector did.
-function PanelSection({ id, title, summary, defaultOpen = false, children }: {
+function PanelSection({ id, title, icon, summary, defaultOpen = false, children }: {
   id: string;
   title: string;
+  /** The section's icon, set on a brand tile. */
+  icon?: React.ReactNode;
   summary?: React.ReactNode;
   defaultOpen?: boolean;
   children: React.ReactNode;
@@ -1097,9 +1135,10 @@ function PanelSection({ id, title, summary, defaultOpen = false, children }: {
     <section className="border-b border-[var(--color-border)] last:border-b-0">
       <button type="button" onClick={toggle} aria-expanded={open}
         className="w-full min-h-12 py-2 flex items-center gap-3 text-left group">
-        <span className="flex-1 min-w-0 font-display text-[17px] font-semibold text-[var(--color-text)] group-hover:underline underline-offset-4 decoration-[var(--color-border-strong)]">{title}</span>
+        {icon && <span className={`ui-icon-tile is-sm ${open ? "is-solid" : ""}`} aria-hidden>{icon}</span>}
+        <span className="flex-1 min-w-0 font-display text-[17px] font-semibold text-[var(--color-heading)] group-hover:underline underline-offset-4 decoration-[var(--color-border-strong)]">{title}</span>
         {summary && <span className="flex items-center gap-1.5 flex-wrap justify-end min-w-0 text-[13px] text-[var(--color-text-muted)]">{summary}</span>}
-        <ChevronRight className={`w-4 h-4 shrink-0 text-[var(--color-text-muted)] transition-transform ${open ? "rotate-90" : ""}`} />
+        <ChevronRight className={`w-4 h-4 shrink-0 text-[var(--color-main)] transition-transform ${open ? "rotate-90" : ""}`} />
       </button>
       {open && <div className="pb-5 space-y-3">{children}</div>}
     </section>

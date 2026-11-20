@@ -152,12 +152,11 @@ export default function RegisterPage() {
         {kpis && (
           <div className={`${bandSeg} mt-4`} role="group" aria-label="Show">
             <button type="button" onClick={() => setFilter("all")} aria-pressed={filter === "all"} className={bandSegItem(filter === "all")}>
-              All <span className="font-display tabular-nums">{kpis.totalControlled.toLocaleString()}</span>
+              All <span className={`ui-count !h-5 !px-1.5 !text-[12px] ${filter === "all" ? "is-solid" : ""}`}>{kpis.totalControlled.toLocaleString()}</span>
             </button>
             {shownChips.map((c) => (
               <button key={c.key} type="button" onClick={() => setFilter(c.key)} aria-pressed={filter === c.key} className={bandSegItem(filter === c.key)}>
-                {c.tone && c.n > 0 && <span aria-hidden="true" className={`w-2 h-2 rounded-full ${c.tone === "bad" ? "bg-[var(--state-overdue)]" : "bg-[var(--state-held)]"}`} />}
-                {c.label} <span className="font-display tabular-nums">{c.n.toLocaleString()}</span>
+                {c.label} <span className={`ui-count !h-5 !px-1.5 !text-[12px] ${c.tone && c.n > 0 ? (c.tone === "bad" ? "is-bad" : "is-warn") : filter === c.key ? "is-solid" : ""}`}>{c.n.toLocaleString()}</span>
               </button>
             ))}
           </div>
@@ -211,20 +210,28 @@ export default function RegisterPage() {
                 <tr key={r.id} className="border-t border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
                   <td className="px-3 py-2.5">
                     <div className="flex items-center gap-1.5">
-                      <Link href={`/documents/${r.libraryId}?doc=${r.id}`} className="font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{r.number}</Link>
+                      <Link href={`/documents/${r.libraryId}?doc=${r.id}`} className="ui-id text-[15px]">{r.number}</Link>
                       {r.external && <OriginBadge origin="external" source={null} reference={null} />}
                     </div>
                     {r.title && r.title !== r.number && <div className="text-[13px] text-[var(--color-text-muted)] truncate max-w-[280px]">{r.title}</div>}
                     {/* Phone: the facts under the number. */}
                     <div className="sm:hidden mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-[var(--color-text-muted)]">
-                      <span>Rev <span className="font-display tabular-nums font-semibold text-[var(--color-text)]">{r.rev || "-"}</span></span>
+                      <span>Rev <span className="ui-id">{r.rev || "-"}</span></span>
                       <span className={r.owned ? "text-[var(--color-text)]" : ""}>{r.ownerName || "Admin/DocCtrl"}</span>
                       {r.reviewStatus !== "none" && <ReviewPill nextReviewDate={r.nextReviewDate} compact />}
                       {r.review?.inReview && <StatusTag tone={r.review.ready ? "good" : "warn"}>In review</StatusTag>}
                       {(r.legalHold || r.dispositionEligible) && <RetentionPill retentionUntil={r.retentionUntil} dispositionState={r.dispositionEligible ? "eligible" : null} legalHold={r.legalHold} compact />}
                     </div>
                   </td>
-                  <td className="px-3 py-2 text-[var(--color-text-muted)] hidden md:table-cell">{r.libraryName}</td>
+                  <td className="px-3 py-2 hidden md:table-cell">
+                    {r.libraryName
+                      ? <button type="button" onClick={() => setLibraryId(libraryId === r.libraryId ? null : r.libraryId)}
+                          className={`ui-tag !font-sans ${libraryId === r.libraryId ? "!bg-[var(--color-main)] !text-white !border-[var(--color-main)]" : ""}`} aria-pressed={libraryId === r.libraryId}
+                          title={libraryId === r.libraryId ? "Show every library" : `Show only ${r.libraryName}`}>
+                          {r.libraryName}
+                        </button>
+                      : <span className="text-[var(--color-text-faint)]">-</span>}
+                  </td>
                   <td className="px-3 py-2 max-sm:hidden">
                     <span className={`inline-flex items-center gap-1 text-[13px] whitespace-nowrap ${r.owned ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
                       <User2 className="w-3 h-3" /> {r.ownerName || "Admin/DocCtrl"}

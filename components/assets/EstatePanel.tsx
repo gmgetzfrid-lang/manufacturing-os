@@ -32,7 +32,7 @@ export default function EstatePanel({ orgId, assetId, tag }: { orgId: string; as
   return (
     <section className="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] overflow-hidden">
       <div className="px-4 sm:px-5 pt-4 pb-3 border-b border-[var(--color-border)] flex items-center justify-between">
-        <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)] inline-flex items-center gap-2"><Waypoints className="w-4 h-4" /> Across the estate</h2>
+        <h2 className="font-display text-[17px] font-semibold text-[var(--color-heading)] inline-flex items-center gap-2.5"><span className="ui-icon-tile is-sm" aria-hidden><Waypoints className="w-4 h-4" /></span> Across the estate</h2>
         <Link href={`/documents/graph?q=${encodeURIComponent(tag)}`} className="text-[13px] text-[var(--color-accent-text)] hover:underline">Explore on the map →</Link>
       </div>
       <div className="p-4 space-y-4">
@@ -43,7 +43,7 @@ export default function EstatePanel({ orgId, assetId, tag }: { orgId: string; as
             <EntityStrip entities={res.entities} />
             {res.groups.map((g) => (
               <div key={g.key}>
-                <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">{g.label} · {g.ids.length}</div>
+                <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5 flex items-center gap-1.5">{g.label} <span className="ui-count !h-5 !text-[12px]">{g.ids.length}</span></div>
                 <ul className="divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)]">
                   {g.ids.slice(0, 8).map((id) => {
                     const r = res.results.find((x) => x.id === id)!;
@@ -51,7 +51,7 @@ export default function EstatePanel({ orgId, assetId, tag }: { orgId: string; as
                       <li key={id} className="px-3 py-2">
                         <Link href={r.href} className="flex items-center gap-2 hover:underline">
                           <FileTypeIcon type={fileTypeOf(r.name)} className="w-4 h-4 shrink-0" />
-                          <span className="text-sm font-semibold truncate">{r.name}</span>
+                          <span className="text-[14px] font-semibold text-[var(--color-accent-text)] truncate">{r.name}</span>
                           <span className="text-[13px] text-[var(--color-text-muted)] truncate">{[r.libraryName, ...r.path].filter(Boolean).join(" / ")}</span>
                         </Link>
                         <RelationChips relations={r.relations} />

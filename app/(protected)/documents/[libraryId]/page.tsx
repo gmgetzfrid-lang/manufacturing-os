@@ -180,6 +180,7 @@ import {
   FolderPlus,
   LayoutGrid,
   FolderKanban,
+  Folder as FolderIcon,
   Layers,
   Loader2,
   MoreHorizontal,
@@ -3165,7 +3166,7 @@ export default function LibraryExplorerPage() {
     if (colKey === "status") return 104;
     if (colKey === "updatedAt") return 104;
     const def = columnMap.get(colKey);
-    if (def?.type === "tags" || def?.isPill) return 180;
+    if (def?.type === "tags" || def?.isPill) return 236;
     if (def?.type === "date") return 110;
     if (def?.type === "number") return 90;
     if (def?.type === "boolean") return 70;
@@ -4103,7 +4104,11 @@ export default function LibraryExplorerPage() {
               {/* FOLDERS: a compact table, one row per folder with its counts. */}
               {filteredFolders.length > 0 && (
                 <nav aria-labelledby="lib-folders-h">
-                  <h2 id="lib-folders-h" className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)] mb-2.5">Folders</h2>
+                  <h2 id="lib-folders-h" className="flex items-center gap-2.5 font-display text-[19px] leading-tight font-semibold text-[var(--color-heading)] mb-2.5">
+                    <span className="ui-icon-tile is-sm is-solid" aria-hidden><FolderIcon className="w-4 h-4" /></span>
+                    Folders
+                    <span className="ui-count is-solid font-sans">{filteredFolders.length.toLocaleString()}</span>
+                  </h2>
                   <FolderGrid
                     layout="list"
                     folders={filteredFolders}
@@ -4257,10 +4262,11 @@ export default function LibraryExplorerPage() {
                 white sheet. */}
             <section aria-labelledby="lib-docs-h" className="min-w-0">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-2 mb-2.5 min-h-9">
-                <h2 id="lib-docs-h" className="flex items-baseline gap-2 min-w-0 mr-auto">
-                  <span className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">{noun.many === "documents" ? "Documents" : library.name}</span>
+                <h2 id="lib-docs-h" className="flex items-center gap-2.5 min-w-0 mr-auto">
+                  <span className="ui-icon-tile is-sm is-solid" aria-hidden><FileText className="w-4 h-4" /></span>
+                  <span className="font-display text-[19px] leading-tight font-semibold text-[var(--color-heading)]">{noun.many === "documents" ? "Documents" : library.name}</span>
                   <span className="text-[14px] text-[var(--color-text-muted)] tabular-nums"
-                    title="Documents filed directly in this folder">{filteredDocs.length.toLocaleString()} here</span>
+                    title="Documents filed directly in this folder"><span className="ui-count is-solid">{filteredDocs.length.toLocaleString()}</span> here</span>
                   {folderCounts && (() => {
                     const below = currentFolderId ? folderCounts.totals.get(currentFolderId) ?? 0 : folderCounts.libraryTotal;
                     return below > (folderCounts.direct.get(currentFolderId ?? null) ?? 0) && below !== filteredDocs.length ? (
@@ -4458,24 +4464,50 @@ export default function LibraryExplorerPage() {
                     ) : sortedDocs.map((doc) => {
                       const out = isDocumentCheckedOut(doc);
                       const showTitle = !!doc.title && !!doc.documentNumber && doc.title !== doc.documentNumber;
+                      // Its equipment, as pills you can tap (photos); three, then "+N".
+                      const tags = columnDefs
+                        .filter((d) => d && (d.type === "tags" || d.isPill))
+                        .flatMap((d) => {
+                          const v = (doc.metadata ?? {})[d.key];
+                          const list = Array.isArray(v) ? v.map(String) : v ? String(v).split(",").map((x) => x.trim()).filter(Boolean) : [];
+                          return list.map((tag) => ({ tag, label: d.pillGroupLabel || d.label || "Equipment" }));
+                        });
+                      const isOpen = selectedDoc?.id === doc.id;
                       return (
-                        <button
-                          key={doc.id}
-                          onClick={() => setSelectedDoc(doc)}
-                          className="w-full text-left px-4 py-3 active:bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] block"
-                        >
-                          <span className="flex items-center gap-3">
-                            <span className="flex-1 min-w-0 truncate font-display text-[17px] leading-snug font-semibold tabular-nums text-[var(--color-text)]">{doc.documentNumber || doc.title || doc.name || "-"}</span>
-                            {doc.status && <StatusTag status={doc.status} className="shrink-0" />}
-                          </span>
-                          <span className="mt-0.5 flex items-center gap-x-3 text-[13px] text-[var(--color-text-muted)] min-w-0">
-                            {showTitle && <span className="truncate min-w-0">{doc.title}</span>}
-                            <span className="shrink-0">Rev <span className="font-display tabular-nums font-semibold text-[var(--color-text)]">{doc.rev || "-"}</span></span>
-                            {out
-                              ? <span className="shrink-0 font-semibold text-[var(--state-held)] truncate">Checked out{doc.checkedOutBy === uid ? " by you" : doc.checkedOutByName ? ` by ${doc.checkedOutByName}` : ""}</span>
-                              : <span className="shrink-0">{humanDate(doc.updatedAt)}</span>}
-                          </span>
-                        </button>
+                        <div key={doc.id} className={`relative ${isOpen ? "bg-[var(--color-accent-soft)]" : ""}`}>
+                          {isOpen && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--color-main)]" />}
+                          <button
+                            onClick={() => setSelectedDoc(doc)}
+                            className={`w-full text-left px-4 pt-3 ${tags.length ? "pb-1.5" : "pb-3"} active:bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] block`}
+                          >
+                            <span className="flex items-center gap-3">
+                              <span className="ui-id flex-1 min-w-0 truncate text-[17px] leading-snug">{doc.documentNumber || doc.title || doc.name || "-"}</span>
+                              {doc.status && <StatusTag status={doc.status} className="shrink-0" />}
+                            </span>
+                            <span className="mt-0.5 flex items-center gap-x-3 text-[13px] text-[var(--color-text-muted)] min-w-0">
+                              {showTitle && <span className="truncate min-w-0">{doc.title}</span>}
+                              <span className="shrink-0">Rev <span className="font-display tabular-nums font-semibold text-[var(--color-text)]">{doc.rev || "-"}</span></span>
+                              {out
+                                ? <span className="shrink-0 font-semibold text-[var(--state-held)] truncate">Checked out{doc.checkedOutBy === uid ? " by you" : doc.checkedOutByName ? ` by ${doc.checkedOutByName}` : ""}</span>
+                                : <span className="shrink-0">{humanDate(doc.updatedAt)}</span>}
+                            </span>
+                          </button>
+                          {tags.length > 0 && (
+                            <div className="px-4 pb-3 flex flex-wrap items-center gap-1">
+                              {tags.slice(0, tags.length > 3 ? 2 : 3).map((t) => (
+                                <AssetTagChip key={`${t.label}-${t.tag}`} tag={t.tag} type={t.label}
+                                  orgId={activeOrgId ?? undefined} userId={uid ?? undefined}
+                                  canManage={["Admin", "Manager", "Supervisor"].includes(activeRole) || activeRole.includes("Engineer") || activeRole === "Drafter"} />
+                              ))}
+                              {tags.length > 3 && (
+                                <button type="button" onClick={() => setSelectedDoc(doc)} className="ui-tag is-more tabular-nums"
+                                  aria-label={`${tags.length - 2} more equipment on ${doc.documentNumber || "this document"}: open it`}>
+                                  +{tags.length - 2}
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       );
                     })}
                   </div>
@@ -4526,7 +4558,7 @@ export default function LibraryExplorerPage() {
                               checked={allSelected}
                               ref={(el) => { if (el) el.indeterminate = someSelected; }}
                               onChange={toggleSelectAll}
-                              className="w-3.5 h-3.5 rounded accent-[var(--color-text)] cursor-pointer"
+                              className="w-3.5 h-3.5 rounded accent-[var(--color-main)] cursor-pointer"
                             />
                           </th>
                           {activeColumns.map((colKey) => <React.Fragment key={colKey}>{((): React.ReactNode => {
@@ -4644,10 +4676,8 @@ export default function LibraryExplorerPage() {
                                 onDoubleClick={() => handleRowDoubleClick(docRecord)}
                                 onContextMenu={(e) => handleRowContextMenu(docRecord, e)}
                                 className={`group cursor-pointer transition-colors relative ${
-                                  isRowSelected
-                                    ? "bg-[var(--color-surface-2)]"
-                                    : isFocused
-                                    ? "bg-[var(--color-surface-2)]"
+                                  isRowSelected || isFocused
+                                    ? "bg-[var(--color-accent-soft)]"
                                     : "hover:bg-[var(--color-surface-2)]"
                                 } ${isKeyFocused ? "outline outline-1 -outline-offset-1 outline-[var(--color-border-strong)]" : ""} ${cutDocIds.has(docRecord.id!) ? "opacity-50" : ""}`}
                               >
@@ -4655,13 +4685,13 @@ export default function LibraryExplorerPage() {
                                   {/* Left edge on the selected row (inside the cell, so it
                                       never takes a column of its own). */}
                                   {(isRowSelected || isFocused) && (
-                                    <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--color-text)]" />
+                                    <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--color-main)]" />
                                   )}
                                   <input
                                     type="checkbox"
                                     checked={isRowSelected}
                                     onChange={() => {}}
-                                    className="w-3.5 h-3.5 rounded accent-[var(--color-text)] cursor-pointer"
+                                    className="w-3.5 h-3.5 rounded accent-[var(--color-main)] cursor-pointer"
                                   />
                                 </td>
                                 {activeColumns.map((colKey) => <React.Fragment key={colKey}>{((): React.ReactNode => {
@@ -4676,7 +4706,7 @@ export default function LibraryExplorerPage() {
                                       ? String(rawVal).split(",").map((v) => v.trim()).filter(Boolean)
                                       : [];
                                     return (
-                                      <td key={colKey} className={`px-3 ${rowPad} align-top`}>
+                                      <td key={colKey} className={`px-3 ${rowPad} align-middle`}>
                                         <PillCell
                                           values={list}
                                           label={def.pillGroupLabel || def.label || "Equipment"}
@@ -4738,7 +4768,7 @@ export default function LibraryExplorerPage() {
                                       <td key={colKey} className={`px-3 ${rowPad}`}>
                                         <div className="min-w-0">
                                           {!hasSeparateDocNum && docRecord.documentNumber && (
-                                            <div className="font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)] truncate leading-tight">
+                                            <div className="ui-id text-[15px] truncate leading-tight">
                                               {docRecord.documentNumber}
                                             </div>
                                           )}
@@ -4790,7 +4820,7 @@ export default function LibraryExplorerPage() {
                                             {/* The number opens the document (the click is the row's). */}
                                             <button
                                               type="button"
-                                              className="min-w-0 truncate text-left font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)] rounded focus-visible:outline-2"
+                                              className="ui-id min-w-0 truncate text-left text-[15px] rounded focus-visible:outline-2"
                                               title={`Open ${docRecord.documentNumber || "this document"}`}
                                             >
                                               {docRecord.documentNumber || "-"}
@@ -4834,7 +4864,7 @@ export default function LibraryExplorerPage() {
                                         onClick={(e) => handleStageDoc(docRecord, e)}
                                         className={`p-1 rounded-md transition-all ${
                                           isStaged
-                                            ? "text-[var(--color-surface)] bg-[var(--color-text)] ring-1 ring-[var(--color-border-strong)] opacity-100"
+                                            ? "text-white bg-[var(--color-main)] opacity-100"
                                             : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] opacity-60 sm:opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
                                         }`}
                                         title={isStaged ? "Remove from reference stack" : "Add to reference stack"}
