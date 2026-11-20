@@ -21,6 +21,8 @@ import {
 import { listProjects, bulkCheckoutToProject } from "@/lib/projects";
 import type { Project, DocumentRecord, ProjectVisibility } from "@/types/schema";
 import IsoGuidance from "@/components/ui/IsoGuidance";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
+import { useDraft } from "@/hooks/useDraft";
 
 interface BulkCheckoutToProjectModalProps {
   isOpen: boolean;
@@ -37,6 +39,8 @@ interface BulkCheckoutToProjectModalProps {
 export default function BulkCheckoutToProjectModal({
   isOpen, onClose, docs, orgId, actorUserId, actorEmail, actorRole, onSuccess,
 }: BulkCheckoutToProjectModalProps) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => onClose(), isOpen);
   const router = useRouter();
   // Top-level kind. "adhoc" is the default since most operator checkouts
   // (procedures, policy edits) aren't project work.
@@ -48,6 +52,8 @@ export default function BulkCheckoutToProjectModal({
   // New-project fields
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  // Typed words are kept on this device until this goes through.
+  useDraft<string>(isOpen ? `bulk-checkout-project:${orgId}` : null, description, setDescription, (v) => !v.trim());
   const [moc, setMoc] = useState("");
   const [targetDate, setTargetDate] = useState("");
   const [visibility, setVisibility] = useState<ProjectVisibility>("public");
@@ -132,6 +138,7 @@ export default function BulkCheckoutToProjectModal({
       // For project checkouts, send the user to the project so they see
       // the result of their work. For ad-hoc, stay on the library.
       if (result.projectId) router.push(`/projects/${result.projectId}`);
+      setDescription("");
       onClose();
     } catch (e) {
       setError((e as Error).message);
@@ -159,7 +166,7 @@ export default function BulkCheckoutToProjectModal({
                 : "Attach all checkouts to the same project so the team knows they belong together."}
             </div>
           </div>
-          <button onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
+          <button aria-label="Close" onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -239,7 +246,7 @@ export default function BulkCheckoutToProjectModal({
                 <textarea
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Description * - what's the team going to do with these documents?"
+                  placeholder="Description * (what will the team do with these?)"
                   rows={3}
                   className="w-full px-3 py-2 border border-[var(--color-border)] rounded-md text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none resize-y"
                 />
@@ -272,7 +279,7 @@ export default function BulkCheckoutToProjectModal({
                 onChange={(e) => setSelectedProjectId(e.target.value)}
                 className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm bg-[var(--color-surface)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
               >
-                {projects.length === 0 && <option value="">No active projects - switch to New</option>}
+                {projects.length === 0 && <option value="">No active projects: switch to New</option>}
                 {projects.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name}{p.visibility === "private" ? " (private)" : ""}
@@ -324,7 +331,7 @@ export default function BulkCheckoutToProjectModal({
           </div>
 
           {error && (
-            <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+            <div className="flex items-start gap-2 text-xs border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
             </div>
           )}
@@ -335,9 +342,7 @@ export default function BulkCheckoutToProjectModal({
           <button
             onClick={submit}
             disabled={busy}
-            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white disabled:opacity-60 ${
-              kind === "adhoc" ? "bg-emerald-600 hover:bg-emerald-500" : "bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]"
-            }`}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-60 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)]"
           >
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ChevronRight className="w-3.5 h-3.5" />}
             {busy ? "Checking out…" : `Checkout ${docs.length} doc${docs.length === 1 ? "" : "s"}`}

@@ -270,7 +270,7 @@ const CheckoutInfoPopover = ({
                     <div className="flex justify-between items-center">
                       <p className="text-xs font-bold text-[var(--color-text)] truncate">{session.userName}</p>
                       {session.userId === docRecord.checkedOutBy && (
-                        <span className="flex items-center text-[11px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] px-1.5 py-0.5 rounded-full border border-[var(--color-border)] shadow-sm" title="This person holds the lock - they're the one publishing wins for">
+                        <span className="flex items-center text-[11px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] px-1.5 py-0.5 rounded-full border border-[var(--color-border)] shadow-sm" title="This person holds the lock, they're the one publishing wins for">
                           <Lock className="w-2.5 h-2.5 mr-1" /> HOLDS LOCK
                         </span>
                       )}
@@ -288,7 +288,7 @@ const CheckoutInfoPopover = ({
                     </span>
                   )}
                   {session.note ? (
-                    <div className="text-xs text-[var(--color-text)] bg-white/60 p-2 rounded-lg border border-black/5 italic">
+                    <div className="text-xs text-[var(--color-text)] bg-[var(--color-surface-2)] p-2 rounded-lg border border-[var(--color-border)] italic">
                       &ldquo;{session.note}&rdquo;
                     </div>
                   ) : !session.purpose ? (
@@ -325,11 +325,11 @@ const CheckoutInfoPopover = ({
           <button
             onClick={handleReleaseMine}
             disabled={releasing}
-            className="w-full py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-bold flex items-center justify-center transition-colors disabled:opacity-50"
+            className="w-full py-2 bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)] rounded-lg text-xs font-bold flex items-center justify-center transition-colors disabled:opacity-50"
             title="Ends your session only. If others are still on the checkout, the lock passes to them."
           >
             {releasing ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Check className="w-3.5 h-3.5 mr-1.5" />}
-            {releasing ? "Releasing…" : "Release my checkout - no changes"}
+            {releasing ? "Releasing…" : "Release my checkout, no changes"}
           </button>
         )}
 
@@ -339,10 +339,10 @@ const CheckoutInfoPopover = ({
              <button
                onClick={handleForceRelease}
                disabled={processing}
-               className="w-full py-2 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg text-xs font-bold flex items-center justify-center transition-colors disabled:opacity-50"
+               className="w-full py-2 bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-rose-700 dark:text-rose-400 border border-[var(--color-border)] rounded-lg text-xs font-bold flex items-center justify-center transition-colors disabled:opacity-50"
              >
                <Shield className="w-3.5 h-3.5 mr-1.5" />
-               {processing ? "Releasing..." : "Admin Force Release"}
+               {processing ? "Releasing…" : "Force release (admin)"}
              </button>
            </div>
         )}
@@ -443,15 +443,12 @@ export default function CheckoutStatusCell({
         className={`
           relative flex items-center pl-1 pr-3 py-1 rounded-full border shadow-sm cursor-pointer transition-all hover:shadow-md hover:scale-[1.02] active:scale-[0.98]
           ${isLockedByMe 
-            ? 'bg-green-50/80 border-green-200 ring-1 ring-green-100' 
+            ? 'bg-[var(--color-surface)] border-[var(--color-border-strong)] ring-1 ring-[var(--color-border-strong)]' 
             : 'bg-[var(--color-surface-2)] border-[var(--color-border)] ring-1 ring-[var(--color-border-strong)]'
           }
         `}
       >
-        {/* Pulsing Dot */}
-        <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
-          <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${isLockedByMe ? 'bg-green-500' : 'bg-[var(--color-text-muted)]'}`}></span>
-        </span>
+        {/* (A corner status dot sat here; the words say who has it.) */}
 
         {/* Avatars */}
         <div className="flex -space-x-1.5 mr-2">
@@ -466,8 +463,8 @@ export default function CheckoutStatusCell({
         </div>
 
         {/* Text Action */}
-        <span className={`text-[11px] font-bold uppercase tracking-wide ${isLockedByMe ? 'text-green-700' : 'text-[var(--color-text)]'}`}>
-          {isLockedByMe ? 'Checked Out by You' : 'Checked Out'}
+        <span className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text)]">
+          {isLockedByMe ? 'Checked out by you' : 'Checked out'}
         </span>
       </div>
 
@@ -477,7 +474,7 @@ export default function CheckoutStatusCell({
         className={`
           w-7 h-7 flex items-center justify-center rounded-full transition-all border
           ${showInfo 
-            ? 'bg-slate-800 text-white border-slate-700' 
+            ? 'bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]' 
             : 'bg-[var(--color-surface)] text-[var(--color-text-faint)] border-[var(--color-border)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-muted)] opacity-60 sm:opacity-0 group-hover:opacity-100'
           }
         `}

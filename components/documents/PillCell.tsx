@@ -159,7 +159,7 @@ export default function PillCell({
         {input.trim() && (
           <button
             onClick={(e) => { e.stopPropagation(); addPill(); }}
-            className="shrink-0 p-1.5 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] rounded-lg transition-colors"
+            className="shrink-0 p-1.5 border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] rounded-lg transition-colors"
           >
             <Plus className="w-3 h-3" />
           </button>

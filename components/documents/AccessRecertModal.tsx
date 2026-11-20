@@ -13,6 +13,7 @@ import {
   type AccessGrant,
 } from "@/lib/accessRecert";
 import type { RecertPolicy } from "@/types/schema";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
 export default function AccessRecertModal({ libraryId, orgId, name, uid, userName, onClose, onSaved }: {
   libraryId: string;
@@ -23,6 +24,8 @@ export default function AccessRecertModal({ libraryId, orgId, name, uid, userNam
   onClose: () => void;
   onSaved?: () => void;
 }) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => onClose());
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [enabled, setEnabled] = useState(true);
@@ -79,7 +82,7 @@ export default function AccessRecertModal({ libraryId, orgId, name, uid, userNam
             <div className="text-sm font-bold text-[var(--color-text)]">Access recertification</div>
             <div className="text-[11px] text-[var(--color-text-muted)] truncate">Review &amp; attest who has access to {name || "this library"}</div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
+          <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
         </div>
 
         {loading ? (
@@ -133,10 +136,10 @@ export default function AccessRecertModal({ libraryId, orgId, name, uid, userNam
 
             {/* Attest */}
             <div className="space-y-2 pt-1 border-t border-[var(--color-border)]">
-              <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional) - e.g. removed 2 contractors" className={`${inp} w-full`} />
+              <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional): e.g. removed 2 contractors" className={`${inp} w-full`} />
               <div className="flex justify-end gap-2">
                 <button onClick={onClose} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text-muted)]">Close</button>
-                <button onClick={() => void recertify()} disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold disabled:opacity-50">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Recertify - access reviewed</button>
+                <button onClick={() => void recertify()} disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-xs font-bold disabled:opacity-50">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Recertify - access reviewed</button>
               </div>
             </div>
           </div>

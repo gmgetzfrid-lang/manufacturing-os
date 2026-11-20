@@ -87,15 +87,19 @@ export default function LibraryHomeBoard({
     setEditing(true);
   };
 
+  // A failed save says so here and keeps the editor open with your changes.
+  const [saveErr, setSaveErr] = useState<string | null>(null);
   const save = async () => {
-    setSaving(true);
+    setSaving(true); setSaveErr(null);
     try { await onSave({ ...draft, enabled: true }); setEditing(false); }
+    catch (e) { setSaveErr(`It didn't save: ${(e as Error)?.message || "try again"}.`); }
     finally { setSaving(false); }
   };
 
   const disableHome = async () => {
-    setSaving(true);
+    setSaving(true); setSaveErr(null);
     try { await onSave({ enabled: false, parts: draft.parts }); setEditing(false); }
+    catch (e) { setSaveErr(`It didn't save: ${(e as Error)?.message || "try again"}.`); }
     finally { setSaving(false); }
   };
 
@@ -170,6 +174,7 @@ export default function LibraryHomeBoard({
           </button>
         </div>
       </div>
+      {saveErr && <p role="alert" className="mb-3 border-l-2 border-rose-500 pl-3 text-xs text-rose-700 dark:text-rose-300">{saveErr}</p>}
 
       {/* add-part palette */}
       <div className="flex flex-wrap gap-1.5 mb-3">

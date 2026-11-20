@@ -12,6 +12,7 @@ import { searchOrgUsers, type OrgUser } from "@/lib/notifications";
 import { setReviewPolicy, describeInterval } from "@/lib/reviewCycles";
 import { setOwner } from "@/lib/ownership";
 import type { ReviewPolicy } from "@/types/schema";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
 export default function ReviewPolicyModal({ level, id, orgId, name, uid, userName, onClose, onSaved }: {
   level: "library" | "collection";
@@ -23,6 +24,8 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
   onClose: () => void;
   onSaved?: () => void;
 }) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => onClose());
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [enabled, setEnabled] = useState(true);
@@ -112,7 +115,7 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
             <div className="text-sm font-bold text-[var(--color-text)]">Responsibility &amp; review</div>
             <div className="text-[11px] text-[var(--color-text-muted)] truncate">Applies to every document in this {scopeLabel}{name ? ` · ${name}` : ""}</div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
+          <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
         </div>
 
         {loading ? (
@@ -163,7 +166,7 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
                   <div className="text-[11px] font-bold text-[var(--color-text-muted)]">Notify (besides Admin/DocCtrl)</div>
                   <div className="flex flex-wrap gap-1">
                     {reviewers.map((r) => (
-                      <span key={r.uid} className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-[11px] text-[var(--color-text)]">{r.name || r.email}<button onClick={() => setReviewers((p) => p.filter((x) => x.uid !== r.uid))}><X className="w-3 h-3" /></button></span>
+                      <span key={r.uid} className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-[11px] text-[var(--color-text)]">{r.name || r.email}<button aria-label="Remove" onClick={() => setReviewers((p) => p.filter((x) => x.uid !== r.uid))}><X className="w-3 h-3" /></button></span>
                     ))}
                   </div>
                   <input value={userQuery} onChange={(e) => setUserQuery(e.target.value)} placeholder="Search people…" className={`${inp} w-full`} />

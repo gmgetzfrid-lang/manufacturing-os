@@ -489,7 +489,7 @@ export default function PdfRevisionDiff({
   const pct = (n: number) => stats && stats.totalInkPixels > 0 ? ((n / stats.totalInkPixels) * 100).toFixed(1) : "0.0";
 
   const toggleBtn = (active: boolean) =>
-    `px-2 py-1 rounded text-[11px] font-bold transition-colors ${active ? "bg-orange-500/20 text-orange-300" : "text-slate-400 hover:text-slate-200"}`;
+    `px-2 py-1 rounded text-[11px] font-bold transition-colors ${active ? "bg-white text-slate-900" : "text-slate-400 hover:text-slate-200"}`;
 
   const regLabel = regInfo
     ? `registered ${regInfo.sx !== 1 || regInfo.sy !== 1 ? `${(regInfo.sx * 100).toFixed(1)}%/${(regInfo.sy * 100).toFixed(1)}% ` : ""}${regInfo.dx >= 0 ? "+" : ""}${Math.round(regInfo.dx)},${regInfo.dy >= 0 ? "+" : ""}${Math.round(regInfo.dy)}px`
@@ -510,7 +510,7 @@ export default function PdfRevisionDiff({
             <span className="w-2.5 h-2.5 rounded-sm bg-green-700" /> Added · only in {compareLabel}
           </span>
           {regLabel && (
-            <span className="inline-flex items-center gap-1 text-[11px] text-sky-300" title="Registration warped the base layer (scale + shift) to line up with the compare layer before diffing">
+            <span className="inline-flex items-center gap-1 text-[11px] text-slate-300" title="Registration warped the base layer (scale + shift) to line up with the compare layer before diffing">
               <Crosshair className="w-3 h-3" /> {regLabel}
             </span>
           )}
@@ -551,28 +551,28 @@ export default function PdfRevisionDiff({
               <button
                 onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
                 disabled={currentPage <= 1 || loading}
-                className="p-1 disabled:opacity-30 hover:text-orange-400"
+                className="p-1 disabled:opacity-30 hover:text-white"
                 title="Previous page"
               ><ChevronLeft className="w-3.5 h-3.5" /></button>
               <span className="font-mono">{currentPage} / {pageCount}</span>
               <button
                 onClick={() => setCurrentPage((p) => Math.min(pageCount, p + 1))}
                 disabled={currentPage >= pageCount || loading}
-                className="p-1 disabled:opacity-30 hover:text-orange-400"
+                className="p-1 disabled:opacity-30 hover:text-white"
                 title="Next page"
               ><ChevronRight className="w-3.5 h-3.5" /></button>
             </div>
           )}
           <div className="flex items-center gap-1 bg-slate-900 rounded px-1">
-            <button onClick={() => setZoom((z) => Math.max(0.05, z / 1.25))} className="p-1 hover:text-orange-400" title="Zoom out"><ZoomOut className="w-3.5 h-3.5" /></button>
+            <button onClick={() => setZoom((z) => Math.max(0.05, z / 1.25))} className="p-1 hover:text-white" title="Zoom out"><ZoomOut className="w-3.5 h-3.5" /></button>
             <span className="font-mono w-12 text-center" title="Ctrl + scroll to zoom">{Math.round(zoom * 100)}%</span>
-            <button onClick={() => setZoom((z) => Math.min(6, z * 1.25))} className="p-1 hover:text-orange-400" title="Zoom in"><ZoomIn className="w-3.5 h-3.5" /></button>
-            <button onClick={() => fitToScreen()} className="p-1 hover:text-orange-400" title="Fit the whole sheet on screen">
+            <button onClick={() => setZoom((z) => Math.min(6, z * 1.25))} className="p-1 hover:text-white" title="Zoom in"><ZoomIn className="w-3.5 h-3.5" /></button>
+            <button onClick={() => fitToScreen()} className="p-1 hover:text-white" title="Fit the whole sheet on screen">
               <Maximize className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => panZoom.setPanMode((v) => !v)}
-              className={`p-1 hover:text-orange-400 ${panZoom.panMode ? "text-orange-400" : ""}`}
+              className={`p-1 hover:text-white ${panZoom.panMode ? "text-white bg-white/10 rounded" : ""}`}
               title={panZoom.panMode ? "Pan tool (drag to move) - click for cursor" : "Cursor - click for the pan/grab hand"}
             >{panZoom.panMode ? <Hand className="w-3.5 h-3.5" /> : <MousePointer2 className="w-3.5 h-3.5" />}</button>
           </div>
@@ -583,8 +583,8 @@ export default function PdfRevisionDiff({
       <div ref={scrollRef} className={`flex-1 overflow-auto bg-slate-950 relative ${panZoom.cursorClass}`} style={{ touchAction: "pan-x pan-y" }} {...panZoom.panHandlers}>
         {loading && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-slate-950/80">
-            <Loader2 className="w-8 h-8 animate-spin text-blue-400 mb-2" />
-            <span className="text-xs font-mono text-blue-300">Rendering &amp; registering…</span>
+            <Loader2 className="w-8 h-8 animate-spin text-slate-300 mb-2" />
+            <span className="text-xs text-slate-300">Lining up the two revisions…</span>
           </div>
         )}
         {error && (
@@ -614,7 +614,7 @@ export default function PdfRevisionDiff({
           <span className="text-red-300">− {stats.removedPixels.toLocaleString()} px removed ({pct(stats.removedPixels)}%)</span>
           <span className="text-slate-400">≡ {stats.unchangedPixels.toLocaleString()} unchanged</span>
           {stats.addedPixels === 0 && stats.removedPixels === 0 && (
-            <span className="text-sky-300">No visual differences on this page.</span>
+            <span className="text-emerald-300">No differences on this page.</span>
           )}
         </div>
       )}

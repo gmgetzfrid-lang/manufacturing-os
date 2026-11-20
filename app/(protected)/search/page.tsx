@@ -39,17 +39,18 @@ export default function SearchPage() {
   }, []);
 
   // Requests, projects, notes and transmittals that match.
-  const [otherFind, setOtherFind] = useState<{ q: string; hits: GlobalHit[] } | null>(null);
+  const [otherFind, setOtherFind] = useState<{ q: string; hits: GlobalHit[]; failed?: boolean } | null>(null);
   const q = finder.q;
   useEffect(() => {
     if (!activeOrgId || q.length < 2) return;
     let alive = true;
     void globalSearch({ orgId: activeOrgId, query: q, perKindLimit: 10 })
       .then((h) => { if (alive) setOtherFind({ q, hits: h.filter((x) => OTHER_ICON[x.kind]) }); })
-      .catch(() => { if (alive) setOtherFind({ q, hits: [] }); });
+      .catch(() => { if (alive) setOtherFind({ q, hits: [], failed: true }); });
     return () => { alive = false; };
   }, [activeOrgId, q]);
   const others = otherFind && otherFind.q === q && q.length >= 2 ? otherFind.hits : [];
+  const othersFailed = !!(otherFind && otherFind.q === q && otherFind.failed);
 
   // Keep the address bar in step so a link or Back lands on the same search.
   useEffect(() => {
@@ -74,7 +75,7 @@ export default function SearchPage() {
             className="w-full pl-11 pr-10 py-3 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-base sm:text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] shadow-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:border-[var(--color-accent-ring)] outline-none transition-colors"
           />
           {query && (
-            <button type="button" onClick={() => { setQuery(""); router.replace("/search"); }} title="Clear the search"
+            <button type="button" onClick={() => { setQuery(""); router.replace("/search"); }} title="Clear the search" aria-label="Clear the search"
               className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-[var(--color-text-faint)] hover:text-[var(--color-text)] rounded transition-colors">
               <X className="w-3.5 h-3.5" />
             </button>
@@ -92,6 +93,11 @@ export default function SearchPage() {
         </div>
       )}
 
+      {othersFailed && (
+        <p role="alert" className="mt-4 border-l-2 border-rose-500 pl-3 text-xs text-rose-700 dark:text-rose-300">
+          Couldn&apos;t search requests, projects and notes. Change the search to try again.
+        </p>
+      )}
       {others.length > 0 && (
         <div className="mt-4">
           <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-faint)] mb-1.5">Requests, projects, notes</div>

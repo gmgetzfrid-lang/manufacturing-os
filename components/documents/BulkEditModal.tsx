@@ -13,6 +13,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import { computeUniquenessKey } from "@/lib/uniqueness";
 import type { DocumentRecord, LibraryConfig, MetadataFieldDefinition } from "@/types/schema";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
 interface BulkEditModalProps {
   isOpen: boolean;
@@ -34,6 +35,8 @@ const STATUS_OPTIONS = ["Draft", "In Review", "Issued", "IFC", "Superseded", "Ar
 export default function BulkEditModal({
   isOpen, onClose, docs, library, actorUserId, onApplied,
 }: BulkEditModalProps) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => onClose(), isOpen);
   const [target, setTarget] = useState<TargetField>({ kind: "status" });
   const [newValue, setNewValue] = useState<string>(STATUS_OPTIONS[0]);
   const [busy, setBusy] = useState(false);
@@ -97,9 +100,9 @@ export default function BulkEditModal({
           <div className="p-2 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)]"><Pencil className="w-5 h-5" /></div>
           <div className="flex-1">
             <div className="text-sm font-black text-[var(--color-text)]">Bulk edit · {docs.length} document{docs.length === 1 ? "" : "s"}</div>
-            <div className="text-xs text-[var(--color-text-muted)]">Apply one change to every selected row. Each insert is independent - a single failure doesn&apos;t roll back the rest.</div>
+            <div className="text-xs text-[var(--color-text-muted)]">Apply one change to every selected row. Each insert is independent, a single failure doesn&apos;t roll back the rest.</div>
           </div>
-          <button onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
+          <button aria-label="Close" onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -171,7 +174,7 @@ export default function BulkEditModal({
                 Applied to <b>{results.ok}</b> document{results.ok === 1 ? "" : "s"}.
               </div>
               {results.failed.length > 0 && (
-                <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-xs text-red-800">
+                <div className="text-xs border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
                   <div className="font-bold flex items-center gap-1.5 mb-1"><AlertTriangle className="w-4 h-4" /> {results.failed.length} failed</div>
                   <ul className="ml-5 list-disc space-y-0.5">
                     {results.failed.slice(0, 5).map((f, i) => (

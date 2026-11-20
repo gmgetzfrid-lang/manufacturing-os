@@ -47,6 +47,7 @@ import BackupViewer from "@/components/archive/BackupViewer";
 import { listVersions } from "@/lib/revisions";
 import { recordIntent } from "@/lib/intents";
 import QrBadge from "@/components/ui/QrBadge";
+import MoreMenu from "@/components/ui/MoreMenu";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 import { supabase } from "@/lib/supabase";
 import { bakeMarkupIntoPdf } from "@/lib/markupExport";
@@ -801,13 +802,27 @@ export default function FullScreenViewer({
   };
 
   // ─── Keyboard shortcuts ───────────────────────────────────────────────
+  // Escape steps out one layer: a confirm, then the stamp menu or a drawing
+  // tool, and once nothing is open it closes the viewer (same as the X).
+  const escState = useRef({ tool, stampMenuOpen, pending: !!pending, diffOpen, phoneQrOpen });
+  useEffect(() => { escState.current = { tool, stampMenuOpen, pending: !!pending, diffOpen, phoneQrOpen }; });
   useEffect(() => {
     if (!isOpen) return;
     const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        const st = escState.current;
+        if (st.diffOpen) return; // the compare window handles its own Escape
+        if (st.pending) { setPending(null); return; }
+        if (st.phoneQrOpen) { setPhoneQrOpen(false); return; }
+        if (st.stampMenuOpen || st.tool !== "pan") { setStampMenuOpen(false); setTool("pan"); return; }
+        const active = document.activeElement;
+        if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) return;
+        document.querySelector<HTMLButtonElement>("[data-fullscreen-viewer] [data-viewer-close]")?.click();
+        return;
+      }
       const meta = e.ctrlKey || e.metaKey;
       if (meta && e.key.toLowerCase() === "z" && !e.shiftKey) { e.preventDefault(); void undo(); return; }
       if (meta && (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))) { e.preventDefault(); void redo(); return; }
-      if (e.key === "Escape") { setStampMenuOpen(false); setTool("pan"); return; }
       if (e.key === "Delete" || e.key === "Backspace") {
         const act = fabricRef.current?.getActiveObject();
         if (act && (act.type === "i-text" || act.type === "textbox") && (act as unknown as { isEditing?: boolean }).isEditing) return;
@@ -1107,9 +1122,9 @@ export default function FullScreenViewer({
   };
 
   const ToolBtn = ({ value, icon: Icon, label }: { value: Tool; icon: LucideIcon; label: string }) => (
-    <button onClick={() => setTool(value)} title={label}
+    <button onClick={() => setTool(value)} title={label} aria-label={label} aria-pressed={tool === value}
       className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${
-        tool === value ? "bg-orange-600 text-white" : "text-slate-300 hover:text-white hover:bg-slate-700"
+        tool === value ? "bg-white text-slate-900" : "text-slate-300 hover:text-white hover:bg-slate-700"
       }`}>
       <Icon className="w-5 h-5" />
     </button>
@@ -1125,7 +1140,7 @@ export default function FullScreenViewer({
     <div data-fullscreen-viewer className="fixed inset-0 z-[100] bg-slate-900 flex flex-col" onPointerUp={onCanvasMouseUp} onPointerCancel={onCanvasMouseUp} onMouseLeave={onCanvasMouseUp}>
       {committing && (
         <div className="absolute inset-0 z-[200] bg-slate-950/85 backdrop-blur-sm flex flex-col items-center justify-center gap-3">
-          <Loader2 className="w-9 h-9 animate-spin text-emerald-400" />
+          <Loader2 className="w-9 h-9 animate-spin text-slate-300" />
           <span className="text-sm font-bold text-white">Applying your markups…</span>
         </div>
       )}
@@ -1147,10 +1162,11 @@ export default function FullScreenViewer({
           </div>
           <button
             onClick={(e) => { e.stopPropagation(); setTagsBarOpen(false); }}
-            title="Hide equipment tag bar"
-            className="shrink-0 p-1 rounded text-white/60 hover:text-white hover:bg-white/10 text-[11px] font-bold"
+            title="Hide equipment tags"
+            aria-label="Hide equipment tags"
+            className="shrink-0 p-1 rounded text-white/60 hover:text-white hover:bg-white/10"
           >
-            ✕
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
       )}
@@ -1221,27 +1237,18 @@ export default function FullScreenViewer({
           data-test="download-with-markup-btn"
           onClick={() => { console.warn("[FullScreenViewer] Download w/ Markup CLICK"); requestMarkupDownload(); }}
           disabled={!resolvedUrl || markupBusy}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-orange-600 hover:bg-orange-500 text-white disabled:opacity-40 disabled:cursor-not-allowed"
-          title="Download a copy with your markups baked into the PDF">
-          {markupBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
-          <span className="hidden sm:inline">Download w/ Markup</span>
-        </button>
-        {/* Compare against previous revision (Phase 4) */}
-        <button
-          onClick={() => setDiffOpen(true)}
-          disabled={!docRecord}
           className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed"
-          title={previousVersion ? `Compare Rev ${previousVersion.revisionLabel} → Rev ${currentVersion?.revisionLabel ?? "?"} (pick any two revisions inside)` : "Compare any two revisions as a true overlay"}
-        >
-          <GitCompare className="w-3.5 h-3.5" /> <span className="hidden xl:inline">Compare</span>
+          title="Download a copy with your markups in the PDF">
+          {markupBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
+          <span className="hidden sm:inline">Download with markups</span>
         </button>
 
         {/* Send to drafting — pre-fills a new request with this doc (and any
             markups baked in) as the Source attachment. */}
         <button onClick={() => void sendToDrafting()} disabled={!docRecord || sendingDraft}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-teal-600 hover:bg-teal-500 text-white disabled:opacity-40 disabled:cursor-not-allowed"
-          title="Send this document to a new drafting request. Pre-fills the doc number, rev, sheet and unit - and if you've marked it up, attaches the marked-up sheet as the Source.">
-          {sendingDraft ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />} <span className="hidden xl:inline">Send to Drafting</span>
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] disabled:opacity-40 disabled:cursor-not-allowed"
+          title="Start a drafting request for this document. Your markups go with it.">
+          {sendingDraft ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />} <span className="hidden xl:inline">Send to drafting</span>
         </button>
 
         {/* Print */}
@@ -1253,28 +1260,32 @@ export default function FullScreenViewer({
 
         {/* Continue on phone — scan and walk to the unit with the same
             drawing open. Zero setup: it's just this document's URL. */}
-        {docRecord?.id && docRecord.libraryId && (
-          <div className="relative">
-            <button
-              onClick={() => setPhoneQrOpen((v) => !v)}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold ${phoneQrOpen ? "bg-blue-600 text-white" : "bg-slate-800 hover:bg-slate-700 text-slate-200"}`}
-              title="Open this drawing on your phone - scan and go"
-            >
-              <Smartphone className="w-3.5 h-3.5" /> <span className="hidden lg:inline">Phone</span>
-            </button>
-            {phoneQrOpen && (
+        {/* Less-used: compare revisions, open on a phone. */}
+        <div className="relative">
+          <MoreMenu
+            label="More"
+            iconOnly
+            triggerClass="inline-flex items-center justify-center h-8 w-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200"
+            items={[
+              ...(docRecord ? [{ icon: <GitCompare className="w-4 h-4" />, label: "Compare revisions", onClick: () => setDiffOpen(true) }] : []),
+              ...(docRecord?.id && docRecord.libraryId ? [{ icon: <Smartphone className="w-4 h-4" />, label: phoneQrOpen ? "Hide the phone code" : "Open on your phone", onClick: () => setPhoneQrOpen((v) => !v) }] : []),
+            ]}
+          />
+          {docRecord?.id && docRecord.libraryId && (
+            phoneQrOpen && (
               <div className="absolute right-0 top-full mt-2 z-[60] bg-white rounded-xl shadow-2xl border border-slate-200 p-3 animate-in fade-in zoom-in-95">
+                <button onClick={() => setPhoneQrOpen(false)} aria-label="Close" className="absolute top-1 right-1 p-1 rounded text-slate-500 hover:text-slate-900"><X className="w-3.5 h-3.5" /></button>
                 <QrBadge
                   value={`${window.location.origin}/documents/${docRecord.libraryId}?doc=${docRecord.id}`}
                   size={150}
                   caption="Scan to open this drawing on your phone"
                 />
               </div>
-            )}
-          </div>
-        )}
+            )
+          )}
+        </div>
 
-        <button onClick={() => void handleClose()} disabled={committing} title="Close" aria-label="Close" className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-full disabled:opacity-50">
+        <button data-viewer-close onClick={() => void handleClose()} disabled={committing} title="Close" aria-label="Close" className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-full disabled:opacity-50">
           <X className="w-5 h-5" />
         </button>
       </div>
@@ -1284,18 +1295,18 @@ export default function FullScreenViewer({
           checkout, say so here, passively (no click-through, no blocking):
           who, why, since when, one click into the checkout thread. */}
       {docRecord?.checkedOutBy && currentUserId && String(docRecord.checkedOutBy) !== String(currentUserId) && (
-        <div className="bg-amber-500/15 border-b border-amber-500/40 px-4 py-1.5 flex items-center gap-2 text-[11px] text-amber-300 shrink-0">
+        <div className="border-l-2 border-amber-500 bg-slate-900 px-4 py-1.5 flex items-center gap-2 text-[11px] text-amber-300 shrink-0">
           <Lock className="w-3.5 h-3.5 shrink-0" />
           <span className="truncate">
             <b>{docRecord.checkedOutByName || "Another user"}</b> is working on this document
-            {docRecord.checkoutNote ? <> - <i>{docRecord.checkoutNote}</i></> : null}
-            {docRecord.checkedOutAt ? <> · since {new Date(String(docRecord.checkedOutAt)).toLocaleDateString()}</> : null}
-            . Your copy may go stale - coordinate before making changes.
+            {docRecord.checkedOutAt ? <> since {new Date(String(docRecord.checkedOutAt)).toLocaleDateString()}</> : null}
+            {docRecord.checkoutNote ? <>: <i>{docRecord.checkoutNote}</i></> : null}
+            . Talk to them before you change it.
           </span>
           {onCheckout && (
             <button
               onClick={() => onCheckout(docRecord)}
-              className="ml-auto shrink-0 px-2 py-0.5 rounded-md border border-amber-500/50 hover:bg-amber-500/20 font-bold"
+              className="ml-auto shrink-0 px-2 py-0.5 rounded-md border border-slate-600 text-slate-200 hover:bg-slate-800 font-bold"
             >
               Open checkout thread
             </button>
@@ -1314,7 +1325,7 @@ export default function FullScreenViewer({
         />
       )}
 
-      {markupError && <div className="bg-red-50 border-b border-red-200 text-red-700 text-xs px-4 py-2 font-mono">{markupError}</div>}
+      {markupError && <p role="alert" className="border-l-2 border-rose-500 bg-slate-900 text-rose-300 text-xs px-4 py-1.5">{markupError}</p>}
 
       {/* ─── BODY: Tool rail | Canvas ─────────────────────────────────── */}
       <div className="flex-1 overflow-hidden flex">
@@ -1332,7 +1343,7 @@ export default function FullScreenViewer({
           <button onClick={addText} className="w-10 h-10 rounded-lg flex items-center justify-center text-slate-300 hover:text-white hover:bg-slate-700" title="Text (T)"><Type className="w-5 h-5" /></button>
           <button onClick={addStickyNote} className="w-10 h-10 rounded-lg flex items-center justify-center text-slate-300 hover:text-white hover:bg-slate-700" title="Sticky Note (N)"><StickyNote className="w-5 h-5" /></button>
           <div className="relative">
-            <button onClick={() => setStampMenuOpen((v) => !v)} className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${stampMenuOpen ? "bg-orange-600 text-white" : "text-slate-300 hover:text-white hover:bg-slate-700"}`} title="Stamp"><StampIcon className="w-5 h-5" /></button>
+            <button onClick={() => setStampMenuOpen((v) => !v)} aria-expanded={stampMenuOpen} aria-label="Stamp" className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${stampMenuOpen ? "bg-white text-slate-900" : "text-slate-300 hover:text-white hover:bg-slate-700"}`} title="Stamp"><StampIcon className="w-5 h-5" /></button>
             {stampMenuOpen && (
               <div className="absolute left-12 top-0 w-64 rounded-xl bg-slate-900 border border-slate-700 shadow-2xl p-2 z-50 max-h-[80vh] overflow-y-auto">
                 <div className="text-[11px] font-black text-slate-500 uppercase tracking-widest px-2 pb-2">Standard</div>
@@ -1346,7 +1357,7 @@ export default function FullScreenViewer({
                   <span className="text-[11px] font-black text-slate-500 uppercase tracking-widest">Custom</span>
                   <button
                     onClick={() => stampFileInputRef.current?.click()}
-                    className="text-[11px] font-bold px-2 py-1 rounded-md bg-orange-600 hover:bg-orange-500 text-white"
+                    className="text-[11px] font-bold px-2 py-1 rounded-md bg-slate-700 hover:bg-slate-600 text-white"
                   >+ Upload</button>
                   <input
                     ref={stampFileInputRef}
@@ -1361,14 +1372,14 @@ export default function FullScreenViewer({
                   />
                 </div>
                 {customStamps.length === 0 ? (
-                  <div className="text-[11px] text-slate-500 px-2 pb-2">Upload PNG/JPG/SVG stamps - saved on this device.</div>
+                  <div className="text-[11px] text-slate-500 px-2 pb-2">Upload PNG/JPG/SVG stamps: saved on this device.</div>
                 ) : (
                   <div className="grid grid-cols-3 gap-1 px-1 pb-1">
                     {customStamps.map((s) => (
                       <div key={s.id} className="relative group">
                         <button
                           onClick={() => void addCustomStamp(s.src)}
-                          className="w-full h-14 rounded-md bg-white border border-slate-700 hover:border-orange-500 overflow-hidden p-1"
+                          className="w-full h-14 rounded-md bg-white border border-slate-700 hover:border-slate-300 overflow-hidden p-1"
                           title={s.name}
                         >
                           {/* eslint-disable-next-line @next/next/no-img-element -- user-uploaded stamp thumbnails are data/storage URLs the optimizer can't process */}
@@ -1408,9 +1419,7 @@ export default function FullScreenViewer({
               <input type="range" min={1} max={12} value={strokeWidth} onChange={(e) => setStrokeWidth(Number(e.target.value))} className="w-24 h-1 bg-slate-700 rounded-lg accent-orange-500 cursor-pointer" />
               <span className="text-[11px] font-mono text-slate-300 w-5 text-right">{strokeWidth}</span>
             </div>
-            <div className="ml-auto text-[11px] text-slate-500 font-mono hidden md:block">
-              Tip: V/H/P/L/A/R/T/N/E to switch tools - Ctrl+Z / Ctrl+Y to undo
-            </div>
+
           </div>
 
           <div ref={canvasScrollRef} className={`flex-1 overflow-auto relative bg-slate-200 p-6 ${panZoom.cursorClass}`}
@@ -1505,27 +1514,28 @@ export default function FullScreenViewer({
       {/* ─── Uncontrolled-copy confirmation modal ────────────────────── */}
       {pending && (
         <div className="fixed inset-0 z-[110] bg-slate-900/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-6">
-          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden">
-            <div className="px-6 py-4 border-b border-slate-200 flex items-center gap-3">
-              <div className="p-2 bg-amber-100 rounded-lg"><ShieldAlert className="w-5 h-5 text-amber-700" /></div>
-              <div>
-                <div className="text-sm font-black text-slate-900">Uncontrolled Copy</div>
-                <div className="text-xs text-slate-500">You don&apos;t currently have this document checked out.</div>
+          <div className="w-full max-w-md rounded-2xl bg-[var(--color-surface)] text-[var(--color-text)] shadow-2xl border border-[var(--color-border)] overflow-hidden">
+            <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
+              <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-black">This copy will be stamped uncontrolled</div>
+                <div className="text-xs text-[var(--color-text-muted)]">You don&apos;t have this document checked out.</div>
               </div>
+              <button onClick={() => { setPending(null); setActionError(null); }} disabled={actionBusy || markupBusy} aria-label="Close" className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
             </div>
-            <div className="px-6 py-4 text-sm text-slate-700 space-y-3">
-              <p>Continuing will produce an <b>uncontrolled copy</b>. Every page will be stamped with a diagonal &quot;UNCONTROLLED - FOR REVIEW ONLY&quot; watermark plus a footer with your email and the timestamp. The action will be logged to the audit trail.</p>
-              {actionError && <p className="text-xs text-red-600 font-mono bg-red-50 border border-red-200 rounded-lg p-2">{actionError}</p>}
+            <div className="px-6 py-4 text-sm text-[var(--color-text-muted)] space-y-3">
+              <p>Each page gets an &quot;UNCONTROLLED - FOR REVIEW ONLY&quot; mark and a footer with your email and the time. It&apos;s logged.</p>
+              {actionError && <p role="alert" className="text-xs text-rose-700 dark:text-rose-300 border-l-2 border-rose-500 pl-2">{actionError}</p>}
             </div>
-            <div className="px-6 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2">
-              <button onClick={() => { setPending(null); setActionError(null); }} disabled={actionBusy || markupBusy} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-50">Cancel</button>
+            <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
+              <button onClick={() => { setPending(null); setActionError(null); }} disabled={actionBusy || markupBusy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
               <button
                 onClick={() => {
                   if (pending.type === "markup") void downloadWithMarkup();
                   else void runDocAction(pending.type);
                 }}
                 disabled={actionBusy || markupBusy}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-60"
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60"
               >
                 {(actionBusy || markupBusy) && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                 {pending.type === "download" ? "Download stamped copy" :

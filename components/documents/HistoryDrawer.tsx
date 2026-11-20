@@ -12,6 +12,7 @@ import ReverseConfirmModal from "@/components/documents/lifecycle/ReverseConfirm
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import { useRole } from "@/components/providers/RoleContext";
 import { getDocumentTimeline, type TimelineEvent } from "@/lib/timeline";
+import { escapeStackBusy } from "@/components/documents/useEscapeClose";
 
 interface HistoryDrawerProps {
   isOpen: boolean;
@@ -44,6 +45,9 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
   const { uid, userEmail, activeRole } = useRole();
   const isReverseAuthorized = activeRole === "Admin" || activeRole === "DocCtrl";
   const [loading, setLoading] = useState<boolean>(true);
+  // A failed read says so; it is never shown as "nothing here".
+  const [loadErr, setLoadErr] = useState<string | null>(null);
+  const [timelineErr, setTimelineErr] = useState<string | null>(null);
   const [activeSnapshot, setActiveSnapshot] = useState<DocumentVersion | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
 
@@ -63,6 +67,8 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
       ]);
 
       if (!isStillValid()) return;
+      const readErr = vRes.error ?? sRes.error ?? aRes.error;
+      setLoadErr(readErr ? readErr.message : null);
 
       setVersions((vRes.data || []).map(r => ({
         id: r.id, orgId: r.org_id, libraryId: r.library_id, documentId: r.document_id,
@@ -86,6 +92,7 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
     } catch (e) {
       console.error("Data load failed", e);
       if (isStillValid()) {
+        setLoadErr((e as Error)?.message || "try again");
         setVersions([]);
         setSessions([]);
         setAuditLogs([]);
@@ -117,9 +124,10 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
     if (!isOpen || !docRecord?.id) return;
     let alive = true;
     setTimelineLoading(true);
+    setTimelineErr(null);
     getDocumentTimeline({ documentId: docRecord.id, limit: 100 })
       .then((evts) => { if (alive) setTimelineEvents(evts); })
-      .catch(() => { if (alive) setTimelineEvents([]); })
+      .catch((e: unknown) => { if (alive) { setTimelineEvents([]); setTimelineErr((e as Error)?.message || "try again"); } })
       .finally(() => { if (alive) setTimelineLoading(false); });
     return () => { alive = false; };
   }, [isOpen, docRecord?.id]);
@@ -130,6 +138,8 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
+      // A dialog open over the drawer (e.g. reverse) closes first.
+      if (escapeStackBusy()) return;
       if (activeSnapshot) {
         setActiveSnapshot(null);
         return;
@@ -245,7 +255,7 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
                   </span>
                 </div>
                 {docRecord.checkedOutBy && (
-                  <div className="mt-2 p-2 bg-red-50 border border-red-100 rounded-lg flex items-center text-xs text-red-700 font-bold">
+                  <div className="mt-2 border-l-2 border-amber-500 pl-2 flex items-center text-xs text-amber-800 dark:text-amber-300 font-bold">
                     <Lock className="w-3 h-3 mr-2" />
                     Checked Out by {docRecord.checkedOutByName || "User"}
                   </div>
@@ -286,9 +296,12 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
             <div className="space-y-4">
               {docRecord.id && <RevisionChainStrip documentId={docRecord.id} />}
               {timelineLoading ? (
-                <div className="flex justify-center p-8">
-                  <div className="w-6 h-6 border-4 border-[var(--color-border)] border-t-[var(--color-border-strong)] rounded-full animate-spin" />
+                <div className="flex items-center justify-center gap-2 p-8 text-xs text-[var(--color-text-muted)]">
+                  <div className="w-5 h-5 border-4 border-[var(--color-border)] border-t-[var(--color-border-strong)] rounded-full animate-spin" />
+                  Loading the timeline…
                 </div>
+              ) : timelineErr ? (
+                <p role="alert" className="border-l-2 border-rose-500 pl-3 text-xs text-rose-700 dark:text-rose-300">Couldn&apos;t load the timeline: {timelineErr}</p>
               ) : (
                 <TimelineFeed
                   events={timelineEvents}
@@ -299,9 +312,12 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
               )}
             </div>
           ) : loading ? (
-            <div className="flex justify-center p-8">
-              <div className="w-8 h-8 border-4 border-[var(--color-border)] border-t-[var(--color-border-strong)] rounded-full animate-spin" />
+            <div className="flex items-center justify-center gap-2 p-8 text-xs text-[var(--color-text-muted)]">
+              <div className="w-5 h-5 border-4 border-[var(--color-border)] border-t-[var(--color-border-strong)] rounded-full animate-spin" />
+              Loading the history…
             </div>
+          ) : loadErr ? (
+            <p role="alert" className="border-l-2 border-rose-500 pl-3 text-xs text-rose-700 dark:text-rose-300">Couldn&apos;t load the history: {loadErr}</p>
           ) : tab === 'history' ? (
             versions.length === 0 ? (
             <div className="text-center p-8 border-2 border-dashed border-[var(--color-border)] rounded-xl">
@@ -475,8 +491,8 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
             if (docRecord?.id) {
               setTimelineLoading(true);
               getDocumentTimeline({ documentId: docRecord.id, limit: 100 })
-                .then((evts) => setTimelineEvents(evts))
-                .catch(() => { /* noop */ })
+                .then((evts) => { setTimelineEvents(evts); setTimelineErr(null); })
+                .catch((e: unknown) => setTimelineErr((e as Error)?.message || "try again"))
                 .finally(() => setTimelineLoading(false));
             }
           }}

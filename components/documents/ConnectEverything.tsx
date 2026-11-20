@@ -177,7 +177,7 @@ export function useConnectEverything(orgId: string | null, onDone?: () => void) 
 
 export function ConnectButton({ running, onClick, disabled, className = "" }: { running: boolean; onClick: () => void; disabled?: boolean; className?: string }) {
   return (
-    <button onClick={onClick} disabled={running || disabled} title="Units, drawings read, equipment registry and links - all of it, with sensible defaults. Safe to press again."
+    <button onClick={onClick} disabled={running || disabled} title="Units, drawings read, equipment registry and links: all of it, with sensible defaults. Safe to press again."
       className={`rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-2.5 py-1 inline-flex items-center gap-1 font-bold disabled:opacity-60 ${className}`}>
       {running ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} {running ? "Connecting…" : "Connect everything"}
     </button>

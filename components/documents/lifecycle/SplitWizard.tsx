@@ -14,16 +14,18 @@
 // audit, supersession links).
 
 import React, { useMemo, useState } from "react";
-import {
-  X, Split as SplitIcon, Plus, Trash2, ArrowRight, AlertTriangle,
-  Loader2, Check, Upload, FileText, ChevronLeft,
-} from "lucide-react";
+import { X, Split as SplitIcon, Plus, Trash2, ArrowRight, AlertTriangle, Loader2, Check, Upload, ChevronLeft } from "lucide-react";
 import { splitDocument, type SplitTargetSpec } from "@/lib/documentLifecycle";
 import type { DocumentRecord, AssetTag } from "@/types/schema";
 import FirstRunHint from "@/components/ui/FirstRunHint";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import DuplicateAwareInput from "@/components/ui/DuplicateAwareInput";
 import { translatePostgresError } from "@/lib/inputValidation";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
+import { useDraft } from "@/hooks/useDraft";
+import StepPath from "@/components/ui/StepPath";
+import FileThumb from "@/components/ui/FileThumb";
+import PdfDrop, { formatSize } from "@/components/documents/lifecycle/PdfDrop";
 
 interface SplitWizardProps {
   doc: DocumentRecord;
@@ -56,6 +58,8 @@ function tagKey(t: AssetTag): string {
 }
 
 export default function SplitWizard(props: SplitWizardProps) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => props.onCancel());
   const { doc, libraryId, folderPath, orgId, actorUserId, actorUserName, actorEmail, actorRole, onCancel, onSuccess } = props;
   const sourceTags = useMemo<AssetTag[]>(() => Array.isArray(doc.assetTags) ? doc.assetTags : [], [doc.assetTags]);
 
@@ -69,6 +73,8 @@ export default function SplitWizard(props: SplitWizardProps) {
 
   // Step 3 fields
   const [reason, setReason] = useState("");
+  // Typed words are kept on this device until this goes through.
+  useDraft<string>(doc.id ? `split:${doc.id}` : null, reason, setReason, (v) => !v.trim());
   const [mocReference, setMocReference] = useState("");
   const [copyHolds, setCopyHolds] = useState(true);
   const [copyProjects, setCopyProjects] = useState(true);
@@ -118,6 +124,7 @@ export default function SplitWizard(props: SplitWizardProps) {
         copyHolds, copyProjectMembership: copyProjects, copyScope,
         orgId, actorUserId, actorUserName, actorEmail, actorRole,
       });
+      setReason("");
       onSuccess();
     } catch (e) {
       const f = translatePostgresError(e, { entity: "document", field: "document_number" });
@@ -136,7 +143,7 @@ export default function SplitWizard(props: SplitWizardProps) {
         {/* Header */}
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface-2)]">
           <div className="flex items-center gap-2">
-            <SplitIcon className="w-5 h-5 text-amber-600" />
+            <SplitIcon className="w-5 h-5 text-[var(--color-text-muted)]" />
             <div>
               <h2 className="font-black text-[var(--color-text)]">Split Document</h2>
               <div className="text-[11px] font-mono text-[var(--color-text-muted)] mt-0.5">
@@ -144,13 +151,14 @@ export default function SplitWizard(props: SplitWizardProps) {
               </div>
             </div>
           </div>
-          <button type="button" onClick={onCancel} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)]">
+          <button aria-label="Close" type="button" onClick={onCancel} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)]">
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Step indicator */}
-        <Stepper step={step} />
+        <StepPath steps={["Define targets", "Distribute tags", "Reason & confirm"]} current={step - 1}
+          onPick={(i) => setStep((i + 1) as 1 | 2 | 3)} className="px-5 py-2 border-b border-[var(--color-border)]" />
 
         {/* Body */}
         <div className="p-5 space-y-4 min-h-[200px]">
@@ -189,7 +197,7 @@ export default function SplitWizard(props: SplitWizardProps) {
           )}
 
           {error && (
-            <div className="flex items-start gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2.5 py-1.5">
+            <div className="flex items-start gap-2 text-xs border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
             </div>
           )}
@@ -295,24 +303,21 @@ function Step1Targets({
               />
             </div>
             <div className="mt-2 flex items-center gap-2">
-              <label className="flex-1 border-2 border-dashed border-[var(--color-border-strong)] rounded p-2 cursor-pointer hover:border-amber-400 hover:bg-amber-50/30 text-center">
-                <input
-                  type="file"
-                  accept="application/pdf"
-                  className="hidden"
-                  onChange={(e) => onUpdate(i, { file: e.target.files?.[0] ?? null })}
-                />
+              <PdfDrop onFile={(f) => onUpdate(i, { file: f })} file={t.file}>
                 {t.file ? (
-                  <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text)]">
-                    <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-                    <span className="font-mono">{t.file.name}</span>
+                  <span className="inline-flex items-center gap-2 text-[11px] text-[var(--color-text)] text-left min-w-0">
+                    <FileThumb file={t.file} size={28} />
+                    <span className="min-w-0">
+                      <span className="block font-mono truncate">{t.file.name}</span>
+                      <span className="block text-[var(--color-text-muted)]">{formatSize(t.file.size)}</span>
+                    </span>
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
-                    <Upload className="w-3.5 h-3.5" /> Upload PDF
+                    <Upload className="w-3.5 h-3.5" /> Drop or pick the PDF
                   </span>
                 )}
-              </label>
+              </PdfDrop>
             </div>
             <input
               value={t.changeLog}
@@ -324,7 +329,7 @@ function Step1Targets({
         ))}
       </div>
 
-      <button onClick={onAdd} className="text-xs font-bold text-amber-700 hover:text-amber-800 inline-flex items-center gap-1">
+      <button onClick={onAdd} className="text-xs font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] inline-flex items-center gap-1">
         <Plus className="w-3 h-3" /> Add another target sheet
       </button>
     </div>
@@ -500,30 +505,6 @@ function CarryOver({ label, checked, onChange, help }: { label: string; checked:
         <span className="text-[var(--color-text)]">{label}</span>
       </label>
       {help && <HelpTooltip>{help}</HelpTooltip>}
-    </div>
-  );
-}
-
-function Stepper({ step }: { step: 1 | 2 | 3 }) {
-  const labels = ["Define targets", "Distribute tags", "Reason & confirm"];
-  return (
-    <div className="px-5 py-2 border-b border-[var(--color-border)] flex items-center gap-3 text-[11px]">
-      {labels.map((l, i) => {
-        const n = (i + 1) as 1 | 2 | 3;
-        const active = step === n;
-        const done = step > n;
-        return (
-          <React.Fragment key={n}>
-            <div className={`inline-flex items-center gap-1.5 ${active ? "text-amber-700 font-bold" : done ? "text-emerald-700" : "text-[var(--color-text-faint)]"}`}>
-              <span className={`inline-flex items-center justify-center w-4 h-4 rounded-full text-[11px] font-black ${
-                active ? "bg-amber-600 text-white" : done ? "bg-emerald-600 text-white" : "bg-slate-200 text-[var(--color-text-muted)]"
-              }`}>{done ? "✓" : n}</span>
-              {l}
-            </div>
-            {n < 3 && <ArrowRight className="w-3 h-3 text-slate-300" />}
-          </React.Fragment>
-        );
-      })}
     </div>
   );
 }

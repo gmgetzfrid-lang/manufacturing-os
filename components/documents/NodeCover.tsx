@@ -95,10 +95,8 @@ export default function NodeCover({
     );
   }
 
-  // No image → color/brand gradient panel with the icon.
-  const bg = color
-    ? `linear-gradient(135deg, ${color}, color-mix(in srgb, ${color} 55%, #000))`
-    : "var(--brand-gradient)";
+  // No image → the folder's own color (flat), else a plain slate panel.
+  const bg = color ?? "#475569";
   return (
     <div className={`relative grid place-items-center ${rounded} ${className}`} style={{ background: bg }}>
       {showIcon && <NodeIcon name={appearance.icon} className={`${iconSize} text-white drop-shadow`} />}

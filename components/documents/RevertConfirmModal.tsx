@@ -8,6 +8,8 @@ import React, { useState } from "react";
 import { X, RotateCcw, AlertTriangle, Loader2 } from "lucide-react";
 import { revertToVersion } from "@/lib/revisions";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
+import { useDraft } from "@/hooks/useDraft";
 
 interface RevertConfirmModalProps {
   isOpen: boolean;
@@ -26,7 +28,11 @@ export default function RevertConfirmModal({
   isOpen, onClose, doc, libraryId, targetVersion,
   orgId, actorUserId, actorEmail, actorRole, onSuccess,
 }: RevertConfirmModalProps) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => onClose(), isOpen);
   const [reason, setReason] = useState("");
+  // Typed words are kept on this device until this goes through.
+  useDraft<string>(isOpen && doc.id ? `revert:${doc.id}:${targetVersion.id ?? ""}` : null, reason, setReason, (v) => !v.trim());
   const [mocRef, setMocRef] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -67,7 +73,7 @@ export default function RevertConfirmModal({
               {doc.documentNumber || doc.title || doc.name} - current is Rev {doc.rev}
             </div>
           </div>
-          <button onClick={onClose} disabled={busy} className="p-2 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg">
+          <button aria-label="Close" onClick={onClose} disabled={busy} className="p-2 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -105,7 +111,7 @@ export default function RevertConfirmModal({
           </div>
 
           {error && (
-            <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+            <div className="flex items-start gap-2 text-xs border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
               <span>{error}</span>
             </div>

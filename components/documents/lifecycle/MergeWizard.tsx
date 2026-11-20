@@ -8,10 +8,7 @@
 //   3. Asset tag union + reason + carry-over toggles.
 
 import React, { useEffect, useMemo, useState } from "react";
-import {
-  X, Merge, Plus, Trash2, ArrowRight, AlertTriangle,
-  Loader2, Check, Upload, FileText, ChevronLeft, Search,
-} from "lucide-react";
+import { X, Merge, Plus, Trash2, ArrowRight, AlertTriangle, Loader2, Check, Upload, ChevronLeft, Search } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { mergeDocuments, type MergeTargetSpec } from "@/lib/documentLifecycle";
 import type { DocumentRecord, AssetTag } from "@/types/schema";
@@ -19,6 +16,11 @@ import { docRowToDocumentRecord } from "@/lib/documentRows";
 import FirstRunHint from "@/components/ui/FirstRunHint";
 import DuplicateAwareInput from "@/components/ui/DuplicateAwareInput";
 import { translatePostgresError } from "@/lib/inputValidation";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
+import { useDraft } from "@/hooks/useDraft";
+import StepPath from "@/components/ui/StepPath";
+import FileThumb from "@/components/ui/FileThumb";
+import PdfDrop, { formatSize } from "@/components/documents/lifecycle/PdfDrop";
 
 interface MergeWizardProps {
   sourceDoc: DocumentRecord;
@@ -38,6 +40,8 @@ function tagKey(t: AssetTag): string {
 }
 
 export default function MergeWizard(props: MergeWizardProps) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => props.onCancel());
   const { sourceDoc, libraryId, folderPath, orgId, actorUserId, actorUserName, actorEmail, actorRole, onCancel, onSuccess } = props;
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -77,6 +81,8 @@ export default function MergeWizard(props: MergeWizardProps) {
   const [excludedTagKeys, setExcludedTagKeys] = useState<Set<string>>(new Set());
 
   const [reason, setReason] = useState("");
+  // Typed words are kept on this device until this goes through.
+  useDraft<string>(sourceDoc.id ? `merge:${sourceDoc.id}` : null, reason, setReason, (v) => !v.trim());
   const [mocReference, setMocReference] = useState("");
   const [copyHolds, setCopyHolds] = useState(true);
   const [copyProjects, setCopyProjects] = useState(true);
@@ -126,6 +132,7 @@ export default function MergeWizard(props: MergeWizardProps) {
         copyHolds, copyProjectMembership: copyProjects,
         orgId, actorUserId, actorUserName, actorEmail, actorRole,
       });
+      setReason("");
       onSuccess();
     } catch (e) {
       const f = translatePostgresError(e, { entity: "document", field: "document_number" });
@@ -141,7 +148,7 @@ export default function MergeWizard(props: MergeWizardProps) {
         {/* Header */}
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface-2)]">
           <div className="flex items-center gap-2">
-            <Merge className="w-5 h-5 text-amber-600" />
+            <Merge className="w-5 h-5 text-[var(--color-text-muted)]" />
             <div>
               <h2 className="font-black text-[var(--color-text)]">Merge Documents</h2>
               <div className="text-[11px] font-mono text-[var(--color-text-muted)] mt-0.5">
@@ -149,19 +156,14 @@ export default function MergeWizard(props: MergeWizardProps) {
               </div>
             </div>
           </div>
-          <button onClick={onCancel} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)]">
+          <button aria-label="Close" onClick={onCancel} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)]">
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Step indicator */}
-        <div className="px-5 py-2 border-b border-[var(--color-border)] flex items-center gap-3 text-[11px]">
-          <StepLabel n={1} active={step === 1} done={step > 1} label="Pick sources" />
-          <ArrowRight className="w-3 h-3 text-slate-300" />
-          <StepLabel n={2} active={step === 2} done={step > 2} label="Target" />
-          <ArrowRight className="w-3 h-3 text-slate-300" />
-          <StepLabel n={3} active={step === 3} done={false} label="Tags & confirm" />
-        </div>
+        <StepPath steps={["Pick sources", "Target", "Tags & confirm"]} current={step - 1}
+          onPick={(i) => setStep((i + 1) as 1 | 2 | 3)} className="px-5 py-2 border-b border-[var(--color-border)]" />
 
         <div className="p-5 space-y-4 min-h-[200px]">
           <FirstRunHint storageKey="lifecycle.merge.intro" tone="info">
@@ -212,7 +214,7 @@ export default function MergeWizard(props: MergeWizardProps) {
           )}
 
           {error && (
-            <div className="flex items-start gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2.5 py-1.5">
+            <div className="flex items-start gap-2 text-xs border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
             </div>
           )}
@@ -345,7 +347,7 @@ function Step1Sources({
 function SourceChip({ doc, primary, onRemove }: { doc: DocumentRecord; primary?: boolean; onRemove?: () => void }) {
   return (
     <div className="flex items-center gap-2 text-xs bg-[var(--color-surface)] border border-[var(--color-border)] rounded px-2 py-1.5">
-      <span className={`text-[11px] font-bold uppercase tracking-widest px-1 py-0.5 rounded ${primary ? "bg-amber-100 text-amber-800 border border-amber-200" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border border-[var(--color-border)]"}`}>
+      <span className={`text-[11px] font-bold uppercase tracking-widest px-1 py-0.5 rounded ${primary ? "bg-[var(--color-text)] text-[var(--color-surface)] border border-[var(--color-text)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border border-[var(--color-border)]"}`}>
         {primary ? "Primary" : "Source"}
       </span>
       <span className="font-mono font-bold text-[var(--color-text)]">{doc.documentNumber || "-"}</span>
@@ -402,18 +404,18 @@ function Step2Target(props: {
             <input value={props.newRev} onChange={(e) => props.setNewRev(e.target.value)} placeholder="Initial rev" className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5 font-mono" />
             <input value={props.newSheetNumber} onChange={(e) => props.setNewSheetNumber(e.target.value)} placeholder="Sheet # (optional)" className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5 font-mono" />
           </div>
-          <label className="block border-2 border-dashed border-[var(--color-border-strong)] rounded p-2 cursor-pointer hover:border-amber-400 hover:bg-amber-50/30 text-center">
-            <input type="file" accept="application/pdf" className="hidden" onChange={(e) => props.setNewFile(e.target.files?.[0] ?? null)} />
+          <PdfDrop onFile={props.setNewFile} file={props.newFile}>
             {props.newFile ? (
-              <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text)]">
-                <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> <span className="font-mono">{props.newFile.name}</span>
+              <span className="inline-flex items-center gap-2 text-[11px] text-[var(--color-text)] min-w-0">
+                <FileThumb file={props.newFile} size={28} />
+                <span className="min-w-0"><span className="block font-mono truncate">{props.newFile.name}</span><span className="block text-[var(--color-text-muted)]">{formatSize(props.newFile.size)}</span></span>
               </span>
             ) : (
               <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
-                <Upload className="w-3.5 h-3.5" /> Upload the combined PDF
+                <Upload className="w-3.5 h-3.5" /> Drop or pick the combined PDF
               </span>
             )}
-          </label>
+          </PdfDrop>
           <input value={props.newChangeLog} onChange={(e) => props.setNewChangeLog(e.target.value)} placeholder="Initial change note" className="w-full text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5" />
         </div>
       )}
@@ -446,18 +448,18 @@ function Step2Target(props: {
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 <input value={props.extendRevLabel} onChange={(e) => props.setExtendRevLabel(e.target.value)} placeholder="New rev label" className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5 font-mono" />
               </div>
-              <label className="block border-2 border-dashed border-[var(--color-border-strong)] rounded p-2 cursor-pointer hover:border-amber-400 hover:bg-amber-50/30 text-center">
-                <input type="file" accept="application/pdf" className="hidden" onChange={(e) => props.setExtendFile(e.target.files?.[0] ?? null)} />
+              <PdfDrop onFile={props.setExtendFile} file={props.extendFile}>
                 {props.extendFile ? (
-                  <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text)]">
-                    <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> <span className="font-mono">{props.extendFile.name}</span>
+                  <span className="inline-flex items-center gap-2 text-[11px] text-[var(--color-text)] min-w-0">
+                    <FileThumb file={props.extendFile} size={28} />
+                    <span className="min-w-0"><span className="block font-mono truncate">{props.extendFile.name}</span><span className="block text-[var(--color-text-muted)]">{formatSize(props.extendFile.size)}</span></span>
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
-                    <Upload className="w-3.5 h-3.5" /> Upload merged PDF
+                    <Upload className="w-3.5 h-3.5" /> Drop or pick the merged PDF
                   </span>
                 )}
-              </label>
+              </PdfDrop>
               <input value={props.extendChangeLog} onChange={(e) => props.setExtendChangeLog(e.target.value)} placeholder="Rev change narrative" className="w-full text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5" />
             </>
           )}
@@ -471,7 +473,7 @@ function ModeButton({ active, onClick, label, sub }: { active: boolean; onClick:
   return (
     <button
       onClick={onClick}
-      className={`flex-1 text-left p-3 border-2 rounded-lg ${active ? "border-amber-500 bg-amber-50" : "border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-border-strong)]"}`}
+      className={`flex-1 text-left p-3 border-2 rounded-lg ${active ? "border-[var(--color-text)] bg-[var(--color-surface-2)] ring-1 ring-[var(--color-text)]" : "border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-border-strong)]"}`}
     >
       <div className="text-sm font-bold text-[var(--color-text)]">{label}</div>
       <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">{sub}</div>
@@ -518,7 +520,7 @@ function Step3TagsAndConfirm(props: {
 
       {props.tagUnion.length > 0 && (
         <div>
-          <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest mb-1">Asset tag union - uncheck to exclude</div>
+          <div className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest mb-1">Asset tag union: uncheck to exclude</div>
           <div className="border border-[var(--color-border)] rounded-lg p-2 max-h-48 overflow-y-auto grid grid-cols-2 md:grid-cols-3 gap-1">
             {props.tagUnion.map((t) => {
               const k = tagKey(t);
@@ -567,13 +569,3 @@ function Step3TagsAndConfirm(props: {
   );
 }
 
-function StepLabel({ n, active, done, label }: { n: number; active: boolean; done: boolean; label: string }) {
-  return (
-    <div className={`inline-flex items-center gap-1.5 ${active ? "text-amber-700 font-bold" : done ? "text-emerald-700" : "text-[var(--color-text-faint)]"}`}>
-      <span className={`inline-flex items-center justify-center w-4 h-4 rounded-full text-[11px] font-black ${
-        active ? "bg-amber-600 text-white" : done ? "bg-emerald-600 text-white" : "bg-slate-200 text-[var(--color-text-muted)]"
-      }`}>{done ? "✓" : n}</span>
-      {label}
-    </div>
-  );
-}

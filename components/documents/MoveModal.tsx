@@ -4,6 +4,7 @@ import React, { useMemo, useState } from "react";
 import { X, CheckCircle2 } from "lucide-react";
 import type { LibraryCollection } from "@/types/schema";
 import FolderTree from "@/components/documents/FolderTree";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
 export default function MoveModal(props: {
   isOpen: boolean;
@@ -14,6 +15,8 @@ export default function MoveModal(props: {
   title?: string;
   allowRoot?: boolean;
 }) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => props.onClose(), props.isOpen);
   const { isOpen, onClose, onConfirm, collections, currentId, title, allowRoot = true } = props;
   const [selected, setSelected] = useState<string | null>(null);
 
@@ -32,7 +35,7 @@ export default function MoveModal(props: {
             <div className="text-sm font-bold text-[var(--color-text)]">{title || "Move"}</div>
             <div className="text-xs text-[var(--color-text-muted)]">Select a destination folder.</div>
           </div>
-          <button
+          <button aria-label="Close"
             onClick={onClose}
             className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"
           >
@@ -59,7 +62,7 @@ export default function MoveModal(props: {
           </button>
           <button
             onClick={() => onConfirm(selected ?? null)}
-            className="px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-bold hover:bg-slate-800 inline-flex items-center gap-2"
+            className="px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-bold inline-flex items-center gap-2"
           >
             <CheckCircle2 className="h-4 w-4" />
             Move here

@@ -24,6 +24,7 @@ export default function ImpactPanel({ documentId, orgId }: ImpactPanelProps) {
   // curated links. The same walk the publish-time impact notice makes, shown
   // BEFORE you publish so the blast radius is a decision input, not a
   // surprise afterwards.
+  const [impactFailed, setImpactFailed] = useState(false);
   const [connected, setConnected] = useState<Array<{
     id: string; library_id: string; document_number: string | null;
     title: string | null; reason: string;
@@ -36,10 +37,11 @@ export default function ImpactPanel({ documentId, orgId }: ImpactPanelProps) {
       setImpact(null);
       setOpen(false);
       setConnected([]);
+      setImpactFailed(false);
       try {
         const result = await getDocumentImpact(documentId, orgId);
         if (alive) setImpact(result);
-      } catch { /* quiet */ }
+      } catch { if (alive) setImpactFailed(true); }
       try {
         const { findConnectedDocuments } = await import("@/lib/revisionImpact");
         const rows = await findConnectedDocuments(documentId, { limit: 12 });
@@ -49,7 +51,9 @@ export default function ImpactPanel({ documentId, orgId }: ImpactPanelProps) {
     return () => { alive = false; };
   }, [documentId, orgId]);
 
-  if (!impact) return null;
+  // Loading and failure each say so; "nothing touches this" stays silent.
+  if (impactFailed) return <p className="px-4 pt-2 text-[11px] text-rose-700 dark:text-rose-300">Couldn&apos;t check what this document touches.</p>;
+  if (!impact) return <p className="px-4 pt-2 text-[11px] text-[var(--color-text-muted)]">Checking what this document touches…</p>;
   const total =
     impact.siblingDocs.length + impact.openTickets.length + impact.projects.length +
     impact.activeHoldCount + impact.openBranchCount +
@@ -148,7 +152,7 @@ export default function ImpactPanel({ documentId, orgId }: ImpactPanelProps) {
                     href={d.libraryId ? `/documents/${d.libraryId}?doc=${d.id}` : "#"}
                     className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] group"
                   >
-                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${d.checkedOutByName ? "bg-amber-500 animate-pulse" : "bg-slate-300"}`} />
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${d.checkedOutByName ? "bg-amber-500" : "bg-slate-300"}`} />
                     <span className="text-xs font-bold text-[var(--color-text)] group-hover:text-[var(--color-text)] truncate">{d.label}</span>
                     <span className="text-[11px] text-[var(--color-text-faint)] shrink-0">Rev {d.rev ?? "-"}</span>
                     <span className="text-[11px] text-[var(--color-text-faint)] truncate">({d.sharedTags.slice(0, 3).join(", ")})</span>

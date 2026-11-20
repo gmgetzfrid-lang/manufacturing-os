@@ -61,7 +61,7 @@ export default function SuspectEquipment({ orgId, refreshKey = "", onRemoved }: 
           </li>
         ))}
       </ul>
-      <button onClick={() => void remove()} disabled={busy || !sel.size} className="rounded-lg bg-amber-600 text-white px-3 py-1.5 font-bold inline-flex items-center gap-1.5 disabled:opacity-50">
+      <button onClick={() => void remove()} disabled={busy || !sel.size} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] px-3 py-1.5 font-bold inline-flex items-center gap-1.5 disabled:opacity-50">
         {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} Remove {sel.size} from the registry
       </button>
     </div>

@@ -6,12 +6,16 @@
 // (defaults to a sensible suggestion from the current rev).
 
 import React, { useCallback, useEffect, useState } from "react";
-import { X, Repeat2, Loader2, AlertTriangle, Check, Upload, FileText } from "lucide-react";
+import { X, Repeat2, Loader2, AlertTriangle, Check, Upload } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { setLevelRevUp } from "@/lib/documentLifecycle";
 import { suggestNextRevisionLabel } from "@/lib/revisions";
 import { docRowToDocumentRecord } from "@/lib/documentRows";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
+import { useDraft } from "@/hooks/useDraft";
+import FileThumb from "@/components/ui/FileThumb";
+import PdfDrop, { formatSize } from "@/components/documents/lifecycle/PdfDrop";
 
 interface SetRevUpModalProps {
   setId: string;
@@ -44,6 +48,8 @@ const CHANGE_TYPES: { value: NonNullable<DocumentVersion["changeType"]>; label: 
 ];
 
 export default function SetRevUpModal(props: SetRevUpModalProps) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => props.onCancel());
   const { setId, libraryId, folderPath, orgId, actorUserId, actorEmail, actorRole, onCancel, onSuccess } = props;
   const [sheets, setSheets] = useState<SheetDraft[]>([]);
   const [loading, setLoading] = useState(true);
@@ -52,6 +58,8 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
 
   // Shared metadata
   const [sharedChangeLog, setSharedChangeLog] = useState("");
+  // Typed words are kept on this device until this goes through.
+  useDraft<string>(setId ? `set-revup:${setId}` : null, sharedChangeLog, setSharedChangeLog, (v) => !v.trim());
   const [sharedMoc, setSharedMoc] = useState("");
   const [issueType, setIssueType] = useState<DocumentVersion["issueType"]>("Issued for Construction");
   const [changeType, setChangeType] = useState<DocumentVersion["changeType"]>("Major");
@@ -107,6 +115,7 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
       });
       setResult({ succeeded: r.succeeded, sentForReview: r.sentForReview, failed: r.failed });
       if (r.failed.length === 0) {
+        setSharedChangeLog("");
         onSuccess();
       }
     } catch (e) {
@@ -125,7 +134,7 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
               <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">Every active sheet in this set, in one operation.</div>
             </div>
           </div>
-          <button onClick={onCancel} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)]">
+          <button aria-label="Close" onClick={onCancel} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)]">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -178,18 +187,18 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
                         placeholder="New rev" />
                     </div>
                     <div className="col-span-5">
-                      <label className="block border border-dashed border-[var(--color-border-strong)] rounded p-1 cursor-pointer hover:border-emerald-400 hover:bg-emerald-50/30 text-center text-[11px]">
-                        <input type="file" accept="application/pdf" className="hidden" onChange={(e) => updateSheet(i, { file: e.target.files?.[0] ?? null })} />
+                      <PdfDrop onFile={(f) => updateSheet(i, { file: f })} file={s.file} className="p-1 text-[11px]">
                         {s.file ? (
-                          <span className="inline-flex items-center gap-1 text-[var(--color-text)]">
-                            <FileText className="w-3 h-3 text-[var(--color-text-muted)]" /> <span className="font-mono truncate">{s.file.name}</span>
+                          <span className="inline-flex items-center gap-1.5 text-[var(--color-text)] min-w-0 text-left">
+                            <FileThumb file={s.file} size={24} />
+                            <span className="min-w-0"><span className="block font-mono truncate">{s.file.name}</span><span className="block text-[var(--color-text-muted)]">{formatSize(s.file.size)}</span></span>
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-[var(--color-text-muted)]">
-                            <Upload className="w-3 h-3" /> Upload PDF
+                            <Upload className="w-3 h-3" /> Drop or pick the PDF
                           </span>
                         )}
-                      </label>
+                      </PdfDrop>
                     </div>
                   </div>
                 ))}
@@ -215,7 +224,7 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
           )}
 
           {error && (
-            <div className="flex items-start gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2.5 py-1.5">
+            <div className="flex items-start gap-2 text-xs border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
             </div>
           )}
@@ -223,7 +232,7 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
 
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
           <button onClick={onCancel} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
-          <button onClick={submit} disabled={!valid || busy || loading} className="inline-flex items-center gap-1.5 text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded disabled:opacity-40">
+          <button onClick={submit} disabled={!valid || busy || loading} className="inline-flex items-center gap-1.5 text-sm font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
             Bump All
           </button>

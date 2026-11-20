@@ -181,7 +181,7 @@ export default function CompareRevisionsModal({
                 <Archive className="w-3 h-3" /> {offloadedCount} archived off-server excluded
               </span>
             )}
-            <button onClick={onClose} className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-700" title="Close">
+            <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-700" title="Close">
               <X className="w-4 h-4" />
             </button>
           </div>

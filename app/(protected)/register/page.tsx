@@ -13,7 +13,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Field";
-import { Spinner } from "@/components/ui/Spinner";
+import LoadingBlock from "@/components/ui/LoadingBlock";
 import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
 import ReviewPill from "@/components/documents/ReviewPill";
 import AckPill from "@/components/documents/AckPill";
@@ -25,6 +25,9 @@ import {
   type RegisterRow, type RegisterKpis, type RegisterFilter,
 } from "@/lib/docControlRegister";
 
+const FILTERS: RegisterFilter[] = ["all", "unowned", "review_overdue", "review_due", "acks_outstanding", "in_review", "effective_pending", "legal_hold", "disposition_eligible", "external"];
+const asFilter = (v: string | null): RegisterFilter | null => (v && (FILTERS as string[]).includes(v) ? (v as RegisterFilter) : null);
+
 export default function RegisterPage() {
   const { activeOrgId } = useRole();
   const [rows, setRows] = useState<RegisterRow[]>([]);
@@ -35,6 +38,31 @@ export default function RegisterPage() {
   const [filter, setFilter] = useState<RegisterFilter>("all");
   const [libraryId, setLibraryId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+
+  // Deep links: ?filter=legal_hold (any tile's key), ?library=<id>, ?q=<text>
+  // open the register already narrowed. Choices made here are written back
+  // to the address, so a copied link opens the same view.
+  const [urlRead, setUrlRead] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const sp = new URLSearchParams(window.location.search);
+    const f = asFilter(sp.get("filter"));
+    if (f) setFilter(f);
+    const lib = sp.get("library");
+    if (lib) setLibraryId(lib);
+    const q = sp.get("q");
+    if (q) setSearch(q);
+    setUrlRead(true);
+  }, []);
+  useEffect(() => {
+    if (!urlRead || typeof window === "undefined") return;
+    const sp = new URLSearchParams(window.location.search);
+    if (filter === "all") sp.delete("filter"); else sp.set("filter", filter);
+    if (libraryId) sp.set("library", libraryId); else sp.delete("library");
+    if (search.trim()) sp.set("q", search.trim()); else sp.delete("q");
+    const qs = sp.toString();
+    window.history.replaceState(null, "", qs ? `${window.location.pathname}?${qs}` : window.location.pathname);
+  }, [urlRead, filter, libraryId, search]);
 
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
@@ -72,7 +100,7 @@ export default function RegisterPage() {
       <PageHeaderBar
         icon={ClipboardList}
         title="Control Register"
-        subtitle={<>Every controlled document with its owner, review status, acknowledgment, and pending sign-offs - the master register for an audit.</>}
+        subtitle={<>Every controlled document with its owner, review, sign-offs and records status.</>}
         actions={
           <>
             <Button variant="secondary" size="sm" onClick={exportCsv} disabled={loading || filtered.length === 0}>
@@ -86,8 +114,8 @@ export default function RegisterPage() {
       />
 
       {error && (
-        <div className="mb-3 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800 flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 shrink-0" /> {error}
+        <div role="alert" className="mb-3 border-l-2 border-rose-500 pl-3 text-xs text-rose-700 dark:text-rose-300 flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 shrink-0" /> Couldn&apos;t load the register: {error}
         </div>
       )}
 
@@ -122,8 +150,8 @@ export default function RegisterPage() {
       </div>
 
       {loading ? (
-        <div className="py-16 flex items-center justify-center"><Spinner /></div>
-      ) : filtered.length === 0 ? (
+        <LoadingBlock what="the register" rows={6} />
+      ) : error ? null : filtered.length === 0 ? (
         <div className="py-16 text-center text-sm text-[var(--color-text-muted)]">No documents match.</div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-[var(--color-border)]">
@@ -164,7 +192,7 @@ export default function RegisterPage() {
                   <td className="px-3 py-2">{r.ack ? <AckPill summary={r.ack} compact /> : <span className="text-[var(--color-text-faint)]">-</span>}</td>
                   <td className="px-3 py-2 hidden lg:table-cell">
                     {r.distributionAcksOutstanding > 0
-                      ? <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-bold text-amber-700" title={`${r.distributionAcksOutstanding} distribution confirmation${r.distributionAcksOutstanding === 1 ? "" : "s"} outstanding`}>{r.distributionAcksOutstanding} unconfirmed</span>
+                      ? <span className="inline-flex items-center text-[11px] font-bold text-amber-700 dark:text-amber-400" title={`${r.distributionAcksOutstanding} distribution confirmation${r.distributionAcksOutstanding === 1 ? "" : "s"} outstanding`}>{r.distributionAcksOutstanding} unconfirmed</span>
                       : <span className="text-[var(--color-text-faint)]">-</span>}
                   </td>
                   <td className="px-3 py-2">
@@ -188,12 +216,12 @@ function Tile({ label, value, tone = "slate", active, onClick }: {
 }) {
   const tones: Record<string, string> = {
     slate: "text-[var(--color-text)]",
-    amber: "text-amber-700",
-    rose: "text-rose-700",
+    amber: "text-amber-700 dark:text-amber-400",
+    rose: "text-rose-700 dark:text-rose-400",
     violet: "text-[var(--color-text)]",
   };
   return (
-    <button onClick={onClick} className={`text-left rounded-xl border p-3 transition-colors ${active ? "border-[var(--color-accent)] bg-[var(--color-surface-2)]" : "border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"}`}>
+    <button onClick={onClick} aria-pressed={!!active} className={`text-left rounded-xl border p-3 transition-colors ${active ? "border-[var(--color-text)] ring-1 ring-[var(--color-text)] bg-[var(--color-surface-2)]" : "border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"}`}>
       <div className={`text-2xl font-black ${tones[tone]}`}>{value}</div>
       <div className="text-[11px] font-bold text-[var(--color-text-muted)] mt-0.5">{label}</div>
     </button>

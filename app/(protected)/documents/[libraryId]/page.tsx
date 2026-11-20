@@ -57,6 +57,10 @@ import { translatePostgresError } from "@/lib/inputValidation";
 import { computeUniquenessKey } from "@/lib/uniqueness";
 import { forceReleaseDocument } from "@/lib/checkoutEpisodes";
 import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
+import { tryUpload } from "@/lib/uploadRetry";
+import LoadingBlock from "@/components/ui/LoadingBlock";
+import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
+import { Button } from "@/components/ui/Button";
 import WatchButton from "@/components/ui/WatchButton";
 import CommandPalette from "@/components/documents/CommandPalette";
 import DocThumb from "@/components/documents/DocThumb";
@@ -188,7 +192,6 @@ import {
   Archive,
   ArchiveRestore,
   Briefcase,
-  CheckSquare,
   Hash,
   Save, ArrowRight,
   Table as TableIcon,
@@ -343,7 +346,8 @@ export default function LibraryExplorerPage() {
     setWatchdogBusy(sug.targetId);
     try {
       const isFolder = !documents.some((d) => d.id === sug.targetId) && !!folderMapRef.current?.get(sug.targetId);
-      await dismissEdge({ orgId: activeOrgId, a: isFolder ? nid.folder(sug.targetId) : nid.doc(sug.targetId), b: nid.folder(sug.home.id), type: "filed_under", summary: sug.reason, actor: { userId: uid, name: userEmail } }).catch(() => undefined);
+      await dismissEdge({ orgId: activeOrgId, a: isFolder ? nid.folder(sug.targetId) : nid.doc(sug.targetId), b: nid.folder(sug.home.id), type: "filed_under", summary: sug.reason, actor: { userId: uid, name: userEmail } })
+        .catch((e: unknown) => setError(`Couldn't remember "Leave it", so it may ask again: ${(e as Error)?.message ?? "try again"}.`));
       setWatchdog((prev) => prev.filter((p) => p.targetId !== sug.targetId));
     } finally { setWatchdogBusy(null); }
   };
@@ -431,7 +435,8 @@ export default function LibraryExplorerPage() {
       const currentCols = library.customColumns || [];
       const updatedCols = [...currentCols, field];
 
-      await supabase.from("libraries").update({ custom_columns: updatedCols, updated_by: uid }).eq("id", library.id!);
+      const { error: colErr } = await supabase.from("libraries").update({ custom_columns: updatedCols, updated_by: uid }).eq("id", library.id!);
+      if (colErr) throw colErr;
       setLibrary((prev) => prev ? { ...prev, customColumns: updatedCols } : prev);
 
       // Auto-add to view (active columns) — schema act, lands org-wide.
@@ -440,17 +445,18 @@ export default function LibraryExplorerPage() {
 
     } catch (e) {
       console.error("Failed to add column", e);
-      setError("Failed to create column.");
+      setError("Couldn't add the column. Try again.");
     }
   };
 
   const handleSaveUniquenessKeys = async (next: string[]) => {
     if (!library || !activeOrgId) return;
     try {
-      await supabase.from("libraries").update({
+      const { error: keyErr } = await supabase.from("libraries").update({
         uniqueness_keys: next.length ? next : null,
         updated_by: uid,
       }).eq("id", library.id!);
+      if (keyErr) throw keyErr;
       setLibrary((prev) => prev ? { ...prev, uniquenessKeys: next.length ? next : undefined } : prev);
     } catch (e) {
       console.error("Failed to save uniqueness keys", e);
@@ -469,11 +475,13 @@ export default function LibraryExplorerPage() {
       let nextCols = currentCols;
       if (!hasSheet) {
         nextCols = [...currentCols, { key: "sheet", label: "Sheet", type: "text" }];
-        await supabase.from("libraries").update({ custom_columns: nextCols, updated_by: uid }).eq("id", library.id!);
+        const { error: colErr } = await supabase.from("libraries").update({ custom_columns: nextCols, updated_by: uid }).eq("id", library.id!);
+        if (colErr) throw colErr;
       }
       const baseKeys = library.uniquenessKeys?.length ? library.uniquenessKeys : ["documentNumber"];
       const nextKeys = Array.from(new Set([...baseKeys, "sheet"]));
-      await supabase.from("libraries").update({ uniqueness_keys: nextKeys, updated_by: uid }).eq("id", library.id!);
+      const { error: keyErr } = await supabase.from("libraries").update({ uniqueness_keys: nextKeys, updated_by: uid }).eq("id", library.id!);
+      if (keyErr) throw keyErr;
       setLibrary((prev) => prev ? { ...prev, customColumns: nextCols, uniquenessKeys: nextKeys } : prev);
       if (!hasSheet && !activeColumns.includes("sheet")) {
         await updateColumns([...activeColumns, "sheet"], { scope: "org" });
@@ -1199,6 +1207,9 @@ export default function LibraryExplorerPage() {
   const [renameFolderId, setRenameFolderId] = useState<string | null>(null);
   const [customizeFolderId, setCustomizeFolderId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  // A failed create/rename says so inside the dialog that asked for it.
+  const [folderErr, setFolderErr] = useState<string | null>(null);
+  const [bulkMoreOpen, setBulkMoreOpen] = useState(false);
 
   // UX enhancements
   const [isDragOver, setIsDragOver] = useState(false);
@@ -1330,7 +1341,7 @@ export default function LibraryExplorerPage() {
       });
     } catch (e) {
       console.error("Force unlock failed", e);
-      setError("Failed to force unlock.");
+      setError(`Couldn't release the lock: ${(e as Error)?.message ?? "try again"}.`);
     }
   };
 
@@ -1344,7 +1355,7 @@ export default function LibraryExplorerPage() {
     }
     if (!(await appConfirm({
       title: `Delete "${selectedDoc.title || selectedDoc.name || selectedDoc.documentNumber || "this document"}"?`,
-      message: "This removes the document AND every revision attached to it. The file in R2 storage is left untouched (you can clean that up later). This cannot be undone.",
+      message: "This removes the document and every revision of it. This cannot be undone. To hide it but keep it, use Archive instead.",
       tone: "danger",
     }))) return;
 
@@ -1561,7 +1572,7 @@ export default function LibraryExplorerPage() {
     if (!loadingLibrary) return;
     const t = window.setTimeout(() => {
       console.error("[libraryId] load timed out", { libraryId, activeOrgId });
-      setError("Library load timed out after 15s. Check console / network tab.");
+      setError("The library took too long to load. Reload the page to try again.");
       setLoadingLibrary(false);
     }, 15000);
     return () => window.clearTimeout(t);
@@ -2277,17 +2288,25 @@ export default function LibraryExplorerPage() {
   // creating or deleting a custom column) pass scope:"org" so the change
   // reaches everyone who rides the org default, not just the admin.
   const updateColumns = async (next: string[], opts?: { scope?: "user" | "org" }) => {
+    const before = activeColumns;
     setActiveColumns(next);
     if (!activeOrgId || !uid) return;
     const scope = opts?.scope === "org" && isController ? "org" : "user";
-    await saveTableView({
-      scope,
-      orgId: activeOrgId,
-      ownerUserId: scope === "user" ? uid : undefined,
-      libraryId,
-      collectionId: currentFolderId ?? undefined,
-      columns: next,
-    });
+    try {
+      await saveTableView({
+        scope,
+        orgId: activeOrgId,
+        ownerUserId: scope === "user" ? uid : undefined,
+        libraryId,
+        collectionId: currentFolderId ?? undefined,
+        columns: next,
+      });
+    } catch (e) {
+      // Put the columns back: the screen must match what was saved.
+      setActiveColumns(before);
+      setError(`Couldn't save the columns: ${(e as Error).message}`);
+      return;
+    }
     // A user row now exists here — surface the "Clear my default" escape
     // hatch immediately, not on the next folder visit.
     setViewDefaults((prev) => scope === "user"
@@ -2297,6 +2316,7 @@ export default function LibraryExplorerPage() {
 
   const openCreateFolder = () => {
     setRenameValue("");
+    setFolderErr(null);
     setCreatingFolder(true);
   };
 
@@ -2320,16 +2340,19 @@ export default function LibraryExplorerPage() {
       if (newAcl) {
         const chain = [...buildFolderChain(currentFolder), newAcl];
         const aclIndex = buildAclIndexFromChain(chain);
-        await supabase.from("collections").update({ acl_index: aclIndex ?? null }).eq("id", newId);
+        const { error: idxErr } = await supabase.from("collections").update({ acl_index: aclIndex ?? null }).eq("id", newId);
+        if (idxErr) setError(`The folder was made, but its permissions didn't save: ${idxErr.message}. Open its permissions and save them again.`);
       }
 
       nudgeEstateResolver(activeOrgId, { folderIds: [newId] });
       askWatchdog({ folderIds: [newId] });
       setCreatingFolder(false);
       setRenameValue("");
+      // Straight into the new folder: the next step is filling it.
+      setCurrentFolderId(newId);
     } catch (e) {
       console.error(e);
-      setError("Failed to create folder.");
+      setFolderErr(`Couldn't create the folder: ${e instanceof Error ? e.message : "try again"}.`);
     }
   };
 
@@ -2343,7 +2366,7 @@ export default function LibraryExplorerPage() {
       setRenameValue("");
     } catch (e) {
       console.error(e);
-      setError("Failed to rename folder.");
+      setFolderErr(`Couldn't rename the folder: ${e instanceof Error ? e.message : "try again"}.`);
     }
   };
 
@@ -2589,6 +2612,10 @@ export default function LibraryExplorerPage() {
     const createdDocIds: string[] = [];
     const notifyLibrarySubscribers = (count: number, firstName: string) => {
       if (!activeOrgId || !uid || count === 0) return;
+      // The link opens what landed: the one document, or the folder it went to.
+      const link = count === 1 && createdDocIds[0]
+        ? `/documents/${libraryId}?doc=${createdDocIds[0]}`
+        : currentFolderId ? `/documents/${libraryId}?folderId=${currentFolderId}` : `/documents/${libraryId}`;
       void import("@/lib/notify/dispatch").then((m) =>
         m.emit({
           orgId: activeOrgId,
@@ -2596,7 +2623,7 @@ export default function LibraryExplorerPage() {
           kind: "library_doc_added",
           title: count === 1 ? `New document: ${firstName}` : `${count} new documents added`,
           body: `${userEmail ?? "Someone"} added ${count === 1 ? firstName : `${count} documents`} to a library you subscribe to.`,
-          link: `/documents/${libraryId}`,
+          link,
           resource: { type: "library", id: libraryId },
           actorUserId: uid,
           actorName: userEmail ?? "someone",
@@ -2608,6 +2635,7 @@ export default function LibraryExplorerPage() {
     // staged batch is skipped, whatever the window still lists.
     items = items.filter((it) => !landedFilesRef.current.has(it.file));
     const landedFiles: File[] = [];
+    const unlinked: string[] = [];
     setLoadingUpload(true);
     setError(null);
 
@@ -2766,7 +2794,7 @@ export default function LibraryExplorerPage() {
       });
 
       // ── Upload + insert one file ─────────────────────────────────
-      const uploadOne = async (entry: { item: StagedItem; docNumber: string }) => {
+      const uploadOne = async (entry: { item: StagedItem; docNumber: string }, sig: AbortSignal | undefined = signal) => {
         const { item, docNumber } = entry;
         const file = item.file;
         const subPath = pathByFile.get(file) ?? [];
@@ -2781,7 +2809,7 @@ export default function LibraryExplorerPage() {
         const hashing = item.fileHash ? Promise.resolve(item.fileHash) : hashFile(file);
         const uploadResult = await uploadToPath(file, storagePath, {
           contentType: file.type || undefined,
-          signal,
+          signal: sig,
         });
         const fileHash = await hashing;
 
@@ -2878,7 +2906,12 @@ export default function LibraryExplorerPage() {
         }
 
         if (!versionsViaServerRef.current) {
-          await supabase.from("documents").update({ current_version_id: newVersion.id }).eq("id", newDoc.id);
+          // Point the document at its file. One quiet retry; if it still
+          // fails the batch says so (the file and record are both saved).
+          const point = () => supabase.from("documents").update({ current_version_id: newVersion!.id }).eq("id", newDoc.id);
+          let { error: ptrErr } = await point();
+          if (ptrErr) ({ error: ptrErr } = await point());
+          if (ptrErr) unlinked.push(file.name);
         }
         createdDocIds.push(newDoc.id as string);
         landedFiles.push(file);
@@ -2898,7 +2931,10 @@ export default function LibraryExplorerPage() {
       let stopped = false;
       let finished = 0;
       setUploadProgress({ done: 0, total: resolved.length });
-      const runPool = async (entries: typeof resolved) => {
+      // The last round goes through tryUpload, so a file that still fails
+      // gets "Try again" on the corner card with the same file. Safe to
+      // repeat: a failed file leaves no record behind (see uploadOne).
+      const runPool = async (entries: typeof resolved, offerRetry = false) => {
         const failed: Array<{ entry: (typeof resolved)[number]; reason: string }> = [];
         let nextIdx = 0;
         const worker = async () => {
@@ -2909,7 +2945,16 @@ export default function LibraryExplorerPage() {
             const idx = nextIdx++;
             if (idx >= entries.length) return;
             try {
-              await uploadOne(entries[idx]);
+              const entry = entries[idx];
+              if (offerRetry) {
+                // A later "Try again" runs after this window may be gone, so
+                // it doesn't listen to this window's Stop.
+                let first = true;
+                await tryUpload(entry.item.file.name, () => { const sig = first ? signal : undefined; first = false; return uploadOne(entry, sig); },
+                  { onRetried: () => setDocsRefreshTick((t) => t + 1) });
+              } else {
+                await uploadOne(entry);
+              }
               finished++;
               setUploadProgress({ done: finished, total: resolved.length });
             } catch (err) {
@@ -2924,7 +2969,7 @@ export default function LibraryExplorerPage() {
       for (let round = 1; round <= 2 && failedRound.length > 0 && !stopped; round++) {
         await new Promise((r) => setTimeout(r, 2000 * round));
         if (signal?.aborted) { stopped = true; break; }
-        failedRound = await runPool(failedRound.map((f) => f.entry));
+        failedRound = await runPool(failedRound.map((f) => f.entry), round === 2);
       }
       const failures = failedRound.map((f) => ({ name: f.entry.item.file.name, reason: f.reason }));
       const landed = landedFiles.length - alreadyHere.length;
@@ -2935,6 +2980,7 @@ export default function LibraryExplorerPage() {
 
       const notes: string[] = [];
       if (foldersCreatedNote) notes.push(foldersCreatedNote);
+      if (unlinked.length) notes.push(`${unlinked.length} file${unlinked.length === 1 ? " was" : "s were"} saved but not yet shown as the current file (${unlinked.slice(0, 3).join(", ")}${unlinked.length > 3 ? "…" : ""}). Reload to check them.`);
       if (alreadyHere.length) notes.push(`${alreadyHere.length.toLocaleString()} file${alreadyHere.length === 1 ? " was" : "s were"} already here and skipped.`);
       if (autoRenamed.length > 0) {
         const sample = autoRenamed.slice(0, 3).map((r) => `${r.original} → ${r.final}`).join(", ");
@@ -3003,7 +3049,11 @@ export default function LibraryExplorerPage() {
       status: next.core?.status ?? selectedDoc.status,
       customFields: next.metadata as Record<string, unknown>,
     }, library?.uniquenessKeys);
-    await supabase.from("documents").update(payload).eq("id", selectedDoc.id);
+    const { error: saveErr } = await supabase.from("documents").update(payload).eq("id", selectedDoc.id);
+    if (saveErr) {
+      const f = translatePostgresError(saveErr, { entity: "document", field: "document_number" });
+      throw new Error(f.message);
+    }
   };
 
   const saveInlineDocNumber = async (docId: string, nextValue: string) => {
@@ -3051,7 +3101,8 @@ export default function LibraryExplorerPage() {
   const handleDeleteColumn = async (key: string) => {
     if (!library || !activeOrgId) return;
     const updatedCols = (library.customColumns ?? []).filter((c) => c.key !== key);
-    await supabase.from("libraries").update({ custom_columns: updatedCols, updated_by: uid }).eq("id", library.id!);
+    const { error: delErr } = await supabase.from("libraries").update({ custom_columns: updatedCols, updated_by: uid }).eq("id", library.id!);
+    if (delErr) throw new Error(delErr.message);
     setLibrary((prev) => prev ? { ...prev, customColumns: updatedCols } : prev);
     // Remove from active view columns too — schema act, lands org-wide so
     // the deleted column doesn't linger as an orphan in the org default.
@@ -3163,7 +3214,8 @@ export default function LibraryExplorerPage() {
         if (saveWidthsTimerRef.current) clearTimeout(saveWidthsTimerRef.current);
         const snapshot = { ...colWidthsRef.current };
         saveWidthsTimerRef.current = setTimeout(() => {
-          supabase.from("libraries").update({ column_widths: snapshot, updated_by: uid }).eq("id", library.id!);
+          void supabase.from("libraries").update({ column_widths: snapshot, updated_by: uid }).eq("id", library.id!)
+            .then(({ error: wErr }) => { if (wErr) setError("Couldn't save the column width. It will reset next time."); });
         }, 600);
       }
     };
@@ -3181,7 +3233,8 @@ export default function LibraryExplorerPage() {
       const next = { ...prev };
       delete next[colKey];
       if (library?.id && uid) {
-        supabase.from("libraries").update({ column_widths: next, updated_by: uid }).eq("id", library.id!);
+        void supabase.from("libraries").update({ column_widths: next, updated_by: uid }).eq("id", library.id!)
+          .then(({ error: wErr }) => { if (wErr) setError("Couldn't save the column width. It will reset next time."); });
       }
       return next;
     });
@@ -3271,7 +3324,9 @@ export default function LibraryExplorerPage() {
     );
   }
 
-  if (loadingLibrary) {
+  // Until the first fetch answers, "not found" would be a lie: keep the
+  // loader up unless the fetch has actually said why it failed.
+  if (loadingLibrary || (!library && !error)) {
     return <RouteLoader label="Loading library…" />;
   }
 
@@ -3703,7 +3758,7 @@ export default function LibraryExplorerPage() {
         <div className="relative">
           <button
             onClick={() => setUploadMenuOpen((v) => !v)}
-            className="h-7 px-2.5 rounded-md bg-slate-900 text-white hover:bg-slate-800 flex items-center gap-1 text-xs font-bold transition-colors"
+            className="h-7 px-2.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] flex items-center gap-1 text-xs font-bold transition-colors"
             title="Upload files or a whole folder"
             aria-haspopup="menu"
             aria-expanded={uploadMenuOpen}
@@ -3728,7 +3783,7 @@ export default function LibraryExplorerPage() {
                 <button role="menuitem"
                   onClick={() => { setUploadMenuOpen(false); folderInputRef.current?.click(); }}
                   className="w-full px-3 py-2.5 text-left hover:bg-[var(--color-surface-2)] flex items-start gap-2.5 border-t border-[var(--color-border)]">
-                  <FolderUp className="w-4 h-4 mt-0.5 text-emerald-600 shrink-0" />
+                  <FolderUp className="w-4 h-4 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
                   <span>
                     <span className="block text-xs font-bold">A whole folder…</span>
                     <span className="block text-[11px] text-[var(--color-text-muted)]">
@@ -3736,9 +3791,6 @@ export default function LibraryExplorerPage() {
                     </span>
                   </span>
                 </button>
-                <div className="px-3 py-2 text-[11px] text-[var(--color-text-faint)] border-t border-[var(--color-border)] bg-[var(--color-surface-2)]/60">
-                  Or drag files or folders anywhere onto this page.
-                </div>
               </div>
             </>
           )}
@@ -3791,10 +3843,11 @@ export default function LibraryExplorerPage() {
                 )}
                 {isController && (
                   <button
-                    onClick={() => { setActionsMenuOpen(false); openCreateFolder(); }}
+                    onClick={() => { setActionsMenuOpen(false); setShowEquipmentSweep(true); }}
                     className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
+                    title="Pull equipment tags the AI read from drawings into the equipment column and the registry"
                   >
-                    <FolderPlus className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> New folder
+                    <ScanSearch className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Equipment sweep
                   </button>
                 )}
                 <button
@@ -3933,15 +3986,15 @@ export default function LibraryExplorerPage() {
       {(error || notice) && (
         <div className="shrink-0 px-3 pt-2 space-y-1.5 z-20">
           {error && (
-            <div className="rounded-lg border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/30 px-3 py-2 text-xs text-rose-800 dark:text-rose-200 flex items-start gap-2">
+            <div role="alert" className="border-l-2 border-rose-500 pl-3 py-1 text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2">
               <span className="flex-1 min-w-0">{error}</span>
-              <button onClick={() => setError(null)} className="shrink-0 p-0.5 rounded hover:bg-rose-100 dark:hover:bg-rose-900/40" title="Dismiss"><X className="w-3.5 h-3.5" /></button>
+              <button onClick={() => setError(null)} className="shrink-0 p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)]" aria-label="Dismiss"><X className="w-3.5 h-3.5" /></button>
             </div>
           )}
           {notice && (
-            <div className="rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 px-3 py-2 text-xs font-bold text-emerald-800 dark:text-emerald-200 flex items-start gap-2">
+            <div role="status" className="border-l-2 border-emerald-500 pl-3 py-1 text-xs text-emerald-800 dark:text-emerald-300 flex items-start gap-2">
               <span className="flex-1 min-w-0">{notice}</span>
-              <button onClick={() => setNotice(null)} className="shrink-0 p-0.5 rounded hover:bg-emerald-100 dark:hover:bg-emerald-900/40" title="Dismiss"><X className="w-3.5 h-3.5" /></button>
+              <button onClick={() => setNotice(null)} className="shrink-0 p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)]" aria-label="Dismiss"><X className="w-3.5 h-3.5" /></button>
             </div>
           )}
         </div>
@@ -4064,16 +4117,8 @@ export default function LibraryExplorerPage() {
             {/* HERO HEADER (library root or folder; only when customized) */}
             {pageHeader && <PageHeader header={pageHeader} />}
 
-            {/* Subtle hint for admins inside a folder — columns are library-wide */}
-            {isController && currentFolderId && (
-              <div className="mb-2 px-3 py-2 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg text-[11px] text-[var(--color-text)] flex items-center gap-2">
-                <Columns className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
-                <span>
-                  Columns shown here apply to <b>every folder</b> in <b>{library?.name}</b>. To rename, reorder, or add columns,
-                  open <button onClick={() => setShowColumnManager(true)} className="font-bold text-[var(--color-accent)] underline hover:text-[var(--color-accent-hover)]">Library Column Manager</button>.
-                </span>
-              </div>
-            )}
+            {/* (The "columns are library-wide" hint lived here; Manage columns
+                in the ⋯ menu is the one home for columns now.) */}
 
             {/* CUSTOMIZABLE HOME — library root OR folder; opt-in, default off */}
             {!currentFolderId && library && (
@@ -4086,7 +4131,8 @@ export default function LibraryExplorerPage() {
                 onOpenFolder={(id) => setCurrentFolderId(id)}
                 onOpenDoc={(doc) => setSelectedDoc(doc)}
                 onSave={async (cfg) => {
-                  await supabase.from("libraries").update({ home_config: cfg, updated_by: uid }).eq("id", library.id!);
+                  const { error: homeErr } = await supabase.from("libraries").update({ home_config: cfg, updated_by: uid }).eq("id", library.id!);
+                  if (homeErr) throw new Error(homeErr.message);
                   setLibrary((prev) => (prev ? { ...prev, homeConfig: cfg } : prev));
                 }}
               />
@@ -4143,7 +4189,7 @@ export default function LibraryExplorerPage() {
                     allFolders={folders}
                     docTotals={folderCounts?.totals}
                     onOpen={(id) => setCurrentFolderId(id)}
-                    onRename={isController ? (id) => { setRenameFolderId(id); setRenameValue(folderMap.get(id)?.name || ""); } : undefined}
+                    onRename={isController ? (id) => { setFolderErr(null); setRenameFolderId(id); setRenameValue(folderMap.get(id)?.name || ""); } : undefined}
                     onMove={isController ? (id) => { setRenameFolderId(id); setShowMoveModal(true); } : undefined}
                     onPermissions={isController ? (id) => { setRenameFolderId(id); setShowPermissions(true); } : undefined}
                     onCustomize={isController ? (id) => { setCustomizeFolderId(id); } : undefined}
@@ -4211,8 +4257,8 @@ export default function LibraryExplorerPage() {
                   </div>
                 )}
                 {docFetchHitCap && !loadingDocs && docStreamProgress === null && (
-                  <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-[11px] text-amber-900">
-                    Showing the first <b>10,000</b> documents (newest first) - this folder holds more. Use the filter box or subfolders to narrow it.
+                  <div className="mx-4 mt-2 border-l-2 border-amber-500 pl-3 py-0.5 text-xs text-amber-800 dark:text-amber-300">
+                    Showing the first <b>10,000</b> documents, newest first. This folder holds more: filter or open a subfolder to narrow it.
                   </div>
                 )}
                 <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3 bg-[var(--color-surface)]">
@@ -4240,7 +4286,7 @@ export default function LibraryExplorerPage() {
                     <input
                       value={search}
                       onChange={(e) => setSearch(e.target.value)}
-                      placeholder="Filter this folder - number, title, sheet #, any field…"
+                      placeholder="Filter this folder: number, title, sheet #, any field…"
                       className="w-full pl-8 pr-7 py-1.5 text-base sm:text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/40 focus:border-[var(--color-accent)] transition-shadow"
                     />
                     {search && (
@@ -4279,7 +4325,7 @@ export default function LibraryExplorerPage() {
                           aria-pressed={docLayout === opt.key}
                           className={`px-2 py-1.5 transition-colors ${
                             docLayout === opt.key
-                              ? "bg-slate-900 text-white"
+                              ? "bg-[var(--color-text)] text-[var(--color-surface)]"
                               : "bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]"
                           }`}
                         >
@@ -4325,7 +4371,7 @@ export default function LibraryExplorerPage() {
                               <Pin className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                               <span className="flex-1">
                                 Set as <b>my</b> default here
-                                <span className="block text-[11px] font-normal text-[var(--color-text-muted)]">Only you - wins over the org default</span>
+                                <span className="block text-[11px] font-normal text-[var(--color-text-muted)]">Only you: wins over the org default</span>
                               </span>
                               {viewDefaults.hasUserRow && <Check className="w-3.5 h-3.5 text-emerald-600" />}
                             </button>
@@ -4358,66 +4404,27 @@ export default function LibraryExplorerPage() {
                         </>
                       )}
                     </div>
-                    {isController && (
-                      <button
-                        onClick={() => setShowEquipmentSweep(true)}
-                        title="Equipment sweep - pull AI-extracted equipment tags from indexed drawings into your equipment column and the registry"
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border)] transition-all"
-                      >
-                        <ScanSearch className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Equipment</span>
-                      </button>
-                    )}
-                    {isController && (
-                      <button
-                        onClick={() => setShowColumnManager(true)}
-                        title="Configure columns - hide, rename, or reorder"
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all"
-                      >
-                        <Columns className="w-3.5 h-3.5" /> Columns
-                      </button>
-                    )}
                   </div>
                 </div>
 
                 {!loadingDocs && filteredDocs.length === 0 && filteredFolders.length === 0 ? (
                   /* INTERACTIVE EMPTY STATE */
                   <div className="flex-1 flex flex-col items-center justify-center p-12">
-                    <div className="w-20 h-20 rounded-2xl bg-[var(--color-surface-2)] border-2 border-dashed border-[var(--color-border)] flex items-center justify-center mb-5">
-                      <UploadCloud className="w-8 h-8 text-slate-300" />
-                    </div>
+                    <UploadCloud className="w-8 h-8 text-[var(--color-text-faint)] mb-3" />
                     <h3 className="text-base font-bold text-[var(--color-text)] mb-1">Nothing here yet</h3>
-                    <p className="text-sm text-[var(--color-text-muted)] text-center max-w-xs mb-6">
-                      Drag and drop files into this window, or use the buttons below to add your first document or folder.
+                    {/* Upload (top right) is the one home for adding files. */}
+                    <p className="text-sm text-[var(--color-text-muted)] text-center max-w-xs">
+                      Drop files or a folder here, or use Upload.
                     </p>
-                    <div className="flex items-center gap-3">
-                      <button
-                        onClick={() => fileInputRef.current?.click()}
-                        className="flex items-center gap-2 px-5 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-slate-800 transition-colors shadow-sm"
-                      >
-                        <UploadCloud className="w-4 h-4" /> Upload Files
-                      </button>
-                      <button
-                        onClick={() => folderInputRef.current?.click()}
-                        className="flex items-center gap-2 px-5 py-2.5 bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] rounded-xl text-sm font-bold hover:bg-[var(--color-surface-2)] transition-colors"
-                      >
-                        <FolderUp className="w-4 h-4" /> Upload a Folder
-                      </button>
-                      {isController && (
-                        <button
-                          onClick={openCreateFolder}
-                          className="flex items-center gap-2 px-5 py-2.5 bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] rounded-xl text-sm font-bold hover:bg-[var(--color-surface-2)] transition-colors"
-                        >
-                          <FolderPlus className="w-4 h-4" /> New Folder
-                        </button>
-                      )}
-                    </div>
                   </div>
                 ) : (
                   <>
                   {/* MOBILE CARD LIST — the table is unusable on a phone, so
                       below md we render tappable cards of the same docs. */}
                   <div className="md:hidden flex-1 overflow-y-auto p-2 space-y-2">
-                    {sortedDocs.length === 0 ? (
+                    {loadingDocs && sortedDocs.length === 0 ? (
+                      <LoadingBlock what="documents" />
+                    ) : sortedDocs.length === 0 ? (
                       <div className="text-center text-xs text-[var(--color-text-faint)] py-8">No documents.</div>
                     ) : sortedDocs.map((doc) => (
                       <button
@@ -4561,7 +4568,7 @@ export default function LibraryExplorerPage() {
                         {loadingDocs ? (
                           <tr>
                             <td colSpan={activeColumns.length + 5} className="px-6 py-12 text-center text-[var(--color-text-muted)]">
-                              <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />Loading…
+                              <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />Loading documents…
                             </td>
                           </tr>
                         ) : sortedDocs.length === 0 ? (
@@ -4632,13 +4639,19 @@ export default function LibraryExplorerPage() {
                                             // Optimistic local update so the chip
                                             // doesn't revert on edit-exit before
                                             // the DB write lands.
+                                            const oldMeta = docRecord.metadata;
                                             setDocuments((prev) => prev.map((d) =>
                                               d.id === docRecord.id ? { ...d, metadata: newMeta } : d
                                             ));
-                                            await supabase.from("documents").update({
+                                            const { error: pillErr } = await supabase.from("documents").update({
                                               metadata: newMeta,
                                               updated_at: new Date().toISOString(),
                                             }).eq("id", docRecord.id);
+                                            if (pillErr) {
+                                              // Put it back and say so: the cell must show what's saved.
+                                              setDocuments((prev) => prev.map((d) => d.id === docRecord.id ? { ...d, metadata: oldMeta } : d));
+                                              setError(`Couldn't save ${def.label || "that field"} on ${docRecord.documentNumber || docRecord.title || "the document"}: ${pillErr.message}`);
+                                            }
                                           }}
                                         />
                                       </td>
@@ -4884,16 +4897,8 @@ export default function LibraryExplorerPage() {
         />
       )}
 
-      {/* Persistent discoverability hint — teaches that bulk actions exist,
-          shown only when nothing's selected and there are rows to act on. The
-          full action bar (below) takes over the moment a row is checked. */}
-      {selectedDocIds.size === 0 && sortedDocs.length > 0 && (
-        <div className={`fixed left-1/2 -translate-x-1/2 z-30 ${stagedDocs.length > 0 ? "bottom-16" : "bottom-10"} pointer-events-none`}>
-          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900/80 text-slate-300 text-[11px] font-bold shadow-lg" style={{ backdropFilter: "blur(12px)" }}>
-            <CheckSquare className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Select rows for bulk actions
-          </div>
-        </div>
-      )}
+      {/* (A floating "Select rows for bulk actions" pill sat here; the row
+          checkboxes say it themselves, and nothing floats over the list.) */}
 
       {/* Folder selection bar — ctrl/shift-click tiles, then act on them all. */}
       {isController && selectedFolderIds.size > 0 && selectedDocIds.size === 0 && (
@@ -4908,7 +4913,7 @@ export default function LibraryExplorerPage() {
             </button>
             <button
               onClick={() => setDeleteFolders([...selectedFolderIds].map((x) => ({ id: x, name: folderMap.get(x)?.name ?? "Folder" })))}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold bg-red-500/90 hover:bg-red-500 rounded-lg transition-all active:scale-95"
+              className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold text-rose-300 hover:text-white hover:bg-rose-600/80 rounded-lg transition-colors"
               title="Delete the selected folders (Delete key)">
               <Trash2 className="w-3 h-3" /> Delete…
             </button>
@@ -4937,54 +4942,67 @@ export default function LibraryExplorerPage() {
           >
             Deselect
           </button>
+          {/* One orange (Move, unless the stack's Open shows), two quiet, the rest under More. */}
           <button
             onClick={() => setShowBulkMoveModal(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] rounded-lg transition-all active:scale-95"
+            className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold rounded-lg transition-all active:scale-95 ${stagedDocs.length > 0
+              // The stack's Open is the orange one while the stack shows.
+              ? "text-slate-200 hover:text-white hover:bg-slate-700/60"
+              : "bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)]"}`}
             title="Move all selected documents to a folder"
           >
             <ArrowRight className="w-3 h-3" /> Move to…
           </button>
           <button
             onClick={handleStageSelected}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] rounded-lg transition-all active:scale-95"
+            className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold text-slate-200 hover:text-white hover:bg-slate-700/60 rounded-lg transition-colors"
+            title="Add to the reference stack to read side by side"
           >
             <Layers className="w-3 h-3" /> Stage
           </button>
           <button
             onClick={() => setShowBulkCheckout(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] rounded-lg transition-all active:scale-95"
-            title="Bulk-check-out selected docs - ad-hoc or to a project"
+            className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold text-slate-200 hover:text-white hover:bg-slate-700/60 rounded-lg transition-colors"
+            title="Check out the selected documents, on their own or to a project"
           >
-            <Briefcase className="w-3 h-3" /> Bulk Checkout
+            <Briefcase className="w-3 h-3" /> Check out
           </button>
-          {isController && (
-            <button
-              onClick={() => setShowBulkEdit(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] rounded-lg transition-all active:scale-95"
-              title="Apply one metadata change across all selected docs"
-            >
-              <Pencil className="w-3 h-3" /> Bulk Edit
-            </button>
+          {bulkDeleting && (
+            <span className="flex items-center gap-1.5 px-2 text-[11px] font-bold text-rose-300">
+              <Loader2 className="w-3 h-3 animate-spin" /> Deleting {bulkDeleting.done} of {bulkDeleting.total}…
+            </span>
           )}
-          {isController && (
-            <button
-              onClick={handleBulkArchive}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold bg-amber-500/90 hover:bg-amber-500 rounded-lg transition-all active:scale-95"
-              title="Mark selected as Archived (preserves history)"
-            >
-              <Archive className="w-3 h-3" /> Archive
-            </button>
-          )}
-          {isController && (
-            <button
-              onClick={() => void handleBulkDelete()}
-              disabled={bulkDeleting !== null}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold bg-red-500/90 hover:bg-red-500 rounded-lg transition-all active:scale-95 disabled:opacity-70"
-            >
-              {bulkDeleting
-                ? <><Loader2 className="w-3 h-3 animate-spin" /> Deleting {bulkDeleting.done} of {bulkDeleting.total}…</>
-                : <><Trash2 className="w-3 h-3" /> Delete</>}
-            </button>
+          {isController && !bulkDeleting && (
+            <div className="relative">
+              <button
+                onClick={() => setBulkMoreOpen((v) => !v)}
+                aria-haspopup="menu" aria-expanded={bulkMoreOpen}
+                className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-slate-200 hover:text-white hover:bg-slate-700/60 rounded-lg transition-colors"
+              >
+                <MoreHorizontal className="w-3.5 h-3.5" /> More
+              </button>
+              {bulkMoreOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setBulkMoreOpen(false)} />
+                  {/* Opens upward: the bar sits at the bottom of the screen. */}
+                  <div role="menu" className="absolute right-0 bottom-full mb-2 z-50 w-48 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-xl py-1">
+                    <button role="menuitem" onClick={() => { setBulkMoreOpen(false); setShowBulkEdit(true); }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs font-semibold hover:bg-[var(--color-surface-2)]">
+                      <Pencil className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Edit fields on all
+                    </button>
+                    <button role="menuitem" onClick={() => { setBulkMoreOpen(false); void handleBulkArchive(); }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs font-semibold hover:bg-[var(--color-surface-2)]">
+                      <Archive className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Archive
+                    </button>
+                    <div className="my-1 h-px bg-[var(--color-border)]" />
+                    <button role="menuitem" onClick={() => { setBulkMoreOpen(false); void handleBulkDelete(); }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs font-semibold text-rose-700 dark:text-rose-400 hover:bg-[var(--color-surface-2)]">
+                      <Trash2 className="w-3.5 h-3.5" /> Delete…
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -5391,59 +5409,35 @@ export default function LibraryExplorerPage() {
       )}
 
       {creatingFolder && (
-        <div className="fixed inset-0 z-[90] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm animate-in fade-in p-4">
-          <div className="w-full max-w-md rounded-2xl bg-[var(--color-surface)] shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
-            <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-between">
-              <div>
-                <div className="text-sm font-bold text-[var(--color-text)]">Create Folder</div>
-                <div className="text-xs text-[var(--color-text-muted)]">Add a new subfolder here.</div>
-              </div>
-              <button onClick={() => setCreatingFolder(false)} className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]">
-                <X className="h-4 w-4 text-[var(--color-text-muted)]" />
-              </button>
-            </div>
-            <div className="p-6">
+        <Modal onClose={() => setCreatingFolder(false)} size="sm" zIndex={90}>
+          <ModalHeader icon={FolderPlus} title="New folder"
+            subtitle={`Inside ${currentFolder?.name ?? library.name}`} onClose={() => setCreatingFolder(false)} />
+          <form onSubmit={(e) => { e.preventDefault(); void confirmCreateFolder(); }}>
+            <ModalBody>
               <input
                 value={renameValue}
-                onChange={(e) => setRenameValue(e.target.value)}
+                onChange={(e) => { setRenameValue(e.target.value); setFolderErr(null); }}
                 placeholder="Folder name"
-                className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] text-sm"
+                aria-label="Folder name"
+                className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm"
                 autoFocus
               />
-            </div>
-            <div className="px-6 py-4 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
-              <button
-                onClick={() => setCreatingFolder(false)}
-                className="px-4 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmCreateFolder}
-                className="px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-bold hover:bg-slate-800"
-              >
-                Create
-              </button>
-            </div>
-          </div>
-        </div>
+              {folderErr && <p role="alert" className="mt-2 text-xs text-rose-700 dark:text-rose-300">{folderErr}</p>}
+            </ModalBody>
+            <ModalFooter>
+              <Button type="button" variant="secondary" onClick={() => setCreatingFolder(false)}>Cancel</Button>
+              <Button type="submit" disabled={!renameValue.trim()}>Create and open</Button>
+            </ModalFooter>
+          </form>
+        </Modal>
       )}
 
       {/* RECENTLY DELETED FOLDERS — the 30-day delete hold. */}
       {trashFolders !== null && (
-        <div className="fixed inset-0 z-[90] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm animate-in fade-in p-4" onClick={() => setTrashFolders(null)}>
-          <div className="w-full max-w-lg rounded-2xl bg-[var(--color-surface)] shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
-            <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-between">
-              <div>
-                <div className="text-sm font-bold text-[var(--color-text)]">Recently deleted folders</div>
-                <div className="text-xs text-[var(--color-text-muted)]">
-                  Held for 30 days, then removed for good. Restoring brings the folder back empty at its old spot - its former contents moved up a level when it was deleted.
-                </div>
-              </div>
-              <button onClick={() => setTrashFolders(null)} className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface)]">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
+        <Modal onClose={() => setTrashFolders(null)} size="md" zIndex={90}>
+          <ModalHeader icon={Trash2} title="Recently deleted folders"
+            subtitle="Kept 30 days. A restored folder comes back empty: its contents moved up a level when it was deleted."
+            onClose={() => setTrashFolders(null)} />
             <div className="max-h-80 overflow-y-auto p-3 space-y-1.5">
               {trashFolders.length === 0 ? (
                 <div className="text-center text-xs text-[var(--color-text-faint)] py-8">Nothing in the trash.</div>
@@ -5460,7 +5454,7 @@ export default function LibraryExplorerPage() {
                   <button
                     onClick={() => void restoreFromTrash(f.id)}
                     disabled={trashBusy === f.id}
-                    className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 disabled:opacity-50 transition-all"
+                    className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-all"
                   >
                     {trashBusy === f.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <ArchiveRestore className="w-3 h-3" />}
                     Restore
@@ -5468,47 +5462,30 @@ export default function LibraryExplorerPage() {
                 </div>
               ))}
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
 
       {renameFolderId && !showMoveModal && !showPermissions && (
-        <div className="fixed inset-0 z-[90] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm animate-in fade-in p-4">
-          <div className="w-full max-w-md rounded-2xl bg-[var(--color-surface)] shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
-            <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-between">
-              <div>
-                <div className="text-sm font-bold text-[var(--color-text)]">Rename Folder</div>
-                <div className="text-xs text-[var(--color-text-muted)]">Update the folder name.</div>
-              </div>
-              <button onClick={() => setRenameFolderId(null)} className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]">
-                <X className="h-4 w-4 text-[var(--color-text-muted)]" />
-              </button>
-            </div>
-            <div className="p-6">
+        <Modal onClose={() => setRenameFolderId(null)} size="sm" zIndex={90}>
+          <ModalHeader icon={Pencil} title="Rename folder" onClose={() => setRenameFolderId(null)} />
+          <form onSubmit={(e) => { e.preventDefault(); void confirmRenameFolder(); }}>
+            <ModalBody>
               <input
                 value={renameValue}
-                onChange={(e) => setRenameValue(e.target.value)}
+                onChange={(e) => { setRenameValue(e.target.value); setFolderErr(null); }}
                 placeholder="Folder name"
-                className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] text-sm"
+                aria-label="Folder name"
+                className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm"
                 autoFocus
               />
-            </div>
-            <div className="px-6 py-4 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
-              <button
-                onClick={() => setRenameFolderId(null)}
-                className="px-4 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmRenameFolder}
-                className="px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-bold hover:bg-slate-800"
-              >
-                Rename
-              </button>
-            </div>
-          </div>
-        </div>
+              {folderErr && <p role="alert" className="mt-2 text-xs text-rose-700 dark:text-rose-300">{folderErr}</p>}
+            </ModalBody>
+            <ModalFooter>
+              <Button type="button" variant="secondary" onClick={() => setRenameFolderId(null)}>Cancel</Button>
+              <Button type="submit" disabled={!renameValue.trim()}>Rename</Button>
+            </ModalFooter>
+          </form>
+        </Modal>
       )}
     </div>
   );
@@ -5525,10 +5502,12 @@ function LibraryNumberingModal({ orgId, libraryId, onClose }: {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   useEffect(() => {
     void import("@/lib/libraryNumbering").then((m) =>
       m.getLibraryNumbering(libraryId).then((c) =>
-        setCfg(c ?? { enabled: false, prefix: "", pad: 4, next_number: 1 })));
+        setCfg(c ?? { enabled: false, prefix: "", pad: 4, next_number: 1 })))
+      .catch((e: unknown) => setLoadErr(`Couldn't load the numbering settings: ${(e as Error)?.message ?? "try again"}.`));
   }, [libraryId]);
 
   const save = async () => {
@@ -5545,18 +5524,12 @@ function LibraryNumberingModal({ orgId, libraryId, onClose }: {
   const preview = cfg ? `${cfg.prefix}${String(cfg.next_number).padStart(cfg.pad, "0")}` : "";
 
   return (
-    <div className="fixed inset-0 z-[95] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm p-4" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl bg-[var(--color-surface)] shadow-2xl border border-[var(--color-border)]">
-        <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2.5">
-          <Hash className="w-4 h-4 text-[var(--color-text-muted)]" />
-          <div className="flex-1">
-            <div className="text-sm font-black text-[var(--color-text)]">Auto-numbering</div>
-            <div className="text-[11px] text-[var(--color-text-muted)]">Uploads with a BLANK number get the next issued one. Typed numbers always win.</div>
-          </div>
-          <button onClick={onClose} className="p-1.5 rounded hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4 text-[var(--color-text-muted)]" /></button>
-        </div>
-        {cfg === null ? (
-          <div className="p-6 text-center text-sm text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline" /> Loading…</div>
+    <Modal onClose={onClose} size="sm" zIndex={95}>
+        <ModalHeader icon={Hash} title="Auto-numbering" subtitle="Uploads with a blank number get the next one. A typed number always wins." onClose={onClose} />
+        {loadErr ? (
+          <p role="alert" className="m-5 border-l-2 border-rose-500 pl-3 text-sm text-rose-700 dark:text-rose-300">{loadErr}</p>
+        ) : cfg === null ? (
+          <div className="p-6 text-center text-sm text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline" /> Loading the numbering settings…</div>
         ) : (
           <div className="p-5 space-y-3">
             <label className="flex items-center gap-2 text-sm font-bold text-[var(--color-text)] cursor-pointer">
@@ -5587,18 +5560,16 @@ function LibraryNumberingModal({ orgId, libraryId, onClose }: {
             <div className="text-xs text-[var(--color-text-muted)]">
               Next issued number: <span className="font-mono font-black text-[var(--color-text)]">{preview}</span>
             </div>
-            {err && <div className="rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-700">{err}</div>}
+            {err && <p role="alert" className="text-xs text-rose-700 dark:text-rose-300">{err}</p>}
           </div>
         )}
-        <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] rounded-b-2xl flex justify-end gap-2">
-          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
-          <button onClick={() => void save()} disabled={busy || !cfg}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-white bg-[var(--color-accent)] hover:opacity-90 disabled:opacity-50">
-            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Save
-          </button>
-        </div>
-      </div>
-    </div>
+        <ModalFooter>
+          <Button variant="secondary" size="sm" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button size="sm" onClick={() => void save()} disabled={!cfg} loading={busy}>
+            {!busy && <Save className="w-3.5 h-3.5" />} Save
+          </Button>
+        </ModalFooter>
+    </Modal>
   );
 }
 
@@ -5614,13 +5585,11 @@ function ReadingHint({ startedAt }: { startedAt: number }) {
   const secs = Math.max(0, Math.round((now - startedAt) / 1000));
   return (
     <div className="mt-2 text-[11px] text-[var(--color-text-muted)]">
-      <div>{secs}s - the upload window opens as soon as every file is found.</div>
+      <div>{secs}s. The upload window opens once every file is found.</div>
       {secs >= 15 && (
-        <div className="mt-2 text-left rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-2.5 py-2 text-amber-900 dark:text-amber-200">
-          Taking a while? If this folder is in OneDrive or SharePoint, files that are &quot;online-only&quot; have to download to
-          your computer first. Right-click the folder → <b>Always keep on this device</b>, wait for it to sync, then drop it again -
-          or use <b>Upload → A whole folder…</b>.
-        </div>
+        <p className="mt-2 text-left border-l-2 border-amber-500 pl-2.5 text-amber-800 dark:text-amber-300">
+          Slow? OneDrive or SharePoint files that are online-only must download first. Right-click the folder, pick <b>Always keep on this device</b>, wait for it to sync, then drop it again.
+        </p>
       )}
     </div>
   );

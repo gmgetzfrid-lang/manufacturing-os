@@ -25,7 +25,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  X, Upload, FileText, Loader2, ShieldCheck,
+  X, Upload, Loader2, ShieldCheck,
   ArrowUpFromLine, AlertTriangle, ChevronRight, Lock,
   GitBranch, MessageSquare, Diff, FileBox,
 } from "lucide-react";
@@ -40,7 +40,12 @@ import { postActivity } from "@/lib/activityThread";
 import CompareRevisionsModal from "@/components/documents/CompareRevisionsModal";
 import type { DocumentRecord, DocumentVersion, ReviewControl } from "@/types/schema";
 import IsoGuidance from "@/components/ui/IsoGuidance";
+import FileThumb from "@/components/ui/FileThumb";
+import { useFileDrag } from "@/hooks/useFileDrag";
+import { useDraft } from "@/hooks/useDraft";
+import { tryUpload } from "@/lib/uploadRetry";
 import { appAlert } from "@/components/providers/DialogProvider";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
 interface RevUpModalProps {
   isOpen: boolean;
@@ -90,6 +95,8 @@ export default function RevUpModal({
   orgId, actorUserId, actorEmail, actorRole, onSuccess, onReviewSubmitted,
   onDirectPublished, presetChangeType, presetChangeLog,
 }: RevUpModalProps) {
+  // Escape closes the whole flow (the conflict screen too), like the X.
+  useEscapeClose(() => { if (!submitting) { setConflict(null); onClose(); } }, isOpen);
   const [file, setFile] = useState<File | null>(null);
   const [sourceFile, setSourceFile] = useState<File | null>(null);
   const [revisionLabel, setRevisionLabel] = useState("");
@@ -122,7 +129,6 @@ export default function RevUpModal({
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [dragOver, setDragOver] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sourceInputRef = useRef<HTMLInputElement>(null);
@@ -179,6 +185,13 @@ export default function RevUpModal({
     })();
     return () => { alive = false; };
   }, [isOpen, doc.id, doc.rev, doc.currentVersionId, actorUserId, memoryKey, presetChangeType, presetChangeLog]);
+
+  // Typed words survive a reload or a closed window (declared after the
+  // reset above so a restored draft wins). A caller's preset text wins
+  // over a draft, so no draft is kept then.
+  useDraft<string>(isOpen && doc.id && !presetChangeLog ? `revup:${doc.id}` : null, changeLog, setChangeLog, (v) => !v.trim());
+  useDraft<string>(isOpen && doc.id ? `revup-note:${doc.id}` : null, overrideReason, setOverrideReason, (v) => !v.trim());
+  useDraft<string>(isOpen && doc.id ? `revup-branch:${doc.id}` : null, branchReason, setBranchReason, (v) => !v.trim());
 
   // Resolve this library/folder/document's pre-publish review policy when the
   // modal opens, so we know whether to publish directly or open an in-review
@@ -238,12 +251,8 @@ export default function RevUpModal({
     setError(null);
   }, []);
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragOver(false);
-    const f = e.dataTransfer.files?.[0];
-    if (f) handleFile(f);
-  };
+  const pdfDrag = useFileDrag((fs) => handleFile(fs[0] ?? null), submitting);
+  const srcDrag = useFileDrag((fs) => setSourceFile(fs[0] ?? null), submitting);
 
   const doPublish = async (asBranch: boolean) => {
     setError(null);
@@ -276,34 +285,60 @@ export default function RevUpModal({
         orgId, actorUserId, actorEmail, actorRole,
         overrideReason: lockedByOther ? overrideReason : undefined,
       };
-      if (willReview && !asBranch) {
+      // The upload and its save run through tryUpload, so a failed one gets
+      // "Try again" on the corner card with the same file. Safe to repeat: a
+      // second run that finds its revision already saved stops on the
+      // duplicate label instead of saving it twice. On the first run a
+      // conflict or duplicate is handed back to this form (it has its own
+      // screen for those); a retry from the card reports them as failures.
+      const review = willReview && !asBranch;
+      let attempt = 0;
+      const run = async () => {
+        const first = attempt++ === 0;
+        try {
+          if (review) return { kind: "review" as const, submitted: await submitForReview(common) };
+          const r = await revUpDocument({
+            ...common,
+            expectedBaseVersionId: baseVersionId === "none" ? null : baseVersionId,
+            asBranch,
+            branchReason: asBranch ? branchReason.trim() : undefined,
+            sourceFile,
+          });
+          return { kind: "direct" as const, newVersion: r.newVersion, branched: !!r.branched };
+        } catch (err) {
+          if (first && (err instanceof StaleBaseError || err instanceof DuplicateLabelError)) return { kind: "stop" as const, err };
+          throw err;
+        }
+      };
+      const out = await tryUpload(file.name, run, {
+        onRetried: (o) => {
+          if (o.kind === "direct") { onDirectPublished?.(o.newVersion, o.branched); onSuccess(o.newVersion); }
+          else if (o.kind === "review") onReviewSubmitted?.(o.submitted);
+        },
+      });
+      if (out.kind === "stop") throw out.err;
+      if (out.kind === "review") {
         // Open an in-review draft (2A) instead of publishing. The live rev stays
         // the controlled copy; reviewers are notified. The list's realtime refresh
         // surfaces the "in review" pill. Base conflicts don't apply here — the
         // draft never touches the current revision.
-        const submitted = await submitForReview(common);
+        const submitted = out.submitted;
         // The most consequential outcome in publishing must not be silent:
         // tell the user exactly what happened and what happens next.
         void appAlert({
-          title: `Submitted for review - draft ${submitted.revisionLabel}`,
-          message: "Reviewers have been notified. The current revision stays the controlled copy; the moment the last required reviewer signs, the draft publishes automatically.",
+          title: `Sent for review: draft ${submitted.revisionLabel}`,
+          message: "The reviewers were told. The current revision stays in force until the last reviewer signs, then the draft publishes.",
         });
         onReviewSubmitted?.(submitted);
       } else {
-        const { newVersion, branched } = await revUpDocument({
-          ...common,
-          expectedBaseVersionId: baseVersionId === "none" ? null : baseVersionId,
-          asBranch,
-          branchReason: asBranch ? branchReason.trim() : undefined,
-          sourceFile,
-        });
-        onDirectPublished?.(newVersion, !!branched);
+        const { newVersion, branched } = out;
+        onDirectPublished?.(newVersion, branched);
         onSuccess(newVersion);
         if (branched) {
           // The branch is real but NOT current — make sure that lands.
           void appAlert({
-            title: "Published as an UNRECONCILED BRANCH",
-            message: `Rev ${newVersion.revisionLabel} is saved, but it is NOT the current revision. It appears in the DocCtrl open-items queue and stays open until it is merged into a later revision or withdrawn.`,
+            title: "Saved as a branch, not the current revision",
+            message: `Rev ${newVersion.revisionLabel} is saved but is not the current revision. It stays on the Doc Control open items until it is merged into a later revision or withdrawn.`,
           });
         }
       }
@@ -328,11 +363,11 @@ export default function RevUpModal({
         setShowBranchInput(false);
         try { setVersions(await listVersions(doc.id!)); } catch { /* diff falls back */ }
       } else if (e instanceof DuplicateLabelError) {
-        setError(`${e.message} The document may have advanced while this form was open - check Version History.`);
+        setError(`${e.message} Someone may have published while this was open. The next label is filled in: check it and publish again.`);
         setRevisionLabel(suggestNextRevisionLabel(doc.rev));
       } else {
         console.error("Rev up failed", e);
-        setError((e as Error).message || "Rev up failed");
+        setError(`It didn't publish: ${(e as Error).message || "try again"}.`);
       }
     } finally {
       setSubmitting(false);
@@ -353,7 +388,7 @@ export default function RevUpModal({
       });
       setMsgSent(true);
     } catch (e) {
-      setError((e as Error).message || "Couldn't post the message");
+      setError(`Couldn't send the message: ${(e as Error).message || "try again"}.`);
     }
   };
 
@@ -368,18 +403,20 @@ export default function RevUpModal({
   if (conflict) {
     return (
       <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
-        <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border-2 border-amber-400 overflow-hidden my-8 animate-in fade-in zoom-in-95">
-          <div className="px-6 py-4 border-b border-amber-200 bg-amber-50 flex items-center gap-3">
-            <div className="p-2 bg-amber-500 rounded-lg">
-              <AlertTriangle className="w-5 h-5 text-white" />
-            </div>
+        <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 animate-in fade-in zoom-in-95">
+          <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
+            {/* Arrow = one step back (to the form). X = close the flow. */}
+            <button onClick={() => setConflict(null)} disabled={submitting} aria-label="Back to the form" title="Back to the form"
+              className="p-2 -ml-2 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg">
+              <ChevronRight className="w-4 h-4 rotate-180" />
+            </button>
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-black text-amber-900">This document changed while you were working</div>
-              <div className="text-xs text-amber-800 truncate">
+              <div className="text-sm font-black text-amber-800 dark:text-amber-300 inline-flex items-center gap-1.5"><AlertTriangle className="w-4 h-4" /> This document changed while you were working</div>
+              <div className="text-xs text-[var(--color-text-muted)] truncate">
                 {doc.documentNumber || doc.title || doc.name}
               </div>
             </div>
-            <button onClick={() => setConflict(null)} disabled={submitting} title="Back to the form" className="p-2 text-amber-700 hover:text-amber-900 hover:bg-amber-100 rounded-lg">
+            <button aria-label="Close" onClick={() => { setConflict(null); onClose(); }} disabled={submitting} title="Close" className="p-2 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg">
               <X className="w-4 h-4" />
             </button>
           </div>
@@ -396,12 +433,10 @@ export default function RevUpModal({
                 </span>
               )}
             </div>
-            <div className="text-xs text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-3">
-              Your upload is based on <b>Rev {myBaseVersion?.revisionLabel ?? doc.rev ?? "?"}</b> and does
-              <b> not</b> include their changes. <b>Nothing has been published</b> - publishing now would have
-              silently overwritten their work, which is exactly what this stop prevents. Review the diff,
-              coordinate, then merge their change into your CAD file and publish on top of Rev {conflict.currentRev}.
-            </div>
+            <p className="text-xs text-[var(--color-text-muted)]">
+              Your file is based on <b>Rev {myBaseVersion?.revisionLabel ?? doc.rev ?? "?"}</b> and doesn&apos;t have their changes.
+              <b> Nothing was published.</b> Add their change to your CAD file, then publish on top of Rev {conflict.currentRev}.
+            </p>
 
             {/* Actions */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -418,24 +453,24 @@ export default function RevUpModal({
               </button>
               <div className="p-3 rounded-xl border-2 border-[var(--color-border)]">
                 <div className="flex items-center gap-2">
-                  <MessageSquare className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <MessageSquare className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
                   <div className="text-xs font-bold text-[var(--color-text)]">
                     Message {conflict.currentByName || "them"} in the document thread
                   </div>
                 </div>
                 {msgSent ? (
-                  <div className="mt-2 text-[11px] font-bold text-emerald-700">Message posted to the thread ✓</div>
+                  <div className="mt-2 text-[11px] font-bold text-emerald-700 dark:text-emerald-400">Sent to the document thread.</div>
                 ) : (
                   <div className="mt-2 flex gap-1.5">
                     <input
                       value={conflictMsg}
                       onChange={(e) => setConflictMsg(e.target.value)}
-                      placeholder="Optional note (a default heads-up is sent if empty)"
-                      className="flex-1 px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[11px]"
+                      placeholder="Your note, or leave blank for a short heads-up"
+                      className="flex-1 px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-xs"
                     />
                     <button
                       onClick={handleSendConflictMessage}
-                      className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-white bg-emerald-600 hover:bg-emerald-500"
+                      className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-[var(--color-text)] border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"
                     >
                       Send
                     </button>
@@ -452,25 +487,23 @@ export default function RevUpModal({
                   className="flex items-center gap-2 text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                 >
                   <GitBranch className="w-3.5 h-3.5" />
-                  I still need to publish my file → publish as an unreconciled branch…
+                  I still need to publish my file: save it as a branch…
                 </button>
               ) : (
                 <div className="space-y-2">
                   <div className="flex items-center gap-2 text-xs font-bold text-[var(--color-text)]">
                     <GitBranch className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-                    Publish as a BRANCH
+                    Save as a branch
                   </div>
                   <div className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">
-                    Your file is saved on the record, but it does <b>not</b> become the current revision.
-                    An open item is created (visible to Document Control and both authors) that stays open
-                    until someone merges the two changes into a later revision - or withdraws this branch.
-                    This is on the record: use it when you genuinely can&apos;t coordinate first.
+                    Your file is saved but does <b>not</b> become the current revision. It stays an open item for
+                    Doc Control and both of you until it is merged into a later revision or withdrawn.
                   </div>
                   <textarea
                     value={branchReason}
                     onChange={(e) => setBranchReason(e.target.value)}
                     rows={2}
-                    placeholder="Why are you branching instead of coordinating? (required)"
+                    placeholder="Why it can't wait (required)"
                     className={`${inputClass} resize-y`}
                   />
                   <div className="flex justify-end gap-2">
@@ -478,7 +511,7 @@ export default function RevUpModal({
                       onClick={() => { setShowBranchInput(false); setBranchReason(""); }}
                       className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold border border-[var(--color-border)]"
                     >
-                      Back
+                      Cancel
                     </button>
                     <button
                       onClick={() => doPublish(true)}
@@ -486,7 +519,7 @@ export default function RevUpModal({
                       className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
                     >
                       {submitting ? <Loader2 className="w-3 h-3 animate-spin" /> : <GitBranch className="w-3 h-3" />}
-                      Publish branch
+                      Save branch
                     </button>
                   </div>
                 </div>
@@ -494,22 +527,16 @@ export default function RevUpModal({
             </div>
 
             {error && (
-              <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
-                <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-                <span>{error}</span>
-              </div>
+              <p role="alert" className="border-l-2 border-rose-500 pl-3 text-xs text-rose-700 dark:text-rose-300">{error}</p>
             )}
           </div>
 
-          <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between">
-            <div className="text-[11px] text-[var(--color-text-muted)]">
-              Recommended: coordinate, merge into your CAD file, publish on top of Rev {conflict.currentRev}.
-            </div>
+          <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end">
             <button
               onClick={() => { setConflict(null); onClose(); }}
               className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
             >
-              Close - I&apos;ll coordinate first
+              Close, I&apos;ll talk to them first
             </button>
           </div>
         </div>
@@ -537,12 +564,12 @@ export default function RevUpModal({
             <ArrowUpFromLine className="w-5 h-5 text-[var(--color-text-muted)]" />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-black text-[var(--color-text)]">Publish New Revision</div>
+            <div className="text-sm font-black text-[var(--color-text)]">Publish a new revision</div>
             <div className="text-xs text-[var(--color-text-muted)] truncate">
-              {doc.documentNumber || doc.title || doc.name} - currently Rev {doc.rev || "-"}
+              {doc.documentNumber || doc.title || doc.name}, now at Rev {doc.rev || "-"}
             </div>
           </div>
-          <button onClick={onClose} disabled={submitting} className="p-2 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg">
+          <button aria-label="Close" onClick={onClose} disabled={submitting} className="p-2 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -552,25 +579,28 @@ export default function RevUpModal({
           <div>
             <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">New PDF</label>
             <div
-              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={handleDrop}
+              {...pdfDrag.bind}
               onClick={() => fileInputRef.current?.click()}
-              className={`mt-1.5 rounded-xl border-2 border-dashed transition-colors cursor-pointer p-6 text-center ${
-                dragOver ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]" :
-                file ? "border-emerald-400 bg-emerald-50" : "border-[var(--color-border-strong)] hover:border-slate-400 bg-[var(--color-surface-2)]"
-              }`}
+              role="button" tabIndex={0}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInputRef.current?.click(); } }}
+              className={`mt-1.5 rounded-xl border-2 border-dashed transition-colors cursor-pointer p-4 ${
+                file ? "border-[var(--color-border-strong)] bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] hover:border-slate-400 bg-[var(--color-surface-2)] text-center"
+              } ${pdfDrag.ring}`}
             >
-              {file ? (
-                <div className="flex items-center justify-center gap-2 text-sm text-emerald-700">
-                  <FileText className="w-4 h-4" />
-                  <span className="font-medium">{file.name}</span>
-                  <span className="text-xs text-emerald-600">({(file.size / 1024).toFixed(0)} KB)</span>
+              {pdfDrag.over ? (
+                <div className="text-sm font-bold text-[var(--color-text)] text-center">{pdfDrag.say}</div>
+              ) : file ? (
+                <div className="flex items-center gap-3 text-left">
+                  <FileThumb file={file} />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-semibold text-[var(--color-text)] truncate">{file.name}</div>
+                    <div className="text-xs text-[var(--color-text-muted)]">{formatSize(file.size)} · tap to pick another</div>
+                  </div>
                 </div>
               ) : (
                 <div className="flex items-center justify-center gap-2 text-sm text-[var(--color-text-muted)]">
                   <Upload className="w-4 h-4" />
-                  Drop the published PDF here, or click to browse
+                  Drop the PDF here, or tap to pick it
                 </div>
               )}
               <input
@@ -587,8 +617,8 @@ export default function RevUpModal({
           <Field
             label="Based On Revision *"
             hint={baseWasRecorded
-              ? "Recorded automatically from your checkout / download - change it only if your working copy came from somewhere else."
-              : "No checkout or download was recorded for you on this document. Declare which revision your work started from."}
+              ? "Filled in from your checkout or download."
+              : "No checkout or download of yours is on record. Pick the revision you started from."}
           >
             <select
               value={baseVersionId}
@@ -605,13 +635,9 @@ export default function RevUpModal({
               ))}
             </select>
             {baseVersionId !== "none" && baseVersionId !== (doc.currentVersionId ?? "none") && (
-              <div className="mt-1.5 flex items-start gap-1.5 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2">
-                <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
-                <span>
-                  You&apos;re declaring a base that is <b>not the current revision</b>. Publishing will stop
-                  with a conflict so you can review what changed since - that&apos;s expected, not an error.
-                </span>
-              </div>
+              <p className="mt-1.5 border-l-2 border-amber-500 pl-2 text-[11px] text-amber-800 dark:text-amber-300">
+                That isn&apos;t the current revision, so publishing will stop and show what changed since.
+              </p>
             )}
           </Field>
 
@@ -641,27 +667,21 @@ export default function RevUpModal({
               chosen change type (Minor/Correction) bypasses the gate. The
               default dropdown value must never silently decide governance. */}
           {reviewControl && reviewControl.mode !== "none" && effMode === "none" && (
-            <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-[12px] text-amber-900 flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" />
-              <span>
-                This library normally requires <b>pre-publish review</b>, but a <b>{changeType}</b> change
-                publishes directly, skipping the reviewers. If this change is more than a {String(changeType).toLowerCase()},
-                set Change Type to <b>Major</b>.
-              </span>
-            </div>
+            <p className="border-l-2 border-amber-500 pl-3 text-[12px] text-amber-800 dark:text-amber-300">
+              A <b>{changeType}</b> change skips this library&apos;s reviewers. If it&apos;s more than that, set Change Type to <b>Major</b>.
+            </p>
           )}
 
           {/* Pre-publish review banner — this library gates revisions behind
               reviewer sign-off. A Minor/Correction change escapes the gate. */}
           {effMode !== "none" && (
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 text-[12px] text-[var(--color-text)] space-y-2">
+            <div className="text-[12px] text-[var(--color-text)] space-y-2">
               <div className="flex items-start gap-2">
                 <ShieldCheck className="w-4 h-4 mt-0.5 shrink-0 text-[var(--color-text-muted)]" />
                 <span>
-                  This library requires <b>pre-publish review</b>.{" "}
                   {willReview
-                    ? <>Your revision will be submitted as an <b>in-review draft ({revisionLabel || "?"}A)</b> for reviewer sign-off - it won&apos;t go live until approved.</>
-                    : <>You&apos;ve chosen to publish directly, without review.</>}
+                    ? <>Goes to the reviewers as draft <b>{revisionLabel || "?"}A</b>. It goes live once they sign.</>
+                    : <>Publishes now, without review.</>}
                 </span>
               </div>
               {effMode === "publisher_choice" && (
@@ -674,7 +694,7 @@ export default function RevUpModal({
           )}
 
           {/* Change narrative */}
-          <Field label="Change Narrative *" hint="What changed and why (PSM-required)">
+          <Field label="What changed *" hint="What changed and why">
             <textarea
               value={changeLog}
               onChange={(e) => setChangeLog(e.target.value)}
@@ -706,10 +726,9 @@ export default function RevUpModal({
               change type on a drawing waives the MOC — say so, so a real
               process change doesn't slip out under last week's setting. */}
           {docClass === "drawing" && isMinorLike && (
-            <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5">
-              <b>{changeType}</b> on a drawing is replacement-in-kind - no MOC required. If this revision
-              changes the process, switch the change type to <b>Major</b> (the MOC becomes mandatory).
-            </div>
+            <p className="border-l-2 border-amber-500 pl-2 text-[11px] text-amber-800 dark:text-amber-300">
+              No MOC needed for a <b>{changeType}</b> drawing change. If it changes the process, set Change Type to <b>Major</b>.
+            </p>
           )}
 
           {/* THE FOLD — everyday publishes are: PDF, base, label, narrative.
@@ -721,7 +740,7 @@ export default function RevUpModal({
             onClick={() => setShowMore((v) => !v)}
             className="w-full flex items-center justify-between px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
           >
-            <span>More options - signoff chain, MOC, effective date, CAD source</span>
+            <span>More: sign-offs, MOC, effective date, CAD file</span>
             <span>{showMore ? "▲" : "▼"}</span>
           </button>
           {showMore && (<>
@@ -756,29 +775,34 @@ export default function RevUpModal({
               pulls the authoritative DWG from the vault, not a desktop folder. */}
           <Field
             label="Attach CAD Source (recommended)"
-            hint="DWG or zip of xrefs. Stored with this revision - the next drafter can pull it with one click instead of hunting a desktop folder."
+            hint="DWG or a zip with its xrefs. Kept with this revision for the next drafter."
           >
             <div
               onClick={() => sourceInputRef.current?.click()}
-              className={`rounded-xl border-2 border-dashed cursor-pointer p-3 text-center transition-colors ${
-                sourceFile ? "border-emerald-400 bg-emerald-50" : "border-[var(--color-border-strong)] hover:border-slate-400 bg-[var(--color-surface-2)]"
-              }`}
+              {...srcDrag.bind}
+              className={`rounded-xl border-2 border-dashed cursor-pointer p-3 transition-colors ${
+                sourceFile ? "border-[var(--color-border-strong)] bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] hover:border-slate-400 bg-[var(--color-surface-2)] text-center"
+              } ${srcDrag.ring}`}
             >
-              {sourceFile ? (
-                <div className="flex items-center justify-center gap-2 text-xs text-emerald-700">
-                  <FileBox className="w-3.5 h-3.5" />
-                  <span className="font-medium">{sourceFile.name}</span>
-                  <span className="text-[11px] text-emerald-600">({(sourceFile.size / 1024).toFixed(0)} KB)</span>
-                  <button
+              {srcDrag.over ? (
+                <div className="text-xs font-bold text-[var(--color-text)] text-center">{srcDrag.say}</div>
+              ) : sourceFile ? (
+                <div className="flex items-center gap-2.5 text-xs text-left">
+                  <FileThumb file={sourceFile} size={32} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-semibold text-[var(--color-text)] truncate">{sourceFile.name}</span>
+                    <span className="block text-[11px] text-[var(--color-text-muted)]">{formatSize(sourceFile.size)}</span>
+                  </span>
+                  <button aria-label="Remove file"
                     onClick={(e) => { e.stopPropagation(); setSourceFile(null); }}
-                    className="ml-1 text-emerald-700 hover:text-emerald-900"
+                    className="ml-1 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                     title="Remove"
                   ><X className="w-3 h-3" /></button>
                 </div>
               ) : (
                 <div className="flex items-center justify-center gap-2 text-xs text-[var(--color-text-muted)]">
                   <FileBox className="w-3.5 h-3.5" />
-                  Attach the DWG / source zip (optional)
+                  Drop the DWG or zip here, or tap to pick it (optional)
                 </div>
               )}
               <input
@@ -796,17 +820,16 @@ export default function RevUpModal({
           {/* Override: the doc is checked out by someone else. Publishing leaves
               their checkout open; they're notified and pointed to the new rev. */}
           {lockedByOther && (
-            <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 space-y-2">
-              <div className="flex items-start gap-2 text-[12px] text-amber-900">
-                <Lock className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" />
+            <div className="border-l-2 border-amber-500 pl-3 space-y-2">
+              <div className="flex items-start gap-2 text-[12px] text-amber-800 dark:text-amber-300">
+                <Lock className="w-4 h-4 mt-0.5 shrink-0" />
                 <span>
-                  <b>{doc.checkedOutByName || "Another user"}</b> has this checked out.
-                  Publishing won&apos;t release their checkout - they stay in, but get
-                  notified and pointed to your new revision. Best for minor changes.
+                  <b>{doc.checkedOutByName || "Another user"}</b> has this checked out. They stay checked
+                  out and are told about your new revision.
                 </span>
               </div>
               <div>
-                <label className="text-[11px] font-black text-amber-900 uppercase tracking-widest">
+                <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">
                   Note to {doc.checkedOutByName || "the checkout holder"} *
                 </label>
                 <textarea
@@ -814,33 +837,21 @@ export default function RevUpModal({
                   onChange={(e) => setOverrideReason(e.target.value)}
                   rows={2}
                   className={`${inputClass} resize-y mt-1`}
-                  placeholder="e.g. Fixed the callout on detail B - minor, won't affect your edits."
+                  placeholder="e.g. Fixed the callout on detail B. Minor, won't affect your edits."
                 />
               </div>
             </div>
           )}
 
           {error && (
-            <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
-              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-              <span>{error}</span>
-            </div>
+            <p role="alert" className="border-l-2 border-rose-500 pl-3 text-xs text-rose-700 dark:text-rose-300">{error}</p>
           )}
-
-          <div className="flex items-center gap-2 text-[11px] text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-3">
-            <ShieldCheck className="w-3.5 h-3.5 shrink-0 text-emerald-600" />
-            <span>
-              The previous revision will be archived (not deleted) and remain accessible in Version History.
-              A SHA-256 hash of the new file is recorded for audit integrity. If someone published ahead of
-              you, this form stops with a conflict instead of overwriting their work.
-            </span>
-          </div>
         </div>
 
         {/* Footer */}
         <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between gap-2">
           <div className="text-[11px] text-[var(--color-text-muted)]">
-            Going from <b>Rev {doc.rev || "-"}</b> → {willReview
+            Rev <b>{doc.rev || "-"}</b> to {willReview
               ? <b className="text-[var(--color-text)]">{revisionLabel || "?"}A (in review)</b>
               : <b className="text-[var(--color-text)]">Rev {revisionLabel || "?"}</b>}
           </div>
@@ -855,16 +866,22 @@ export default function RevUpModal({
             <button
               onClick={() => doPublish(false)}
               disabled={submitting || !file}
-              className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white disabled:opacity-50 ${willReview ? "bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)]" : "bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]"}`}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
             >
               {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ChevronRight className="w-3.5 h-3.5" />}
-              {submitting ? (willReview ? "Submitting…" : "Publishing…") : (willReview ? "Submit for Review" : "Publish Revision")}
+              {submitting ? (willReview ? "Sending…" : "Publishing…") : (willReview ? "Send for review" : "Publish revision")}
             </button>
           </div>
         </div>
       </div>
     </div>
   );
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function Field({ label, hint, isoTopic, children }: { label: string; hint?: string; isoTopic?: import("@/components/ui/IsoGuidance").IsoTopic | undefined; children: React.ReactNode }) {

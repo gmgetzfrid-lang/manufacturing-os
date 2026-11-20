@@ -12,6 +12,8 @@ import { X, Check, Loader2, ImageIcon, Upload } from "lucide-react";
 import { NODE_ICON_KEYS, NodeIcon } from "@/lib/nodeIcons";
 import NodeCover, { type NodeAppearanceLike } from "@/components/documents/NodeCover";
 import { uploadToPath } from "@/lib/storage";
+import { tryUpload } from "@/lib/uploadRetry";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
 const COLOR_SWATCHES = ["#4f46e5", "#2563eb", "#0ea5e9", "#0d9488", "#059669", "#65a30d", "#ea580c", "#dc2626", "#e11d48", "#db2777", "#7c3aed", "#475569"];
 
@@ -42,11 +44,14 @@ export default function CustomizeNodeModal({
   onClose: () => void;
   onSave: (v: CustomizeValue) => Promise<void> | void;
 }) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => onClose());
   // Parent remounts this modal via `key`, so a plain initializer is the
   // freshest seed (no reseed effect needed).
   const { showToast } = useToast();
   const [v, setV] = useState<CustomizeValue>(initial);
   const [saving, setSaving] = useState(false);
+  const [saveErr, setSaveErr] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [bgUploading, setBgUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -64,10 +69,11 @@ export default function CustomizeNodeModal({
       const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "");
       const rand = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}`;
       const path = `${storagePrefix.replace(/\/+$/, "")}/covers/${rand}.${ext}`;
-      await uploadToPath(file, path, { contentType: file.type });
+      // Wrapped for "Try again" on the corner card with the same image.
+      await tryUpload(file.name, () => uploadToPath(file, path, { contentType: file.type }), { onRetried: () => set({ coverImageUrl: path }) });
       set({ coverImageUrl: path }); // stored as a storage path; NodeCover signs it
     } catch (e) {
-      showToast({ type: "error", title: "Upload failed", message: e instanceof Error ? e.message : "unknown error" });
+      showToast({ type: "error", title: "The image didn't upload", message: e instanceof Error ? e.message : "Try again." });
     } finally {
       setUploading(false);
     }
@@ -80,18 +86,21 @@ export default function CustomizeNodeModal({
       const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "");
       const rand = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}`;
       const path = `${storagePrefix.replace(/\/+$/, "")}/backgrounds/${rand}.${ext}`;
-      await uploadToPath(file, path, { contentType: file.type });
-      set({ bgImagePath: path, bgType: "image", bgOpacity: v.bgOpacity ?? 0.18, bgTint: v.bgTint ?? "neutral" });
+      const apply = () => set({ bgImagePath: path, bgType: "image", bgOpacity: v.bgOpacity ?? 0.18, bgTint: v.bgTint ?? "neutral" });
+      await tryUpload(file.name, () => uploadToPath(file, path, { contentType: file.type }), { onRetried: apply });
+      apply();
     } catch (e) {
-      showToast({ type: "error", title: "Upload failed", message: e instanceof Error ? e.message : "unknown error" });
+      showToast({ type: "error", title: "The image didn't upload", message: e instanceof Error ? e.message : "Try again." });
     } finally {
       setBgUploading(false);
     }
   };
 
   const handleSave = async () => {
-    setSaving(true);
-    try { await onSave(v); onClose(); } finally { setSaving(false); }
+    setSaving(true); setSaveErr(null);
+    try { await onSave(v); onClose(); }
+    catch (e) { setSaveErr(`It didn't save: ${(e as Error)?.message || "try again"}.`); }
+    finally { setSaving(false); }
   };
 
   return createPortal(
@@ -99,7 +108,7 @@ export default function CustomizeNodeModal({
       <div className="w-full max-w-lg rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-[var(--color-border)]">
           <h2 className="font-black text-[var(--color-text)]">{title}</h2>
-          <button onClick={onClose} className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+          <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
 
         <div className="p-5 space-y-4 max-h-[70vh] overflow-auto">
@@ -119,7 +128,7 @@ export default function CustomizeNodeModal({
             <label className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Color</label>
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
               <button onClick={() => set({ color: undefined })} title="Match theme"
-                className={`px-2.5 h-7 rounded-full text-[11px] font-bold border ${!v.color ? "border-[var(--color-accent)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`} style={!v.color ? { background: "var(--brand-gradient)", color: "#fff" } : undefined}>Theme</button>
+                className={`px-2.5 h-7 rounded-full text-[11px] font-bold border ${!v.color ? "border-transparent ring-2 ring-offset-2 ring-[var(--color-text-muted)] ring-offset-[var(--color-surface)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`} style={!v.color ? { background: "var(--brand-gradient)", color: "#fff" } : undefined}>Theme</button>
               {COLOR_SWATCHES.map((c) => (
                 <button key={c} onClick={() => set({ color: c })} title={c}
                   className={`w-7 h-7 rounded-full ${v.color === c ? "ring-2 ring-offset-2 ring-[var(--color-text-muted)] ring-offset-[var(--color-surface)]" : ""}`} style={{ backgroundColor: c }}>
@@ -247,7 +256,8 @@ export default function CustomizeNodeModal({
           )}
         </div>
 
-        <div className="px-5 py-3.5 border-t border-[var(--color-border)] flex justify-end gap-2">
+        <div className="px-5 py-3.5 border-t border-[var(--color-border)] flex items-center justify-end gap-2">
+          {saveErr && <p role="alert" className="mr-auto text-xs text-rose-700 dark:text-rose-300">{saveErr}</p>}
           <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Cancel</button>
           <button onClick={handleSave} disabled={saving} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold text-[var(--color-accent-fg)] disabled:opacity-50" style={{ background: "var(--color-accent)" }}>
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save

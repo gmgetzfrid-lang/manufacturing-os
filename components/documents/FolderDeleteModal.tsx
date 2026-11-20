@@ -125,7 +125,7 @@ export default function FolderDeleteModal({
                     {subfolders > 0 && <> in <b className="text-[var(--color-text)]">{subfolders.toLocaleString()} subfolder{subfolders === 1 ? "" : "s"}</b></>}.</>}
             </div>
           </div>
-          <button onClick={onClose} disabled={!!running} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] disabled:opacity-40">
+          <button aria-label="Close" onClick={onClose} disabled={!!running} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] disabled:opacity-40">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -156,7 +156,7 @@ export default function FolderDeleteModal({
         )}
 
         {error && (
-          <div className="mx-5 mb-3 rounded-lg border border-rose-300 bg-rose-50 dark:bg-rose-950/30 px-3 py-2 text-xs text-rose-700 dark:text-rose-300 flex gap-2">
+          <div className="mx-5 mb-3 text-xs flex gap-2 border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
             <AlertTriangle className="w-4 h-4 shrink-0" /> {error}
           </div>
         )}

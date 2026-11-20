@@ -158,7 +158,12 @@ export default function FindPanel({ orgId, f, unit, compact, onOpenFolder, onOpe
           {!quick && f.loading && (
             <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)] py-3"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Searching…</div>
           )}
-          {nothing && (
+          {f.failed && (
+            <p role="alert" className="border-l-2 border-rose-500 pl-3 text-xs text-rose-700 dark:text-rose-300">
+              Part of the search didn&apos;t answer, so some results may be missing. Change the search to try again.
+            </p>
+          )}
+          {nothing && !f.failed && (
             <div className="rounded-xl border border-dashed border-[var(--color-border-strong)] p-5 text-center text-sm text-[var(--color-text-muted)]">
               Nothing matches “{f.q}”. Try the equipment ID (like 5530.29), a drawing number, or a few words from the drawing.
             </div>

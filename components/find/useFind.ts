@@ -39,6 +39,8 @@ export interface FindState {
   preview: FindDoc | null;
   setPreview: (id: string | null) => void;
   docs: Record<string, FindDoc>;
+  /** The search itself failed (not "nothing found"). */
+  failed: boolean;
 }
 
 export function useFind(orgId: string | null, query: string, contextUnit: string | null, opts: { controller?: boolean } = {}): FindState {
@@ -53,6 +55,9 @@ export function useFind(orgId: string | null, query: string, contextUnit: string
   const [deepLoading, setDeepLoading] = useState(false);
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [wanted, setWanted] = useState<string | null>(null);
+  // A failed search is said as such, never shown as "nothing matches".
+  const [quickFailed, setQuickFailed] = useState(false);
+  const [deepFailed, setDeepFailed] = useState(false);
 
   // ── Equipment, folders and documents by number: as you type ──────────
   useEffect(() => {
@@ -60,8 +65,8 @@ export function useFind(orgId: string | null, query: string, contextUnit: string
     let alive = true;
     setLoading(true);
     findQuick(orgId, q, { controller: opts.controller })
-      .then((r) => { if (alive) { setQuick(r); setUserPicked(false); setPreviewId(null); } })
-      .catch(() => { if (alive) setQuick({ q, equipment: [], docs: {}, docOrder: [], folders: [] }); })
+      .then((r) => { if (alive) { setQuick(r); setQuickFailed(false); setUserPicked(false); setPreviewId(null); } })
+      .catch(() => { if (alive) { setQuick({ q, equipment: [], docs: {}, docOrder: [], folders: [] }); setQuickFailed(true); } })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [orgId, q, opts.controller]);
@@ -72,8 +77,8 @@ export function useFind(orgId: string | null, query: string, contextUnit: string
     let alive = true;
     setDeepLoading(true);
     findDeep(orgId, qDeep)
-      .then((r) => { if (alive) setDeep({ ...r, q: qDeep }); })
-      .catch(() => { if (alive) setDeep({ order: [], docs: {}, q: qDeep }); })
+      .then((r) => { if (alive) { setDeep({ ...r, q: qDeep }); setDeepFailed(false); } })
+      .catch(() => { if (alive) { setDeep({ order: [], docs: {}, q: qDeep }); setDeepFailed(true); } })
       .finally(() => { if (alive) setDeepLoading(false); });
     return () => { alive = false; };
   }, [orgId, qDeep]);
@@ -142,5 +147,6 @@ export function useFind(orgId: string | null, query: string, contextUnit: string
     pickWhenFound: (id) => setWanted(id),
     detail, docOrder, deepLoading: deepLoading || qDeep !== query.trim(),
     preview, setPreview: setPreviewId, docs,
+    failed: q.length >= 2 && (quickFailed || deepFailed),
   };
 }

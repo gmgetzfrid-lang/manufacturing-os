@@ -183,7 +183,7 @@ export default function RelatedPanel({
                 </span>
               )}
               {r.evidence_lost_at && (
-                <span title="A later revision removed the evidence this link was based on - still linked, worth a look."
+                <span title="A later revision removed what this link was based on. It is still linked: worth a look."
                   className="shrink-0 text-amber-600"><AlertTriangle className="w-3 h-3" /></span>
               )}
               {canManage && (
@@ -220,7 +220,7 @@ export default function RelatedPanel({
           <div className="flex items-center gap-1.5 justify-end">
             <button onClick={() => setUrlDraft(null)} className="text-[11px] font-bold text-[var(--color-text-muted)] px-2 py-1">Cancel</button>
             <button onClick={() => void addUrl()} disabled={busy || !urlDraft.url.trim()}
-              className="inline-flex items-center gap-1 text-[11px] font-black text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg px-2 py-1 disabled:opacity-50">
+              className="inline-flex items-center gap-1 text-[11px] font-black border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] rounded-lg px-2 py-1 disabled:opacity-50">
               {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Pin it
             </button>
           </div>
@@ -251,7 +251,7 @@ export default function RelatedPanel({
 
       {/* Found, awaiting a decision — review where the document is. */}
       {proposals.length > 0 && (
-        <div className="rounded-lg border border-amber-200 dark:border-amber-900 bg-amber-50/60 dark:bg-amber-950/30 p-2 space-y-1.5">
+        <div className="border-l-2 border-amber-500 pl-2.5 py-1 space-y-1.5">
           <div className="flex items-center gap-1.5">
             <Sparkles className="w-3 h-3 text-amber-600" />
             <span className="text-[11px] font-black uppercase tracking-widest text-amber-800 dark:text-amber-300">
@@ -270,7 +270,7 @@ export default function RelatedPanel({
               {canManage && (
                 <div className="flex items-center gap-1.5">
                   <button onClick={() => void decideProposal(p, true)} disabled={decidingId === p.id}
-                    className="inline-flex items-center gap-1 text-[11px] font-black text-white bg-emerald-600 hover:bg-emerald-500 rounded px-1.5 py-0.5 disabled:opacity-50">
+                    className="inline-flex items-center gap-1 text-[11px] font-black border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] rounded px-1.5 py-0.5 disabled:opacity-50">
                     {decidingId === p.id ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Check className="w-2.5 h-2.5" />} Link
                   </button>
                   <button onClick={() => void decideProposal(p, false)} disabled={decidingId === p.id}

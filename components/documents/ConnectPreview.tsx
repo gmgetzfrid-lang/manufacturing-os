@@ -13,6 +13,7 @@ import React, { useMemo, useState } from "react";
 import { X, Loader2, Lock, FileText, ChevronRight, ChevronDown, Send, ShieldOff } from "lucide-react";
 import LibraryAiSwitch from "@/components/documents/LibraryAiSwitch";
 import type { ConnectPlan, PlanFileState } from "@/lib/estate/connectPlan";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
 const STATE: Record<PlanFileState, { label: string; tone: string; sent: boolean }> = {
   new: { label: "new - will be read", tone: "bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text)]", sent: true },
@@ -27,6 +28,8 @@ export default function ConnectPreview({ orgId, plan, loading, canChange, onStar
   orgId: string; plan: ConnectPlan; loading: boolean; canChange: boolean;
   onStart: (libraryIds: string[]) => void; onClose: () => void; onReplan: (libraryIds: string[]) => void;
 }) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => onClose());
   const [picked, setPicked] = useState<Set<string>>(() => new Set(plan.libraries.filter((l) => l.selected).map((l) => l.id)));
   const [open, setOpen] = useState<string | null>(null);
   const chosen = plan.libraries.filter((l) => l.selected);
@@ -47,7 +50,7 @@ export default function ConnectPreview({ orgId, plan, loading, canChange, onStar
             <div className="text-base font-black">Before anything is sent to AI</div>
             <div className="text-xs text-[var(--color-text-muted)]">Nothing has run yet. Check what will be read, change it, then press Start.</div>
           </div>
-          <button onClick={onClose} className="opacity-60 hover:opacity-100"><X className="w-5 h-5" /></button>
+          <button aria-label="Close" onClick={onClose} className="opacity-60 hover:opacity-100"><X className="w-5 h-5" /></button>
         </div>
 
         <div className="p-4 space-y-3 text-xs">
@@ -111,7 +114,7 @@ export default function ConnectPreview({ orgId, plan, loading, canChange, onStar
           {loading && <Loader2 className="w-4 h-4 animate-spin" />}
           <button onClick={onClose} className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-sm font-semibold">Cancel</button>
           {dirty
-            ? <button onClick={() => onReplan(pickedNow)} disabled={loading || !pickedNow.length} className="rounded-lg bg-slate-900 text-white px-3 py-1.5 text-sm font-bold disabled:opacity-50">Update the list</button>
+            ? <button onClick={() => onReplan(pickedNow)} disabled={loading || !pickedNow.length} className="rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 text-sm font-bold disabled:opacity-50">Update the list</button>
             : <button onClick={() => onStart(chosen.map((l) => l.id))} disabled={loading || !chosen.length} className="rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-3 py-1.5 text-sm font-bold disabled:opacity-50">Start</button>}
         </div>
       </div>

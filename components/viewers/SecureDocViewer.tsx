@@ -172,7 +172,7 @@ export default function SecureDocViewer({
       if ((e.ctrlKey || e.metaKey) && (e.key === 'p' || e.key === 's')) {
         e.preventDefault();
         e.stopPropagation();
-        await appAlert({ message: "SECURITY ALERT: Printing or Saving controlled documents via browser is strictly prohibited.\n\nUse the 'Print Control' workflow.", tone: "danger" });
+        await appAlert({ title: "Print and save are off here", message: "Controlled documents don't print or save from the browser. Open the full view and use Print or Download there: it stamps the copy." });
       }
     };
 
@@ -210,37 +210,22 @@ export default function SecureDocViewer({
         </div>
       </div>
 
-      {/* HEADER BAR */}
-      <div className="h-10 bg-slate-800 border-b border-slate-700 flex items-center justify-between px-4 shrink-0 z-50 shadow-md">
-        <div className="flex items-center space-x-3 overflow-hidden min-w-0">
-            <span className="text-xs font-mono font-bold text-orange-500 bg-orange-950/30 px-1.5 py-0.5 rounded border border-orange-500/20 whitespace-nowrap">
-              {docNumber}
-            </span>
-            <span className="text-xs font-bold text-slate-300 truncate max-w-[200px]" title={title}>
-              {title}
-            </span>
-            <span className="text-[11px] font-bold text-slate-500 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-700">
-              Rev {rev}
-            </span>
-        </div>
-        
-        <div className="flex items-center space-x-2">
-            <div className="flex items-center text-[11px] text-red-400 bg-red-950/20 px-2 py-1 rounded border border-red-500/10" title="Browser Print/Save Disabled">
-                <ShieldAlert className="w-3 h-3 mr-1.5" />
-                <span className="font-bold">SECURE VIEW</span>
-            </div>
-        </div>
+      {/* One quiet line: which file and revision this is. The host (side
+          panel, history drawer) already shows the title, so it isn't repeated. */}
+      <div className="h-8 bg-slate-800 border-b border-slate-700 flex items-center gap-2 px-3 shrink-0 z-50 min-w-0" title={title}>
+        <span className="text-xs font-mono font-bold text-slate-200 truncate">{docNumber}</span>
+        <span className="text-[11px] font-bold text-slate-400 shrink-0">Rev {rev}</span>
+        <Lock className="w-3 h-3 text-slate-500 shrink-0 ml-auto" aria-label="Print and save are off in this preview" />
       </div>
 
-      {/* AMBIENT LOCK BANNER — someone else is mid-change on this document. */}
+      {/* Someone else is mid-change on this document: a plain line. */}
       {lockHolder && (
-        <div className="bg-amber-500/15 border-b border-amber-500/40 px-4 py-1.5 flex items-center gap-2 text-[11px] text-amber-300 shrink-0 z-50">
-          <Lock className="w-3.5 h-3.5 shrink-0" />
+        <div className="border-l-2 border-amber-500 bg-slate-900 px-3 py-1 flex items-center gap-2 text-[11px] text-amber-300 shrink-0 z-50">
           <span className="truncate">
             <b>{lockHolder.name || 'Another user'}</b> has this checked out
-            {lockHolder.note ? <> - <i>{lockHolder.note}</i></> : null}
-            {lockHolder.since ? <> · since {new Date(lockHolder.since).toLocaleDateString()}</> : null}
-            . This view may go stale.
+            {lockHolder.since ? <> since {new Date(lockHolder.since).toLocaleDateString()}</> : null}
+            {lockHolder.note ? <>: <i>{lockHolder.note}</i></> : null}
+            . It may change soon.
           </span>
         </div>
       )}
@@ -261,14 +246,14 @@ export default function SecureDocViewer({
           </div>
         ) : loading ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 bg-slate-900/90 z-20">
-            <Loader2 className="w-10 h-10 animate-spin mb-3 text-blue-500" />
-            <span className="text-xs font-mono font-bold animate-pulse text-blue-400">DECRYPTING STREAM...</span>
+            <Loader2 className="w-7 h-7 animate-spin mb-2 text-slate-400" />
+            <span className="text-xs font-semibold text-slate-300">Loading the preview…</span>
           </div>
         ) : error ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center text-red-400 bg-slate-900 z-20">
-            <AlertTriangle className="w-16 h-16 mb-4 opacity-50" />
-            <h3 className="text-lg font-bold text-red-500">Access Denied</h3>
-            <p className="text-sm font-mono mt-2 text-red-300/70 max-w-md text-center">{error}</p>
+            <AlertTriangle className="w-8 h-8 mb-3 opacity-60" />
+            <h3 className="text-sm font-bold text-red-400">Couldn&apos;t open the preview</h3>
+            <p className="text-xs mt-1 text-red-300/80 max-w-md text-center">{error}</p>
           </div>
         ) : blobUrl ? (
           <iframe 
@@ -278,25 +263,24 @@ export default function SecureDocViewer({
           />
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-slate-600">
-            <XCircle className="w-12 h-12 mb-2 opacity-20" />
-            <p>No content loaded</p>
+            <XCircle className="w-8 h-8 mb-2 opacity-30" />
+            <p className="text-xs">No file to show.</p>
           </div>
         )}
       </div>
 
       {/* PRINT PROTECTION CURTAIN */}
       <div className="hidden print:flex fixed inset-0 z-[9999] bg-white flex-col items-center justify-center p-10 text-center">
-        <div className="border-4 border-red-600 p-10 rounded-3xl">
-          <ShieldAlert className="w-32 h-32 text-red-600 mb-8 mx-auto" />
-          <h1 className="text-5xl font-black text-red-600 mb-4">SECURITY VIOLATION</h1>
-          <p className="text-2xl font-bold text-slate-900 mb-8">
-              This document is CONTROLLED DATA.
+        <div className="border-2 border-slate-900 p-10 rounded-2xl">
+          <ShieldAlert className="w-16 h-16 text-slate-900 mb-6 mx-auto" />
+          <h1 className="text-3xl font-black text-slate-900 mb-3">Controlled document</h1>
+          <p className="text-lg text-slate-700 mb-6">
+              This preview doesn&apos;t print. Open the full view and use Print: it stamps the copy.
           </p>
-          <div className="bg-slate-100 p-6 rounded-xl text-left inline-block">
-             <p className="font-mono text-sm mb-2"><strong>USER:</strong> {viewerId}</p>
-             <p className="font-mono text-sm mb-2"><strong>DATE:</strong> {new Date().toISOString()}</p>
-             <p className="font-mono text-sm mb-2"><strong>DOC ID:</strong> {docNumber}</p>
-             <p className="font-mono text-sm text-red-600 font-bold mt-4">EVENT LOGGED: ILLEGAL PRINT ATTEMPT</p>
+          <div className="text-left inline-block">
+             <p className="font-mono text-sm mb-1"><strong>User:</strong> {viewerId}</p>
+             <p className="font-mono text-sm mb-1"><strong>Date:</strong> {new Date().toLocaleString()}</p>
+             <p className="font-mono text-sm"><strong>Document:</strong> {docNumber}</p>
           </div>
         </div>
       </div>

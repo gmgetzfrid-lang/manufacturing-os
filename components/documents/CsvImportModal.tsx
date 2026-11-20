@@ -21,6 +21,8 @@ import {
 import { supabase } from "@/lib/supabase";
 import { computeUniquenessKey } from "@/lib/uniqueness";
 import type { LibraryConfig } from "@/types/schema";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
+import { useDraft } from "@/hooks/useDraft";
 
 interface Props {
   isOpen: boolean;
@@ -50,8 +52,12 @@ interface ImportResult {
 export default function CsvImportModal({
   isOpen, onClose, library, orgId, collectionId, actorUserId, onImported,
 }: Props) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => onClose(), isOpen);
   const [step, setStep] = useState<Step>("paste");
   const [raw, setRaw] = useState("");
+  // Typed words are kept on this device until this goes through.
+  useDraft<string>(isOpen && library.id ? `csv-import:${library.id}` : null, raw, setRaw, (v) => !v.trim());
   const [headers, setHeaders] = useState<string[]>([]);
   const [rows, setRows] = useState<string[][]>([]);
   const [mapping, setMapping] = useState<Record<string, string>>({}); // fieldKey → csvHeader
@@ -189,6 +195,7 @@ export default function CsvImportModal({
     setStep("done");
     setBusy(false);
     if (ok > 0) {
+      setRaw("");
       onImported?.(ok);
       // Imported rows are new doc-control content — AI libraries watching
       // this library mirror them now rather than at the next cron pass.
@@ -205,14 +212,14 @@ export default function CsvImportModal({
             <div className="text-sm font-black text-[var(--color-text)]">Import documents from CSV</div>
             <div className="text-xs text-[var(--color-text-muted)]">Bulk-create records (no files attached yet). Use this for backfilling legacy registers.</div>
           </div>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
+          <button aria-label="Close" onClick={onClose} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
             <X className="w-4 h-4" />
           </button>
         </div>
 
         <div className="px-5 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
           {error && (
-            <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-xs text-red-800 flex items-start gap-2">
+            <div className="text-xs flex items-start gap-2 border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
             </div>
           )}
@@ -290,7 +297,7 @@ export default function CsvImportModal({
                 Imported <b>{result.ok}</b> document record{result.ok === 1 ? "" : "s"}.
               </div>
               {result.failed.length > 0 && (
-                <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-xs text-red-800">
+                <div className="text-xs border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
                   <div className="font-bold flex items-center gap-1.5 mb-1"><AlertTriangle className="w-4 h-4" /> {result.failed.length} failed</div>
                   <ul className="ml-5 list-disc space-y-0.5">
                     {result.failed.slice(0, 8).map((f, i) => (
@@ -319,12 +326,12 @@ export default function CsvImportModal({
               {step === "done" ? "Close" : "Cancel"}
             </button>
             {step === "paste" && (
-              <button onClick={parseCsv} disabled={!raw.trim()} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold disabled:opacity-50">
+              <button onClick={parseCsv} disabled={!raw.trim()} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-xs font-bold disabled:opacity-50">
                 Continue <ChevronRight className="w-3.5 h-3.5" />
               </button>
             )}
             {step === "map" && (
-              <button onClick={goPreview} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold">
+              <button onClick={goPreview} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-xs font-bold">
                 Preview <ChevronRight className="w-3.5 h-3.5" />
               </button>
             )}

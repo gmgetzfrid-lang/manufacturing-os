@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { appConfirm } from "@/components/providers/DialogProvider";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
 interface DocItem {
   id: string;
@@ -32,6 +33,8 @@ interface LibraryOrderModalProps {
 export default function LibraryOrderModal({
   isOpen, orgId, libraryId, onClose, onSaved,
 }: LibraryOrderModalProps) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => onClose(), isOpen);
   const [docs, setDocs] = useState<DocItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -111,9 +114,11 @@ export default function LibraryOrderModal({
       // Bulk-update sort_order. One row per update to avoid the
       // upsert-with-conflict dance (Postgres-via-Supabase doesn't have
       // a clean bulk-update API).
-      await Promise.all(docs.map((d, idx) =>
+      const results = await Promise.all(docs.map((d, idx) =>
         supabase.from("documents").update({ sort_order: idx }).eq("id", d.id)
       ));
+      const failed = results.filter((r) => r.error).length;
+      if (failed) throw new Error(`${failed} of ${docs.length} documents didn't take their new place. Save again.`);
       onSaved();
       onClose();
     } catch (e) {
@@ -127,10 +132,11 @@ export default function LibraryOrderModal({
     if (!(await appConfirm({ title: "Clear custom order", message: "Clear custom order? Documents will fall back to updated-date order.", tone: "danger" }))) return;
     setBusy(true);
     try {
-      await supabase.from("documents")
+      const { error: resetErr } = await supabase.from("documents")
         .update({ sort_order: null })
         .eq("org_id", orgId)
         .eq("library_id", libraryId);
+      if (resetErr) throw new Error(resetErr.message);
       onSaved();
       onClose();
     } catch (e) {
@@ -158,7 +164,7 @@ export default function LibraryOrderModal({
               <div className="text-[11px] text-[var(--color-text-muted)]">Drag rows to set the order documents appear in this library.</div>
             </div>
           </div>
-          <button onClick={onClose} disabled={busy} className="p-1.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+          <button aria-label="Close" onClick={onClose} disabled={busy} className="p-1.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -218,7 +224,7 @@ export default function LibraryOrderModal({
         </div>
 
         {error && (
-          <div className="px-5 py-2 bg-red-50 border-t border-red-200 text-xs text-red-700 flex items-start gap-2 shrink-0">
+          <div className="mx-5 my-2 text-xs flex items-start gap-2 shrink-0 border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
             <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
           </div>
         )}
@@ -229,7 +235,7 @@ export default function LibraryOrderModal({
           </button>
           <div className="flex items-center gap-2">
             <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
-            <button onClick={save} disabled={busy || !dirty} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 shadow">
+            <button onClick={save} disabled={busy || !dirty} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] disabled:opacity-50 shadow">
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
               Save order
             </button>

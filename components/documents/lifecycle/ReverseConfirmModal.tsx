@@ -14,6 +14,8 @@ import {
   reverseSplit, reverseMerge, reverseRenumber, type ReverseResult,
 } from "@/lib/documentLifecycle";
 import type { TimelineEvent } from "@/lib/timeline";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
+import { useDraft } from "@/hooks/useDraft";
 
 interface ReverseConfirmModalProps {
   event: TimelineEvent;
@@ -28,7 +30,11 @@ interface ReverseConfirmModalProps {
 export default function ReverseConfirmModal({
   event, orgId, actorUserId, actorEmail, actorRole, onCancel, onSuccess,
 }: ReverseConfirmModalProps) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => onCancel());
   const [reason, setReason] = useState("");
+  // Typed words are kept on this device until this goes through.
+  useDraft<string>(event.id ? `reverse:${event.id}` : null, reason, setReason, (v) => !v.trim());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ReverseResult | null>(null);
@@ -67,6 +73,7 @@ export default function ReverseConfirmModal({
       // otherwise stay open so the user reads the warnings before
       // dismissing.
       if (res.warnings.length === 0) {
+        setReason("");
         onSuccess();
       }
     } catch (e) {
@@ -91,7 +98,7 @@ export default function ReverseConfirmModal({
               </div>
             </div>
           </div>
-          <button onClick={onCancel} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)]">
+          <button aria-label="Close" onClick={onCancel} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)]">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -154,7 +161,7 @@ export default function ReverseConfirmModal({
           )}
 
           {error && (
-            <div className="flex items-start gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2.5 py-1.5">
+            <div className="flex items-start gap-2 text-xs border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
             </div>
           )}
@@ -162,7 +169,7 @@ export default function ReverseConfirmModal({
 
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
           {result ? (
-            <button onClick={onSuccess} className="text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded">
+            <button onClick={onSuccess} className="text-sm font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded">
               Done
             </button>
           ) : (
@@ -173,7 +180,7 @@ export default function ReverseConfirmModal({
               <button
                 onClick={submit}
                 disabled={busy || !valid}
-                className="inline-flex items-center gap-1.5 text-sm font-bold bg-slate-700 hover:bg-slate-800 text-white px-3 py-1.5 rounded disabled:opacity-40"
+                className="inline-flex items-center gap-1.5 text-sm font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40"
               >
                 {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Undo2 className="w-3.5 h-3.5" />}
                 Confirm Reverse

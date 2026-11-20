@@ -5,6 +5,7 @@ import React, { useState } from "react";
 import { Type, Hash, Calendar, CheckSquare, List, User, Link as LinkIcon, Tags, X, ArrowRight, Plus, Trash2, CheckCircle2, Settings2, Camera, Zap, MousePointerClick, Image as ImageIcon, FileText, CalendarClock, ClipboardCheck, CalendarCheck, Archive, Globe } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { MetadataFieldDefinition, MetadataFieldType } from "@/types/schema";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
 interface CreateColumnWizardProps {
   isOpen: boolean;
@@ -48,6 +49,8 @@ function FeatureMini({ icon, bg, title, body }: { icon: React.ReactNode; bg: str
 }
 
 export default function CreateColumnWizard({ isOpen, onClose, onSave, initialType = 'text', initialStep = 1, onOpenColumnManager }: CreateColumnWizardProps) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => onClose(), isOpen);
   const { showToast } = useToast();
   const [step, setStep] = useState<1 | 2>(initialStep);
   const [selectedType, setSelectedType] = useState<MetadataFieldType>(initialType);
@@ -130,7 +133,7 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
             <h2 className="text-lg font-bold text-[var(--color-text)]">{step === 1 ? "Add a Column" : `Configure ${currentTypeLabel}`}</h2>
             <p className="text-xs text-[var(--color-text-muted)]">{step === 1 ? "Choose the type of data to store." : "Define settings and validation."}</p>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-lg text-[var(--color-text-muted)] transition-colors"><X className="w-5 h-5" /></button>
+          <button aria-label="Close" onClick={onClose} className="p-2 hover:bg-slate-200 rounded-lg text-[var(--color-text-muted)] transition-colors"><X className="w-5 h-5" /></button>
         </div>
 
         {/* BODY */}
@@ -262,7 +265,7 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
                       </span>
                     </span>
                     <span className="text-[var(--color-text-faint)]">→ click →</span>
-                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-slate-900 text-white text-[11px] font-bold">
+                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-[var(--color-text)] text-[var(--color-surface)] text-[11px] font-bold">
                       <ImageIcon className="w-3 h-3" /> Full-screen photo carousel
                     </span>
                   </div>
@@ -281,11 +284,11 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     <button type="button" onClick={() => setReferenceKind("photos")} className={`text-left p-3 rounded-lg border-2 transition-all ${referenceKind === "photos" ? 'border-[var(--color-text)] bg-[var(--color-surface-2)] ring-1 ring-[var(--color-accent)]' : 'border-[var(--color-border)] hover:border-[var(--color-accent)]/40'}`}>
                       <div className="flex items-center gap-2 mb-1"><Camera className="w-4 h-4 text-[var(--color-text-muted)]" /><span className="text-sm font-bold text-[var(--color-text)]">Photos</span><span className="ml-auto text-[11px] font-bold text-[var(--color-text-faint)] uppercase">Default</span></div>
-                      <p className="text-[11px] text-[var(--color-text-muted)] leading-snug">Asset Registry photo gallery - site photos of the equipment.</p>
+                      <p className="text-[11px] text-[var(--color-text-muted)] leading-snug">Asset Registry photo gallery: site photos of the equipment.</p>
                     </button>
                     <button type="button" onClick={() => setReferenceKind("files")} className={`text-left p-3 rounded-lg border-2 transition-all ${referenceKind === "files" ? 'border-[var(--color-text)] bg-[var(--color-surface-2)] ring-1 ring-[var(--color-accent)]' : 'border-[var(--color-border)] hover:border-[var(--color-accent)]/40'}`}>
                       <div className="flex items-center gap-2 mb-1"><FileText className="w-4 h-4 text-[var(--color-text-muted)]" /><span className="text-sm font-bold text-[var(--color-text)]">Linked drawings</span></div>
-                      <p className="text-[11px] text-[var(--color-text-muted)] leading-snug">Reference another document in the system - e.g. a circuit id → its isometric. Opens in a drawing viewer.</p>
+                      <p className="text-[11px] text-[var(--color-text-muted)] leading-snug">Reference another document in the system: e.g. a circuit id → its isometric. Opens in a drawing viewer.</p>
                     </button>
                   </div>
                 </div>
@@ -315,7 +318,7 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
             <button
               onClick={() => { onOpenColumnManager(); onClose(); }}
               className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent-hover)] flex items-center gap-1 hover:underline"
-              title="Manage existing columns - rename, reorder, hide, or delete"
+              title="Manage existing columns: rename, reorder, hide, or delete"
             >
               <Settings2 className="w-3.5 h-3.5" /> Manage existing columns
             </button>
@@ -326,7 +329,7 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
           )}
           <button onClick={onClose} className="px-4 py-2 text-sm font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] rounded-lg">Cancel</button>
           {step === 1 ? (
-            <button onClick={handleNext} className="px-6 py-2 bg-slate-900 text-white text-sm font-bold rounded-lg hover:bg-slate-800 flex items-center">
+            <button onClick={handleNext} className="px-6 py-2 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-bold rounded-lg flex items-center">
               Next <ArrowRight className="w-4 h-4 ml-2" />
             </button>
           ) : (

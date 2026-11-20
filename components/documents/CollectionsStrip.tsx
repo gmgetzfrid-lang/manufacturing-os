@@ -46,12 +46,11 @@ interface CollectionsStripProps {
 
 const ADMIN_ROLES = ["Admin", "Manager", "Supervisor"];
 
-/** Book-cover gradient from the collection's color, else a purple book. */
+/** Book cover in the collection's own color (flat, no gradient), else a
+ *  plain slate book. */
 function bookCover(color?: string | null): string {
-  if (color && /^#[0-9a-fA-F]{6}$/.test(color)) {
-    return `linear-gradient(135deg, ${color}, color-mix(in srgb, ${color} 55%, #000))`;
-  }
-  return "linear-gradient(135deg, #7c3aed, #4c1d95)";
+  if (color && /^#[0-9a-fA-F]{6}$/.test(color)) return color;
+  return "#475569";
 }
 
 export default function CollectionsStrip({
@@ -115,21 +114,19 @@ export default function CollectionsStrip({
         </div>
         <button
           onClick={() => setCreating(true)}
-          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] shadow-sm transition-colors"
+          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] transition-colors"
         >
-          <Plus className="w-3 h-3" /> New Collection
+          <Plus className="w-3 h-3" /> New collection
         </button>
       </div>
 
       {error && (
-        <div className="mb-2 p-2 bg-red-50 border border-red-200 rounded text-[11px] text-red-700">{error}</div>
+        <div className="mb-2 text-[11px] border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">{error}</div>
       )}
 
       {collections.length === 0 ? (
         <div className="text-[11px] text-[var(--color-text-muted)] italic py-1">
-          No books {folderId && folderName ? <>in <b>{folderName}</b></> : "at the library root"} yet. Use{" "}
-          <b>+ New Collection</b> to combine related documents into one named book
-          (e.g., &quot;Crude Unit P&amp;ID Book&quot;) you can open and read end-to-end - it lives in this folder.
+          No books {folderId && folderName ? <>in <b>{folderName}</b></> : "at the library root"} yet.
         </div>
       ) : (
         <div className="flex gap-2.5 overflow-x-auto pb-1 -mx-1 px-1">

@@ -191,7 +191,7 @@ export default function AckSection({ doc, orgId, canManage }: {
         <>
           {/* Assignee's own sign action */}
           {myPending && (
-            <button onClick={() => setSigning(true)} className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-accent)] text-white text-xs font-black shadow hover:opacity-90">
+            <button onClick={() => setSigning(true)} className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 text-xs font-black shadow">
               <Pencil className="w-3.5 h-3.5" /> Read &amp; acknowledge{rev ? ` Rev ${rev}` : ""}
             </button>
           )}
@@ -296,7 +296,7 @@ export default function AckSection({ doc, orgId, canManage }: {
                 <button onClick={() => void clearPolicy()} disabled={busy} className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-red-600 hover:bg-red-50 disabled:opacity-50">Remove</button>
                 <div className="flex gap-2">
                   <button onClick={() => setMode("view")} className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-[var(--color-text-muted)]">Cancel</button>
-                  <button onClick={() => void saveEdit()} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-white text-[11px] font-bold disabled:opacity-50">{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Save</button>
+                  <button onClick={() => void saveEdit()} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 text-[11px] font-bold disabled:opacity-50">{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Save</button>
                 </div>
               </div>
             </div>

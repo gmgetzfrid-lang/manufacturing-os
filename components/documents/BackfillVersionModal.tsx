@@ -18,12 +18,16 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import {
-  X, Upload, FileText, Loader2, ShieldCheck, History,
-  ArrowUpFromLine, AlertTriangle, Info,
+  X, Upload, Loader2, History,
+  ArrowUpFromLine,
 } from "lucide-react";
+import FileThumb from "@/components/ui/FileThumb";
+import { useDraft } from "@/hooks/useDraft";
+import { tryUpload } from "@/lib/uploadRetry";
 import { backfillVersion, listVersions } from "@/lib/revisions";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 import { useFileDrag } from "@/hooks/useFileDrag";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
 interface BackfillVersionModalProps {
   isOpen: boolean;
@@ -55,6 +59,8 @@ export default function BackfillVersionModal({
   isOpen, onClose, doc, libraryId, folderPath,
   orgId, actorUserId, actorEmail, actorRole, onSuccess,
 }: BackfillVersionModalProps) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => onClose(), isOpen);
   const [file, setFile] = useState<File | null>(null);
   const [revisionLabel, setRevisionLabel] = useState("");
   const [changeLog, setChangeLog] = useState("");
@@ -102,6 +108,9 @@ export default function BackfillVersionModal({
     setBusy(false);
   }, [isOpen, doc.id]);
 
+  // The narrative survives a reload (after the reset above, so it wins).
+  useDraft<string>(isOpen && doc.id ? `backfill:${doc.id}` : null, changeLog, setChangeLog, (v) => !v.trim());
+
   const onPickFile = (f: File | null) => {
     setFile(f);
     if (f && !sourceFileName) setSourceFileName(f.name);
@@ -116,7 +125,10 @@ export default function BackfillVersionModal({
     setBusy(true);
     setError(null);
     try {
-      const newVersion = await backfillVersion({
+      // Upload + save, wrapped so a failure offers "Try again" with the same
+      // file. A retry first looks for the revision a failed run may already
+      // have saved, so it is never saved twice.
+      const input = {
         doc, libraryId, folderPath, file,
         revisionLabel, changeLog,
         issueType, changeType,
@@ -125,11 +137,21 @@ export default function BackfillVersionModal({
         releasedAt: releasedAtLocal ? new Date(releasedAtLocal).toISOString() : undefined,
         supersedesVersionId: supersedesVersionId || undefined,
         orgId, actorUserId, actorEmail, actorRole,
-      });
+      };
+      let attempt = 0;
+      const run = async () => {
+        if (attempt++ > 0 && doc.id) {
+          const saved = (await listVersions(doc.id)).find((v) => v.revisionLabel === revisionLabel.trim());
+          if (saved) return saved;
+        }
+        return backfillVersion(input);
+      };
+      const newVersion = await tryUpload(file.name, run, { onRetried: (v) => onSuccess(v) });
+      setChangeLog("");
       onSuccess(newVersion);
       onClose();
     } catch (e) {
-      setError((e as Error).message || "Backfill failed.");
+      setError(`It didn't save: ${(e as Error).message || "try again"}.`);
     } finally {
       setBusy(false);
     }
@@ -148,29 +170,21 @@ export default function BackfillVersionModal({
           <div className="flex items-center gap-2">
             <History className="w-5 h-5 text-[var(--color-text-muted)]" />
             <div>
-              <h2 className="font-black text-[var(--color-text)]">Backfill Older Revision</h2>
+              <h2 className="font-black text-[var(--color-text)]">Add an older revision</h2>
               <div className="text-[11px] text-[var(--color-text-muted)] font-mono">
                 {doc.documentNumber || doc.title || doc.name} - current is Rev {doc.rev || "-"}
               </div>
             </div>
           </div>
-          <button type="button" onClick={onClose} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)]">
+          <button aria-label="Close" type="button" onClick={onClose} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)]">
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Distinction banner — make it impossible to confuse with rev-up */}
-        <div className="px-5 py-3 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] flex items-start gap-2 text-xs text-[var(--color-text)]">
-          <Info className="w-4 h-4 mt-0.5 shrink-0 text-[var(--color-text-muted)]" />
-          <div>
-            <div className="font-bold">This is a historical / backfill upload.</div>
-            <div className="mt-0.5">
-              The document&apos;s <b>current revision will not change</b>. Use this to
-              retroactively populate prior revisions (e.g. so you can diff an old
-              version against the current one). For a forward release, use Rev-Up.
-            </div>
-          </div>
-        </div>
+        {/* One line so it can't be mistaken for a new revision. */}
+        <p className="px-5 py-2.5 border-b border-[var(--color-border)] text-xs text-[var(--color-text)]">
+          <b>The current revision stays as it is.</b> This adds a past revision to the history.
+        </p>
 
         <div className="p-5 space-y-4">
           {/* File picker */}
@@ -188,16 +202,20 @@ export default function BackfillVersionModal({
                 className="hidden"
                 onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
               />
-              {file ? (
-                <div className="flex items-center justify-center gap-2 text-sm text-[var(--color-text)]">
-                  <FileText className="w-4 h-4 text-[var(--color-text-muted)]" />
-                  <span className="font-mono">{file.name}</span>
-                  <span className="text-[11px] text-[var(--color-text-muted)] font-mono">({(file.size / 1024).toFixed(0)} KB)</span>
+              {fileDrag.over ? (
+                <div className="text-sm font-bold text-[var(--color-text)]">{fileDrag.say}</div>
+              ) : file ? (
+                <div className="flex items-center gap-3 text-left">
+                  <FileThumb file={file} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-semibold text-[var(--color-text)] truncate">{file.name}</span>
+                    <span className="block text-[11px] text-[var(--color-text-muted)]">{file.size < 1024 * 1024 ? `${(file.size / 1024).toFixed(0)} KB` : `${(file.size / (1024 * 1024)).toFixed(1)} MB`} · tap to pick another</span>
+                  </span>
                 </div>
               ) : (
                 <div className="text-sm text-[var(--color-text-muted)]">
                   <Upload className="w-5 h-5 mx-auto mb-1 opacity-60" />
-                  Click or drag a PDF here
+                  Drop the PDF here, or tap to pick it
                 </div>
               )}
             </div>
@@ -293,19 +311,12 @@ export default function BackfillVersionModal({
           )}
 
           {error && (
-            <div className="flex items-start gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2.5 py-1.5">
-              <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-              <span>{error}</span>
-            </div>
+            <p role="alert" className="border-l-2 border-rose-500 pl-3 text-xs text-rose-700 dark:text-rose-300">{error}</p>
           )}
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-between">
-          <div className="text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
-            <ShieldCheck className="w-3 h-3 text-[var(--color-text-faint)]" />
-            File will be SHA-256 hashed before upload. REV_BACKFILL audit event will be recorded.
-          </div>
+        <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end">
           <div className="flex items-center gap-2">
             <button type="button" onClick={onClose} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
             <button
@@ -314,7 +325,7 @@ export default function BackfillVersionModal({
               className="inline-flex items-center gap-1.5 text-sm font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40"
             >
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowUpFromLine className="w-3.5 h-3.5" />}
-              Backfill Revision
+              Add revision
             </button>
           </div>
         </div>

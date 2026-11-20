@@ -218,11 +218,11 @@ export default function EstateMap({ nodes, edges, query, selectedId, highlightId
         : "absolute top-2 left-1/2 -translate-x-1/2 flex items-center gap-1 text-[11px] pointer-events-auto max-w-[70%] flex-wrap justify-center"}>
         {soleRoot
           ? (rootUp ? <button onClick={rootUp.onUp} title="Up a folder" className="shrink-0 rounded-md border px-2 py-1 font-semibold bg-[var(--color-surface)]/90 border-[var(--color-border)]">↑ {rootUp.label}</button> : null)
-          : <button onClick={() => setFocusId(null)} className={`shrink-0 rounded-md border px-2 py-1 font-semibold ${focusId ? "bg-[var(--color-surface)]/90 border-[var(--color-border)]" : "bg-violet-600 text-white border-transparent"}`}>Whole estate</button>}
+          : <button onClick={() => setFocusId(null)} className={`shrink-0 rounded-md border px-2 py-1 font-semibold ${focusId ? "bg-[var(--color-surface)]/90 border-[var(--color-border)]" : "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent"}`}>Whole estate</button>}
         {crumbs.map((c, i) => (
           <React.Fragment key={c.id}>
             {(!soleRoot || rootUp || i > 0) && <span className="text-[var(--color-text-faint)]">›</span>}
-            <button onClick={() => setFocusId(c.id)} className={`shrink-0 rounded-md border px-2 py-1 font-semibold ${c.id === focusId ? "bg-violet-600 text-white border-transparent" : "bg-[var(--color-surface)]/90 border-[var(--color-border)]"}`}>{c.label}</button>
+            <button onClick={() => setFocusId(c.id)} className={`shrink-0 rounded-md border px-2 py-1 font-semibold ${c.id === focusId ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)]/90 border-[var(--color-border)]"}`}>{c.label}</button>
           </React.Fragment>
         ))}
         {compact ? null : !focusId

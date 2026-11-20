@@ -87,7 +87,7 @@ export default function OriginSection({ doc, orgId, canManage }: {
           )}
           <div className="flex justify-end gap-2">
             <button onClick={() => { setEditing(false); void load(); }} className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-[var(--color-text-muted)]">Cancel</button>
-            <button onClick={() => void save()} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-white text-[11px] font-bold disabled:opacity-50">{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Save</button>
+            <button onClick={() => void save()} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 text-[11px] font-bold disabled:opacity-50">{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Save</button>
           </div>
         </div>
       ) : origin === "external" && (edition || url) ? (

@@ -8,6 +8,8 @@ import React, { useState } from "react";
 import { X, Archive, AlertTriangle, Loader2, ArchiveRestore } from "lucide-react";
 import { archiveDocument, unarchiveDocument } from "@/lib/revisions";
 import type { DocumentRecord } from "@/types/schema";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
+import { useDraft } from "@/hooks/useDraft";
 
 interface ArchiveConfirmModalProps {
   isOpen: boolean;
@@ -26,7 +28,11 @@ export default function ArchiveConfirmModal({
   isOpen, onClose, doc, mode,
   orgId, actorUserId, actorEmail, actorRole, onSuccess,
 }: ArchiveConfirmModalProps) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => onClose(), isOpen);
   const [reason, setReason] = useState("");
+  // Typed words are kept on this device until this goes through.
+  useDraft<string>(isOpen && doc.id ? `archive:${doc.id}:${mode}` : null, reason, setReason, (v) => !v.trim());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -70,7 +76,7 @@ export default function ArchiveConfirmModal({
               {doc.documentNumber || doc.title || doc.name}
             </div>
           </div>
-          <button onClick={onClose} disabled={busy} className="p-2 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg">
+          <button aria-label="Close" onClick={onClose} disabled={busy} className="p-2 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -105,7 +111,7 @@ export default function ArchiveConfirmModal({
           </div>
 
           {error && (
-            <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+            <div className="flex items-start gap-2 text-xs border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
               <span>{error}</span>
             </div>
@@ -119,9 +125,7 @@ export default function ArchiveConfirmModal({
           <button
             onClick={() => void submit()}
             disabled={busy}
-            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white disabled:opacity-60 ${
-              isArchive ? "bg-slate-700 hover:bg-slate-800" : "bg-emerald-600 hover:bg-emerald-500"
-            }`}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-60 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)]"
           >
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : (isArchive ? <Archive className="w-3.5 h-3.5" /> : <ArchiveRestore className="w-3.5 h-3.5" />)}
             {busy ? "Saving…" : (isArchive ? "Archive Document" : "Restore Document")}

@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { BookOpen, X, ChevronUp, ChevronDown, Trash2, Play } from "lucide-react";
 import type { DocumentRecord } from "@/types/schema";
+import { badgeText } from "@/lib/badge";
 
 interface StagingTrayProps {
   docs: DocumentRecord[];
@@ -37,7 +38,7 @@ export default function StagingTray({ docs, onRemove, onClear, onOpen }: Staging
                   <span className="text-xs text-[var(--color-text)] truncate flex-1 min-w-0">
                     {doc.title || doc.name}
                   </span>
-                  <button
+                  <button aria-label="Remove"
                     onClick={() => onRemove(doc.id!)}
                     className="shrink-0 text-slate-300 hover:text-red-500 transition-colors opacity-60 sm:opacity-0 group-hover:opacity-100"
                   >
@@ -52,24 +53,24 @@ export default function StagingTray({ docs, onRemove, onClear, onOpen }: Staging
         {/* Tray bar */}
         <div className="bg-slate-900 text-white flex items-center gap-3 px-5 py-2.5 shadow-2xl border-t border-slate-700">
           <div className="flex items-center gap-2.5 flex-1 min-w-0">
-            <BookOpen className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
+            <BookOpen className="w-4 h-4 text-slate-400 shrink-0" />
             <span className="text-sm font-bold text-white whitespace-nowrap">Reference Stack</span>
-            <span className="text-xs font-black bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-0.5 rounded-full shrink-0">
-              {docs.length}
+            <span className="text-xs font-black bg-slate-700 text-white px-2 py-0.5 rounded-full shrink-0">
+              {badgeText(docs.length)}
             </span>
             {/* Pills preview — hidden on small screens */}
             <div className="hidden md:flex items-center gap-1 overflow-hidden flex-1 min-w-0">
               {docs.slice(0, 6).map((doc) => (
                 <span
                   key={doc.id}
-                  className="text-[11px] font-mono bg-slate-800 hover:bg-slate-700 px-2 py-0.5 rounded text-slate-300 whitespace-nowrap cursor-pointer transition-colors border border-slate-700"
+                  className="text-[11px] font-mono bg-slate-800 px-2 py-0.5 rounded text-slate-300 whitespace-nowrap border border-slate-700"
                   title={doc.title || doc.name}
                 >
                   {doc.documentNumber || (doc.title || "").slice(0, 10) || "-"}
                 </span>
               ))}
               {docs.length > 6 && (
-                <span className="text-[11px] text-[var(--color-text-muted)] whitespace-nowrap">+{docs.length - 6} more</span>
+                <span className="text-[11px] text-slate-400 whitespace-nowrap">+{docs.length - 6} more</span>
               )}
             </div>
           </div>
@@ -77,15 +78,18 @@ export default function StagingTray({ docs, onRemove, onClear, onOpen }: Staging
           <div className="flex items-center gap-1 shrink-0">
             <button
               onClick={() => setExpanded((v) => !v)}
-              className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors text-[var(--color-text-faint)] hover:text-white"
-              title={expanded ? "Collapse list" : "Show all staged docs"}
+              className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors text-slate-400 hover:text-white"
+              title={expanded ? "Hide the list" : "Show the list"}
+              aria-label={expanded ? "Hide the list" : "Show the list"}
+              aria-expanded={expanded}
             >
               {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
             </button>
             <button
               onClick={onClear}
-              className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors text-[var(--color-text-faint)] hover:text-red-400"
-              title="Clear staging area"
+              className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors text-slate-400 hover:text-red-400"
+              title="Empty the stack"
+              aria-label="Empty the stack"
             >
               <Trash2 className="w-4 h-4" />
             </button>
@@ -95,7 +99,7 @@ export default function StagingTray({ docs, onRemove, onClear, onOpen }: Staging
               className="flex items-center gap-2 px-4 py-2 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] rounded-xl font-bold text-sm transition-all shadow-lg active:scale-95"
             >
               <Play className="w-3.5 h-3.5" />
-              Open Book
+              Open
             </button>
           </div>
         </div>

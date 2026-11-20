@@ -12,6 +12,7 @@ import { searchOrgUsers, type OrgUser } from "@/lib/notifications";
 import { setAckPolicy } from "@/lib/acknowledgments";
 import { listTeams, type Team } from "@/lib/teams";
 import { ALL_ROLES, type AckPolicy, type Role } from "@/types/schema";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
 export default function AckPolicyModal({ level, id, orgId, name, uid, userName, onClose, onSaved }: {
   level: "library" | "collection";
@@ -23,6 +24,8 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
   onClose: () => void;
   onSaved?: () => void;
 }) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => onClose());
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [enabled, setEnabled] = useState(true);
@@ -106,7 +109,7 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
             <div className="text-sm font-bold text-[var(--color-text)]">Read &amp; understood</div>
             <div className="text-[11px] text-[var(--color-text-muted)] truncate">Every issued revision in this {scopeLabel}{name ? ` · ${name}` : ""} must be acknowledged</div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
+          <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
         </div>
 
         {loading ? (
@@ -123,7 +126,7 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
                   <div className="text-[11px] font-bold text-[var(--color-text-muted)]">Named people</div>
                   <div className="flex flex-wrap gap-1">
                     {people.map((p) => (
-                      <span key={p.uid} className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-[11px] text-[var(--color-text)]">{p.name || p.email}<button onClick={() => setPeople((prev) => prev.filter((x) => x.uid !== p.uid))}><X className="w-3 h-3" /></button></span>
+                      <span key={p.uid} className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-[11px] text-[var(--color-text)]">{p.name || p.email}<button aria-label="Remove" onClick={() => setPeople((prev) => prev.filter((x) => x.uid !== p.uid))}><X className="w-3 h-3" /></button></span>
                     ))}
                   </div>
                   <input value={userQuery} onChange={(e) => setUserQuery(e.target.value)} placeholder="Search people…" className={`${inp} w-full`} />
@@ -160,7 +163,7 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
 
                 <label className="flex items-start gap-2 text-[11px] text-[var(--color-text)] pt-1">
                   <input type="checkbox" checked={hardGate} onChange={(e) => setHardGate(e.target.checked)} className="mt-0.5" />
-                  <span>Hard-gate: mark a revision <b>&ldquo;pending acknowledgment&rdquo;</b> until everyone has signed (default is soft - effective immediately, outstanding tracked &amp; escalated).</span>
+                  <span>Hard-gate: mark a revision <b>&ldquo;pending acknowledgment&rdquo;</b> until everyone has signed (default is soft: in force at once, with who still owes a signature tracked).</span>
                 </label>
 
                 {nobody && <div className="text-[11px] text-amber-600">Add at least one person, role, or department, or nobody will be asked to sign.</div>}

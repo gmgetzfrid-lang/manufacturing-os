@@ -10,6 +10,8 @@ import { X, Layers, AlertTriangle, Loader2, Plus, Trash2 } from "lucide-react";
 import { supersedeDocument } from "@/lib/revisions";
 import type { DocumentRecord } from "@/types/schema";
 import IsoGuidance from "@/components/ui/IsoGuidance";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
+import { useDraft } from "@/hooks/useDraft";
 
 interface SupersedeModalProps {
   isOpen: boolean;
@@ -27,7 +29,11 @@ export default function SupersedeModal({
   isOpen, onClose, doc, libraryId,
   orgId, actorUserId, actorEmail, actorRole, onSuccess,
 }: SupersedeModalProps) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => onClose(), isOpen);
   const [reason, setReason] = useState("");
+  // Typed words are kept on this device until this goes through.
+  useDraft<string>(isOpen && doc.id ? `supersede:${doc.id}` : null, reason, setReason, (v) => !v.trim());
   const [mocRef, setMocRef] = useState("");
   const [replacementInput, setReplacementInput] = useState("");
   const [replacements, setReplacements] = useState<string[]>([]);
@@ -94,7 +100,7 @@ export default function SupersedeModal({
               {doc.documentNumber || doc.title || doc.name}
             </div>
           </div>
-          <button onClick={onClose} disabled={busy} className="p-2 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg">
+          <button aria-label="Close" onClick={onClose} disabled={busy} className="p-2 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -137,7 +143,7 @@ export default function SupersedeModal({
               <button
                 onClick={addReplacement}
                 disabled={!replacementInput.trim()}
-                className="px-3 py-2 rounded-lg bg-slate-700 hover:bg-slate-800 text-white text-xs font-bold disabled:opacity-40"
+                className="px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-xs font-bold disabled:opacity-40"
               >
                 <Plus className="w-3.5 h-3.5" />
               </button>
@@ -159,7 +165,7 @@ export default function SupersedeModal({
               </div>
             )}
             {unresolved.length > 0 && (
-              <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-800">
+              <div className="mt-2 text-[11px] border-l-2 border-amber-500 pl-3 text-amber-800 dark:text-amber-300">
                 <b>Note:</b> these document numbers couldn&apos;t be found in this library and were skipped:&nbsp;
                 <span className="font-mono">{unresolved.join(", ")}</span>
               </div>
@@ -177,7 +183,7 @@ export default function SupersedeModal({
           </div>
 
           {error && (
-            <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+            <div className="flex items-start gap-2 text-xs border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
               <span>{error}</span>
             </div>
@@ -191,7 +197,7 @@ export default function SupersedeModal({
           <button
             onClick={() => void submit()}
             disabled={busy}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-amber-600 hover:bg-amber-500 disabled:opacity-60"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] disabled:opacity-60"
           >
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Layers className="w-3.5 h-3.5" />}
             {busy ? "Saving…" : "Supersede Document"}

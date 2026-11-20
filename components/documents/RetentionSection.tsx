@@ -88,7 +88,7 @@ export default function RetentionSection({ doc, orgId, canManage }: {
   };
   const dispose = async () => {
     if (!doc.id) return;
-    if (!(await appConfirm({ title: "Dispose this record?", message: "It will be archived and marked disposed - the audit trail is kept. This is a records-management action.", tone: "danger", confirmLabel: "Dispose" }))) return;
+    if (!(await appConfirm({ title: "Dispose this record?", message: "It will be archived and marked disposed. The audit trail is kept.", tone: "danger", confirmLabel: "Dispose" }))) return;
     setBusy(true);
     try {
       const res = await disposeDocument({ documentId: doc.id, orgId, action: "archive", actorId: uid, actorName: userEmail });
@@ -127,7 +127,7 @@ export default function RetentionSection({ doc, orgId, canManage }: {
   const inp = "text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 outline-none focus:border-[var(--color-border-strong)]";
 
   return (
-    <div className={`rounded-xl border p-3 space-y-2.5 ${hold.on ? "border-red-300 bg-red-50/40" : "border-[var(--color-border)] bg-[var(--color-surface)]"}`}>
+    <div className={`rounded-xl border p-3 space-y-2.5 bg-[var(--color-surface)] border-[var(--color-border)] ${hold.on ? "border-l-2 border-l-rose-500" : ""}`}>
       <div className="flex items-center gap-2">
         <Archive className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)]">Retention</span>
@@ -135,14 +135,14 @@ export default function RetentionSection({ doc, orgId, canManage }: {
       </div>
 
       {loading ? (
-        <div className="flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading…</div>
+        <div className="flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading retention…</div>
       ) : (
         <>
           {hold.on && (
-            <div className="rounded-lg border border-red-200 bg-white p-2 text-[11px] text-red-800">
+            <div className="text-[11px] text-rose-700 dark:text-rose-300">
               <div className="flex items-center gap-1.5 font-bold"><ShieldAlert className="w-3.5 h-3.5" /> Legal hold{hold.matter ? `: ${hold.matter}` : ""}</div>
-              {hold.reason && <div className="text-red-600 mt-0.5">{hold.reason}</div>}
-              <div className="text-red-500 mt-0.5">This record can&apos;t be deleted or disposed until the hold is released.</div>
+              {hold.reason && <div className="mt-0.5">{hold.reason}</div>}
+              <div className="mt-0.5">It can&apos;t be deleted or disposed of until the hold is released.</div>
             </div>
           )}
 
@@ -158,7 +158,7 @@ export default function RetentionSection({ doc, orgId, canManage }: {
                 ? <button onClick={() => void release()} disabled={busy} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] text-[11px] font-bold hover:bg-[var(--color-surface-2)]"><Unlock className="w-3.5 h-3.5" /> Release hold</button>
                 : <button onClick={() => void placeHold()} disabled={busy} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-red-300 text-red-700 text-[11px] font-bold hover:bg-red-50"><Lock className="w-3.5 h-3.5" /> Legal hold</button>}
               {eligible && !hold.on && (
-                <button onClick={() => void dispose()} disabled={busy} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-[11px] font-bold"><Archive className="w-3.5 h-3.5" /> Dispose</button>
+                <button onClick={() => void dispose()} disabled={busy} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[11px] font-bold"><Archive className="w-3.5 h-3.5" /> Dispose</button>
               )}
               <button onClick={beginEdit} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] text-[11px] font-bold hover:bg-[var(--color-surface-2)]"><Pencil className="w-3.5 h-3.5" /> {eff ? "Edit" : "Set policy"}</button>
             </div>
@@ -195,7 +195,7 @@ export default function RetentionSection({ doc, orgId, canManage }: {
                 <button onClick={() => void clearPolicy()} disabled={busy} className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-red-600 hover:bg-red-50 disabled:opacity-50">Remove</button>
                 <div className="flex gap-2">
                   <button onClick={() => setMode("view")} className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-[var(--color-text-muted)]">Cancel</button>
-                  <button onClick={() => void saveEdit()} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-white text-[11px] font-bold disabled:opacity-50">{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Save</button>
+                  <button onClick={() => void saveEdit()} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 text-[11px] font-bold disabled:opacity-50">{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Save</button>
                 </div>
               </div>
             </div>

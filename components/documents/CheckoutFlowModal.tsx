@@ -35,6 +35,9 @@ import {
 import type { CheckoutSession, DocumentRecord, CheckoutMode } from "@/types/schema";
 import { useToast } from "@/components/providers/ToastProvider";
 import { logCheckoutEvent } from "@/lib/audit";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
+import { useDraft } from "@/hooks/useDraft";
+import LoadingBlock from "@/components/ui/LoadingBlock";
 
 // ISO-style document control: every checkout must say WHY. The category is the
 // machine-readable purpose (filterable, reportable); the reason is the
@@ -78,10 +81,16 @@ interface CheckoutFlowModalProps {
 }
 
 export default function CheckoutFlowModal({ isOpen, onClose, document, currentUser, canPublish = false, folderPath }: CheckoutFlowModalProps) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => onClose(), isOpen);
   const [activeSessions, setActiveSessions] = useState<CheckoutSession[]>([]);
-  const [, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [purposeCategory, setPurposeCategory] = useState<string>("");
+  // The "why" and a new project's description are kept as drafts on this
+  // device until the checkout goes through.
+  useDraft<string>(isOpen && document.id ? `checkout-why:${document.id}` : null, note, setNote, (v) => !v.trim());
   // "Options" fold — project linkage + timing live behind it so the default
   // path is two fields and one button. Friction is why people skip systems.
   const [showOptions, setShowOptions] = useState(false);
@@ -104,6 +113,21 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
   // Ad-hoc duration choice. 1 month is the absolute cap so an "ad-hoc"
   // checkout can never silently park a doc forever.
   const [adhocDuration, setAdhocDuration] = useState<"24h" | "3d" | "1w" | "1mo">("24h");
+  useDraft<string>(isOpen && document.id ? `checkout-newproj:${document.id}` : null, newProjectDescription, setNewProjectDescription, (v) => !v.trim());
+
+  // Start from the last purpose and time window this person picked.
+  const lastPickKey = `mfg.checkout.last.${currentUser.uid}`;
+  useEffect(() => {
+    if (!isOpen) return;
+    try {
+      const last = JSON.parse(localStorage.getItem(lastPickKey) ?? "null") as { purpose?: string; duration?: "24h" | "3d" | "1w" | "1mo" } | null;
+      if (last?.purpose && (CHECKOUT_PURPOSES as readonly string[]).includes(last.purpose)) setPurposeCategory((cur) => cur || last.purpose!);
+      if (last?.duration) setAdhocDuration(last.duration);
+    } catch { /* private mode: start blank */ }
+  }, [isOpen, lastPickKey]);
+  const rememberPick = () => {
+    try { localStorage.setItem(lastPickKey, JSON.stringify({ purpose: purposeCategory, duration: adhocDuration })); } catch { /* private mode */ }
+  };
   
   const [processing, setProcessing] = useState(false);
   const [quickBusy, setQuickBusy] = useState(false);
@@ -156,14 +180,20 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
     let alive = true;
 
     const fetchSessions = async () => {
-      const { data } = await supabase
+      const { data, error: readErr } = await supabase
         .from("checkout_sessions")
         .select("*")
         .eq("org_id", document.orgId!)
         .eq("document_id", document.id!)
         .eq("status", "active")
         .order("started_at", { ascending: false });
+      if (alive && readErr) {
+        setLoadErr(`Couldn't check who has this document out: ${readErr.message}`);
+        setLoading(false);
+        return;
+      }
       if (alive) {
+        setLoadErr(null);
         // purpose + episodeId MUST survive this mapping — CheckInPanel derives
         // its entire outcome card set from mySession.purpose. Dropping it here
         // silently degrades every check-in to the generic card set.
@@ -365,7 +395,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
       // -wins left an orphaned session + a mismatched collaborator list.
       // (The active_collaborators array is still a read-modify-write; that is
       // a benign list, not the authoritative lock.)
-      const { data: lockedRow } = await supabase
+      const { data: lockedRow, error: lockErr } = await supabase
         .from("documents")
         .update({
           checked_out_by: currentUser.uid,
@@ -379,14 +409,18 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
         .or(`checked_out_by.is.null,checked_out_by.eq.${currentUser.uid}`)
         .select("id")
         .maybeSingle();
+      // A failed write is not "someone else has it": say it failed.
+      if (lockErr) throw new Error(`Couldn't lock the document: ${lockErr.message}`);
+      rememberPick();
 
       if (!lockedRow) {
         // Someone else holds the lock (they had it already, or won the race).
         // Join THEIR episode as a collaborator — do NOT seize the lock.
-        await supabase
+        const { error: collabErr } = await supabase
           .from("documents")
           .update({ active_collaborators: newCollaborators })
           .eq("id", document.id!);
+        if (collabErr) showToast({ type: "warning", title: "Your name may not show on the document yet", message: collabErr.message });
         await postEpisodeSystemMessage({
           orgId: document.orgId,
           documentId: document.id!,
@@ -432,10 +466,11 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
           },
         });
         setProcessing(false);
+        setNote("");
         showToast({
           type: "warning",
-          title: "Joined an active checkout",
-          message: "Someone else holds the lock. You're on their checkout ticket now - coordinate in the thread before editing.",
+          title: "You joined their checkout",
+          message: "Someone else has it checked out. Talk in the thread before you edit.",
           duration: 8000,
         });
         return;
@@ -514,10 +549,12 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
       });
 
       setProcessing(false);
+      setNote("");
+      setNewProjectDescription("");
       onClose();
     } catch (e: unknown) {
       console.error(e);
-      showToast({ type: "error", title: "Checkout failed", message: (e as Error).message });
+      showToast({ type: "error", title: "It didn't check out", message: (e as Error).message });
       setProcessing(false);
     }
   };
@@ -549,8 +586,8 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
       if (result === "joined") {
         showToast({
           type: "warning",
-          title: "Joined an active checkout",
-          message: "Someone else holds the lock - your quick hold put you on their checkout ticket. Coordinate before editing.",
+          title: "You joined their checkout",
+          message: "Someone else has it checked out, so your quick hold joined theirs. Talk to them before you edit.",
           duration: 8000,
         });
       }
@@ -558,7 +595,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
       onClose();
     } catch (e) {
       console.error(e);
-      showToast({ type: "error", title: "Quick hold failed", message: (e as Error).message });
+      showToast({ type: "error", title: "The quick hold didn't go through", message: (e as Error).message });
       setQuickBusy(false);
     }
   };
@@ -592,14 +629,14 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
         <div className={`flex-1 flex flex-col bg-[var(--color-surface-2)] ${isIdle ? "" : "border-r border-[var(--color-border)]"}`}>
           <div className="px-6 py-4 border-b border-[var(--color-border)] flex justify-between items-center bg-[var(--color-surface)]">
             <div>
-              <h2 className="text-lg font-bold text-[var(--color-text)]">Document Checkout</h2>
+              <h2 className="text-lg font-bold text-[var(--color-text)]">{mySession ? "Check in" : "Check out"}</h2>
               <p className="text-xs text-[var(--color-text-muted)] truncate max-w-[200px]">{document.title}</p>
             </div>
             {/* Close button must be visible on every breakpoint — previously
                 md:hidden on desktop meant a user who just wanted to PEEK at
                 their own checkout had no way out without committing to a
                 check-in action. */}
-            <button onClick={onClose} title="Close" className="p-2 rounded-lg hover:bg-[var(--color-surface-2)]"><X className="w-5 h-5" /></button>
+            <button aria-label="Close" onClick={onClose} title="Close" className="p-2 rounded-lg hover:bg-[var(--color-surface-2)]"><X className="w-5 h-5" /></button>
           </div>
 
           <div className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -643,7 +680,12 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
 
             {/* ACTION AREA */}
             <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-5 shadow-sm">
-              {mySession ? (
+              {/* Until the sessions load we can't tell check-out from check-in. */}
+              {loadErr ? (
+                <p role="alert" className="border-l-2 border-rose-500 pl-3 text-sm text-rose-700 dark:text-rose-300">{loadErr}</p>
+              ) : loading ? (
+                <LoadingBlock what="who has it out" rows={3} className="border-0 p-0" />
+              ) : mySession ? (
                 // CHECK IN FLOW — "How did it go?" One question, cards derived
                 // from the checkout purpose + document class + authority.
                 // Everything (attestation, MOC gate, redline uploads, ticket
@@ -664,7 +706,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                   {isOrphaned ? (
                     <div className="flex items-center gap-2 p-3 bg-[var(--color-surface-2)] text-[var(--color-text)] rounded-lg text-xs">
                       <RefreshCw className="w-4 h-4 shrink-0" />
-                      <span><strong>Out of sync:</strong> you&apos;re shown as holding this document, but your session was lost. Check out again to keep working - or release the lock if you&apos;re done.</span>
+                      <span><strong>Out of sync:</strong> you&apos;re shown as holding this document, but your session was lost. Check out again to keep working, or release the lock if you&apos;re done.</span>
                     </div>
                   ) : (
                     <h3 className="text-sm font-bold text-[var(--color-text)]">Check out this document</h3>
@@ -681,7 +723,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                     >
                       {quickBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-muted)] shrink-0" /> : <Zap className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />}
                       <span className="text-[11px] text-[var(--color-text)]">
-                        <b>Just need it for today?</b> Quick hold - one click, no questions, auto-releases tonight.
+                        <b>Just for today?</b> Quick hold: no questions, releases tonight.
                       </span>
                     </button>
                   )}
@@ -731,7 +773,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                   >
                     <span>
                       {projectChoice === "adhoc"
-                        ? <>Quick checkout - auto-releases in <b>{{ "24h": "24 hours", "3d": "3 days", "1w": "1 week", "1mo": "1 month" }[adhocDuration]}</b></>
+                        ? <>Quick checkout: auto-releases in <b>{{ "24h": "24 hours", "3d": "3 days", "1w": "1 week", "1mo": "1 month" }[adhocDuration]}</b></>
                         : projectChoice === "existing"
                           ? <>Linked to project <b>{projects.find((p) => p.id === selectedProjectId)?.name || "…"}</b></>
                           : <>Creating a new project</>}
@@ -751,7 +793,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                         onClick={() => setProjectChoice("adhoc")}
                         className={`flex-1 py-1.5 text-[11px] font-bold rounded-md transition-all ${projectChoice === "adhoc" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
                       >
-                        Ad-hoc (24h)
+                        Ad-hoc
                       </button>
                       <button
                         onClick={() => setProjectChoice("existing")}
@@ -781,15 +823,12 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                               key={opt.v}
                               onClick={() => setAdhocDuration(opt.v)}
                               className={`flex-1 py-1 text-[11px] font-bold rounded transition-colors ${
-                                adhocDuration === opt.v ? "bg-slate-900 text-white" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                                adhocDuration === opt.v ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                               }`}
                             >
                               {opt.label}
                             </button>
                           ))}
-                        </div>
-                        <div className="text-[11px] text-[var(--color-text-muted)]">
-                          Ad-hoc checkouts auto-release so the doc never gets stuck. Pick a window that matches what you&apos;re doing - 1 month is the cap.
                         </div>
                       </div>
                     )}
@@ -818,7 +857,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                         <textarea
                           value={newProjectDescription}
                           onChange={(e) => setNewProjectDescription(e.target.value)}
-                          placeholder="Description * - what's the team going to do?"
+                          placeholder="Description * (what will the team do?)"
                           rows={2}
                           className="w-full px-2.5 py-1.5 border border-[var(--color-border)] rounded-md text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none resize-y"
                         />
@@ -851,19 +890,16 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                         onChange={(e) => setExpectedReleaseAt(e.target.value ? new Date(e.target.value).toISOString() : "")}
                         className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
                       />
-                      <div className="text-[11px] text-[var(--color-text-muted)] mt-1">
-                        Helps the team know when this might be released. Stale checkouts surface a warning past this date.
-                      </div>
                     </div>
                   )}
                   </div>
                   )}
 
                   {activeSessions.length > 0 && !isOrphaned && (
-                    <div className="p-3 bg-amber-50 text-amber-800 rounded-lg text-xs flex items-start">
+                    <p className="border-l-2 border-amber-500 pl-3 text-xs text-amber-800 dark:text-amber-300 flex items-start">
                       <AlertTriangle className="w-4 h-4 mr-2 shrink-0 mt-0.5" />
-                      Others are currently working on this file. Coordinate via chat to avoid conflicts.
-                    </div>
+                      Others are working on this file. Talk in the thread first.
+                    </p>
                   )}
 
                   {/* EVERYTHING STATED UP FRONT — the checklist shows both
@@ -881,8 +917,8 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                     const buttonLabel = processing ? "Working…"
                       : !purposeDone ? "Pick a purpose to continue"
                       : !noteDone ? (noteLen === 0 ? "Add a few words on why" : `Add ${5 - noteLen} more character${5 - noteLen === 1 ? "" : "s"}`)
-                      : isOrphaned ? "Restore Session"
-                      : document.checkedOutBy ? "Join Session" : "Check Out Now";
+                      : isOrphaned ? "Check out again"
+                      : document.checkedOutBy ? "Join their checkout" : "Check out";
                     return (
                       <div className="space-y-2">
                         {!ready && (
@@ -902,7 +938,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                               className="px-4 py-3 bg-[var(--color-surface)] border border-[var(--color-border-strong)] text-[var(--color-text)] rounded-xl font-bold text-sm hover:bg-[var(--color-surface-2)]"
                               title="Release the lock without starting a session"
                             >
-                              Release Lock
+                              Release the lock
                             </button>
                           )}
                           <button

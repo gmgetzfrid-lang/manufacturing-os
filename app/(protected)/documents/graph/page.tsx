@@ -62,25 +62,28 @@ import { triageListing } from "@/lib/fileFinder/triage";
 import { findEstate } from "@/lib/find/client";
 import type { FindResponse, FindRelation } from "@/lib/find/types";
 import { EntityStrip, EquipmentCards, RelationChips, PageHits, ActivityPanel, CoverageLine } from "@/components/find/FindPanels";
+import { useEscapeClose, escapeStackBusy } from "@/components/documents/useEscapeClose";
+import { badgeText } from "@/lib/badge";
 
 const VERDICT_STYLE: Record<RankedHit["verdict"], string> = {
   strong: "bg-green-100 text-green-800 border-green-200",
-  possible: "bg-yellow-100 text-yellow-800 border-yellow-200",
-  weak: "bg-slate-100 text-slate-600 border-slate-200",
+  possible: "bg-amber-100 text-amber-800 border-amber-200",
+  weak: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]",
   rejected: "bg-red-100 text-red-700 border-red-200",
 };
 const VERDICT_LABEL: Record<RankedHit["verdict"], string> = {
   strong: "Strong", possible: "Possible", weak: "Weak", rejected: "Ditch",
 };
 const CHIP_STYLE: Record<QueryChip["kind"], string> = {
-  identifier: "bg-blue-50 text-blue-800 border-blue-200",
-  word: "bg-slate-50 text-slate-700 border-slate-200",
-  phrase: "bg-slate-50 text-slate-800 border-slate-300",
-  year: "bg-amber-50 text-amber-800 border-amber-200",
-  unit: "bg-purple-50 text-purple-800 border-purple-200",
-  sheet: "bg-teal-50 text-teal-800 border-teal-200",
-  rev: "bg-teal-50 text-teal-800 border-teal-200",
-  doctype: "bg-orange-50 text-orange-800 border-orange-200",
+  // Query parts read by kind in words, not colour: one neutral chip.
+  identifier: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
+  word: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
+  phrase: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
+  year: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
+  unit: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
+  sheet: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
+  rev: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
+  doctype: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
 };
 
 const LIT_CAP = 150;
@@ -126,6 +129,9 @@ function GraphPageInner() {
   const [pageView, setPageView] = useState<{ fileKey: string; page: number; title: string; knowledgeDocId: string; tags: string[] } | null>(null);
   /** The "read these" chooser: which knowledge library should read a folder. */
   const [readAsk, setReadAsk] = useState<{ folder: FindCoverage["unreadFolders"][number]; libs: KnowledgeLibrary[]; pick: string; busy: boolean; note: string | null } | null>(null);
+  // Escape closes the photo or the read-this-folder dialog first.
+  useEscapeClose(() => setLightbox(null), !!lightbox);
+  useEscapeClose(() => setReadAsk((r) => (r?.busy ? r : null)), !!readAsk);
   const [finding, setFinding] = useState(false);
   const findSeq = useRef(0);
 
@@ -571,6 +577,7 @@ function GraphPageInner() {
       if (e.key === "ArrowLeft" || e.key === "p") { if (hits.length) { e.preventDefault(); jumpTo(activeIdx - 1); } return; }
       if (e.key === "Enter") { const id = selectedId ?? hits[activeIdx]?.entry.id; if (id) { e.preventDefault(); openEntry(id); } return; }
       if (e.key !== "Escape" && e.key !== "Backspace") return;
+      if (e.key === "Escape" && escapeStackBusy()) return; // a dialog is open over the map
       if (selectedId || selSat) { setSelectedId(null); setSelSat(null); return; }
       if (focusId) { e.preventDefault(); up(); }
     };
@@ -581,16 +588,16 @@ function GraphPageInner() {
   const selectedEntry = selectedId ? entryById.get(selectedId) : undefined;
   const selectedHit = selectedId ? hits.find((h) => h.entry.id === selectedId) : undefined;
 
-  if (!activeOrgId) return null;
+  if (!activeOrgId) return <p className="p-6 text-sm text-[var(--color-text-muted)]">Pick a workspace in the sidebar to see its file map.</p>;
 
   return (
     <div className="flex flex-col lg:h-[calc(100vh-56px)]">
       <ViewTabs title="Documents" tabs={DOCUMENT_VIEWS} />
       {error && (
-        <div className={`mx-4 mt-3 px-3 py-2 rounded-lg border text-sm flex items-center gap-2 ${data ? "border-amber-200 bg-amber-50 text-amber-800" : "border-red-200 bg-red-50 text-red-700"}`}>
+        <div role="alert" className={`mx-4 mt-3 pl-3 py-1 border-l-2 text-sm flex items-center gap-2 ${data ? "border-amber-500 text-amber-800 dark:text-amber-300" : "border-rose-500 text-rose-700 dark:text-rose-300"}`}>
           <AlertTriangle className="w-4 h-4 shrink-0" /> <span className="flex-1">{error}</span>
           <button onClick={() => { setError(null); void refresh(); }} className="font-bold hover:underline">Retry</button>
-          <button onClick={() => setError(null)} className="opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
+          <button aria-label="Dismiss" onClick={() => setError(null)} className="opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
         </div>
       )}
       {/* A phone stacks the three: find, the map, the details. */}
@@ -602,9 +609,9 @@ function GraphPageInner() {
               <button key={k} onClick={() => setPanel(k)}
                 className={`flex-1 px-2 py-2 inline-flex items-center justify-center gap-1 border-b-2 ${panel === k ? "border-[var(--color-accent)] text-[var(--color-text)]" : "border-transparent text-[var(--color-text-muted)]"}`}>
                 <Icon className="w-3.5 h-3.5" /> {label}
-                {k === "drives" && listings.length > 0 && <span className="ml-1 px-1.5 rounded-full bg-teal-100 text-teal-800">{listings.length}</span>}
-                {k === "links" && (data?.edges.length ?? 0) > 0 && <span className="ml-1 px-1.5 rounded-full bg-sky-100 text-sky-800">{data!.edges.length}</span>}
-                {k === "aliases" && aliases.length > 0 && <span className="ml-1 px-1.5 rounded-full bg-purple-100 text-purple-800">{aliases.length}</span>}
+                {k === "drives" && listings.length > 0 && <span className="ml-1 px-1.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)]">{badgeText(listings.length)}</span>}
+                {k === "links" && (data?.edges.length ?? 0) > 0 && <span className="ml-1 px-1.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)]">{badgeText(data!.edges.length)}</span>}
+                {k === "aliases" && aliases.length > 0 && <span className="ml-1 px-1.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)]">{badgeText(aliases.length)}</span>}
               </button>
             ))}
           </div>
@@ -641,7 +648,7 @@ function GraphPageInner() {
                           <span className="opacity-60">{c.kind === "identifier" ? "#" : c.kind === "unit" ? "unit" : c.kind === "year" ? "yr" : c.kind === "phrase" ? "“”" : c.kind === "doctype" ? "type" : ""}</span>
                           {c.label}
                           {c.via !== "typed" && <span className="opacity-60">· {c.via}</span>}
-                          <button onClick={() => removeChip(c)} className="opacity-50 hover:opacity-100"><X className="w-3 h-3" /></button>
+                          <button aria-label="Remove" onClick={() => removeChip(c)} className="opacity-50 hover:opacity-100"><X className="w-3 h-3" /></button>
                         </span>
                       ))}
                       {parsed.chips.length === 0 && <span className="text-xs text-[var(--color-text-muted)]">Nothing to search on - add a tag, a word or a year.</span>}
@@ -715,11 +722,11 @@ function GraphPageInner() {
               )}
               {controller && activeOrgId && focusId?.startsWith("lib:") && !selectedEntry && (
                 <button onClick={() => setSetupLib(focusId.slice(4))} title="Say what each level of folders is - operating area, equipment type, equipment - and everything filed underneath inherits it"
-                  className="ml-1 rounded-md border border-purple-300 bg-purple-50 text-purple-800 px-2 py-1 font-semibold inline-flex items-center gap-1"><Factory className="w-3 h-3" /> Set up as equipment library</button>
+                  className="ml-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] px-2 py-1 font-semibold inline-flex items-center gap-1 hover:bg-[var(--color-surface-2)]"><Factory className="w-3 h-3" /> Set up as equipment library</button>
               )}
               {selectedEntry && (
                 <button onClick={() => { setSelectedId(null); setSelSat(null); }} title="Stop focusing on this file (Esc)"
-                  className="ml-2 rounded-md bg-slate-900 text-white px-2 py-1 font-semibold inline-flex items-center gap-1 shadow">
+                  className="ml-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-1 font-semibold inline-flex items-center gap-1">
                   <ChevronLeft className="w-3 h-3" /> Back · Esc
                 </button>
               )}
@@ -733,7 +740,7 @@ function GraphPageInner() {
                 </button>
               )}
               <button onClick={() => setShowEstate((v) => !v)} title="Green counts of equipment on every file and folder; click a file to see its equipment around it"
-                className={`rounded-md border px-2 py-1 inline-flex items-center gap-1 ${showEstate ? "bg-purple-600 text-white border-transparent" : "bg-[var(--color-surface)]/90 border-[var(--color-border)]"}`}>
+                className={`rounded-md border px-2 py-1 inline-flex items-center gap-1 ${showEstate ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)]/90 border-[var(--color-border)]"}`}>
                 <Factory className="w-3 h-3" /> Units &amp; equipment
               </button>
               {focusId && <button onClick={up} className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1"><Minus className="w-3 h-3" /> Up</button>}
@@ -760,7 +767,7 @@ function GraphPageInner() {
             <div className="absolute left-1/2 -translate-x-1/2 bottom-12 flex items-center gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/95 shadow-md px-2 py-1.5 text-xs">
               <button onClick={() => jumpTo(activeIdx - 1)} className="rounded-md border border-[var(--color-border)] p-1 hover:bg-[var(--color-canvas)]" title="Previous result (←)"><ChevronLeft className="w-4 h-4" /></button>
               <button onClick={() => jumpTo(activeIdx)} className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 hover:bg-[var(--color-canvas)]" title="Centre on this result">
-                <Crosshair className="w-3.5 h-3.5 text-sky-600" />
+                <Crosshair className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                 <span className="font-bold tabular-nums">{activeIdx + 1}</span><span className="text-[var(--color-text-muted)]">/ {hits.length}</span>
                 <span className={`rounded-full border px-1.5 py-px text-[11px] font-bold ${VERDICT_STYLE[activeHit.verdict]}`}>{VERDICT_LABEL[activeHit.verdict]} · {activeHit.score}</span>
                 <FileTypeIcon type={fileTypeOf(activeHit.entry.name)} className="w-3.5 h-3.5" />
@@ -787,7 +794,7 @@ function GraphPageInner() {
           {resolveNote && !(showConnect && (connect.status || connect.running)) && (
             <div className="absolute top-12 right-3 max-w-md rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]/95 px-3 py-2 text-xs shadow-md flex items-start gap-2">
               <Link2 className="w-3.5 h-3.5 mt-0.5 shrink-0" /> <span>{resolveNote}</span>
-              <button onClick={() => setResolveNote(null)} className="opacity-60 hover:opacity-100"><X className="w-3.5 h-3.5" /></button>
+              <button aria-label="Dismiss" onClick={() => setResolveNote(null)} className="opacity-60 hover:opacity-100"><X className="w-3.5 h-3.5" /></button>
             </div>
           )}
           <div className="absolute bottom-3 right-3 text-[11px] text-[var(--color-text-muted)]">Click a folder to explore it · click a file for details · double-click to open · ← → step results · Esc goes up</div>
@@ -816,7 +823,7 @@ function GraphPageInner() {
                   </div>
                 </div>
                 {hiddenHits > 0 && (
-                  <button onClick={() => drill(null)} className="mb-2 w-full text-left rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-800">
+                  <button onClick={() => drill(null)} className="mb-2 w-full text-left rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[11px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                     {hiddenHits} more candidate{hiddenHits === 1 ? "" : "s"} outside {crumbs[crumbs.length - 1]?.label ?? "this folder"} - show the whole estate
                   </button>
                 )}
@@ -889,7 +896,7 @@ function GraphPageInner() {
       {viewerError && (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 rounded-lg border border-red-200 bg-red-50 text-red-800 text-sm px-3 py-2 shadow-lg flex items-center gap-2">
           <AlertTriangle className="w-4 h-4" /> {viewerError}
-          <button onClick={() => setViewerError(null)} className="ml-2 opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
+          <button aria-label="Dismiss" onClick={() => setViewerError(null)} className="ml-2 opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
         </div>
       )}
       {connect.plan && activeOrgId && (
@@ -900,9 +907,9 @@ function GraphPageInner() {
         <div className="fixed inset-0 z-[70] bg-black/85 flex items-center justify-center p-6" onClick={() => setLightbox(null)}>
           <div className="max-w-5xl max-h-full flex flex-col items-center gap-2" onClick={(e) => e.stopPropagation()}>
             <SignedImg path={lightbox.file_url} alt={lightbox.caption ?? ""} className="max-h-[80vh] max-w-full rounded-xl object-contain shadow-2xl" placeholder={<Loader2 className="w-6 h-6 animate-spin text-white" />} />
-            <div className="text-xs text-white/80">{lightbox.caption || "Photo"}{lightbox.captured_at ? ` · ${new Date(lightbox.captured_at).toLocaleDateString()}` : ""} · click outside to close</div>
+            <div className="text-xs text-white/80">{lightbox.caption || "Photo"}{lightbox.captured_at ? ` · ${new Date(lightbox.captured_at).toLocaleDateString()}` : ""}</div>
           </div>
-          <button onClick={() => setLightbox(null)} className="absolute top-4 right-4 text-white/80 hover:text-white"><X className="w-6 h-6" /></button>
+          <button aria-label="Close" onClick={() => setLightbox(null)} className="absolute top-4 right-4 text-white/80 hover:text-white"><X className="w-6 h-6" /></button>
         </div>
       )}
       {pageView && activeOrgId && (
@@ -914,7 +921,7 @@ function GraphPageInner() {
         <LibrarySetup orgId={activeOrgId} libraryId={setupLib} libraryName={data?.libraries.find((l) => l.id === setupLib)?.name ?? "this library"} onDone={() => void refresh()} onClose={() => setSetupLib(null)} />
       )}
       {readAsk && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40" onClick={() => !readAsk.busy && setReadAsk(null)}>
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/50" onClick={() => !readAsk.busy && setReadAsk(null)}>
           <div className="w-[28rem] max-w-[92vw] rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
             <div className="text-sm font-black inline-flex items-center gap-2"><Eye className="w-4 h-4 text-emerald-600" /> Read the contents of {readAsk.folder.path || "this library"}</div>
             <div className="text-xs text-[var(--color-text-muted)]">{readAsk.folder.count} file{readAsk.folder.count === 1 ? "" : "s"} here have never been read. Linking the folder as a source of a knowledge library reads them: text pages cost nothing, scanned or SHX pages use vision on the cheap tier within your monthly cap, and every tag read becomes a link. Nothing outside the folder is touched.</div>
@@ -963,7 +970,7 @@ function PathCrumbs({ entry }: { entry: IndexEntry }) {
       {parts.map((p, i) => (
         <React.Fragment key={i}>
           {i > 0 && <ChevronRight className="w-3 h-3 opacity-50" />}
-          <span className={i === 0 ? (entry.source === "listing" ? "text-teal-700 font-semibold" : "text-purple-700 font-semibold") : ""}>{p}</span>
+          <span className={i === 0 ? "text-[var(--color-text)] font-semibold" : ""}>{p}</span>
         </React.Fragment>
       ))}
     </div>
@@ -989,15 +996,15 @@ function HitCard({ hit, rank, active, relations, pages, onReveal, onOpen, onPage
 }) {
   const e = hit.entry;
   return (
-    <div className={`rounded-lg border p-2.5 ${active ? "border-sky-400 bg-sky-50/40" : "border-[var(--color-border)] bg-[var(--color-canvas)]"}`}>
+    <div className={`rounded-lg border p-2.5 ${active ? "border-[var(--color-text)] bg-[var(--color-surface-2)]" : "border-[var(--color-border)] bg-[var(--color-canvas)]"}`}>
       <div className="flex items-start gap-2">
         <button onClick={onReveal} className="flex-1 text-left min-w-0">
           <div className="flex items-center gap-1.5">
-            <span className={`shrink-0 w-5 h-5 rounded-full grid place-items-center text-[11px] font-extrabold text-white ${active ? "bg-sky-500" : "bg-slate-800"}`}>{rank}</span>
+            <span className={`shrink-0 w-5 h-5 rounded-full grid place-items-center text-[11px] font-extrabold ${active ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-slate-800 text-white"}`}>{rank}</span>
             <span className={`shrink-0 rounded-full border px-1.5 py-px text-[11px] font-bold ${VERDICT_STYLE[hit.verdict]}`}>{VERDICT_LABEL[hit.verdict]} · {hit.score}</span>
             <FileTypeIcon type={fileTypeOf(e.name)} className="w-4 h-4 shrink-0" />
             <span className="text-sm font-semibold truncate">{e.name}</span>
-            {e.read?.status === "ready" && <span title={`Content read by AI (${e.read.pages} pages)`} className="shrink-0 inline-flex items-center gap-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 px-1.5 text-[11px] font-bold"><Eye className="w-3 h-3" /> read</span>}
+            {e.read?.status === "ready" && <span title={`Content read by AI (${e.read.pages} pages)`} className="shrink-0 inline-flex items-center gap-0.5 text-emerald-700 dark:text-emerald-400 px-1 text-[11px] font-bold"><Eye className="w-3 h-3" /> read</span>}
           </div>
           {e.title && e.title !== e.name && <div className="text-[11px] text-[var(--color-text-muted)] truncate">{e.title}</div>}
           <PathCrumbs entry={e} />
@@ -1020,7 +1027,7 @@ function SelectedCard({ entry, hit, sameBytes, onClose, onReveal, onOpen, orgId,
   orgId?: string | null; canRead?: boolean; onRead?: () => void;
 }) {
   return (
-    <div className="p-3 border-b border-[var(--color-border)] bg-sky-50/30">
+    <div className="p-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
           <div className="text-sm font-bold truncate flex items-center gap-1.5"><FileTypeIcon type={fileTypeOf(entry.name)} className="w-4 h-4 shrink-0" /> <span className="truncate">{entry.name}</span></div>
@@ -1032,22 +1039,22 @@ function SelectedCard({ entry, hit, sameBytes, onClose, onReveal, onOpen, orgId,
             {entry.status && <span className="rounded bg-[var(--color-surface)] border border-[var(--color-border)] px-1">{entry.status}</span>}
             {entry.years.length > 0 && <span className="rounded bg-[var(--color-surface)] border border-[var(--color-border)] px-1">dated {entry.years.join(", ")}</span>}
             {entry.read && <span className={`rounded border px-1 ${entry.read.status === "ready" ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-amber-50 border-amber-200 text-amber-700"}`}>{entry.read.status === "ready" ? `read by AI · ${entry.read.pages} pages` : `AI read: ${entry.read.status}`}</span>}
-            {entry.unitCodes.map((c) => <span key={c} className="rounded bg-purple-50 border border-purple-200 text-purple-800 px-1">unit {c}</span>)}
+            {entry.unitCodes.map((c) => <span key={c} className="rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text)] px-1">unit {c}</span>)}
             {entry.sizeBytes != null && <span className={`rounded border px-1 ${entry.sizeBytes === 0 ? "bg-red-50 border-red-200 text-red-700" : "bg-[var(--color-surface)] border-[var(--color-border)]"}`}>{entry.sizeBytes === 0 ? "0 KB" : `${Math.max(1, Math.round(entry.sizeBytes / 1024))} KB`}</span>}
-            {entry.idents.map((t) => <span key={t} className="rounded bg-blue-50 border border-blue-200 text-blue-800 px-1">{tagVariants(t)[1] ?? t}</span>)}
+            {entry.idents.map((t) => <span key={t} className="rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text)] px-1">{tagVariants(t)[1] ?? t}</span>)}
           </div>
         </div>
-        <button onClick={onClose} className="shrink-0 opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
+        <button aria-label="Close" onClick={onClose} className="shrink-0 opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
       </div>
       {entry.href && (
         <div className="mt-2 flex items-center gap-3">
-          <button onClick={onOpen} className="inline-flex items-center gap-1 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-2 py-1 text-xs font-bold"><ExternalLink className="w-3.5 h-3.5" /> Open</button>
+          <button onClick={onOpen} className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-1 text-xs font-bold"><ExternalLink className="w-3.5 h-3.5" /> Open</button>
           <Link href={entry.href} className="text-xs font-semibold text-[var(--color-text-muted)] hover:underline">Go to it in the library</Link>
           <Link href={globalGraphHref(entry.id)} className="text-xs font-semibold text-[var(--color-text-muted)] hover:underline inline-flex items-center gap-1"><Globe className="w-3 h-3" /> Global view</Link>
         </div>
       )}
       {entry.source === "listing" && (
-        <div className="mt-2 text-xs text-teal-800 inline-flex items-center gap-1"><HardDrive className="w-3.5 h-3.5" /> On {entry.listingName}, not in the system. Upload it to bring it under control.</div>
+        <div className="mt-2 text-xs text-amber-800 dark:text-amber-300 inline-flex items-center gap-1"><HardDrive className="w-3.5 h-3.5" /> On {entry.listingName}, not in the system. Upload it to bring it under control.</div>
       )}
       {canRead && orgId && entry.source === "system" && fileTypeOf(entry.name).key === "pdf" && (
         <ReadDrawingPanel orgId={orgId} documentId={entry.id.replace(/^doc:/, "")} onDone={onRead} />
@@ -1140,7 +1147,7 @@ function EntityPanel({ orgId, sat, data, entryById, nodeById, serverFind: liveFi
         <span className="w-8 h-8 rounded-full grid place-items-center text-white shrink-0" style={{ background: sat.color }}><Icon className="w-4 h-4" /></span>
         <div className="min-w-0 flex-1">
           <div className="text-[11px] text-[var(--color-text-muted)] flex items-center gap-1 flex-wrap">
-            {unit && kind !== "unit" ? <><button onClick={() => onNarrow(unit.code)} className="font-bold text-purple-700 hover:underline">{unit.label}</button><ChevronRight className="w-3 h-3" /></> : null}
+            {unit && kind !== "unit" ? <><button onClick={() => onNarrow(unit.code)} className="font-bold text-[var(--color-accent)] hover:underline">{unit.label}</button><ChevronRight className="w-3 h-3" /></> : null}
             <span className="font-bold" style={{ color: sat.color }}>{kind === "asset" ? "Equipment" : kind === "unit" ? "Unit" : kind === "project" ? "Project" : "Tag read off the drawings"}</span>
           </div>
           <div className="text-base font-black leading-tight">{sat.label}</div>
@@ -1154,7 +1161,7 @@ function EntityPanel({ orgId, sat, data, entryById, nodeById, serverFind: liveFi
           )}
           {kind === "tag" && <div className="text-[11px] text-[var(--color-text-muted)]">Not in the equipment registry yet. Connect everything puts it there.</div>}
         </div>
-        <button onClick={onClose} className="opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
+        <button aria-label="Close" onClick={onClose} className="opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
       </div>
       {about?.callout && (about.callout.name || about.callout.details) && (
         <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-xs">
@@ -1309,7 +1316,7 @@ function DrivesPanel({ orgId, controller, listings, uid, userEmail, systemHashes
       {listings.map((l) => (
         <div key={l.id} className="rounded-lg border border-[var(--color-border)] p-2 text-xs flex items-start gap-2">
           <button onClick={() => onReveal(`drive:${l.id}`)} className="flex-1 text-left">
-            <div className="font-bold flex items-center gap-1"><HardDrive className="w-3.5 h-3.5 text-teal-700" /> {l.name}</div>
+            <div className="font-bold flex items-center gap-1"><HardDrive className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {l.name}</div>
             <div className="text-[var(--color-text-muted)]">{l.fileCount} files · {l.folders.length} folders{l.format ? ` · ${l.format}` : ""}</div>
           </button>
           {controller && <button onClick={() => remove(l)} className="opacity-50 hover:opacity-100"><Trash2 className="w-3.5 h-3.5" /></button>}

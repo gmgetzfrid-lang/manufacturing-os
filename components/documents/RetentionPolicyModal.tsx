@@ -10,6 +10,7 @@ import { Archive, X, Loader2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { setRetentionPolicy } from "@/lib/retention";
 import type { RetentionPolicy } from "@/types/schema";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
 type Basis = NonNullable<RetentionPolicy["basis"]>;
 type Action = NonNullable<RetentionPolicy["action"]>;
@@ -24,6 +25,8 @@ export default function RetentionPolicyModal({ level, id, orgId, name, uid, user
   onClose: () => void;
   onSaved?: () => void;
 }) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => onClose());
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [existing, setExisting] = useState<RetentionPolicy | null>(null);
@@ -70,7 +73,7 @@ export default function RetentionPolicyModal({ level, id, orgId, name, uid, user
             <div className="text-sm font-bold text-[var(--color-text)]">Retention</div>
             <div className="text-[11px] text-[var(--color-text-muted)] truncate">How long records in this {scopeLabel}{name ? ` · ${name}` : ""} are kept</div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
+          <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
         </div>
 
         {loading ? (
@@ -98,7 +101,7 @@ export default function RetentionPolicyModal({ level, id, orgId, name, uid, user
                 </select>
               </div>
             )}
-            <div className="text-[11px] text-[var(--color-text-muted)]">Records are never auto-destroyed - disposition is always an explicit, logged action, and a legal hold overrides it.</div>
+            <div className="text-[11px] text-[var(--color-text-muted)]">Records are never destroyed on their own. Disposal is always a logged action someone takes, and a legal hold stops it.</div>
 
             <div className="flex justify-between gap-2 pt-2 border-t border-[var(--color-border)]">
               <button onClick={() => void remove()} disabled={busy || !existing} className="px-3 py-2 rounded-lg text-xs font-bold text-red-600 hover:bg-red-50 disabled:opacity-40">Remove</button>

@@ -16,6 +16,7 @@ import { loadCodebook, EMPTY_CODEBOOK, type Codebook } from "@/lib/codebook";
 import { decodeId, looksLikeId, type SweepRow, type RowChoice } from "@/lib/equipmentSweep";
 import { pendingDrawings, readDrawing, newRunId } from "@/lib/drawingCensusClient";
 import type { BridgeConfig } from "@/lib/equipmentBridgeServer";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
 interface DocInfo { number: string | null; title: string | null; rev: string | null; sheet: string | null; sheetTotal: number | null }
 interface SuggestionRow {
@@ -51,6 +52,8 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
   /** Called after any apply so the page refetches documents (new chips). */
   onApplied: () => void;
 }) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => onClose());
   const [rows, setRows] = useState<SuggestionRow[]>([]);
   const [bridge, setBridge] = useState<BridgeConfig>({});
   const [columns, setColumns] = useState<ColumnDef[]>([]);
@@ -357,13 +360,13 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
             </div>
           )}
 
-          {error && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 dark:bg-rose-950/30 dark:border-rose-800 p-3 text-[12.5px] text-rose-800 dark:text-rose-200 flex items-start gap-2"><AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {error}</div>}
+          {error && <div role="alert" className="text-[12.5px] flex items-start gap-2 border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300"><AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {error}</div>}
           {notAdded.length > 0 && (() => {
             // One reason for many (the usual: one name across all units), said once.
             const by = new Map<string, string[]>();
             for (const f of notAdded) by.set(f.why, [...(by.get(f.why) ?? []), f.tag]);
             return (
-              <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 p-3 text-[12.5px] text-amber-900 dark:text-amber-200 space-y-1">
+              <div role="alert" className="text-[12.5px] space-y-1 border-l-2 border-amber-500 pl-3 text-amber-800 dark:text-amber-300">
                 <b>{notAdded.length} not added</b>
                 {[...by.entries()].map(([why, tags]) => <div key={why}><span className="font-mono font-bold">{tags.join(", ")}</span>: {why}</div>)}
               </div>
@@ -474,7 +477,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
                                 </>
                               ) : x.applied ? <span className="text-[var(--color-text-muted)]">-</span> : (
                                 <>
-                                  <input value={x.c.code ?? ""} onChange={(e) => set(x.k, { code: e.target.value, on: true })} placeholder="ID not printed - enter it" aria-label={`${x.s.tag} ID`}
+                                  <input value={x.c.code ?? ""} onChange={(e) => set(x.k, { code: e.target.value, on: true })} placeholder="ID not printed: enter it" aria-label={`${x.s.tag} ID`}
                                     className={`${field} w-full font-mono ${x.typedBad ? "border-rose-400" : "border-dashed border-amber-400"}`} />
                                   <div className={`text-[11px] ${x.typedBad ? "text-rose-700 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>
                                     {x.typedBad ? "Write it as the plant does: 5530.26" : x.dec ? `${unitName(x.dec.unitCode)}${x.dec.typeLabel ? ` · ${x.dec.typeLabel}` : ""}` : x.typed ? "Not a unit in the site codebook" : ""}

@@ -15,12 +15,14 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  X, Upload, AlertTriangle, CheckCircle2, Loader2, Wand2,
-  FileText, Copy, Trash2, Info, KeyRound, FolderTree, ChevronDown, ChevronRight,
+  X, Upload, CheckCircle2, Loader2, Wand2,
+  Copy, Trash2, KeyRound, FolderTree, ChevronDown, ChevronRight,
 } from "lucide-react";
 import { parseFilename, detectBulkHints, withHints, type ParsedFilename } from "@/lib/filenameParser";
 import { readBatch, type NameRole } from "@/lib/filenameRoles";
 import NameReadingStrip from "@/components/documents/NameReadingStrip";
+import FileThumb from "@/components/ui/FileThumb";
+import StepPath from "@/components/ui/StepPath";
 import { computeUniquenessKey } from "@/lib/uniqueness";
 import { hashFile, findExistingCopies, type ExistingCopy } from "@/lib/duplicateFiles";
 
@@ -175,6 +177,7 @@ export default function MetadataStagingModal({
   // enough to review, the rest are a click away (bulk-apply covers all).
   const [showAllRows, setShowAllRows] = useState(false);
   const [failedWhy, setFailedWhy] = useState<Array<{ file: File; reason: string }>>([]);
+  const failedReason = useMemo(() => new Map(failedWhy.map((f) => [f.file, f.reason] as const)), [failedWhy]);
   // Held for the life of one submit so Stop can abort the transfers that are
   // actually on the wire, not merely stop rendering a spinner over them.
   const abortRef = React.useRef<AbortController | null>(null);
@@ -600,17 +603,17 @@ export default function MetadataStagingModal({
           <div className="flex items-center gap-3">
             <div className="p-2 bg-[var(--color-surface-2)] rounded-lg"><Upload className="w-5 h-5 text-[var(--color-text-muted)]" /></div>
             <div>
-              <div className="text-sm font-black text-[var(--color-text)]">{folderUpload ? "Upload folder as-is" : "Review metadata before uploading"}</div>
+              <div className="text-sm font-black text-[var(--color-text)]">{folderUpload ? "Upload this folder" : "Check the details, then upload"}</div>
               <div className="text-xs text-[var(--color-text-muted)]">
                 {folderUpload
-                  ? `${items.length} file${items.length === 1 ? "" : "s"} in ${folderSummary?.folders ?? 0} folder${folderSummary?.folders === 1 ? "" : "s"} - the structure is recreated exactly.`
-                  : `${items.length} file${items.length === 1 ? "" : "s"} ready. Confirm or edit each row, then upload.`}
+                  ? `${items.length} file${items.length === 1 ? "" : "s"} in ${folderSummary?.folders ?? 0} folder${folderSummary?.folders === 1 ? "" : "s"}, kept in the same folders.`
+                  : `${items.length} file${items.length === 1 ? "" : "s"} ready. Fix any row that's wrong, then upload.`}
               </div>
             </div>
           </div>
           {/* Never disabled. An upload the user can't get out of is worse than
               one they cancelled. */}
-          <button
+          <button aria-label="Close"
             onClick={requestClose}
             title={submitting ? "Stop the upload and close" : "Close"}
             className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
@@ -619,16 +622,21 @@ export default function MetadataStagingModal({
           </button>
         </div>
 
+        {/* The upload as one path: picking is done, this is the check. */}
+        <div className="px-4 sm:px-6 pt-3 pb-2 border-b border-[var(--color-border)] shrink-0">
+          <StepPath steps={["Pick the files", "Check the details", "Upload"]} current={submitting ? 2 : 1} className="max-w-md" />
+        </div>
+
         {folderUpload && folderSummary && (
-          <div className="px-4 sm:px-6 py-4 border-b border-[var(--color-border)] bg-emerald-50/60 dark:bg-emerald-950/20 shrink-0">
+          <div className="px-4 sm:px-6 py-4 border-b border-[var(--color-border)] shrink-0">
             <div className="flex items-start gap-3">
-              <FolderTree className="w-5 h-5 text-emerald-700 dark:text-emerald-400 shrink-0 mt-0.5" />
+              <FolderTree className="w-5 h-5 text-[var(--color-text-muted)] shrink-0 mt-0.5" />
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-black text-[var(--color-text)]">
-                  Goes into <span className="text-emerald-700 dark:text-emerald-400">{folderUpload.destination}</span>, organized exactly as it is on your computer
+                  Goes into {folderUpload.destination}, in the same folders as on your computer
                 </div>
                 <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
-                  Folders that already exist here are reused, not duplicated. Document numbers, titles and revisions are read from each filename - you can edit them after, or open the file details below first.
+                  Folders already here are reused. Numbers, titles and revisions come from each file name.
                 </div>
                 <ul className="mt-2 grid gap-x-4 gap-y-0.5 text-[11px] sm:grid-cols-2 max-h-36 overflow-auto">
                   {folderSummary.top.slice(0, 40).map(([path, n]) => (
@@ -664,22 +672,16 @@ export default function MetadataStagingModal({
         {/* Predictive uniqueness banner — only when a collision will actually
             hit the DB constraint */}
         {collisionPreview.collidingRows >= 2 && (
-          <div className="px-4 sm:px-6 py-3 bg-amber-50 border-b border-amber-200 shrink-0">
+          <div className="mx-4 sm:mx-6 my-2 border-l-2 border-amber-500 pl-3 shrink-0">
             <div className="flex items-start gap-2 flex-wrap sm:flex-nowrap">
-              <KeyRound className="w-4 h-4 text-amber-700 mt-0.5 shrink-0" />
               <div className="flex-1 min-w-0">
-                <div className="text-xs font-black text-amber-900">
-                  {collisionPreview.collidingRows} files share the same uniqueness key
+                <div className="text-xs font-black text-amber-800 dark:text-amber-300">
+                  {collisionPreview.collidingRows} files would be the same document here, so they won&apos;t upload
                 </div>
-                <div className="text-[11px] text-amber-800 mt-0.5">
-                  The library treats these as the same document, so the upload will fail. Two ways to fix it:
-                  {" • "}
+                <div className="text-[11px] text-amber-800 dark:text-amber-300 mt-0.5">
                   {sheetInUniqueness
-                    ? "Fill in a different Sheet value on each row."
-                    : hasSheetColumn
-                    ? "Tick Sheet for uniqueness (button →)."
-                    : "Add a Sheet column + uniqueness (button →) if your files are sheets of the same doc."}
-                  {" • Or auto-suffix the colliding doc numbers (button →) if your files are genuinely different and just have similar numbers."}
+                    ? "Give each row its own Sheet, or add -2, -3 to the numbers."
+                    : "If they're sheets of one drawing, tell sheets apart. If they're different files, add -2, -3 to the numbers."}
                 </div>
               </div>
               <div className="shrink-0 flex flex-col items-stretch gap-1.5">
@@ -691,18 +693,18 @@ export default function MetadataStagingModal({
                       finally { setFixingUniqueness(false); }
                     }}
                     disabled={fixingUniqueness}
-                    className="inline-flex items-center justify-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-black uppercase tracking-wider bg-amber-700 hover:bg-amber-600 text-white disabled:opacity-50"
+                    className="inline-flex items-center justify-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
                   >
                     {fixingUniqueness ? <Loader2 className="w-3 h-3 animate-spin" /> : <KeyRound className="w-3 h-3" />}
-                    {hasSheetColumn ? "Use Sheet for uniqueness" : "Add Sheet + use for uniqueness"}
+                    {hasSheetColumn ? "Tell sheets apart" : "Add a Sheet column"}
                   </button>
                 )}
                 <button
                   onClick={autoSuffixDuplicates}
-                  className="inline-flex items-center justify-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-black uppercase tracking-wider bg-[var(--color-surface)] border border-amber-300 text-amber-800 hover:bg-amber-50"
-                  title="Append -2, -3, … to colliding doc numbers so each row is unique. Use when the files are genuinely different and just have similar parsed numbers."
+                  className="inline-flex items-center justify-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                  title="Add -2, -3 to the numbers that clash so each row is its own document"
                 >
-                  Auto-suffix duplicates
+                  Add -2, -3
                 </button>
               </div>
             </div>
@@ -722,9 +724,8 @@ export default function MetadataStagingModal({
           );
           if (!already.length && !twiceInBatch.length) return null;
           return (
-            <div className="px-4 sm:px-6 py-3 bg-amber-50 border-b border-amber-200 shrink-0 text-[11px] text-amber-900">
+            <div className="mx-4 sm:mx-6 my-2 border-l-2 border-amber-500 pl-3 shrink-0 text-[11px] text-amber-800 dark:text-amber-300">
               <div className="flex items-start gap-2 flex-wrap sm:flex-nowrap">
-                <Copy className="w-4 h-4 text-amber-700 mt-0.5 shrink-0" />
                 <div className="flex-1 min-w-0">
                   {already.length > 0 && (
                     <div className="text-xs font-black">
@@ -736,12 +737,12 @@ export default function MetadataStagingModal({
                       {twiceInBatch.length} file{twiceInBatch.length === 1 ? " is" : "s are"} identical to another file in this batch.
                     </div>
                   )}
-                  <div className="mt-0.5 text-amber-800">Uploading them anyway makes another copy. To avoid that, take them out of this batch.</div>
+                  <div className="mt-0.5">Uploading them makes another copy.</div>
                 </div>
                 {already.length > 0 && (
                   <button
                     onClick={() => setItems((prev) => prev.filter((it) => !(copies.get(hashes.get(it.file) ?? "")?.length)))}
-                    className="shrink-0 inline-flex items-center justify-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-black uppercase tracking-wider bg-amber-700 hover:bg-amber-600 text-white"
+                    className="shrink-0 inline-flex items-center justify-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                   >
                     <Trash2 className="w-3 h-3" /> Skip {already.length === 1 ? "it" : `these ${already.length}`}
                   </button>
@@ -756,8 +757,7 @@ export default function MetadataStagingModal({
           <div className="px-4 sm:px-6 py-2 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] text-[11px] text-[var(--color-text)] flex items-center gap-2 shrink-0 animate-in fade-in">
             <Wand2 className="w-3.5 h-3.5 shrink-0" />
             <span>
-              Read the drawings&apos; title blocks and filled <b>{tbFilled}</b> field{tbFilled === 1 ? "" : "s"} from
-              page-1 text (drawing numbers / revisions). Double-check anything that looks off - your edits always win.
+              Read the title blocks on page 1 and filled <b>{tbFilled}</b> field{tbFilled === 1 ? "" : "s"} (numbers and revisions). Check them: your edits win.
             </span>
           </div>
         )}
@@ -791,16 +791,12 @@ export default function MetadataStagingModal({
             {onAddColumn && (
               <button
                 onClick={onAddColumn}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-black uppercase tracking-wider bg-slate-900 text-white hover:bg-slate-800"
-                title="Add a new column to this library - opens the column wizard without closing the upload."
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                title="Add a column to this library without closing the upload"
               >
-                + Add Column
+                + Add column
               </button>
             )}
-            <div className="ml-auto flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
-              <Info className="w-3 h-3" />
-              <span>Filename hints auto-detected. Edit any cell directly.</span>
-            </div>
           </div>
         </div>
 
@@ -836,18 +832,24 @@ export default function MetadataStagingModal({
                 const rowErrors = validation.filter((e) => e.rowId === it.id);
                 const errFor = (field: string) => rowErrors.find((e) => e.field === field)?.msg;
                 return (
-                  <tr key={it.id} className={rowErrors.length ? "bg-red-50/40" : "hover:bg-[var(--color-surface-2)]"}>
+                  <tr key={it.id} className={rowErrors.length ? "bg-red-50/40 dark:bg-red-950/20" : "hover:bg-[var(--color-surface-2)]"}>
                     <td className="px-3 py-1.5">
-                      <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)]" />
+                      <FileThumb file={it.file} size={28} />
                     </td>
                     <td className="px-3 py-1.5 max-w-[16ch]">
                       <div className="text-[11px] text-[var(--color-text)] font-mono truncate" title={it.file.name}>{it.file.name}</div>
                       {folderUpload && (folderUpload.pathOf(it.file)?.length ?? 0) > 0 && (
-                        <div className="text-[11px] text-emerald-700 dark:text-emerald-400 font-mono truncate" title={folderUpload.pathOf(it.file)!.join("/")}>
+                        <div className="text-[11px] text-[var(--color-text-muted)] font-mono truncate" title={folderUpload.pathOf(it.file)!.join("/")}>
                           {folderUpload.pathOf(it.file)!.join("/")}/
                         </div>
                       )}
                       <div className="text-[11px] text-[var(--color-text-faint)]">{formatBytes(it.file.size)}</div>
+                      {/* This file's own state after a try: why it didn't go. */}
+                      {failedReason.get(it.file) && (
+                        <div className="text-[11px] text-rose-700 dark:text-rose-300 truncate" title={failedReason.get(it.file)}>
+                          Didn&apos;t upload: {failedReason.get(it.file)}
+                        </div>
+                      )}
                       {(copies.get(hashes.get(it.file) ?? "") ?? []).map((c) => (
                         <a key={c.href} href={c.href} target="_blank" rel="noreferrer" title={`Already here: ${c.where}`} className="block text-[11px] font-bold text-amber-700 hover:underline truncate">
                           Already in {c.where}
@@ -996,12 +998,11 @@ export default function MetadataStagingModal({
 
         {/* Error + actions */}
         {outcome && (
-          <div className="px-4 sm:px-6 py-3 bg-amber-50 dark:bg-amber-950/30 border-t border-amber-200 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2 shrink-0">
-            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+          <div className="mx-4 sm:mx-6 my-2 border-l-2 border-amber-500 pl-3 text-xs text-amber-800 dark:text-amber-300 flex items-start gap-2 shrink-0">
             <span className="min-w-0 flex-1">
-              <b>{outcome}</b> Only the {items.length} file{items.length === 1 ? "" : "s"} still listed will be sent if you try again - nothing that already uploaded is sent twice.
+              <b>{outcome}</b> Try again sends only the {items.length} file{items.length === 1 ? "" : "s"} still listed. Nothing already up is sent twice.
               {failedWhy.length > 0 && (
-                <ul className="mt-2 max-h-40 overflow-auto rounded-md border border-amber-200 dark:border-amber-800 bg-[var(--color-surface)] divide-y divide-amber-100 dark:divide-amber-900">
+                <ul className="mt-2 max-h-40 overflow-auto rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
                   {failedWhy.slice(0, 300).map((f, i) => (
                     <li key={i} className="px-2 py-1 flex gap-2 min-w-0">
                       <span className="font-mono truncate max-w-[45%] text-[var(--color-text)]" title={(folderUpload?.pathOf(f.file) ?? []).concat(f.file.name).join("/")}>
@@ -1016,9 +1017,9 @@ export default function MetadataStagingModal({
           </div>
         )}
         {error && (
-          <div className="px-4 sm:px-6 py-3 bg-red-50 border-t border-red-200 text-xs text-red-700 flex items-start gap-2 shrink-0">
-            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
-          </div>
+          <p role="alert" className="mx-4 sm:mx-6 my-2 border-l-2 border-rose-500 pl-3 text-xs text-rose-700 dark:text-rose-300 shrink-0">
+            {error}
+          </p>
         )}
         <div className="px-4 sm:px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between flex-wrap gap-2 shrink-0">
           <div className="text-[11px] text-[var(--color-text-muted)] flex items-center gap-2 min-w-0">
@@ -1055,11 +1056,11 @@ export default function MetadataStagingModal({
             ) : (
               <button onClick={onCancel} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">Cancel</button>
             )}
-            <button onClick={submit} disabled={submitting || items.length === 0} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-black text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 shadow">
+            <button onClick={submit} disabled={submitting || items.length === 0} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 shadow">
               {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
               {submitting ? "Uploading…"
-                : outcome ? `Try the ${items.length} remaining again`
-                : folderUpload ? `Upload folder (${items.length} files)` : "Upload All"}
+                : outcome ? `Try again (${items.length})`
+                : folderUpload ? `Upload folder (${items.length} files)` : items.length === 1 ? "Upload" : `Upload ${items.length} files`}
             </button>
           </div>
         </div>

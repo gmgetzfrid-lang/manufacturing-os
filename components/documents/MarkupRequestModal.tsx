@@ -9,6 +9,8 @@ import React, { useState } from "react";
 import { X, MessageSquare, Loader2, AlertTriangle, Send } from "lucide-react";
 import { createMarkupRequest } from "@/lib/markupRequests";
 import type { DocumentRecord } from "@/types/schema";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
+import { useDraft } from "@/hooks/useDraft";
 
 interface MarkupRequestModalProps {
   isOpen: boolean;
@@ -32,7 +34,11 @@ export default function MarkupRequestModal({
   projectId, checkoutSessionId, orgId,
   actorUserId, actorEmail, actorRole, onSuccess,
 }: MarkupRequestModalProps) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => onClose(), isOpen);
   const [message, setMessage] = useState("");
+  // Typed words are kept on this device until this goes through.
+  useDraft<string>(isOpen && document.id ? `markup-req:${document.id}` : null, message, setMessage, (v) => !v.trim());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -75,7 +81,7 @@ export default function MarkupRequestModal({
               {document.documentNumber || document.title || document.name} - from <b>{holderUserName || "the current checkout holder"}</b>
             </div>
           </div>
-          <button onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
+          <button aria-label="Close" onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -92,11 +98,11 @@ export default function MarkupRequestModal({
               onChange={(e) => setMessage(e.target.value)}
               rows={4}
               className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:outline-none"
-              placeholder="e.g. Working on the discharge piping for the same project - could you share your markups on PSV-201 so we don't conflict?"
+              placeholder="e.g. Working on the discharge piping for the same project, could you share your markups on PSV-201 so we don't conflict?"
             />
           </div>
           {error && (
-            <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+            <div className="flex items-start gap-2 text-xs border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
             </div>
           )}

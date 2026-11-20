@@ -140,7 +140,7 @@ export default function HoldStrip({
       {loading ? (
         <div className="text-xs text-[var(--color-text-muted)] flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" /> Loading…</div>
       ) : error ? (
-        <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5 flex items-start gap-1.5">
+        <div role="alert" className="text-xs text-rose-700 dark:text-rose-300 border-l-2 border-rose-500 pl-2 flex items-start gap-1.5">
           <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" /> {error}
         </div>
       ) : holds.length === 0 ? (
@@ -172,7 +172,7 @@ export default function HoldStrip({
                   onClick={() => onOpen(r)}
                   disabled={busy || heldReasons.has(r)}
                   title={heldReasons.has(r) ? "Already on hold for this reason" : `Place hold: ${r}`}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <Plus className="w-3 h-3" /> {r}
                 </button>
@@ -270,7 +270,7 @@ function ActiveHoldRow({
   const lateDays = isLate ? Math.round((nowMs - (expectedMs as number)) / 86400_000) : 0;
 
   return (
-    <div className="bg-amber-50/50 border border-amber-200 rounded-lg p-2.5">
+    <div className="border border-[var(--color-border)] border-l-2 border-l-amber-500 rounded-lg p-2.5">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
@@ -295,7 +295,7 @@ function ActiveHoldRow({
           <button
             onClick={() => void printCard()}
             disabled={busy}
-            title="Print a HOLD card for the field - scanning its QR shows whether this hold is still active"
+            title="Print a HOLD card for the field. Scanning its code shows whether the hold is still active"
             className="text-[11px] font-bold text-red-700 hover:text-red-800 bg-red-50 hover:bg-red-100 border border-red-200 px-1.5 py-1 rounded inline-flex items-center gap-1 transition-colors disabled:opacity-40"
           >
             <Printer className="w-3 h-3" /> Card
@@ -324,7 +324,7 @@ function ActiveHoldRow({
           <button
             onClick={onConfirmRelease}
             disabled={busy}
-            className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white transition-colors disabled:opacity-40"
+            className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] transition-colors disabled:opacity-40"
           >
             <Check className="w-3 h-3" /> Release
           </button>

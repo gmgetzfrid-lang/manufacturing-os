@@ -41,6 +41,7 @@ import OrgGraph2D from "@/components/graph/OrgGraph2D";
 import EstateMap from "@/components/graph/EstateMap";
 import { foldLeaves } from "@/lib/graphFold";
 import { estateGlobe } from "@/lib/estate3d";
+import { badgeText } from "@/lib/badge";
 
 // three.js only downloads when 3D is switched on.
 const OrgGraph3D = React.lazy(() => import("@/components/graph/OrgGraph3D"));
@@ -509,9 +510,9 @@ function GraphPageInner() {
   // the plant as flow, the paper as a web, or everything at once.
   const LENSES: Array<{ key: string; label: string; hidden: GraphNodeType[]; libEdges: boolean; title: string }> = [
     { key: "all", label: "Everything", hidden: [], libEdges: false, title: "Every entity and relationship the org knows" },
-    { key: "process", label: "Process", hidden: ["document", "library", "project", "plot", "finding"], libEdges: false, title: "Units and equipment only - the plant as flow. Draw flows with Connect; read them off a PFD in the unit hub." },
+    { key: "process", label: "Process", hidden: ["document", "library", "project", "plot", "finding"], libEdges: false, title: "Units and equipment only, the plant as flow. Draw flows with Connect; read them off a PFD in the unit hub." },
     { key: "equipment", label: "Equipment ↔ Docs", hidden: ["unit", "plant", "project", "library"], libEdges: false, title: "Equipment and the documents that govern it" },
-    { key: "documents", label: "Documents", hidden: ["asset", "unit", "plant", "plot", "finding"], libEdges: true, title: "The paper web - documents, libraries, projects" },
+    { key: "documents", label: "Documents", hidden: ["asset", "unit", "plant", "plot", "finding"], libEdges: true, title: "The paper web: documents, libraries, projects" },
   ];
   const activeLens = LENSES.find((l) =>
     l.hidden.length === settings.hiddenTypes.length &&
@@ -525,7 +526,7 @@ function GraphPageInner() {
         <div className="[&>div]:mb-0 mr-1 min-w-0 max-w-full">
           <ViewTabs tabs={INTELLIGENCE_VIEWS} />
         </div>
-        <Waypoints className="w-4 h-4 text-violet-600 shrink-0" />
+        <Waypoints className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
         <h1 className="text-sm font-black text-[var(--color-text)] mr-1">Org graph</h1>
         <div className="relative">
           <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
@@ -543,7 +544,7 @@ function GraphPageInner() {
           {rawQuery.trim().length > 2 && (
             <button onClick={() => void runAsk()} disabled={asking}
               title="Search what your documents say"
-              className="absolute right-6 top-1/2 -translate-y-1/2 inline-flex items-center gap-1 text-[11px] font-black text-violet-700 hover:text-violet-600 disabled:opacity-50">
+              className="absolute right-6 top-1/2 -translate-y-1/2 inline-flex items-center gap-1 text-[11px] font-black text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] disabled:opacity-50">
               {asking ? <Loader2 className="w-3 h-3 animate-spin" /> : <>Ask <CornerDownLeft className="w-3 h-3" /></>}
             </button>
           )}
@@ -558,7 +559,7 @@ function GraphPageInner() {
         <button onClick={() => { setPathMode((v) => !v); setPathEnds({ from: null, to: null }); }}
           title="Pick two things and see how they connect"
           className={`inline-flex items-center gap-1.5 px-2 py-1.5 rounded-full border text-[11px] font-black ${
-            pathMode ? "border-cyan-400 text-cyan-700 bg-cyan-50 dark:bg-cyan-950/40"
+            pathMode ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]"
                      : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"
           }`}>
           <Route className="w-3.5 h-3.5" /> Connection path
@@ -570,7 +571,7 @@ function GraphPageInner() {
             <button key={l.key} title={l.title}
               onClick={() => patchSettings({ hiddenTypes: l.hidden, showLibraryEdges: l.libEdges })}
               className={`px-2.5 py-1.5 text-[11px] font-black transition-colors ${activeLens === l.key
-                ? "bg-violet-600 text-white"
+                ? "bg-[var(--color-text)] text-[var(--color-surface)]"
                 : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
               {l.label}
             </button>
@@ -579,7 +580,7 @@ function GraphPageInner() {
 
         {focusNode && (
           <button onClick={() => setFocusId(null)}
-            className="inline-flex items-center gap-1.5 px-2 py-1.5 rounded-full border border-violet-400 bg-violet-50 dark:bg-violet-950/40 text-[11px] font-black text-violet-700">
+            className="inline-flex items-center gap-1.5 px-2 py-1.5 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[11px] font-black text-[var(--color-text)]">
             <Maximize2 className="w-3.5 h-3.5" />
             Focused: {focusNode.label.slice(0, 18)} · {settings.localDepth} hop{settings.localDepth === 1 ? "" : "s"}
             <X className="w-3 h-3" />
@@ -669,13 +670,13 @@ function GraphPageInner() {
             <div className="absolute top-2 left-3 flex flex-col items-start gap-2 max-h-[calc(100%-1rem)] z-10">
               <button onClick={() => setInsightsOpen((v) => !v)}
                 className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border text-[11px] font-black shadow-sm ${
-                  insightsOpen ? "border-violet-400 text-violet-700 bg-[var(--color-surface)]"
+                  insightsOpen ? "border-[var(--color-text)] text-[var(--color-text)] bg-[var(--color-surface)]"
                                : "border-[var(--color-border-strong)] text-[var(--color-text)] bg-[var(--color-surface)]/90 backdrop-blur"
                 }`}>
-                <Lightbulb className="w-3.5 h-3.5 text-violet-600" /> Insights
+                <Lightbulb className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Insights
                 {insights && insights.orphans.length > 0 && (
-                  <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-700 text-[11px] font-black">
-                    {insights.orphans.length}
+                  <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text-muted)] text-[11px] font-black">
+                    {badgeText(insights.orphans.length)}
                   </span>
                 )}
               </button>
@@ -686,7 +687,7 @@ function GraphPageInner() {
                     {([
                       { key: "orphans" as const, label: "Orphans", icon: CircleDashed, count: insights.orphans.length, tone: "text-rose-600" },
                       { key: "hubs" as const, label: "Hubs", icon: Flame, count: insights.hubs.length, tone: "text-amber-600" },
-                      { key: "bridges" as const, label: "Bridges", icon: Spline, count: insights.bridges.length, tone: "text-violet-600" },
+                      { key: "bridges" as const, label: "Bridges", icon: Spline, count: insights.bridges.length, tone: "text-[var(--color-text-muted)]" },
                     ]).map((t) => (
                       <button key={t.key}
                         onClick={() => { setInsightTab(t.key); if (t.key === "orphans") patchSettings({ hideUnlinked: false }); }}
@@ -779,9 +780,9 @@ function GraphPageInner() {
 
             {/* Path panel */}
             {pathMode && (
-              <div className="absolute bottom-3 right-3 w-72 max-w-[calc(100%-1.5rem)] rounded-xl border border-cyan-300 dark:border-cyan-900 bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl p-3 space-y-2 z-10">
+              <div className="absolute bottom-3 right-3 w-72 max-w-[calc(100%-1.5rem)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl p-3 space-y-2 z-10">
                 <div className="flex items-center gap-1.5">
-                  <Route className="w-3.5 h-3.5 text-cyan-600" />
+                  <Route className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                   <span className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text)] flex-1">Connection path</span>
                   <button onClick={() => { setPathMode(false); setPathEnds({ from: null, to: null }); }}
                     aria-label="Close" className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
@@ -808,7 +809,7 @@ function GraphPageInner() {
                       <div key={h.node.id} className="flex items-center gap-1.5">
                         <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: NODE_COLORS[h.node.type] }} />
                         <span className="flex-1 min-w-0 text-[11px] font-bold text-[var(--color-text)] truncate">{h.node.label}</span>
-                        {i > 0 && <span className="shrink-0 text-[11px] text-cyan-700">{h.via}</span>}
+                        {i > 0 && <span className="shrink-0 text-[11px] text-[var(--color-text-muted)]">{h.via}</span>}
                       </div>
                     ))}
                   </div>
@@ -832,7 +833,7 @@ function GraphPageInner() {
                     : "scroll or pinch to zoom · drag to pan · drag a node to move it · double-click to open"}
               </div>
               {(graph?.truncations ?? []).map((t) => (
-                <div key={t} className="inline-flex items-center gap-1 text-[11px] text-amber-700 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 rounded-full px-2 py-0.5">
+                <div key={t} className="inline-flex items-center gap-1 text-[11px] text-amber-700 dark:text-amber-400">
                   <Info className="w-3 h-3" /> {t}
                 </div>
               ))}
@@ -840,7 +841,7 @@ function GraphPageInner() {
 
             {view.ghosts.length > 0 && (
               <Link href="/admin/proposed-links"
-                className="absolute bottom-3 left-3 inline-flex items-center gap-1 text-[11px] font-black text-amber-700 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 rounded-full px-2 py-1 hover:bg-amber-100 z-10">
+                className="absolute bottom-3 left-3 inline-flex items-center gap-1 text-[11px] font-black text-amber-700 dark:text-amber-400 bg-[var(--color-surface)]/95 border border-[var(--color-border)] rounded-full px-2 py-1 hover:bg-[var(--color-surface-2)] z-10">
                 <Sparkles className="w-3 h-3" />
                 {view.ghosts.length} dashed connection{view.ghosts.length === 1 ? "" : "s"} awaiting review
               </Link>
@@ -850,9 +851,9 @@ function GraphPageInner() {
                 the thing a label filter can never be: you asked in English,
                 and the map is now showing you WHERE that knowledge lives. */}
             {answer && !pathMode && (
-              <div className="absolute top-3 left-3 w-96 max-w-[calc(100%-1.5rem)] max-h-[75%] flex flex-col rounded-xl border border-violet-300 dark:border-violet-800 bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl z-10">
+              <div className="absolute top-3 left-3 w-96 max-w-[calc(100%-1.5rem)] max-h-[75%] flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl z-10">
                 <div className="flex items-start gap-2 p-3 pb-2 shrink-0">
-                  <Quote className="w-3.5 h-3.5 mt-0.5 text-violet-600 shrink-0" />
+                  <Quote className="w-3.5 h-3.5 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="text-xs font-black text-[var(--color-text)] break-words">{answer.question}</div>
                     <div className="text-[11px] text-[var(--color-text-faint)] mt-0.5">
@@ -902,7 +903,7 @@ function GraphPageInner() {
                         {h.snippet.replace(/<\/?b>/g, "")}
                       </div>
                       <Link href={`/knowledge/${h.libraryId}?doc=${h.knowledgeDocumentId}&page=${h.page}`}
-                        className="inline-flex items-center gap-1 text-[11px] font-black text-violet-700 hover:text-violet-600 mt-1">
+                        className="inline-flex items-center gap-1 text-[11px] font-black text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] mt-1">
                         Open at page {h.page} <ArrowUpRight className="w-3 h-3" />
                       </Link>
                     </div>

@@ -40,6 +40,7 @@ export default function EditOverlapBanner({
   const [rows, setRows] = useState<OverlapRow[]>([]);
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [nudged, setNudged] = useState<Set<string>>(new Set());
+  const [nudgeErr, setNudgeErr] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!orgId || !currentUserId) return;
@@ -75,6 +76,7 @@ export default function EditOverlapBanner({
   }, [orgId, currentUserId, onlyMine]);
 
   const visible = rows.filter((r) => !dismissed.has(r.documentId));
+  // Nothing overlapping: nothing to say (this sits inside the library page).
   if (visible.length === 0) return null;
 
   const sendHeadsUp = async (row: OverlapRow) => {
@@ -94,7 +96,11 @@ export default function EditOverlapBanner({
         resourceId: row.documentId,
       });
       setNudged((prev) => new Set(prev).add(row.documentId));
-    } catch { /* best-effort */ }
+      setNudgeErr((prev) => { const n = new Set(prev); n.delete(row.documentId); return n; });
+    } catch {
+      // Say so on the row; the button stays so it can be tried again.
+      setNudgeErr((prev) => new Set(prev).add(row.documentId));
+    }
   };
 
   return (
@@ -107,9 +113,9 @@ export default function EditOverlapBanner({
         return (
           <div
             key={row.documentId}
-            className="flex items-start gap-2.5 px-3.5 py-2.5 rounded-xl border border-amber-300 bg-amber-50 text-amber-900"
+            className="flex items-start gap-2.5 pl-3 py-1 border-l-2 border-amber-500 text-amber-800 dark:text-amber-300"
           >
-            <Users className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" />
+            <Users className="w-4 h-4 mt-0.5 shrink-0" />
             <div className="flex-1 min-w-0 text-xs leading-relaxed">
               <b>{row.documentLabel}:</b>{" "}
               {onlyMine ? (
@@ -117,15 +123,16 @@ export default function EditOverlapBanner({
               ) : (
                 <><b>{[...new Set(row.intents.map((i) => i.userName || "someone"))].join(", ")}</b> all have active edit work on this document</>
               )}
-              {" "}({sourcesByUser.join("; ")}). Coordinate now - publishing from diverged bases will stop with a conflict.
+              {" "}({sourcesByUser.join("; ")}). Talk now: the second one to publish will be stopped.
+              {nudgeErr.has(row.documentId) && <span className="block text-rose-700 dark:text-rose-300 font-bold">The heads-up didn&apos;t send. Try again.</span>}
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
               {nudged.has(row.documentId) ? (
-                <span className="text-[11px] font-bold text-emerald-700">Heads-up sent ✓</span>
+                <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400">Heads-up sent</span>
               ) : (
                 <button
                   onClick={() => void sendHeadsUp(row)}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold border border-amber-400 hover:bg-amber-100"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                   title="Send an in-app heads-up to everyone involved"
                 >
                   <BellRing className="w-3 h-3" /> Send heads-up
@@ -133,8 +140,9 @@ export default function EditOverlapBanner({
               )}
               <button
                 onClick={() => setDismissed((prev) => new Set(prev).add(row.documentId))}
-                className="p-1 rounded-md hover:bg-amber-100"
+                className="p-1 rounded-md text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                 title="Dismiss for now"
+                aria-label="Dismiss"
               >
                 <X className="w-3.5 h-3.5" />
               </button>

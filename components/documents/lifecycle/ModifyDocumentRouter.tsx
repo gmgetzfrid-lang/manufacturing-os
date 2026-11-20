@@ -24,6 +24,7 @@ import MergeWizard from "@/components/documents/lifecycle/MergeWizard";
 import RenumberModal from "@/components/documents/lifecycle/RenumberModal";
 import SetRevUpModal from "@/components/documents/lifecycle/SetRevUpModal";
 import FirstRunHint from "@/components/ui/FirstRunHint";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
 interface ModifyDocumentRouterProps {
   isOpen: boolean;
@@ -50,6 +51,8 @@ type Choice =
   | "set_rev_up";
 
 export default function ModifyDocumentRouter(props: ModifyDocumentRouterProps) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => props.onClose(), props.isOpen);
   const { isOpen, onClose, doc } = props;
   const [choice, setChoice] = useState<Choice | null>(null);
 
@@ -197,7 +200,7 @@ export default function ModifyDocumentRouter(props: ModifyDocumentRouterProps) {
               {doc.documentNumber || doc.title || doc.id} · Rev {doc.rev || "-"} · {doc.status || "-"}
             </div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)]">
+          <button aria-label="Close" onClick={onClose} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)]">
             <X className="w-4 h-4" />
           </button>
         </div>

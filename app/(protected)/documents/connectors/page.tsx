@@ -118,7 +118,7 @@ export default function ConnectorChecksPage() {
       <PageHeaderBar icon={Unplug} title="Connector checks"
         subtitle={<>Every off-page connector read from the drawings, checked against the sheet it points at.</>} />
 
-      {error && <div role="alert" className="mb-3 rounded-xl border border-rose-200 bg-rose-50 dark:bg-rose-950/30 dark:border-rose-800 px-3 py-2 text-[12.5px] font-bold text-rose-800 dark:text-rose-200">The connectors could not be read: {error}</div>}
+      {error && <div role="alert" className="mb-3 text-[12.5px] font-bold border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">The connectors could not be read: {error}</div>}
       {!checks && !error && <div className="py-16 flex items-center justify-center gap-2 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Reading the connectors</div>}
 
       {checks && (

@@ -11,6 +11,7 @@ import React, { useEffect, useState } from "react";
 import { Factory, Layers, Cpu, X, Loader2, Wand2 } from "lucide-react";
 import { estatePost } from "@/lib/estate/client";
 import type { FolderMarkState, LevelMeaning, MarkKind, PlanRow } from "@/lib/estate/folderMarks";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
 type Info = { own: FolderMarkState; inherited: FolderMarkState; units: Array<{ code: string; label: string }>; types: string[]; suggestion: { kind: MarkKind; value: string; ref?: string } | null };
 
@@ -81,7 +82,7 @@ export function FolderMarkBar({ orgId, folderId, onChanged }: { orgId: string; f
       {editing === "equipment" && (
         <><input value={text} onChange={(e) => setText(e.target.value)} placeholder="Tag, e.g. H-2" className="w-20 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-[11px] font-mono" />
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (optional)" className="w-32 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-[11px]" />
-          <button disabled={busy || !text.trim()} onClick={() => void send({ kind: "equipment", tag: text, name })} className="rounded bg-emerald-600 text-white px-2 py-0.5 font-bold disabled:opacity-50">Mark</button></>
+          <button disabled={busy || !text.trim()} onClick={() => void send({ kind: "equipment", tag: text, name })} className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-0.5 font-bold disabled:opacity-50">Mark</button></>
       )}
       {editing && <button onClick={() => setEditing(null)} className="text-[var(--color-text-muted)] hover:underline">cancel</button>}
       {busy && <Loader2 className="w-3 h-3 animate-spin" />}
@@ -94,6 +95,8 @@ const MEANING: Record<LevelMeaning, string> = { area: "Operating area", type: "E
 
 /** Set a whole library up: what each level of folders means, previewed. */
 export function LibrarySetup({ orgId, libraryId, libraryName, onDone, onClose }: { orgId: string; libraryId: string; libraryName: string; onDone?: () => void; onClose: () => void }) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => onClose());
   const [levels, setLevels] = useState<LevelMeaning[]>(["area", "equipment", "skip"]);
   const [rows, setRows] = useState<PlanRow[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -127,7 +130,7 @@ export function LibrarySetup({ orgId, libraryId, libraryName, onDone, onClose }:
             <div className="text-sm font-black">Set up {libraryName} as an equipment library</div>
             <div className="text-[11px] text-[var(--color-text-muted)]">Say what each level of folders is. Everything filed underneath inherits it.</div>
           </div>
-          <button onClick={onClose} className="p-1 opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
+          <button aria-label="Close" onClick={onClose} className="p-1 opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
         </div>
         <div className="px-4 py-3 space-y-2 text-xs">
           {levels.map((l, i) => (
@@ -141,7 +144,7 @@ export function LibrarySetup({ orgId, libraryId, libraryName, onDone, onClose }:
           <div className="text-[11px] text-[var(--color-text-muted)]">Example: Crude Unit / H-1 Crude Heater / (inspection reports, datasheets…) is Operating area, Equipment, Nothing.</div>
           <div className="flex gap-2">
             <button onClick={() => void preview()} disabled={!!busy} className="rounded-md border border-[var(--color-border)] px-3 py-1 font-bold disabled:opacity-50">Preview</button>
-            {rows && <button onClick={() => void apply()} disabled={!!busy || !counts || counts.area + counts.type + counts.eq === 0} className="rounded-md bg-emerald-600 text-white px-3 py-1 font-bold disabled:opacity-50">Apply</button>}
+            {rows && <button onClick={() => void apply()} disabled={!!busy || !counts || counts.area + counts.type + counts.eq === 0} className="rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1 font-bold disabled:opacity-50">Apply</button>}
             {busy && <span className="inline-flex items-center gap-1 text-[var(--color-text-muted)]"><Loader2 className="w-3 h-3 animate-spin" /> {busy}</span>}
           </div>
           {error && <div className="text-red-700">{error}</div>}

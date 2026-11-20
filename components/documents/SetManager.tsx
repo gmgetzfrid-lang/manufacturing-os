@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { DocumentSet, DocumentRecord } from '@/types/schema';
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
 interface SetManagerProps {
   isOpen: boolean;
@@ -17,6 +18,8 @@ interface SetManagerProps {
 }
 
 export default function SetManager({ isOpen, onClose, libraryId }: SetManagerProps) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => onClose(), isOpen);
   // Data State
   const { showToast } = useToast();
   const [sets, setSets] = useState<DocumentSet[]>([]);
@@ -74,10 +77,11 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
   const handleCreateSet = async () => {
     if (!inputValue) return;
     try {
-      await supabase.from('document_sets').insert({
+      const { error: insErr } = await supabase.from('document_sets').insert({
         title: inputValue, library_id: libraryId,
         current_set_rev: '0', sheet_count: 0, asset_index: {},
       });
+      if (insErr) throw insErr;
       setInputValue('');
       setMode('list');
       fetchSets();
@@ -107,10 +111,12 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
     try {
       const newSheetNum = setSetDocs.length + 1;
       const newCount = (activeSet.sheetCount || 0) + 1;
-      await supabase.from('documents').update({
+      const { error: docErr } = await supabase.from('documents').update({
         set_id: activeSet.id, sheet_number: newSheetNum, sheet_total: newCount,
       }).eq('id', docRecord.id);
-      await supabase.from('document_sets').update({ sheet_count: newCount }).eq('id', activeSet.id);
+      if (docErr) throw docErr;
+      const { error: setErr } = await supabase.from('document_sets').update({ sheet_count: newCount }).eq('id', activeSet.id);
+      if (setErr) throw setErr;
       setActiveSet({ ...activeSet, sheetCount: newCount });
       setSetDocs(prev => [...prev, { ...docRecord, sheetNumber: newSheetNum }]);
       setSearchTerm('');
@@ -123,9 +129,10 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
   const removeFromSet = async (docRecord: DocumentRecord) => {
     if (!activeSet || !docRecord.id) return;
     try {
-      await supabase.from('documents').update({
+      const { error: rmErr } = await supabase.from('documents').update({
         set_id: null, sheet_number: null, sheet_total: null,
       }).eq('id', docRecord.id);
+      if (rmErr) throw rmErr;
       setSetDocs(prev => prev.filter(d => d.id !== docRecord.id));
     } catch { showToast({ type: "error", title: "Remove failed" }); }
   };
@@ -145,7 +152,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
               <p className="text-xs text-[var(--color-text-muted)] font-medium">Manage Document Sets & P&ID Packs</p>
             </div>
           </div>
-          <button onClick={onClose}><X className="w-5 h-5 text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]" /></button>
+          <button aria-label="Close" onClick={onClose}><X className="w-5 h-5 text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]" /></button>
         </div>
 
         <div className="flex flex-1 overflow-hidden">

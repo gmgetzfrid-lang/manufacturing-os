@@ -15,6 +15,7 @@ import {
   type LibraryView, type ViewFilterConfig, type ViewSortConfig, type ViewDisplayConfig,
 } from "@/lib/libraryViews";
 import { appConfirm } from "@/components/providers/DialogProvider";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
 interface ViewSelectorProps {
   orgId: string;
@@ -183,6 +184,8 @@ function SaveViewModal({
   filterConfig: ViewFilterConfig; sortConfig: ViewSortConfig; displayConfig: ViewDisplayConfig;
   onClose: () => void; onSaved: () => void;
 }) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => onClose());
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [scope, setScope] = useState<"org" | "user">(isAdmin ? "org" : "user");
@@ -212,7 +215,7 @@ function SaveViewModal({
           <div className="text-sm font-black text-[var(--color-text)] flex items-center gap-2">
             <Save className="w-4 h-4 text-[var(--color-text-muted)]" /> Save current view
           </div>
-          <button onClick={onClose} disabled={busy} className="p-1.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+          <button aria-label="Close" onClick={onClose} disabled={busy} className="p-1.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -242,7 +245,7 @@ function SaveViewModal({
             <input type="checkbox" checked={isDefault} onChange={(e) => setIsDefault(e.target.checked)} />
             Set as default {scope === "org" ? "for the team" : "for me"}
           </label>
-          {error && <div className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded p-2">{error}</div>}
+          {error && <div className="text-[11px] border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">{error}</div>}
         </div>
         <div className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>

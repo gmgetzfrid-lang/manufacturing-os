@@ -7,6 +7,8 @@ import React, { useState } from "react";
 import { X, Hash, Loader2, AlertTriangle, Check } from "lucide-react";
 import { renumberDocument } from "@/lib/documentLifecycle";
 import type { DocumentRecord } from "@/types/schema";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
+import { useDraft } from "@/hooks/useDraft";
 
 interface RenumberModalProps {
   doc: DocumentRecord;
@@ -19,9 +21,13 @@ interface RenumberModalProps {
 }
 
 export default function RenumberModal(props: RenumberModalProps) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => props.onCancel());
   const { doc, orgId, actorUserId, actorEmail, actorRole, onCancel, onSuccess } = props;
   const [newNumber, setNewNumber] = useState(doc.documentNumber ?? "");
   const [reason, setReason] = useState("");
+  // Typed words are kept on this device until this goes through.
+  useDraft<string>(doc.id ? `renumber:${doc.id}` : null, reason, setReason, (v) => !v.trim());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,6 +45,7 @@ export default function RenumberModal(props: RenumberModalProps) {
         doc, newDocumentNumber: newNumber, reason,
         orgId, actorUserId, actorEmail, actorRole,
       });
+      setReason("");
       onSuccess();
     } catch (e) {
       setError((e as Error).message);
@@ -58,7 +65,7 @@ export default function RenumberModal(props: RenumberModalProps) {
               <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">Existing revisions and history are preserved.</div>
             </div>
           </div>
-          <button type="button" onClick={onCancel} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)]">
+          <button aria-label="Close" type="button" onClick={onCancel} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)]">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -98,7 +105,7 @@ export default function RenumberModal(props: RenumberModalProps) {
           </label>
 
           {error && (
-            <div className="flex items-start gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2.5 py-1.5">
+            <div className="flex items-start gap-2 text-xs border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
             </div>
           )}
@@ -106,7 +113,7 @@ export default function RenumberModal(props: RenumberModalProps) {
 
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
           <button type="button" onClick={onCancel} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
-          <button type="submit" disabled={!valid || busy} className="inline-flex items-center gap-1.5 text-sm font-bold bg-slate-700 hover:bg-slate-800 text-white px-3 py-1.5 rounded disabled:opacity-40">
+          <button type="submit" disabled={!valid || busy} className="inline-flex items-center gap-1.5 text-sm font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
             Renumber
           </button>

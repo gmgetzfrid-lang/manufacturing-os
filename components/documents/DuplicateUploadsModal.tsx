@@ -12,6 +12,7 @@ import React, { useEffect, useState } from "react";
 import { Copy, Loader2, Trash2, X, CheckCircle2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { deleteDocuments } from "@/lib/libraryCollections";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
 interface Row { id: string; name: string | null; collection_id: string | null; created_at: string; size: string | null; document_number: string | null; current_version_id: string | null; original: string | null }
 interface Group { key: string; name: string; folderId: string | null; keep: Row; extras: Row[] }
@@ -25,6 +26,8 @@ export default function DuplicateUploadsModal({
   onClose: () => void;
   onDeleted: (ids: string[]) => void;
 }) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => onClose());
   const [groups, setGroups] = useState<Group[] | null>(null);
   const [empty, setEmpty] = useState<Row[]>([]);
   const [scanned, setScanned] = useState(0);
@@ -105,7 +108,7 @@ export default function DuplicateUploadsModal({
               Files uploaded more than once into the same folder, and entries whose file never attached.
             </div>
           </div>
-          <button onClick={onClose} disabled={!!running} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] disabled:opacity-40">
+          <button aria-label="Close" onClick={onClose} disabled={!!running} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] disabled:opacity-40">
             <X className="w-4 h-4" />
           </button>
         </div>

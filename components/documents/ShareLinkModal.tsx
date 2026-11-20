@@ -13,6 +13,7 @@ import {
 } from "@/lib/documentShares";
 import QrBadge from "@/components/ui/QrBadge";
 import { appConfirm } from "@/components/providers/DialogProvider";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
 interface Props {
   isOpen: boolean;
@@ -36,6 +37,8 @@ export default function ShareLinkModal({
   isOpen, onClose, orgId, documentId, documentLabel,
   createdBy, createdByName,
 }: Props) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => onClose(), isOpen);
   const [shares, setShares] = useState<DocumentShare[]>([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -89,14 +92,14 @@ export default function ShareLinkModal({
             <div className="text-sm font-black text-[var(--color-text)]">Share link</div>
             <div className="text-xs text-[var(--color-text-muted)] truncate">{documentLabel ?? documentId.slice(0, 8)}</div>
           </div>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
+          <button aria-label="Close" onClick={onClose} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
             <X className="w-4 h-4" />
           </button>
         </div>
 
         <div className="px-5 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
           {error && (
-            <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-xs text-red-800 flex items-start gap-2">
+            <div className="text-xs flex items-start gap-2 border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
             </div>
           )}
@@ -106,7 +109,7 @@ export default function ShareLinkModal({
             <input
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              placeholder="Optional note - e.g. &quot;for John at the vendor&quot;"
+              placeholder="Optional note: e.g. &quot;for John at the vendor&quot;"
               className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] text-sm"
               disabled={busy}
             />
@@ -171,8 +174,8 @@ export default function ShareLinkModal({
                             </button>
                             <button
                               onClick={() => setQrFor(qrFor === s.id ? null : s.id)}
-                              className={`p-1.5 rounded-md ${qrFor === s.id ? "bg-slate-800 text-white" : "bg-[var(--color-surface-2)] hover:bg-slate-200 text-[var(--color-text)]"}`}
-                              title="Show QR - hand the link to the person next to you"
+                              className={`p-1.5 rounded-md ${qrFor === s.id ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] hover:bg-slate-200 text-[var(--color-text)]"}`}
+                              title="Show QR: hand the link to the person next to you"
                             >
                               <QrCode className="w-3.5 h-3.5" />
                             </button>

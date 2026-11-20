@@ -176,7 +176,7 @@ export default function VersionHistoryPanel({
 
   if (error) {
     return (
-      <div className="text-xs text-red-600 px-3 py-3 bg-red-50 border border-red-200 rounded-lg">{error}</div>
+      <p role="alert" className="text-xs text-rose-700 dark:text-rose-300 border-l-2 border-rose-500 pl-3 py-1">{error}</p>
     );
   }
 
@@ -272,7 +272,7 @@ export default function VersionHistoryPanel({
                     ) : v.isBranch ? (
                       <span
                         className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded"
-                        title="Published as a branch from a stale base - never promoted to current. See the open-items queue for its reconciliation status."
+                        title="Saved as a branch from an old base. Never made current. See the open items for where it stands."
                       >
                         <ShieldAlert className="w-3 h-3" /> Branch
                       </span>
@@ -293,7 +293,7 @@ export default function VersionHistoryPanel({
                     {v.provenance === "unverified" && (
                       <span
                         className="text-[11px] font-bold text-red-700 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded"
-                        title="Published with no recorded checkout/download trail and no verified base declaration. Document Control reviews these - like QA receiving inspection."
+                        title="Published with no recorded checkout/download trail and no verified base declaration. Document Control reviews these, like QA receiving inspection."
                       >
                         ⚑ Unverified provenance
                       </span>
@@ -301,7 +301,7 @@ export default function VersionHistoryPanel({
                     {v.provenance === "session" && (
                       <span
                         className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded"
-                        title="Published from an active checkout session - full provenance."
+                        title="Published from a checkout: full record of where it came from."
                       >
                         Session
                       </span>
@@ -309,7 +309,7 @@ export default function VersionHistoryPanel({
                     {v.provenance === "external" && (
                       <span
                         className="text-[11px] font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded"
-                        title="Submitted by an outside company through a project intake link. External work enters through review (or a trusted link's own documents) - the submitting company is on the record."
+                        title="Submitted by an outside company through a project intake link. External work enters through review (or a trusted link's own documents). The submitting company is on the record."
                       >
                         External{v.createdByName ? ` · ${v.createdByName}` : ""}
                       </span>
@@ -484,12 +484,12 @@ export default function VersionHistoryPanel({
               <input
                 value={reasonDraft}
                 onChange={(e) => setReasonDraft(e.target.value)}
-                placeholder="e.g. mislabeled at upload - title block reads 38"
+                placeholder="e.g. mislabeled at upload, title block reads 38"
                 className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]"
               />
             </label>
             {labelError && (
-              <div className="mt-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5">{labelError}</div>
+              <p role="alert" className="mt-2 text-xs text-rose-700 dark:text-rose-300 border-l-2 border-rose-500 pl-2.5">{labelError}</p>
             )}
             <div className="mt-3 flex items-center justify-end gap-2">
               <button
@@ -503,7 +503,7 @@ export default function VersionHistoryPanel({
               <button
                 type="submit"
                 disabled={savingLabel || !labelDraft.trim()}
-                className="px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-50 inline-flex items-center gap-1.5"
+                className="px-3 py-1.5 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 text-xs font-bold disabled:opacity-50 inline-flex items-center gap-1.5"
               >
                 {savingLabel ? <><Loader2 className="w-3 h-3 animate-spin" /> Saving…</> : "Save correction"}
               </button>

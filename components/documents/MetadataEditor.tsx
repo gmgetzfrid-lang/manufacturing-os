@@ -5,6 +5,7 @@ import { X, Zap, Plus, FileText } from "lucide-react";
 import type { DocumentRecord, MetadataFieldDefinition, MetadataValue } from "@/types/schema";
 import CheckoutStatusCell from "./CheckoutStatusCell";
 import AssetTagChip from "@/components/assets/AssetTagChip";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
 const DOCUMENT_STATUSES = ["Draft", "Issued", "Superseded", "Void", "Archived", "Locked"];
 
@@ -88,14 +89,14 @@ function TagInput({
             <button
               type="button"
               onClick={addPill}
-              className="shrink-0 p-1.5 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] rounded-md transition-colors"
+              className="shrink-0 p-1.5 border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] rounded-md transition-colors"
             >
               <Plus className="w-3 h-3" />
             </button>
           )}
         </div>
       )}
-      {!disabled && <p className="text-[11px] text-[var(--color-text-faint)] mt-1">Enter to add - commas stay in the tag</p>}
+      {!disabled && <p className="text-[11px] text-[var(--color-text-faint)] mt-1">Enter adds it. Commas stay in the tag.</p>}
     </div>
   );
 }
@@ -137,6 +138,8 @@ export default function MetadataEditor(props: {
   onCheckout?: (doc: DocumentRecord) => void;
   onSave: (payload: MetadataEditorSavePayload) => Promise<void>;
 }) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => props.onClose(), props.isOpen);
   const { isOpen, onClose, document, columns, onSave, userRole, currentUserId, currentUserEmail, orgId, onCheckout } = props;
   // Roles that can create assets / upload photos
   const canManageAssets = userRole === "Admin" || userRole === "Manager" || userRole === "Supervisor"
@@ -330,7 +333,7 @@ export default function MetadataEditor(props: {
               </span>
             )}
           </div>
-          <button
+          <button aria-label="Close"
             onClick={onClose}
             className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] shrink-0"
           >
@@ -437,7 +440,7 @@ export default function MetadataEditor(props: {
             <button
               onClick={save}
               disabled={saving}
-              className="px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-bold hover:bg-slate-800 disabled:opacity-60"
+              className="px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-bold disabled:opacity-60"
             >
               {saving ? "Saving…" : "Save"}
             </button>

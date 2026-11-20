@@ -66,6 +66,8 @@ export default function DocumentsHomePage() {
   // to fetch. This avoids "Loading libraries..." showing up forever when the
   // useEffect bails out before calling fetchLibraries.
   const [loading, setLoading] = useState(false);
+  // "No libraries" is only true once a load has answered.
+  const [loadedOnce, setLoadedOnce] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -123,7 +125,8 @@ export default function DocumentsHomePage() {
       page_config: pageConfig,
       updated_at: new Date().toISOString(),
     }).eq("id", libId);
-    if (error) { await appAlert({ message: `Save failed: ${error.message}`, tone: "danger" }); return; }
+    // Thrown, so the customize window stays open and says it didn't save.
+    if (error) throw new Error(error.message);
     setLibraries((arr) => arr.map((l) => l._id === libId
       ? { ...l, color: v.color, icon: v.icon, coverImageUrl: v.coverImageUrl, coverTint: v.coverTint, description: v.description ?? l.description, pageConfig }
       : l));
@@ -185,9 +188,10 @@ export default function DocumentsHomePage() {
       setLibraries(visible);
     } catch (e: unknown) {
       console.error("DocumentsHomePage: failed to load libraries", e);
-      setError("Failed to load libraries. Check Supabase permissions and console errors.");
+      setError("Couldn't load the libraries.");
       setLibraries([]);
     } finally {
+      setLoadedOnce(true);
       if (!opts?.silent) setLoading(false);
     }
   };
@@ -263,17 +267,16 @@ export default function DocumentsHomePage() {
             {isController ? (
               <Link
                 href="/admin/libraries"
-                className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white shadow hover:bg-slate-800 transition"
+                className="inline-flex items-center gap-2 rounded-xl bg-[var(--color-accent)] px-4 py-2 text-sm font-bold text-[var(--color-accent-fg)] shadow hover:bg-[var(--color-accent-hover)] transition"
               >
                 <Settings className="h-4 w-4" />
                 Open Library Admin
                 <ArrowRight className="h-4 w-4" />
               </Link>
             ) : (
-              <div className="inline-flex items-center gap-2 rounded-xl bg-amber-50 px-4 py-2 text-sm font-bold text-amber-800 border border-amber-200">
-                <AlertTriangle className="h-4 w-4" />
-                Access is controlled by DocCtrl/Admin only.
-              </div>
+              <p className="border-l-2 border-amber-500 pl-3 text-sm font-bold text-amber-800 dark:text-amber-300">
+                Only Doc Control or an Admin can give access.
+              </p>
             )}
           </div>
 
@@ -282,7 +285,7 @@ export default function DocumentsHomePage() {
     </div>
   );
 
-  if (loading) {
+  if (loading || (!loadedOnce && !error && !!userEmail)) {
     return <RouteLoader label="Loading libraries…" />;
   }
 
@@ -379,7 +382,7 @@ export default function DocumentsHomePage() {
                 className="pl-9 pr-8 h-10 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/30 focus:border-[var(--color-accent)] w-full"
               />
               {search && (
-                <button type="button" onClick={() => setSearch("")} title="Clear the search"
+                <button aria-label="Clear search" type="button" onClick={() => setSearch("")} title="Clear the search"
                   className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
                   <X className="w-3.5 h-3.5" />
                 </button>
@@ -400,13 +403,13 @@ export default function DocumentsHomePage() {
         </div>
 
         {error && (
-          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+          <div role="alert" className="mb-4 border-l-2 border-rose-500 pl-3 text-sm text-rose-700 dark:text-rose-300">
             <div className="flex items-center gap-2 font-bold">
               <AlertTriangle className="h-4 w-4" />
               {error}
             </div>
-            <div className="mt-2 text-xs text-red-700">
-              If this keeps happening, ask your Admin to check that your membership is active for this workspace.
+            <div className="mt-1 text-xs">
+              Refresh to try again. If it keeps happening, ask an Admin to check your access to this workspace.
             </div>
           </div>
         )}
@@ -494,7 +497,7 @@ function LibraryAdminMenu({
       <button
         onClick={(e) => { e.stopPropagation(); onToggle(); }}
         title="Library admin"
-        className={`p-1.5 rounded-md transition-colors ${open ? "bg-slate-900 text-white" : "text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}
+        className={`p-1.5 rounded-md transition-colors ${open ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}
       >
         <MoreVertical className="w-4 h-4" />
       </button>

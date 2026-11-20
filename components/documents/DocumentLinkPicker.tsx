@@ -11,8 +11,12 @@ import { Search, Loader2, FileText, Check, X, Upload, FolderPlus, Plus, Library 
 import { supabase } from "@/lib/supabase";
 import { searchDocuments, type DocumentRow } from "@/lib/search";
 import { createDocumentWithFile } from "@/lib/revisions";
+import FileThumb from "@/components/ui/FileThumb";
+import { useFileDrag } from "@/hooks/useFileDrag";
+import { tryUpload } from "@/lib/uploadRetry";
 import { createFolder, createLibrary, listLibraryFoldersOnce, type PickerFolder } from "@/lib/libraryCollections";
 import { appPrompt, appAlert } from "@/components/providers/DialogProvider";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
 export default function DocumentLinkPicker({ orgId, userId, canManage = false, excludeIds = [], onPick, onClose }: {
   orgId: string;
@@ -22,6 +26,8 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
   onPick: (documentId: string) => void | Promise<void>;
   onClose: () => void;
 }) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => onClose());
   const [tab, setTab] = useState<"browse" | "upload">("browse");
   const [libraries, setLibraries] = useState<{ id: string; name: string }[]>([]);
 
@@ -56,6 +62,7 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
   const [folders, setFolders] = useState<PickerFolder[]>([]);
   const [folderId, setFolderId] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const pdfDrag = useFileDrag((fs) => setFile(fs[0] ?? null));
   const [docNum, setDocNum] = useState("");
   const [docTitle, setDocTitle] = useState("");
   const [creating, setCreating] = useState(false);
@@ -104,14 +111,16 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
     setCreating(true); setUpError(null);
     try {
       const folder = folders.find((f) => f.id === folderId);
-      const { documentId } = await createDocumentWithFile({
+      // Upload + create, wrapped for "Try again" with the same file. A retry
+      // can't make a second copy: the library refuses a number it already has.
+      const { documentId } = await tryUpload(file.name, () => createDocumentWithFile({
         orgId, libraryId: upLibraryId, collectionId: folderId || null,
         folderPath: folder ? folder.pathNames : undefined,
         documentNumber: docNum.trim(), title: docTitle.trim() || undefined,
         file, actorUserId: userId,
-      });
+      }), { onRetried: (r) => { void onPick(r.documentId); } });
       await onPick(documentId);
-    } catch (e) { setUpError((e as Error).message); } finally { setCreating(false); }
+    } catch (e) { setUpError(`It didn't upload: ${(e as Error).message}`); } finally { setCreating(false); }
   };
 
   const fieldCls = "text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] px-2.5 py-1.5 outline-none focus:border-[var(--color-border-strong)]";
@@ -125,7 +134,7 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
             <div className="text-sm font-bold text-[var(--color-text)]">Link a drawing</div>
             <div className="text-[11px] text-[var(--color-text-muted)]">Reference an existing document, or upload a new one</div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
+          <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
         </div>
 
         {/* Tabs */}
@@ -191,7 +200,22 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
 
             <div className="space-y-1">
               <label className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">PDF</label>
-              <input type="file" accept="application/pdf" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="block w-full text-xs text-[var(--color-text-muted)] file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-[var(--color-surface-2)] file:text-[var(--color-text)] file:text-xs file:font-bold" />
+              <label {...pdfDrag.bind} className={`flex items-center gap-3 rounded-lg border-2 border-dashed border-[var(--color-border-strong)] p-3 cursor-pointer hover:bg-[var(--color-surface-2)] ${pdfDrag.ring}`}>
+                <input type="file" accept="application/pdf" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="sr-only" />
+                {pdfDrag.over ? (
+                  <span className="text-xs font-bold text-[var(--color-text)]">{pdfDrag.say}</span>
+                ) : file ? (
+                  <>
+                    <FileThumb file={file} size={32} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-xs font-semibold text-[var(--color-text)] truncate">{file.name}</span>
+                      <span className="block text-[11px] text-[var(--color-text-muted)]">{file.size < 1024 * 1024 ? `${(file.size / 1024).toFixed(0)} KB` : `${(file.size / (1024 * 1024)).toFixed(1)} MB`} · tap to pick another</span>
+                    </span>
+                  </>
+                ) : (
+                  <span className="text-xs text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Upload className="w-3.5 h-3.5" /> Drop the PDF here, or tap to pick it</span>
+                )}
+              </label>
             </div>
 
             <div className="grid grid-cols-2 gap-2">
@@ -205,7 +229,7 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
               </div>
             </div>
 
-            {upError && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">{upError}</div>}
+            {upError && <p role="alert" className="border-l-2 border-rose-500 pl-3 text-xs text-rose-700 dark:text-rose-300">{upError}</p>}
 
             <div className="flex justify-end pt-1">
               <button onClick={createAndLink} disabled={creating || !upLibraryId || !file || !docNum.trim()} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-xs font-bold disabled:opacity-40 disabled:cursor-not-allowed">

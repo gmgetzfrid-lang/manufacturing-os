@@ -253,17 +253,24 @@ export default function CheckoutsPage() {
                   ? `asset ${overlap.assetTag}`
                   : `${overlap.level === "system" ? "system" : "unit"} ${overlap.scopeName}`;
               const names = involved.map((c) => c.userName || c.userId.slice(0, 8)).join(", ");
-              await notifyMany({
-                orgId: activeOrgId,
-                userIds: recipients,
-                actorUserId: uid ?? undefined,
-                kind: "checkout_conflict",
-                title: "Coordinate - overlapping checkout",
-                body: `${userEmail?.split("@")[0] ?? "A colleague"} flagged that you're both working on ${what} (${names}). Sync up before issuing so changes don't collide.`,
-                link: "/checkouts",
-                resourceType: "checkout",
-              });
-              showToast({ type: "success", title: "Heads-up sent", message: `Notified ${recipients.length} ${recipients.length === 1 ? "person" : "people"} to coordinate on ${what}.` });
+              // The link opens a document on the overlap, not just the list.
+              const first = involved.find((c) => c.libraryId && c.documentId);
+              try {
+                await notifyMany({
+                  orgId: activeOrgId,
+                  userIds: recipients,
+                  actorUserId: uid ?? undefined,
+                  kind: "checkout_conflict",
+                  title: "Overlapping checkouts: talk first",
+                  body: `${userEmail?.split("@")[0] ?? "A colleague"} says you're both working on ${what} (${names}). Talk before you issue so changes don't clash.`,
+                  link: first ? `/documents/${first.libraryId}?doc=${first.documentId}` : "/checkouts",
+                  resourceType: "checkout",
+                });
+              } catch (e) {
+                showToast({ type: "error", title: "The heads-up didn't send", message: (e as Error).message });
+                throw e;
+              }
+              showToast({ type: "success", title: "Heads-up sent", message: `Told ${recipients.length} ${recipients.length === 1 ? "person" : "people"} about ${what}.` });
             }}
           />
         )}
@@ -273,8 +280,8 @@ export default function CheckoutsPage() {
             <Spinner size="sm" /> Loading checkouts…
           </div>
         ) : error ? (
-          <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700 flex items-start gap-2">
-            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
+          <div role="alert" className="border-l-2 border-rose-500 pl-3 text-sm text-rose-700 dark:text-rose-300 flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> Couldn&apos;t load the checkouts: {error}
           </div>
         ) : filtered.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-12 text-center">
@@ -320,7 +327,7 @@ function ProjectGroup({ project, items }: { project: Project | null; items: Chec
                   <span className="px-1.5 py-0.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] font-mono">{project.status}</span>
                 </>
               ) : (
-                <span>Quick reviews - auto-release after 24h</span>
+                <span>Quick reviews: auto-release after 24h</span>
               )}
             </div>
           </div>
@@ -368,7 +375,7 @@ function CheckoutRow({ row, showProject }: { row: CheckoutWithContext; showProje
               <Clock className="w-3 h-3" />since {formatRelative(row.startedAt)}
             </span>
             {isStale && (
-              <span className="inline-flex items-center gap-1 text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+              <span className="inline-flex items-center gap-1 font-bold text-amber-700 dark:text-amber-400">
                 <AlarmClock className="w-3 h-3" /> Past expected release
               </span>
             )}
@@ -389,8 +396,9 @@ function CheckoutRow({ row, showProject }: { row: CheckoutWithContext; showProje
         </div>
         <Link
           href={`/documents/${row.libraryId}?doc=${row.documentId}`}
-          className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-amber-700 hover:bg-amber-50 transition-colors"
+          className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
           title="Open document"
+          aria-label="Open document"
         >
           <ExternalLink className="w-3.5 h-3.5" />
         </Link>
@@ -437,30 +445,26 @@ function ConsolidationPanel({
   const checkoutById = new Map(checkouts.map((c) => [c.id ?? "", c]));
 
   return (
-    <div className="bg-amber-50 border border-amber-200 rounded-2xl mb-6 overflow-hidden">
+    <div className="border-l-2 border-amber-500 mb-6">
       <button
         onClick={onToggle}
-        className="w-full px-4 py-3 flex items-center justify-between gap-3 hover:bg-amber-100/40 transition-colors"
+        aria-expanded={isOpen}
+        className="w-full pl-3 pr-2 py-1.5 flex items-center justify-between gap-3 hover:bg-[var(--color-surface-2)] rounded-r-lg transition-colors"
       >
         <div className="flex items-center gap-2 min-w-0">
-          <Network className="w-4 h-4 text-amber-700 shrink-0" />
-          <div className="text-sm font-bold text-amber-900">
-            Coordination signals
+          <Network className="w-4 h-4 text-amber-700 dark:text-amber-400 shrink-0" />
+          <div className="text-sm font-bold text-amber-800 dark:text-amber-300">
+            Checkouts that overlap
           </div>
-          <div className="text-xs text-amber-700">
+          <div className="text-xs text-amber-700 dark:text-amber-400">
             {assetCount > 0 && <span className="mr-2">{assetCount} asset overlap{assetCount === 1 ? "" : "s"}</span>}
             {scopeCount > 0 && <span>{scopeCount} scope overlap{scopeCount === 1 ? "" : "s"}</span>}
           </div>
         </div>
-        <ChevronDown className={`w-4 h-4 text-amber-700 transition-transform ${isOpen ? "" : "-rotate-90"}`} />
+        <ChevronDown className={`w-4 h-4 text-[var(--color-text-muted)] transition-transform ${isOpen ? "" : "-rotate-90"}`} />
       </button>
       {isOpen && (
-        <div className="px-4 pb-3 space-y-2">
-          <div className="text-[11px] text-amber-800/80 -mt-1">
-            Two or more active checkouts touch the same asset or operational scope.
-            This is a heads-up to coordinate - not a block. Open each checkout to
-            see who&apos;s working on what.
-          </div>
+        <div className="pl-3 pt-1 pb-1 space-y-2">
           <div className="space-y-2">
             {overlaps.map((o, i) => (
               <OverlapCard key={i} overlap={o} checkoutById={checkoutById} onNudge={onNudge} />
@@ -489,6 +493,7 @@ function OverlapCard({
     if (nudging || nudged) return;
     setNudging(true);
     try { await onNudge(overlap, involved); setNudged(true); }
+    catch { /* onNudge already said it failed; the button stays so it can be tried again */ }
     finally { setNudging(false); }
   };
 
@@ -498,11 +503,11 @@ function OverlapCard({
       : <><Layers className="w-3 h-3" /> {overlap.level === "system" ? "System" : "Unit"} <b>{overlap.scopeName}</b></>;
 
   return (
-    <div className="bg-[var(--color-surface)] rounded-lg border border-amber-200 p-3">
+    <div className="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-3">
       <div className="flex items-center gap-2">
-        <div className="text-[11px] font-bold text-amber-900 inline-flex items-center gap-1.5 flex-1 min-w-0">
+        <div className="text-[11px] font-bold text-[var(--color-text)] inline-flex items-center gap-1.5 flex-1 min-w-0">
           {heading}
-          <span className="text-amber-700 font-normal">- {involved.length} checkout{involved.length === 1 ? "" : "s"}</span>
+          <span className="text-[var(--color-text-muted)] font-normal">, {involved.length} checkout{involved.length === 1 ? "" : "s"}</span>
         </div>
         {involved.length >= 2 && (
           <button
@@ -510,26 +515,27 @@ function OverlapCard({
             disabled={nudging || nudged}
             title="Send everyone here an in-app heads-up to coordinate"
             className={`shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold transition-colors ${
-              nudged ? "bg-emerald-100 text-emerald-700"
-                     : "bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] disabled:opacity-60"
+              nudged ? "text-emerald-700 dark:text-emerald-400"
+                     : "border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-60"
             }`}
           >
-            <Send className="w-3 h-3" /> {nudged ? "Heads-up sent" : nudging ? "Sending…" : "Nudge to coordinate"}
+            <Send className="w-3 h-3" /> {nudged ? "Heads-up sent" : nudging ? "Sending…" : "Send a heads-up"}
           </button>
         )}
       </div>
       <div className="mt-1.5 space-y-1">
         {involved.map((c) => (
           <div key={c.id} className="flex items-center gap-2 text-[11px] text-[var(--color-text)]">
-            <Lock className="w-3 h-3 text-amber-600 shrink-0" />
+            <Lock className="w-3 h-3 text-[var(--color-text-faint)] shrink-0" />
             <span className="font-mono text-[var(--color-text-muted)] shrink-0">{c.docNumber || "-"}</span>
             <span className="truncate flex-1 min-w-0">{c.docTitle || "(untitled)"}</span>
             <span className="text-[var(--color-text-muted)]">{c.userName || c.userId.slice(0, 8)}</span>
             {c.libraryId && c.documentId && (
               <Link
-                href={`/documents/${c.libraryId}`}
-                className="text-amber-700 hover:text-amber-900 inline-flex items-center gap-0.5 transition-colors"
-                title="Open in library"
+                href={`/documents/${c.libraryId}?doc=${c.documentId}`}
+                className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] inline-flex items-center gap-0.5 transition-colors"
+                title="Open the document"
+                aria-label="Open the document"
               >
                 <ExternalLink className="w-3 h-3" />
               </Link>

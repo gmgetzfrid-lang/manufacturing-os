@@ -11,6 +11,7 @@ import { useToast } from "@/components/providers/ToastProvider";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { MessageSquare, Send, Zap, HelpCircle, FileSignature, CheckCircle2, Loader2, Pencil } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { useDraft } from "@/hooks/useDraft";
 import {
   type ActivityMessage,
   type ActivityKind,
@@ -64,6 +65,9 @@ export default function ActivityThread({
   const [loading, setLoading] = useState(true);
   const [composerKind, setComposerKind] = useState<"chat" | "proposal">("chat");
   const [composer, setComposer] = useState("");
+  const [loadErr, setLoadErr] = useState<string | null>(null);
+  // A half-written message survives a reload (one draft per checkout thread).
+  useDraft<string>(typeof episodeId === "string" ? `thread:${documentId}:${episodeId}` : null, composer, setComposer, (v) => !v.trim());
   const [proposalTitle, setProposalTitle] = useState("");
   const [busy, setBusy] = useState(false);
   const [replyingTo, setReplyingTo] = useState<string | null>(null);
@@ -93,6 +97,7 @@ export default function ActivityThread({
         );
         if (!alive) return;
         setMessages(list);
+        setLoadErr(null);
         setLoading(false);
         // Defer scroll to next frame so the DOM has updated.
         requestAnimationFrame(() => {
@@ -100,7 +105,7 @@ export default function ActivityThread({
         });
       } catch (e) {
         console.error("[ActivityThread] fetch failed", e);
-        if (alive) setLoading(false);
+        if (alive) { setLoadErr((e as Error)?.message || "try again"); setLoading(false); }
       }
     };
 
@@ -173,7 +178,7 @@ export default function ActivityThread({
       appendLocal(msg);
     } catch (e) {
       console.error(e);
-      showToast({ type: "error", title: "Failed to post", message: (e as Error).message });
+      showToast({ type: "error", title: "It didn't send", message: (e as Error).message });
     } finally {
       setBusy(false);
     }
@@ -189,7 +194,7 @@ export default function ActivityThread({
       }));
     } catch (e) {
       console.error(e);
-      showToast({ type: "error", title: "Action failed", message: (e as Error).message });
+      showToast({ type: "error", title: "The question didn't send", message: (e as Error).message });
     } finally {
       setBusy(false);
     }
@@ -221,6 +226,7 @@ export default function ActivityThread({
       await resolveMessage(id, currentUserId);
     } catch (e) {
       console.error(e);
+      showToast({ type: "error", title: "Couldn't mark it resolved", message: (e as Error).message });
     }
   };
 
@@ -234,11 +240,6 @@ export default function ActivityThread({
             <span className="ml-2 text-[11px] font-bold text-[var(--color-text-faint)]">{messages.length}</span>
           )}
         </h3>
-        <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
-          {composingDisabled
-            ? "Each checkout gets its own thread. Past threads live in the checkout history."
-            : "Chat, hand-offs, proposals, and version questions for this checkout."}
-        </div>
       </div>
 
       {/* Action shortcuts */}
@@ -247,7 +248,7 @@ export default function ActivityThread({
           <button
             onClick={askLatest}
             disabled={busy}
-            className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold bg-[var(--color-surface)] border border-amber-300 text-amber-800 hover:bg-amber-50 disabled:opacity-50"
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
             title="Post a quick &ldquo;is this the latest?&rdquo; question"
           >
             <HelpCircle className="w-3 h-3" /> Is this latest?
@@ -263,10 +264,11 @@ export default function ActivityThread({
           )}
           <button
             onClick={() => setComposerKind((k) => k === "proposal" ? "chat" : "proposal")}
+            aria-pressed={composerKind === "proposal"}
             className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold border ${
               composerKind === "proposal"
-                ? "bg-emerald-100 border-emerald-400 text-emerald-900"
-                : "bg-[var(--color-surface)] border-emerald-300 text-emerald-800 hover:bg-emerald-50"
+                ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)]"
+                : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
             }`}
             title="Post a proactive proposal/draft for the team"
           >
@@ -279,12 +281,15 @@ export default function ActivityThread({
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-3 bg-slate-50/30">
         {loading ? (
           <div className="text-center text-[var(--color-text-faint)] text-xs mt-10">
-            <Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Loading…
+            <Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Loading the thread…
+          </div>
+        ) : loadErr ? (
+          <div role="alert" className="text-center text-rose-700 dark:text-rose-300 text-xs mt-10 px-4">
+            Couldn&apos;t load the thread: {loadErr}
           </div>
         ) : composingDisabled ? (
           <div className="text-center text-[var(--color-text-faint)] text-xs mt-10 px-4">
-            No active checkout. Checking the document out opens a fresh thread -
-            previous checkout conversations are in the history panel.
+            No checkout open. The next checkout starts a new thread. Past ones are in the checkout history.
           </div>
         ) : topLevel.length === 0 ? (
           <div className="text-center text-[var(--color-text-faint)] text-xs mt-10">
@@ -321,7 +326,7 @@ export default function ActivityThread({
             value={proposalTitle}
             onChange={(e) => setProposalTitle(e.target.value)}
             placeholder="Proposal title (optional)"
-            className="w-full px-3 py-1.5 rounded-md border border-emerald-200 bg-emerald-50/40 text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
+            className="w-full px-3 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-xs focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
           />
         )}
         <div className="relative">
@@ -345,16 +350,15 @@ export default function ActivityThread({
             }
             className={`w-full pl-3 pr-10 py-2 rounded-2xl border text-xs outline-none focus:ring-2 resize-none disabled:bg-[var(--color-surface-2)] disabled:cursor-not-allowed ${
               composerKind === "proposal"
-                ? "border-emerald-300 bg-emerald-50/40 focus:ring-emerald-500"
+                ? "border-[var(--color-border-strong)] bg-[var(--color-surface)] focus:ring-[var(--color-accent-ring)]"
                 : "border-[var(--color-border)] bg-[var(--color-surface-2)] focus:ring-[var(--color-accent-ring)]"
             }`}
           />
           <button
             onClick={send}
             disabled={!composer.trim() || busy || composingDisabled}
-            className={`absolute right-1.5 ${composerKind === "proposal" ? "bottom-1.5" : "top-1/2 -translate-y-1/2"} p-1.5 rounded-full text-white disabled:opacity-50 ${
-              composerKind === "proposal" ? "bg-emerald-600 hover:bg-emerald-500" : "bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]"
-            }`}
+            aria-label={composerKind === "proposal" ? "Post proposal" : "Send message"}
+            className={`absolute right-1.5 ${composerKind === "proposal" ? "bottom-1.5" : "top-1/2 -translate-y-1/2"} p-1.5 rounded-full bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 disabled:opacity-50`}
             title={composerKind === "proposal" ? "Post proposal" : "Send message"}
           >
             {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
@@ -404,8 +408,8 @@ function MessageRow({ msg, meIsAuthor, replies, onReply, onMarkResolved, isReply
   if (msg.kind === "proposal") {
     const title = (msg.metadata?.title as string | undefined) || "Proposal";
     return (
-      <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
-        <div className="text-[11px] font-black text-emerald-700 uppercase tracking-widest flex items-center gap-1 mb-1">
+      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
+        <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest flex items-center gap-1 mb-1">
           <Zap className="w-3 h-3" /> Proposal · {msg.userName}
         </div>
         <div className="text-xs font-bold text-[var(--color-text)] mb-1">{title}</div>
@@ -417,9 +421,9 @@ function MessageRow({ msg, meIsAuthor, replies, onReply, onMarkResolved, isReply
 
   if (msg.kind === "question") {
     return (
-      <div className="rounded-lg border border-amber-300 bg-amber-50 p-3">
+      <div className="rounded-lg border border-[var(--color-border)] border-l-2 border-l-amber-500 bg-[var(--color-surface)] p-3">
         <div className="flex items-center justify-between mb-1">
-          <div className="text-[11px] font-black text-amber-800 uppercase tracking-widest flex items-center gap-1">
+          <div className="text-[11px] font-black text-amber-800 dark:text-amber-300 uppercase tracking-widest flex items-center gap-1">
             <HelpCircle className="w-3 h-3" /> Question · {msg.userName}
           </div>
           {msg.resolvedAt ? (
@@ -427,14 +431,14 @@ function MessageRow({ msg, meIsAuthor, replies, onReply, onMarkResolved, isReply
               <CheckCircle2 className="w-3 h-3" /> Resolved
             </span>
           ) : (
-            <button onClick={onMarkResolved} className="text-[11px] font-bold text-amber-700 hover:underline">
+            <button onClick={onMarkResolved} className="text-[11px] font-bold text-[var(--color-text)] hover:underline">
               Mark resolved
             </button>
           )}
         </div>
         <div className="text-xs text-[var(--color-text)]">{msg.text}</div>
         {replies.length > 0 && (
-          <div className="mt-2 space-y-1.5 border-l-2 border-amber-200 pl-3">
+          <div className="mt-2 space-y-1.5 border-l-2 border-[var(--color-border)] pl-3">
             {replies.map((r) => (
               <div key={r.id} className="text-xs">
                 <span className="font-bold text-[var(--color-text)]">{r.userName}: </span>
@@ -452,16 +456,16 @@ function MessageRow({ msg, meIsAuthor, replies, onReply, onMarkResolved, isReply
                 onKeyDown={(e) => { if (e.key === "Enter") onSendReply(); }}
                 autoFocus
                 placeholder="Reply…"
-                className="flex-1 px-2 py-1 rounded-md border border-amber-300 bg-[var(--color-surface)] text-xs"
+                className="flex-1 px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-xs"
               />
               <button
                 onClick={onSendReply}
                 disabled={!replyText.trim() || busy}
-                className="px-2 py-1 rounded-md bg-amber-600 hover:bg-amber-500 text-white text-[11px] font-bold disabled:opacity-50"
+                className="px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[11px] font-bold disabled:opacity-50"
               >Send</button>
             </div>
           ) : (
-            <button onClick={onReply} className="mt-2 text-[11px] font-bold text-amber-700 hover:underline">
+            <button onClick={onReply} className="mt-2 text-[11px] font-bold text-[var(--color-text)] hover:underline">
               Reply
             </button>
           )

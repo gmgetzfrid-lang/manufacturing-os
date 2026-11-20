@@ -16,7 +16,9 @@ import {
 } from "lucide-react";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
-import { Spinner } from "@/components/ui/Spinner";
+import LoadingBlock from "@/components/ui/LoadingBlock";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
+import { useDraft } from "@/hooks/useDraft";
 import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
 import { useRole } from "@/components/providers/RoleContext";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -35,7 +37,11 @@ export default function PackagesPage() {
   const { showToast } = useToast();
   // Scan landing: the QR on a printed cover sheet lands here with ?pkg= —
   // highlight that package so the verdict is instant.
-  const highlightId = useSearchParams().get("pkg");
+  const linkedId = useSearchParams().get("pkg");
+  // A package just made is shown the same way: outlined and scrolled to.
+  const [justMade, setJustMade] = useState<string | null>(null);
+  const highlightId = justMade ?? linkedId;
+  const [loadErr, setLoadErr] = useState<string | null>(null);
 
   const [packages, setPackages] = useState<WorkPackage[] | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -49,11 +55,26 @@ export default function PackagesPage() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<DocPick[]>([]);
   const [creating, setCreating] = useState(false);
+  // The one-line scope is kept on this device until the package is made.
+  useDraft<string>(showCreate && activeOrgId ? `package-new:${activeOrgId}` : null, description, setDescription, (v) => !v.trim());
+  useEscapeClose(() => setShowCreate(false), showCreate);
 
   const load = useCallback(async () => {
     if (!activeOrgId) return;
-    setPackages(await listWorkPackages(activeOrgId));
+    try {
+      setPackages(await listWorkPackages(activeOrgId));
+      setLoadErr(null);
+    } catch (e) {
+      setLoadErr((e as Error).message || "try again");
+      setPackages((prev) => prev ?? []);
+    }
   }, [activeOrgId]);
+
+  useEffect(() => {
+    if (!highlightId || !packages) return;
+    const el = document.querySelector(`[data-package-id="${CSS.escape(highlightId)}"]`);
+    if (el) requestAnimationFrame(() => el.scrollIntoView({ behavior: "smooth", block: "center" }));
+  }, [highlightId, packages]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -87,7 +108,7 @@ export default function PackagesPage() {
     if (picked.length === 0) return showToast({ type: "warning", title: "Add documents", message: "A package needs at least one drawing." });
     setCreating(true);
     try {
-      await createWorkPackage({
+      const newId = await createWorkPackage({
         orgId: activeOrgId,
         name,
         description,
@@ -98,7 +119,8 @@ export default function PackagesPage() {
       setShowCreate(false);
       setName(""); setDescription(""); setPicked([]); setQuery("");
       await load();
-      showToast({ type: "success", title: "Package created", message: "Revisions pinned. You'll be told the moment any drawing advances." });
+      setJustMade(newId);
+      showToast({ type: "success", title: "Package made", message: "Revisions are pinned. You'll be told when any drawing moves on." });
     } catch (e) {
       showToast({ type: "error", title: "Couldn't create package", message: (e as Error).message });
     } finally {
@@ -202,10 +224,9 @@ export default function PackagesPage() {
         icon={Package}
         title="Work Packages"
         subtitle={
-          <>
-            A job&apos;s document set with revisions pinned at assembly. If any drawing advances before
-            the job closes, the package flags itself{staleTotal > 0 && <> - <b className="text-amber-700">{staleTotal} need attention now</b></>}.
-          </>
+          staleTotal > 0
+            ? <b className="text-amber-700 dark:text-amber-400">{staleTotal} package{staleTotal === 1 ? " has" : "s have"} a drawing that moved on.</b>
+            : <>A job&apos;s drawings, pinned at their revisions. You&apos;re told when one moves on.</>
         }
         actions={
           <Button size="sm" onClick={() => setShowCreate(true)}>
@@ -214,20 +235,21 @@ export default function PackagesPage() {
         }
       />
 
+      {loadErr && (
+        <p role="alert" className="mb-3 border-l-2 border-rose-500 pl-3 text-xs text-rose-700 dark:text-rose-300">Couldn&apos;t load the packages: {loadErr}</p>
+      )}
       {packages === null ? (
-        <div className="py-16 flex justify-center"><Spinner /></div>
+        <LoadingBlock what="the work packages" rows={4} />
       ) : packages.length === 0 ? (
+        loadErr ? null : (
         <div className="py-16 text-center">
           <Package className="w-10 h-10 mx-auto text-[var(--color-text-faint)] opacity-40 mb-3" />
           <div className="text-sm font-bold text-[var(--color-text)]">No work packages yet</div>
           <p className="text-xs text-[var(--color-text-muted)] mt-1 max-w-sm mx-auto">
-            Bundle the drawings for a job - a pump swap, a tie-in, a turnaround task. The package
-            watches every revision so a stale print never reaches the field.
+            Use New package to bundle the drawings for a job.
           </p>
-          <Button size="sm" className="mt-4" onClick={() => setShowCreate(true)}>
-            <Plus className="w-3.5 h-3.5" /> Create the first one
-          </Button>
         </div>
+        )
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {packages.map((pkg) => {
@@ -235,11 +257,12 @@ export default function PackagesPage() {
             return (
               <div
                 key={pkg.id}
-                className={`rounded-2xl border-2 overflow-hidden transition-shadow hover:shadow-md ${
-                  stale ? "border-amber-300 bg-amber-50/40" : "border-[var(--color-border)] bg-[var(--color-surface)]"
-                } ${highlightId === pkg.id ? "ring-4 ring-[var(--color-border-strong)] animate-in zoom-in-95" : ""}`}
+                data-package-id={pkg.id}
+                className={`rounded-2xl border overflow-hidden transition-shadow hover:shadow-md bg-[var(--color-surface)] scroll-mt-24 ${
+                  highlightId === pkg.id ? "border-[var(--color-text)] ring-2 ring-[var(--color-text)]" : "border-[var(--color-border)]"
+                }`}
               >
-                <div className={`px-4 py-3 flex items-center gap-2 border-b ${stale ? "border-amber-200 bg-amber-100/50" : "border-[var(--color-border)]"}`}>
+                <div className={`px-4 py-3 flex items-center gap-2 border-b border-[var(--color-border)] ${stale ? "border-l-2 border-l-amber-500" : ""}`}>
                   {stale
                     ? <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
                     : <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />}
@@ -249,10 +272,10 @@ export default function PackagesPage() {
                       {pkg.ownerName || "-"} · {new Date(pkg.createdAt).toLocaleDateString()} · {pkg.docs.length} doc{pkg.docs.length === 1 ? "" : "s"}
                     </div>
                   </div>
-                  <span className={`shrink-0 text-[11px] font-black uppercase tracking-wide px-2 py-0.5 rounded-full ${
-                    stale ? "bg-amber-500 text-white" : "bg-emerald-100 text-emerald-700"
+                  <span className={`shrink-0 text-[11px] font-black uppercase tracking-wide ${
+                    stale ? "text-amber-700 dark:text-amber-400" : "text-emerald-700 dark:text-emerald-400"
                   }`}>
-                    {stale ? `Stale · ${pkg.staleCount}` : "Fresh"}
+                    {stale ? `${pkg.staleCount} moved on` : "Current"}
                   </span>
                 </div>
 
@@ -263,11 +286,11 @@ export default function PackagesPage() {
                       href={d.libraryId ? `/documents/${d.libraryId}?doc=${d.documentId}` : "#"}
                       className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] group"
                     >
-                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${d.drifted ? "bg-amber-500 animate-pulse" : "bg-emerald-400"}`} />
+                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${d.drifted ? "bg-amber-500" : "bg-[var(--color-border-strong)]"}`} />
                       <span className="text-xs font-bold text-[var(--color-text)] group-hover:text-[var(--color-text)] truncate flex-1">{d.docLabel}</span>
                       {d.drifted ? (
-                        <span className="text-[11px] font-bold text-amber-700 shrink-0">
-                          pinned Rev {d.pinnedRevLabel ?? "?"} → now Rev {d.currentRev ?? "?"}
+                        <span className="text-[11px] font-bold text-amber-700 dark:text-amber-400 shrink-0">
+                          pinned Rev {d.pinnedRevLabel ?? "?"}, now Rev {d.currentRev ?? "?"}
                         </span>
                       ) : (
                         <span className="text-[11px] text-[var(--color-text-faint)] shrink-0">Rev {d.pinnedRevLabel ?? "-"}</span>
@@ -283,8 +306,8 @@ export default function PackagesPage() {
                   <button
                     onClick={() => void handlePrintPack(pkg)}
                     disabled={printing === pkg.id}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
-                    title="One PDF: cover sheet (contents + scan-before-starting QR) + every drawing at its current revision, stamped. Pins refresh to match."
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                    title="One PDF: a cover sheet with a scan code, then every drawing at its current revision, stamped. The pins move to match."
                   >
                     {printing === pkg.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Printer className="w-3 h-3" />}
                     Print pack
@@ -293,8 +316,8 @@ export default function PackagesPage() {
                     <button
                       onClick={() => void handleRefresh(pkg)}
                       disabled={busyId === pkg.id}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-white bg-amber-600 hover:bg-amber-500 disabled:opacity-50"
-                      title="Move every pin to the current revision - do this AFTER reviewing what changed"
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                      title="Move every pin to the current revision. Check what changed first."
                     >
                       {busyId === pkg.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
                       Refresh pins
@@ -304,7 +327,7 @@ export default function PackagesPage() {
                     onClick={() => void handleClose(pkg)}
                     disabled={busyId === pkg.id}
                     className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-                    title="Job done - stop watching"
+                    title="Job done: stop watching"
                   >
                     <Archive className="w-3 h-3" /> Close
                   </button>
@@ -325,14 +348,14 @@ export default function PackagesPage() {
                 <div className="text-sm font-black text-[var(--color-text)]">New work package</div>
                 <div className="text-[11px] text-[var(--color-text-muted)]">Revisions are pinned as of right now.</div>
               </div>
-              <button onClick={() => setShowCreate(false)} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+              <button aria-label="Close" onClick={() => setShowCreate(false)} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
             </div>
 
             <div className="p-5 space-y-4">
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder='Job name * - e.g. "E-204 bundle swap"'
+                placeholder='Job name * (e.g. "E-204 bundle swap")'
                 autoFocus
                 className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
               />
@@ -374,7 +397,7 @@ export default function PackagesPage() {
                       <div key={p.id} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[var(--color-surface-2)] text-xs">
                         <span className="font-bold text-[var(--color-text)] flex-1 truncate">{p.label}</span>
                         <span className="text-[11px] text-[var(--color-text-faint)]">pins Rev {p.rev ?? "-"}</span>
-                        <button onClick={() => setPicked((prev) => prev.filter((x) => x.id !== p.id))} className="p-0.5 rounded hover:bg-[var(--color-surface)]">
+                        <button aria-label="Remove" onClick={() => setPicked((prev) => prev.filter((x) => x.id !== p.id))} className="p-0.5 rounded hover:bg-[var(--color-surface)]">
                           <X className="w-3 h-3 text-[var(--color-text-faint)]" />
                         </button>
                       </div>
@@ -392,7 +415,7 @@ export default function PackagesPage() {
                 className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
               >
                 {creating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Package className="w-3.5 h-3.5" />}
-                Create & start watching
+                Make the package
               </button>
             </div>
           </div>

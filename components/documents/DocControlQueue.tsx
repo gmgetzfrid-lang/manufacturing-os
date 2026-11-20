@@ -18,6 +18,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { GitBranch, Flag, KeyRound, Check, Loader2, AlertTriangle } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { useDraft } from "@/hooks/useDraft";
 import { listOpenBranchesForOrg, resolveBranch, type RevisionBranch } from "@/lib/branches";
 
 const STALE_DAYS = 14;
@@ -66,6 +67,8 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
   const [busyId, setBusyId] = useState<string | null>(null);
   const [resolveFor, setResolveFor] = useState<string | null>(null);
   const [resolveNote, setResolveNote] = useState("");
+  // The resolution note is kept on this device until it's on the record.
+  useDraft<string>(resolveFor ? `branch-resolve:${resolveFor}` : null, resolveNote, setResolveNote, (v) => !v.trim());
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -212,8 +215,9 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
 
   const handleVerify = async (rev: UnverifiedRev) => {
     setBusyId(rev.id);
+    setError(null);
     try {
-      await supabase
+      const { error: vErr } = await supabase
         .from("document_versions")
         .update({
           provenance: "declared",
@@ -221,6 +225,7 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
           provenance_verified_by: currentUser.email?.split("@")[0] || currentUser.uid,
         })
         .eq("id", rev.id);
+      if (vErr) setError(`Couldn't mark it checked: ${vErr.message}`);
       await load();
     } finally {
       setBusyId(null);
@@ -229,8 +234,9 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
 
   const handleResolveDeletion = async (req: DeletionRequest) => {
     setBusyId(req.auditId);
+    setError(null);
     try {
-      await supabase.from("audit_logs").insert({
+      const { error: rErr } = await supabase.from("audit_logs").insert({
         action: "DELETION_REQUEST_RESOLVED",
         resource_id: req.documentId,
         resource_type: "document",
@@ -239,6 +245,7 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
         user_email: currentUser.email,
         details: { requestAuditId: req.auditId },
       });
+      if (rErr) setError(`Couldn't close the request: ${rErr.message}`);
       await load();
     } finally {
       setBusyId(null);
@@ -266,7 +273,7 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
         {branches.map((b) => {
           const meta = docLabels.get(b.documentId);
           return (
-            <div key={b.id} className="rounded-xl border border-[var(--color-border)] bg-white p-3">
+            <div key={b.id} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
               <div className="flex items-start gap-2">
                 <GitBranch className="w-4 h-4 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
                 <div className="flex-1 min-w-0 text-xs">
@@ -321,7 +328,7 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
 
         {/* Unverified provenance */}
         {unverified.map((rev) => (
-          <div key={rev.id} className="rounded-xl border border-red-200 bg-white p-3 flex items-start gap-2">
+          <div key={rev.id} className="rounded-xl border border-red-200 bg-[var(--color-surface)] p-3 flex items-start gap-2">
             <Flag className="w-4 h-4 mt-0.5 text-red-600 shrink-0" />
             <div className="flex-1 min-w-0 text-xs">
               <b>Rev {rev.revisionLabel}</b> of{" "}
@@ -349,7 +356,7 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
         {stale.map((s) => {
           const days = Math.floor((Date.now() - Date.parse(s.startedAt)) / 86400000);
           return (
-            <div key={s.sessionId} className="rounded-xl border border-amber-200 bg-white p-3 flex items-start gap-2">
+            <div key={s.sessionId} className="rounded-xl border border-amber-200 bg-[var(--color-surface)] p-3 flex items-start gap-2">
               <KeyRound className="w-4 h-4 mt-0.5 text-amber-600 shrink-0" />
               <div className="flex-1 min-w-0 text-xs">
                 <Link href={docLink(s.documentId, s.libraryId)} className="font-bold text-[var(--color-accent)] hover:underline">
@@ -367,7 +374,7 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
 
         {/* Deletion requests — durable queue, not just a dismissible bell. */}
         {deletionRequests.map((req) => (
-          <div key={req.auditId} className="rounded-xl border border-rose-200 bg-white p-3 flex items-start gap-2">
+          <div key={req.auditId} className="rounded-xl border border-rose-200 bg-[var(--color-surface)] p-3 flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 mt-0.5 text-rose-600 shrink-0" />
             <div className="flex-1 min-w-0 text-xs">
               <Link href={docLink(req.documentId, req.libraryId)} className="font-bold text-[var(--color-accent)] hover:underline">

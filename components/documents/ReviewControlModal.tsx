@@ -14,6 +14,7 @@ import { setDocClass as saveDocClass, type DocClass } from "@/lib/docClass";
 import { appAlert } from "@/components/providers/DialogProvider";
 import { listTeams, type Team } from "@/lib/teams";
 import { ALL_ROLES, type ReviewControl, type ReviewControlMode, type Role } from "@/types/schema";
+import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
 const MODES: { value: ReviewControlMode; label: string; hint: string }[] = [
   { value: "none", label: "No gate", hint: "Publish directly (drawings whose review is handled by the drafting workflow, or simple libraries)." },
@@ -47,7 +48,7 @@ function PickRow({ orgId, label, people, setPeople, roles, setRoles, allTeams, t
       <div className="text-[11px] font-bold text-[var(--color-text-muted)]">{label}</div>
       <div className="flex flex-wrap gap-1">
         {people.map((p) => (
-          <span key={p.uid} className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-[11px] text-[var(--color-text)]">{p.name || p.email}<button onClick={() => setPeople(people.filter((x) => x.uid !== p.uid))}><X className="w-3 h-3" /></button></span>
+          <span key={p.uid} className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-[11px] text-[var(--color-text)]">{p.name || p.email}<button aria-label="Remove" onClick={() => setPeople(people.filter((x) => x.uid !== p.uid))}><X className="w-3 h-3" /></button></span>
         ))}
       </div>
       <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search people…" className={`${inp} w-full`} />
@@ -88,6 +89,8 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
   onClose: () => void;
   onSaved?: () => void;
 }) {
+  // Escape closes this dialog (only the top one when they stack).
+  useEscapeClose(() => onClose());
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [existing, setExisting] = useState<ReviewControl | null>(null);
@@ -172,7 +175,7 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
         try {
           await saveDocClass({ level, id, docClass: docClass === "inherit" ? null : docClass });
         } catch (e) {
-          void appAlert({ title: "Review policy saved - document class was not", message: (e as Error).message });
+          void appAlert({ title: "Review policy saved: document class was not", message: (e as Error).message });
         }
       }
       onSaved?.(); onClose();
@@ -196,7 +199,7 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
             <div className="text-sm font-bold text-[var(--color-text)]">Pre-publish review</div>
             <div className="text-[11px] text-[var(--color-text-muted)] truncate">Change-control for this {scopeLabel}{name ? ` · ${name}` : ""}</div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
+          <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
         </div>
 
         {loading ? (

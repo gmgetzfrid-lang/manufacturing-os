@@ -42,6 +42,8 @@ import { bakeMarkupIntoPdf } from "@/lib/markupExport";
 import { stashDraft, type DraftHandoffFile } from "@/lib/draftHandoff";
 import { appAlert } from "@/components/providers/DialogProvider";
 import { useRouter } from "next/navigation";
+import { badgeText } from "@/lib/badge";
+import { escapeStackBusy } from "@/components/documents/useEscapeClose";
 
 // Same self-hosted worker the single viewer uses (copied to /public on prebuild).
 pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
@@ -616,13 +618,19 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      if (e.key === "Escape") { if (document.fullscreenElement) return; onClose(); }
+      if (e.key === "Escape") {
+        if (document.fullscreenElement) return;
+        // A dialog over the viewer (stamp confirm, bulk checkout) closes first.
+        if (downloadConfirm) { setDownloadConfirm(null); return; }
+        if (escapeStackBusy()) return;
+        onClose();
+      }
       if (e.key === "ArrowRight" || e.key === "ArrowDown") step(1);
       if (e.key === "ArrowLeft" || e.key === "ArrowUp") step(-1);
       if (e.key === "f" || e.key === "F") void toggleFullscreen();
       if (e.key === "b" || e.key === "B") setSidebarOpen((v) => !v);
     },
-    [onClose, step, toggleFullscreen]
+    [onClose, step, toggleFullscreen, downloadConfirm]
   );
 
   useEffect(() => {
@@ -910,9 +918,9 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
       {/* ── THUMBNAIL RAIL (push panel; never overlaps the page) ── */}
       <div className={`${sidebarOpen ? "w-52" : "w-0"} shrink-0 bg-slate-900 border-r border-slate-800 overflow-hidden transition-[width] duration-200 flex flex-col`}>
         <div className="px-3 py-2.5 border-b border-slate-800 flex items-center gap-2 shrink-0">
-          <BookOpen className="w-4 h-4 text-orange-400 shrink-0" />
+          <BookOpen className="w-4 h-4 text-slate-400 shrink-0" />
           <span className="text-sm font-bold text-white truncate">Reference Book</span>
-          <span className="text-[11px] font-black bg-orange-500 text-white px-1.5 py-0.5 rounded-full">{docs.length}</span>
+          <span className="text-[11px] font-black bg-slate-700 text-white px-1.5 py-0.5 rounded-full">{badgeText(docs.length)}</span>
           <button onClick={() => setSidebarOpen(false)} className="ml-auto p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800" title="Hide thumbnails (B)"><PanelLeftClose className="w-4 h-4" /></button>
         </div>
         {/* Focus controls — review just the sheets you pin. */}
@@ -921,7 +929,8 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
             onClick={toggleFocus}
             disabled={picked.size === 0}
             title={picked.size === 0 ? "Pin sheets below, then focus on just those" : focusActive ? "Show all sheets" : "Show only your pinned sheets"}
-            className={`flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] font-bold transition-colors disabled:opacity-40 ${focusActive ? "bg-orange-600 text-white" : "bg-slate-800 text-slate-300 hover:text-white"}`}
+            className={`flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] font-bold transition-colors disabled:opacity-40 ${focusActive ? "bg-white text-slate-900" : "bg-slate-800 text-slate-300 hover:text-white"}`}
+            aria-pressed={focusActive}
           >
             <Layers className="w-3.5 h-3.5" /> {focusActive ? "Focused" : "Focus"}{picked.size > 0 ? ` (${picked.size})` : ""}
           </button>
@@ -938,17 +947,17 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
             const lines = (labelColumns && labelColumns.length ? labelColumns : [{ key: "documentNumber", label: "" }, { key: "title", label: "" }])
               .slice(0, 2).map((c) => cellText(entry.doc, c.key)).filter(Boolean);
             return (
-              <div key={id} className={`relative group rounded-lg overflow-hidden border-2 transition-colors ${activeIdx === idx ? "border-orange-500" : "border-slate-700 hover:border-slate-500"} ${focusActive && !isPicked ? "opacity-40" : ""}`}>
+              <div key={id} className={`relative group rounded-lg overflow-hidden border-2 transition-colors ${activeIdx === idx ? "border-white" : "border-slate-700 hover:border-slate-500"} ${focusActive && !isPicked ? "opacity-40" : ""}`}>
                 <button onClick={() => goToSheet(idx, { flash: true, addToFocus: !isVisible(idx) })} className="block w-full text-left" title={lines.join(" · ")}>
                   <PageThumb url={entry.resolvedUrl} />
                   <div className="px-2 py-1.5 bg-slate-950/90 flex items-baseline gap-2">
+                    <span className="shrink-0 text-[11px] font-black text-slate-400">{idx + 1}</span>
                     <span className="flex-1 min-w-0 text-[11px] font-mono font-bold text-slate-100 truncate">{lines[0] || `Sheet ${idx + 1}`}</span>
                     {lines[1] && <span className="shrink-0 text-[11px] font-bold text-slate-300">{lines[1]}</span>}
                   </div>
                 </button>
-                <div className="absolute top-1 left-1 w-4 h-4 rounded-full bg-orange-500 flex items-center justify-center text-[11px] font-black text-white shadow pointer-events-none">{idx + 1}</div>
-                <button onClick={() => togglePick(idx)} title={isPicked ? "Remove from focus set" : "Pin to focus set"} className={`absolute top-1 right-1 p-1 rounded-md transition-opacity ${isPicked ? "text-orange-400 bg-slate-950/70" : "text-slate-200 bg-slate-950/50 opacity-60 sm:opacity-0 group-hover:opacity-100"}`}>
-                  <Pin className={`w-3 h-3 ${isPicked ? "fill-orange-400" : ""}`} />
+                <button onClick={() => togglePick(idx)} title={isPicked ? "Remove from focus set" : "Pin to focus set"} className={`absolute top-1 right-1 p-1 rounded-md transition-opacity ${isPicked ? "text-white bg-slate-950/70" : "text-slate-200 bg-slate-950/50 opacity-60 sm:opacity-0 group-hover:opacity-100"}`} aria-pressed={isPicked} aria-label={isPicked ? "Remove from focus set" : "Pin to focus set"}>
+                  <Pin className={`w-3 h-3 ${isPicked ? "fill-white" : ""}`} />
                 </button>
               </div>
             );
@@ -963,13 +972,13 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
         {/* Spacer so the first sheet clears the floating toolbar when shown. */}
         <div className="h-12 shrink-0" />
         {entries.map((entry, idx) => (
-          <div key={entry.doc.id} ref={(el) => { sectionRefs.current[idx] = el; }} style={{ display: isVisible(idx) ? undefined : "none" }} className={`flex flex-col ${flashIdx === idx ? "ring-4 ring-orange-500/70 ring-inset" : ""}`}>
+          <div key={entry.doc.id} ref={(el) => { sectionRefs.current[idx] = el; }} style={{ display: isVisible(idx) ? undefined : "none" }} className={`flex flex-col ${flashIdx === idx ? "ring-4 ring-white/60 ring-inset" : ""}`}>
             {/* Slim, translucent per-sheet header — keeps Markup + pin reachable
                 without eating the page. Rides just below the toolbar when it's
                 shown, slides to the very top when the toolbar hides. */}
             <div className="sticky z-10 bg-slate-900/80 backdrop-blur-sm border-y border-slate-800/80 px-4 py-1.5 flex items-center gap-3 transition-[top] duration-200" style={{ top: showChrome ? 52 : 0 }}>
-              <div className="w-5 h-5 rounded-full bg-orange-500 flex items-center justify-center text-[11px] font-black text-white shrink-0">{idx + 1}</div>
-              <span className="text-[11px] font-mono font-bold text-orange-400 shrink-0">{entry.doc.documentNumber || "-"}</span>
+              <div className="w-5 h-5 rounded-full bg-slate-700 flex items-center justify-center text-[11px] font-black text-white shrink-0">{idx + 1}</div>
+              <span className="text-[11px] font-mono font-bold text-slate-100 shrink-0">{entry.doc.documentNumber || "-"}</span>
               <span className="text-[11px] text-slate-300 font-medium truncate">{entry.doc.title || entry.doc.name}</span>
               <div className="ml-auto flex items-center gap-2 shrink-0">
                 <span className="text-[11px] text-slate-500 hidden sm:inline">Rev {entry.doc.rev || "-"}</span>
@@ -980,9 +989,10 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                 <button
                   onClick={() => togglePick(idx)}
                   title={picked.has(entry.doc.id ?? "") ? "Remove from focus set" : "Add to focus set - review just the sheets you need"}
-                  className={`text-[11px] font-bold inline-flex items-center gap-1 px-2 py-0.5 rounded-md border transition-colors ${picked.has(entry.doc.id ?? "") ? "bg-orange-500/20 border-orange-500/50 text-orange-300" : "bg-slate-800 border-slate-700 text-slate-300 hover:text-white"}`}
+                  className={`text-[11px] font-bold inline-flex items-center gap-1 px-2 py-0.5 rounded-md border transition-colors ${picked.has(entry.doc.id ?? "") ? "bg-white border-white text-slate-900" : "bg-slate-800 border-slate-700 text-slate-300 hover:text-white"}`}
+                  aria-pressed={picked.has(entry.doc.id ?? "")}
                 >
-                  <Pin className={`w-3 h-3 ${picked.has(entry.doc.id ?? "") ? "fill-orange-400" : ""}`} /> {picked.has(entry.doc.id ?? "") ? "Focused" : "Focus"}
+                  <Pin className={`w-3 h-3 ${picked.has(entry.doc.id ?? "") ? "fill-slate-900" : ""}`} /> {picked.has(entry.doc.id ?? "") ? "Focused" : "Focus"}
                 </button>
               </div>
             </div>
@@ -997,7 +1007,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
               {entry.loading ? (
                 <div className="flex flex-col items-center justify-center gap-4 text-slate-500 py-20">
                   <Loader2 className="w-10 h-10 animate-spin text-[var(--color-text-muted)]" />
-                  <span className="text-sm font-mono text-orange-400/70 animate-pulse">Loading {entry.doc.documentNumber || "document"}…</span>
+                  <span className="text-sm text-slate-400">Loading {entry.doc.documentNumber || "document"}…</span>
                 </div>
               ) : entry.error || !entry.resolvedUrl ? (
                 <div className="flex flex-col items-center justify-center gap-3 text-slate-600 py-20">
@@ -1073,9 +1083,9 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
         <div className="m-2 rounded-xl bg-slate-900/90 backdrop-blur border border-slate-700/80 shadow-2xl shadow-black/40 px-2 py-1.5 flex items-center gap-2 flex-wrap md:flex-nowrap">
           <button onClick={() => setSidebarOpen((v) => !v)} className={iconBtn} title="Pages & contents (B)"><Menu className="w-4 h-4" /></button>
           <div className="hidden sm:flex items-center gap-1.5 min-w-0">
-            <BookOpen className="w-4 h-4 text-orange-400 shrink-0" />
+            <BookOpen className="w-4 h-4 text-slate-400 shrink-0" />
             <span className="text-xs font-bold text-white truncate max-w-[140px]">Reference Book</span>
-            <span className="shrink-0 text-[11px] font-black bg-orange-500 text-white px-1.5 py-0.5 rounded-full">{docs.length}</span>
+            <span className="shrink-0 text-[11px] font-black bg-slate-700 text-white px-1.5 py-0.5 rounded-full">{badgeText(docs.length)}</span>
           </div>
 
           <div className="w-px h-5 bg-slate-700 hidden sm:block" />
@@ -1089,8 +1099,8 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
 
           {/* Tag search */}
           <div className="relative min-w-0 flex-1 max-w-sm">
-            <div className="flex items-center gap-1.5 bg-slate-950/70 border border-slate-600 rounded-lg px-2.5 py-1.5 shadow-inner transition-all focus-within:border-orange-500 focus-within:ring-2 focus-within:ring-orange-500/30">
-              <Search className="w-4 h-4 text-orange-400 shrink-0" />
+            <div className="flex items-center gap-1.5 bg-slate-950/70 border border-slate-600 rounded-lg px-2.5 py-1.5 shadow-inner transition-all focus-within:border-slate-400 focus-within:ring-2 focus-within:ring-[var(--color-accent-ring)]">
+              <Search className="w-4 h-4 text-slate-400 shrink-0" />
               <input
                 ref={searchInputRef}
                 value={search}
@@ -1110,7 +1120,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                 }}
                 placeholder="Find a sheet, tag, #…"
                 className="bg-transparent text-xs font-medium text-white placeholder:text-slate-400 outline-none w-full min-w-0"
-                title="Search anything - equipment tag, sheet #, document name or any metadata. Typo-tolerant (P-34 = p34). Enter jumps; + pins a sheet to your focus set."
+                title="Search anything: equipment tag, sheet #, document name or any metadata. Typo-tolerant (P-34 = p34). Enter jumps; + pins a sheet to your focus set."
               />
               {searchMsg && <span className={`text-[11px] font-bold shrink-0 ${searchMsg === "No match" ? "text-rose-400" : "text-emerald-400"}`}>{searchMsg}</span>}
               {search ? (
@@ -1127,7 +1137,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                   const id = e?.doc.id ?? "";
                   const isPicked = picked.has(id);
                   return (
-                    <div key={r.idx} onMouseEnter={() => setSuggestIdx(i)} className={`flex items-stretch transition-colors ${i === suggestIdx ? "bg-orange-500/20" : "hover:bg-slate-800"}`}>
+                    <div key={r.idx} onMouseEnter={() => setSuggestIdx(i)} className={`flex items-stretch transition-colors ${i === suggestIdx ? "bg-slate-700" : "hover:bg-slate-800"}`}>
                       <button
                         onMouseDown={(ev) => { ev.preventDefault(); goToSheet(r.idx, { addToFocus: focusActive, flash: true }); }}
                         className="flex-1 min-w-0 text-left px-3 py-1.5"
@@ -1136,12 +1146,12 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                           <span className="font-mono font-bold text-white truncate">{e?.doc.documentNumber || `Sheet ${r.idx + 1}`}</span>
                           <span className="text-[11px] text-slate-400 truncate">{e?.doc.title || e?.doc.name}</span>
                         </div>
-                        <div className="text-[11px] text-orange-300/80 truncate">matched “{r.matched}”</div>
+                        <div className="text-[11px] text-slate-400 truncate">matched “{r.matched}”</div>
                       </button>
                       <button
                         onMouseDown={(ev) => { ev.preventDefault(); togglePick(r.idx); }}
                         title={isPicked ? "Remove from focus set" : "Add this sheet to your focus set"}
-                        className={`shrink-0 px-2.5 flex items-center border-l border-slate-800 transition-colors ${isPicked ? "text-orange-400" : "text-slate-500 hover:text-white"}`}
+                        className={`shrink-0 px-2.5 flex items-center border-l border-slate-800 transition-colors ${isPicked ? "text-white" : "text-slate-500 hover:text-white"}`}
                       >
                         {isPicked ? <Check className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
                       </button>
@@ -1155,12 +1165,12 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
           {/* Zoom / fit-width / rotate cluster */}
           <div className="hidden md:flex items-center gap-0.5 bg-slate-800/80 rounded-lg px-1 py-0.5 shrink-0">
             <button onClick={() => setZoom((z) => Math.max(0.4, Math.round((z - 0.15) * 100) / 100))} className={iconBtn} title="Zoom out"><ZoomOut className="w-4 h-4" /></button>
-            <button onClick={() => setZoom(1)} className={`${iconBtn} ${zoom === 1 ? "text-orange-300" : ""}`} title="Fit to width - reset zoom to 100%"><span className="text-[11px] font-mono w-9 text-center inline-block">{Math.round(zoom * 100)}%</span></button>
+            <button onClick={() => setZoom(1)} className={`${iconBtn} ${zoom === 1 ? "text-white" : ""}`} title="Fit to width: reset zoom to 100%"><span className="text-[11px] font-mono w-9 text-center inline-block">{Math.round(zoom * 100)}%</span></button>
             <button onClick={() => setZoom((z) => Math.min(3, Math.round((z + 0.15) * 100) / 100))} className={iconBtn} title="Zoom in (or Ctrl + scroll)"><ZoomIn className="w-4 h-4" /></button>
             <div className="w-px h-4 bg-slate-700 mx-0.5" />
             <button onClick={() => setRotation((r) => r + 90)} className={iconBtn} title="Rotate 90°"><RotateCw className="w-4 h-4" /></button>
             {!markupMode && (
-              <button onClick={() => panZoom.setPanMode((v) => !v)} className={`${iconBtn} ${panZoom.panMode ? "bg-white/10 text-orange-300" : ""}`} title={panZoom.panMode ? "Pan tool (drag to move the page) - click for the normal cursor" : "Cursor - click to switch back to the pan/grab hand"}>
+              <button onClick={() => panZoom.setPanMode((v) => !v)} className={`${iconBtn} ${panZoom.panMode ? "bg-white text-slate-900" : ""}`} title={panZoom.panMode ? "Pan tool (drag to move the page) - click for the normal cursor" : "Cursor - click to switch back to the pan/grab hand"}>
                 {panZoom.panMode ? <Hand className="w-4 h-4" /> : <MousePointer2 className="w-4 h-4" />}
               </button>
             )}
@@ -1181,7 +1191,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                         <div className="px-3 pt-2 pb-1 text-[11px] font-black uppercase tracking-widest text-slate-500">{g.label}</div>
                         <div className="flex flex-wrap gap-1 px-2 pb-2">
                           {g.tags.map(([t, idx]) => (
-                            <button key={t} onClick={() => { setTagMenuOpen(false); goToSheet(idx, { flash: true }); }} title={`Sheet ${idx + 1}`} className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-800 hover:bg-orange-600 hover:text-white text-[11px] font-bold text-slate-200 border border-slate-700 transition-colors">
+                            <button key={t} onClick={() => { setTagMenuOpen(false); goToSheet(idx, { flash: true }); }} title={`Sheet ${idx + 1}`} className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-800 hover:bg-slate-700 hover:text-white text-[11px] font-bold text-slate-200 border border-slate-700 transition-colors">
                               {t}
                             </button>
                           ))}
@@ -1195,13 +1205,13 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
           )}
 
           {/* Markup toggle — reveals the compact tools sub-bar. */}
-          <button onClick={() => setMarkupMode((v) => !v)} title="Markup - draw on the page. Discarded on close unless you download the sheet or send it to drafting." className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold shrink-0 transition-colors ${markupMode ? "bg-orange-600 text-white" : "bg-slate-800 text-slate-200 hover:bg-slate-700"}`}>
+          <button onClick={() => setMarkupMode((v) => !v)} title="Markup: draw on the page. Discarded on close unless you download the sheet or send it to drafting." className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold shrink-0 transition-colors ${markupMode ? "bg-white text-slate-900" : "bg-slate-800 text-slate-200 hover:bg-slate-700"}`} aria-pressed={markupMode}>
             <Pen className="w-3.5 h-3.5" /> <span className="hidden lg:inline">Markup</span>
           </button>
 
           {/* Focus toggle */}
           {picked.size > 0 && (
-            <button onClick={toggleFocus} title={focusActive ? "Show all sheets" : "Show only your pinned sheets"} className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold shrink-0 transition-colors ${focusActive ? "bg-orange-600 text-white" : "bg-slate-800 text-slate-200 hover:bg-slate-700"}`}>
+            <button onClick={toggleFocus} title={focusActive ? "Show all sheets" : "Show only your pinned sheets"} className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold shrink-0 transition-colors ${focusActive ? "bg-white text-slate-900" : "bg-slate-800 text-slate-200 hover:bg-slate-700"}`} aria-pressed={focusActive}>
               <Layers className="w-3.5 h-3.5" /> {focusActive ? "Focused" : "Focus"} {picked.size}
             </button>
           )}
@@ -1272,7 +1282,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
           <button onClick={() => void toggleFullscreen()} className={iconBtn} title={isFullscreen ? "Exit full screen (F)" : "Full screen (F)"}>
             {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
           </button>
-          <button onClick={onClose} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold transition-colors shrink-0" title="Close (Esc)">
+          <button aria-label="Close" onClick={onClose} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold transition-colors shrink-0" title="Close (Esc)">
             <X className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Close</span>
           </button>
         </div>
@@ -1300,7 +1310,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
           ))}
           <div className="w-px h-5 bg-slate-700 mx-0.5" />
           {[2, 4, 6].map((w) => (
-            <button key={w} onClick={() => setMarkStroke(w)} title={`Line thickness: ${w}px`} className={`${iconBtn} flex items-center justify-center ${markStroke === w ? "bg-white/10 text-orange-300" : ""}`}>
+            <button key={w} onClick={() => setMarkStroke(w)} title={`Line thickness: ${w}px`} className={`${iconBtn} flex items-center justify-center ${markStroke === w ? "bg-white text-slate-900" : ""}`}>
               <span className="rounded-full bg-current block" style={{ width: w + 3, height: w + 3 }} />
             </button>
           ))}
@@ -1342,15 +1352,16 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
       {/* Uncontrolled confirmation modal */}
       {downloadConfirm && (
         <div className="fixed inset-0 z-[120] bg-slate-900/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-6">
-          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden">
-            <div className="px-6 py-4 border-b border-slate-200 flex items-center gap-3">
-              <div className="p-2 bg-amber-100 rounded-lg"><ShieldAlert className="w-5 h-5 text-amber-700" /></div>
-              <div>
-                <div className="text-sm font-black text-slate-900">Uncontrolled Copy</div>
-                <div className="text-xs text-slate-500">{downloadConfirm.type === "book" || downloadConfirm.type === "book-print" ? "Reference books are always uncontrolled." : "You don't have this document checked out."}</div>
+          <div className="w-full max-w-md rounded-2xl bg-[var(--color-surface)] text-[var(--color-text)] shadow-2xl border border-[var(--color-border)] overflow-hidden">
+            <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
+              <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-black">This copy will be stamped uncontrolled</div>
+                <div className="text-xs text-[var(--color-text-muted)]">{downloadConfirm.type === "book" || downloadConfirm.type === "book-print" ? "Reference books are always uncontrolled." : "You don't have this document checked out."}</div>
               </div>
+              <button onClick={() => { setDownloadConfirm(null); setActionError(null); }} disabled={docBusy || bookBusy} aria-label="Close" className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
             </div>
-            <div className="px-6 py-4 text-sm text-slate-700 space-y-3">
+            <div className="px-6 py-4 text-sm text-[var(--color-text-muted)] space-y-3">
               <p>
                 {downloadConfirm.type === "book" || downloadConfirm.type === "book-print" ? (
                   <>Every page of {downloadConfirm.scope === "pinned" ? "your" : "all"} {entriesForScope(downloadConfirm.scope ?? "all").length} {downloadConfirm.scope === "pinned" ? "pinned " : ""}sheet{entriesForScope(downloadConfirm.scope ?? "all").length === 1 ? "" : "s"} will be merged into one PDF and stamped with a diagonal &quot;UNCONTROLLED - FOR REVIEW ONLY&quot; watermark plus a footer with your email and the timestamp. Every document is logged to the audit trail.</>
@@ -1358,14 +1369,14 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                   <>Every page will be stamped with a diagonal &quot;UNCONTROLLED - FOR REVIEW ONLY&quot; watermark plus a footer with your email and the timestamp. The action will be logged.</>
                 )}
               </p>
-              {actionError && <p className="text-xs text-red-600 font-mono bg-red-50 border border-red-200 rounded-lg p-2">{actionError}</p>}
+              {actionError && <p role="alert" className="text-xs text-rose-700 dark:text-rose-300 border-l-2 border-rose-500 pl-2">{actionError}</p>}
             </div>
-            <div className="px-6 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2">
-              <button onClick={() => { setDownloadConfirm(null); setActionError(null); }} disabled={docBusy || bookBusy} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-50">Cancel</button>
+            <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
+              <button onClick={() => { setDownloadConfirm(null); setActionError(null); }} disabled={docBusy || bookBusy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
               <button
                 onClick={() => { if (downloadConfirm.type === "book") void downloadBookMerged(entriesForScope(downloadConfirm.scope ?? "all")); else if (downloadConfirm.type === "book-print") void printBookMerged(entriesForScope(downloadConfirm.scope ?? "all")); else void runDocAction(downloadConfirm.type); }}
                 disabled={docBusy || bookBusy}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-60"
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60"
               >
                 {(docBusy || bookBusy) && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                 {downloadConfirm.type === "book" ? "Download stamped book" : downloadConfirm.type === "book-print" ? "Print stamped book" : downloadConfirm.type === "download" ? "Download stamped copy" : "Print stamped copy"}

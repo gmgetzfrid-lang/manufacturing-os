@@ -18,7 +18,6 @@ import RelatedPanel from "@/components/documents/RelatedPanel";
 import AiBoundaryChip from "@/components/documents/AiBoundaryChip";
 import DistributionRecall from "@/components/documents/DistributionRecall";
 import DistributionAcks from "@/components/documents/DistributionAcks";
-import HelpTooltip from "@/components/ui/HelpTooltip";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
 import ReviewSection from "@/components/documents/ReviewSection";
 import AckSection from "@/components/documents/AckSection";
@@ -289,20 +288,23 @@ export default function InspectorPanel({
   const isCheckedOut = isDocumentCheckedOut(selectedDoc);
   const checkedOutByMe = selectedDoc?.checkedOutBy === uid;
 
+  const [auditState, setAuditState] = useState<"loading" | "ready" | "failed">("loading");
   useEffect(() => {
     let alive = true;
     void (async () => {
       if (!selectedDoc?.id || !selectedDoc.orgId) {
-        if (alive) setRecentAudits([]);
+        if (alive) { setRecentAudits([]); setAuditState("ready"); }
         return;
       }
-      const { data } = await supabase
+      setAuditState("loading");
+      const { data, error: auditErr } = await supabase
         .from("audit_logs")
         .select("*")
         .eq("org_id", selectedDoc.orgId)
         .eq("resource_id", selectedDoc.id)
         .order("timestamp", { ascending: false })
         .limit(3);
+      if (alive) setAuditState(auditErr ? "failed" : "ready");
       if (alive && data) {
         setRecentAudits(data.map((r) => ({
           action: r.action,
@@ -348,21 +350,10 @@ export default function InspectorPanel({
           <span className="text-slate-300">•</span>
           <span className="text-[var(--color-text-muted)] inline-flex items-center gap-0.5">
             Rev <span className="font-bold text-[var(--color-text)]">{selectedDoc.rev || "-"}</span>
-            <HelpTooltip>
-              The current revision label - what authorized copies of this document say at the bottom right.
-              Every Rev-Up creates a new revision and immutable version row with file hash + signoffs.
-            </HelpTooltip>
           </span>
           <span className="text-slate-300">•</span>
           <span className="inline-flex items-center text-[11px] font-bold border px-1.5 py-0.5 rounded-md bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)] gap-0.5">
             {selectedDoc.status || "-"}
-            <HelpTooltip>
-              <b>Draft</b> - not yet released.
-              <b className="block mt-1">Issued</b> - current authoritative revision.
-              <b className="block mt-1">Superseded</b> - replaced by a newer doc (split / merge / supersede). Audit history is preserved.
-              <b className="block mt-1">Archived</b> - retired with no replacement.
-              <b className="block mt-1">Void</b> - explicitly nullified.
-            </HelpTooltip>
           </span>
           {selectedDoc.effectiveDate && <EffectivePill effectiveDate={selectedDoc.effectiveDate} />}
         </div>
@@ -393,23 +384,14 @@ export default function InspectorPanel({
           can carry. A doc with unmerged parallel work must look WRONG
           everywhere you meet it, not just in specialist views. */}
       {openBranches.length > 0 && (
-        <div className="rounded-xl border-2 border-[var(--color-border)] bg-[var(--color-surface-2)] p-3">
-          <div className="flex items-start gap-2">
-            <GitBranch className="w-4 h-4 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
-            <div className="flex-1 min-w-0 text-xs text-[var(--color-text)]">
-              <b>Unreconciled branch{openBranches.length > 1 ? "es" : ""} on this document.</b>{" "}
-              {openBranches.map((b) => (
-                <span key={b.id} className="block mt-1 text-[11px]">
-                  {b.createdByName || b.createdBy} published parallel work on{" "}
-                  {new Date(b.createdAt).toLocaleDateString()} - &ldquo;{b.reason}&rdquo;
-                </span>
-              ))}
-              <span className="block mt-1.5 text-[11px] text-[var(--color-text)]">
-                The current revision does <b>not</b> include that work. Resolve it from the
-                Control Tower&apos;s open-items queue (merge into a new revision, or withdraw).
-              </span>
-            </div>
-          </div>
+        <div className="border-l-2 border-amber-500 pl-3 text-xs text-amber-800 dark:text-amber-300">
+          <b className="inline-flex items-center gap-1"><GitBranch className="w-3.5 h-3.5" /> The current revision is missing parallel work.</b>
+          {openBranches.map((b) => (
+            <span key={b.id} className="block mt-1 text-[11px]">
+              {b.createdByName || b.createdBy} published it on {new Date(b.createdAt).toLocaleDateString()}: &ldquo;{b.reason}&rdquo;
+            </span>
+          ))}
+          <span className="block mt-1 text-[11px]">Merge it into a new revision or withdraw it from the Control Tower open items.</span>
         </div>
       )}
 
@@ -430,43 +412,10 @@ export default function InspectorPanel({
         />
       )}
       {staleHolderCount > 0 && (
-        <div className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs text-amber-900 flex items-start gap-2">
-          <Send className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-600" />
-          <span>
-            <b>{staleHolderCount} {staleHolderCount === 1 ? "person" : "people"} may be working from a superseded copy</b> -
-            they pulled an older revision in the last 60 days and haven&apos;t pulled the current one.
-            Open <b>Distribution &amp; sharing</b> below to see who and send a recall nudge.
-          </span>
-        </div>
-      )}
-
-      {/* PREVIEW ────────────────────────────────────────────────────── */}
-      {selectedVersion?.fileUrl ? (
-        <div className="relative group rounded-xl border border-[var(--color-border)] overflow-hidden h-[60vh] min-h-96 bg-[var(--color-surface-2)]">
-          <SecureDocViewer
-            url={selectedVersion.fileUrl}
-            title={title}
-            docNumber={selectedDoc.documentNumber || selectedDoc.id || ""}
-            rev={selectedDoc.rev || "-"}
-            zoomLevel={75}
-            watermarkText="PREVIEW"
-          />
-          {/* Click-catcher overlay — iframe absorbs pointer events otherwise */}
-          <button
-            type="button"
-            onClick={onFullScreen}
-            className="absolute inset-0 z-10 bg-black/0 group-hover:bg-black/30 transition-all flex items-center justify-center cursor-pointer"
-            title="Open in full screen"
-          >
-            <span className="opacity-60 sm:opacity-0 group-hover:opacity-100 transition-all flex items-center gap-1.5 px-3 py-1.5 bg-white/95 text-[var(--color-text)] rounded-lg text-xs font-bold shadow-lg">
-              <Maximize2 className="w-3.5 h-3.5" /> Open Full View
-            </span>
-          </button>
-        </div>
-      ) : (
-        <div className="h-40 rounded-xl border border-[var(--color-border)] border-dashed bg-[var(--color-surface-2)] flex items-center justify-center text-xs text-[var(--color-text-faint)]">
-          No preview available
-        </div>
+        <p className="border-l-2 border-amber-500 pl-3 text-xs text-amber-800 dark:text-amber-300">
+          <b>{staleHolderCount} {staleHolderCount === 1 ? "person may be" : "people may be"} using an old revision.</b>{" "}
+          They took an older copy in the last 60 days. See who in Distribution &amp; sharing below.
+        </p>
       )}
 
       {/* ACTIONS: one main button (Open; Publish once you have it checked
@@ -519,6 +468,32 @@ export default function InspectorPanel({
         );
       })()}
 
+      {/* PREVIEW ────────────────────────────────────────────────────── */}
+      {selectedVersion?.fileUrl ? (
+        <div className="relative group rounded-xl border border-[var(--color-border)] overflow-hidden h-[45vh] min-h-72 bg-[var(--color-surface-2)]">
+          <SecureDocViewer
+            url={selectedVersion.fileUrl}
+            title={title}
+            docNumber={selectedDoc.documentNumber || selectedDoc.id || ""}
+            rev={selectedDoc.rev || "-"}
+            zoomLevel={75}
+            watermarkText="PREVIEW"
+          />
+          {/* Click-catcher overlay — iframe absorbs pointer events otherwise */}
+          <button
+            type="button"
+            onClick={onFullScreen}
+            className="absolute inset-0 z-10 bg-black/0 hover:bg-black/10 transition-colors cursor-zoom-in"
+            title="Open full size"
+            aria-label="Open full size"
+          />
+        </div>
+      ) : (
+        <div className="h-40 rounded-xl border border-[var(--color-border)] border-dashed bg-[var(--color-surface-2)] flex items-center justify-center text-xs text-[var(--color-text-faint)]">
+          No preview available
+        </div>
+      )}
+
       {/* DISTRIBUTION & SHARING — one drawer for the whole "who has this
           document" story: share links, transmittals (and their trail),
           read confirmations, and stale-copy recall. */}
@@ -545,7 +520,7 @@ export default function InspectorPanel({
             </button>
             <NextLink
               href={`/transmittals?compose=1&doc=${selectedDoc.id}`}
-              title="Issue this document on a transmittal - a tracked cover sheet to a recipient"
+              title="Issue this document on a transmittal: a cover sheet to someone, with a receipt"
               className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
             >
               <Send className="w-3 h-3" /> Transmit
@@ -714,7 +689,7 @@ export default function InspectorPanel({
           title="Checkout"
           icon={Lock}
           summary={isCheckedOut
-            ? <span className="inline-flex items-center text-[11px] font-bold border px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-800 border-amber-200">
+            ? <span className="inline-flex items-center text-[11px] font-bold text-amber-800 dark:text-amber-300">
                 {checkedOutByMe ? "Checked out by you" : `Checked out · ${selectedDoc.checkedOutByName || "someone"}`}
               </span>
             : undefined}
@@ -729,10 +704,10 @@ export default function InspectorPanel({
         {isController && isCheckedOut && onForceUnlock && (
           <button
             onClick={() => onForceUnlock(selectedDoc)}
-            className="w-full mt-3 py-2 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg text-xs font-bold flex items-center justify-center transition-colors"
+            className="w-full mt-3 py-2 bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-rose-700 dark:text-rose-400 border border-[var(--color-border)] rounded-lg text-xs font-bold flex items-center justify-center transition-colors"
           >
             <Shield className="w-3.5 h-3.5 mr-1.5" />
-            Force Release Lock
+            Force release the lock
           </button>
         )}
           <CheckoutHistoryPanel orgId={selectedDoc.orgId} documentId={selectedDoc.id} />
@@ -771,7 +746,7 @@ export default function InspectorPanel({
           <button
             onClick={() => setCompareOpen(true)}
             disabled={!selectedDoc.id}
-            title="Overlay any two revisions - grey unchanged, red removed, green added"
+            title="Overlay any two revisions: grey unchanged, red removed, green added"
             className="flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-all disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <GitCompare className="w-3.5 h-3.5" /> Compare revisions
@@ -798,7 +773,11 @@ export default function InspectorPanel({
         />
       </div>
 
-        {recentAudits.length === 0 ? (
+        {auditState === "loading" ? (
+          <div className="text-xs text-[var(--color-text-muted)]">Loading recent activity…</div>
+        ) : auditState === "failed" ? (
+          <div className="text-xs text-rose-700 dark:text-rose-300">Couldn&apos;t load recent activity.</div>
+        ) : recentAudits.length === 0 ? (
           <div className="text-xs text-[var(--color-text-faint)] italic">No recent activity.</div>
         ) : (
           <div className="space-y-3">
@@ -887,7 +866,7 @@ export default function InspectorPanel({
               <button
                 onClick={onSupersede}
                 disabled={selectedDoc.status === "Archived" || selectedDoc.status === "Superseded"}
-                className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-amber-200 bg-amber-50 text-xs font-bold text-amber-800 hover:bg-amber-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-all"
               >
                 <Layers className="w-3.5 h-3.5" /> Supersede
               </button>
@@ -895,11 +874,7 @@ export default function InspectorPanel({
             {onArchive && (
               <button
                 onClick={onArchive}
-                className={`flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border text-xs font-bold transition-all ${
-                  selectedDoc.status === "Archived"
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
-                    : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
-                }`}
+                className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border text-xs font-bold transition-all border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
               >
                 {selectedDoc.status === "Archived"
                   ? <><ArchiveRestore className="w-3.5 h-3.5" /> Restore</>
@@ -914,7 +889,7 @@ export default function InspectorPanel({
                 try { await openEvidencePack(selectedDoc.id!, selectedDoc.orgId); }
                 catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
               }}
-              title="Assemble the full chain-of-custody - revision lineage, holds, and audit trail - into a print-to-PDF report"
+              title="Put the chain of custody (revisions, holds, audit trail) into a report you can print to PDF"
               className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-all"
             >
               <Shield className="w-3.5 h-3.5" /> Evidence pack
@@ -925,9 +900,9 @@ export default function InspectorPanel({
           {isController && (
             <button
               onClick={onDelete}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-red-200 bg-red-50 text-xs font-bold text-red-700 hover:bg-red-100 transition-all"
+              className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-rose-700 dark:text-rose-400 hover:bg-[var(--color-surface-2)] transition-all"
             >
-              <Trash2 className="w-3.5 h-3.5" /> Delete Document
+              <Trash2 className="w-3.5 h-3.5" /> Delete document
             </button>
           )}
           {/* Owners can't hard-delete (that would break the audit trail) — they
@@ -943,10 +918,10 @@ export default function InspectorPanel({
                     docLabel: selectedDoc.documentNumber || selectedDoc.title || selectedDoc.name || "Document",
                     libraryId: selectedDoc.libraryId, requesterId: uid, requesterName: userEmail, reason: reason.trim(),
                   });
-                  await appAlert({ message: "Deletion request sent to Admin / Doc Control." });
+                  await appAlert({ message: "Sent. Admin or Doc Control will review it." });
                 } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
               }}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-red-200 bg-red-50/60 text-xs font-bold text-red-700 hover:bg-red-100 transition-all"
+              className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-rose-700 dark:text-rose-400 hover:bg-[var(--color-surface-2)] transition-all"
             >
               <Trash2 className="w-3.5 h-3.5" /> Request deletion
             </button>
@@ -999,12 +974,15 @@ export default function InspectorPanel({
 // never transmitted; flags recipients now holding a superseded rev.
 function TransmittalTrail({ orgId, documentId, currentRev }: { orgId: string; documentId: string; currentRev: string | null }) {
   const [rows, setRows] = React.useState<Array<{ id: string; number: string; rev: string | null; purpose: string | null; status: string; recipient: string; issuedAt: string | null }>>([]);
+  const [state, setState] = React.useState<"loading" | "ready" | "failed">("loading");
   React.useEffect(() => {
     let alive = true;
+    setState("loading");
     (async () => {
       const { listTransmittalsForDocument } = await import("@/lib/transmittals");
       const list = await listTransmittalsForDocument(orgId, documentId);
       if (!alive) return;
+      setState("ready");
       setRows(list
         .filter((t) => t.status === "issued" || t.status === "acknowledged")
         .map((t) => ({
@@ -1016,10 +994,13 @@ function TransmittalTrail({ orgId, documentId, currentRev }: { orgId: string; do
           recipient: t.recipientCompany || t.recipientName || "-",
           issuedAt: t.issuedAt ?? null,
         })));
-    })();
+    })().catch(() => { if (alive) setState("failed"); });
     return () => { alive = false; };
   }, [orgId, documentId]);
 
+  if (state === "loading") return <p className="mt-3 text-[11px] text-[var(--color-text-muted)]">Checking transmittals…</p>;
+  if (state === "failed") return <p className="mt-3 text-[11px] text-rose-700 dark:text-rose-300">Couldn&apos;t load the transmittals for this document.</p>;
+  // Never transmitted: nothing to show.
   if (rows.length === 0) return null;
   return (
     <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 px-3 py-2.5">
@@ -1029,17 +1010,17 @@ function TransmittalTrail({ orgId, documentId, currentRev }: { orgId: string; do
           const stale = !!(r.rev && currentRev && r.rev !== currentRev);
           return (
             <li key={r.id} className="flex items-center gap-2 text-[11px] flex-wrap">
-              <NextLink href="/transmittals" className="font-mono font-black text-[var(--color-accent)] hover:underline">{r.number}</NextLink>
+              <NextLink href={`/transmittals?t=${r.id}`} className="font-mono font-black text-[var(--color-accent)] hover:underline">{r.number}</NextLink>
               <span className="text-[var(--color-text-muted)]">
                 Rev {r.rev ?? "-"} · {r.purpose ?? "-"} · to {r.recipient}
                 {r.issuedAt ? ` · ${new Date(r.issuedAt).toLocaleDateString()}` : ""}
               </span>
               {r.status === "acknowledged"
-                ? <span className="text-[11px] font-black text-emerald-700 dark:text-emerald-300">ACK&apos;D</span>
-                : <span className="text-[11px] font-black text-amber-700 dark:text-amber-400">AWAITING ACK</span>}
+                ? <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-300">Received</span>
+                : <span className="text-[11px] font-bold text-amber-700 dark:text-amber-400">Not confirmed yet</span>}
               {stale && (
-                <span className="text-[11px] font-black text-rose-700 dark:text-rose-300 bg-rose-500/10 border border-rose-500/40 rounded px-1 py-0.5" title={`They hold Rev ${r.rev}; current is Rev ${currentRev}. Consider a superseding transmittal.`}>
-                  HOLDS SUPERSEDED REV
+                <span className="text-[11px] font-bold text-rose-700 dark:text-rose-300" title={`They have Rev ${r.rev}. Current is Rev ${currentRev}.`}>
+                  Has an old rev
                 </span>
               )}
             </li>

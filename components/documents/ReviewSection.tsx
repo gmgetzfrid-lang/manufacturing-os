@@ -223,7 +223,7 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
           {canManage && mode === "view" && (
             <div className="flex items-center gap-2 pt-1">
               {eff && (
-                <button onClick={() => setMode("review")} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold"><CheckCircle2 className="w-3.5 h-3.5" /> Mark reviewed</button>
+                <button onClick={() => setMode("review")} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[11px] font-bold"><CheckCircle2 className="w-3.5 h-3.5" /> Mark reviewed</button>
               )}
               <button onClick={beginEdit} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text)] text-[11px] font-bold hover:bg-[var(--color-surface-2)]"><Pencil className="w-3.5 h-3.5" /> {eff ? "Edit cycle" : "Set cycle"}</button>
             </div>
@@ -234,14 +234,14 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
             <div className="space-y-2 pt-1 border-t border-[var(--color-border)]">
               <div className="text-[11px] font-bold text-[var(--color-text-muted)]">Certify this document is current &amp; accurate (resets the clock, no new revision).</div>
               <select value={outcome} onChange={(e) => setOutcome(e.target.value as typeof outcome)} className={`${inp} w-full`}>
-                <option value="no_change">No change - still valid</option>
+                <option value="no_change">No change: still valid</option>
                 <option value="minor">Minor edit made</option>
                 <option value="needs_revision">Needs revision (flag for drafting)</option>
               </select>
               <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional)" className={`${inp} w-full`} />
               <div className="flex justify-end gap-2">
                 <button onClick={() => setMode("view")} className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-[var(--color-text-muted)]">Cancel</button>
-                <button onClick={() => void doReview()} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold disabled:opacity-50">{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Confirm review</button>
+                <button onClick={() => void doReview()} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[11px] font-bold disabled:opacity-50">{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Confirm review</button>
               </div>
             </div>
           )}
@@ -296,7 +296,7 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
                 <button onClick={() => void clearPolicy()} disabled={busy} className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-red-600 hover:bg-red-50 disabled:opacity-50">Remove cycle</button>
                 <div className="flex gap-2">
                   <button onClick={() => setMode("view")} className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-[var(--color-text-muted)]">Cancel</button>
-                  <button onClick={() => void saveEdit()} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-white text-[11px] font-bold disabled:opacity-50">{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Save</button>
+                  <button onClick={() => void saveEdit()} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 text-[11px] font-bold disabled:opacity-50">{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Save</button>
                 </div>
               </div>
             </div>

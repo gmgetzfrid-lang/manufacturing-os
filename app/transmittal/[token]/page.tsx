@@ -124,7 +124,7 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
 
       <div className="p-6 space-y-5">
         {msg && (
-          <div className={`rounded-xl border px-3 py-2.5 text-xs font-bold ${msg.tone === "ok" ? "border-emerald-300 bg-emerald-50 text-emerald-800" : "border-rose-300 bg-rose-50 text-rose-700"}`}>{msg.text}</div>
+          <p role={msg.tone === "ok" ? "status" : "alert"} className={`border-l-2 pl-3 text-xs font-bold ${msg.tone === "ok" ? "border-emerald-500 text-emerald-800 dark:text-emerald-300" : "border-rose-500 text-rose-700 dark:text-rose-300"}`}>{msg.text}</p>
         )}
 
         {/* Document list with downloads */}
@@ -144,14 +144,14 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
                 <button
                   onClick={() => void download(i.documentId)}
                   disabled={downloading === i.documentId}
-                  className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-[11px] font-black hover:opacity-85 disabled:opacity-50 transition-opacity"
+                  className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white text-[11px] font-black hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 transition-colors"
                 >
                   {downloading === i.documentId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} Download
                 </button>
               </li>
             ))}
           </ul>
-          <div className="mt-1.5 text-[11px] text-slate-400">Files download exactly as issued on this transmittal - if a newer revision exists, it is NOT what this record covers.</div>
+          <div className="mt-1.5 text-[11px] text-slate-400">Files download at the revision issued here. A newer revision is not part of this record.</div>
         </div>
 
         {data.notes && (
@@ -163,13 +163,13 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
 
         {/* Acknowledgment */}
         {acknowledged ? (
-          <div className="rounded-xl border border-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 dark:border-emerald-800 px-4 py-3.5">
+          <div className="border-l-2 border-emerald-500 pl-4 py-1">
             <div className="flex items-center gap-2 text-sm font-black text-emerald-800 dark:text-emerald-300">
               <CheckCircle2 className="w-4 h-4" /> Receipt acknowledged
             </div>
             <div className="text-xs text-emerald-700 dark:text-emerald-400 mt-1">
               {data.acknowledgedByName ? <>By <b>{data.acknowledgedByName}</b></> : "Recorded"}
-              {data.acknowledgedAt ? <> on {new Date(data.acknowledgedAt).toLocaleString()}</> : null}. This confirmation is part of the permanent record.
+              {data.acknowledgedAt ? <> on {new Date(data.acknowledgedAt).toLocaleString()}</> : null}. It&apos;s kept on the record.
             </div>
           </div>
         ) : (
@@ -178,12 +178,12 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
               <PenLine className="w-4 h-4 text-[var(--color-text-muted)]" /> Acknowledge receipt
             </div>
             <p className="text-[11px] text-slate-600 dark:text-slate-400 mb-3">
-              Confirming tells {data.orgName ?? "the issuer"} you received these documents at the revisions listed above. Your name and the time are recorded on the transmittal.
+              This tells {data.orgName ?? "the issuer"} you got these documents at the revisions above. Your name and the time are recorded.
             </p>
             <div className="flex items-end gap-2 flex-wrap">
               <label className="block flex-1 min-w-48">
                 <span className="text-[11px] font-black uppercase tracking-wider text-slate-500">Your name (required)</span>
-                <input value={ackName} onChange={(e) => setAckName(e.target.value)} placeholder="e.g. Dave Miller - Acme Fabricators"
+                <input value={ackName} onChange={(e) => setAckName(e.target.value)} placeholder="e.g. Dave Miller, Acme Fabricators"
                   className="mt-0.5 w-full h-9 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 text-sm text-slate-900 dark:text-white" />
               </label>
               <label className="block flex-1 min-w-48">
@@ -200,7 +200,7 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
         )}
 
         <div className="text-[11px] text-slate-400 border-t border-slate-100 dark:border-slate-800 pt-3">
-          Transmittal {data.number} · This page is the live record - every download and the acknowledgment are logged. Only the holder of this link can see it.
+          Transmittal {data.number} · Downloads and the receipt are logged. Only people with this link can see it.
         </div>
       </div>
     </Shell>

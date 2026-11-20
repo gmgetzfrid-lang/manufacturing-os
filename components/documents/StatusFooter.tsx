@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { FileText, Folder, Layers, Command, Activity } from "lucide-react";
+import { FileText, Folder, Layers, Loader2 } from "lucide-react";
 
 interface StatusFooterProps {
   docCount: number;
@@ -11,6 +11,8 @@ interface StatusFooterProps {
   loading?: boolean;
   density: "compact" | "comfy";
   onDensityChange: (d: "compact" | "comfy") => void;
+  /** Kept for callers; "Find in library" in the top bar is the one home for
+   *  the quick-jump, so the footer no longer repeats it. */
   onOpenCommand: () => void;
 }
 
@@ -22,39 +24,40 @@ export default function StatusFooter({
   loading,
   density,
   onDensityChange,
-  onOpenCommand,
+  onOpenCommand: _onOpenCommand,
 }: StatusFooterProps) {
   return (
     <div
-      className="h-7 shrink-0 border-t border-slate-200 bg-white/80 flex items-center gap-4 px-4 text-[11px] font-mono text-slate-500 z-20"
+      className="h-7 shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface)]/90 flex items-center gap-4 px-4 text-[11px] font-mono text-[var(--color-text-muted)] z-20"
       style={{ backdropFilter: "blur(12px)" }}
     >
-      <div className="flex items-center gap-1.5">
-        <Activity className={`w-2.5 h-2.5 ${loading ? "text-[var(--color-text-muted)] animate-pulse" : "text-emerald-500"}`} />
-        <span className="font-bold">{loading ? "SYNCING" : "LIVE"}</span>
-      </div>
-
-      <div className="w-px h-3 bg-slate-200" />
+      {/* Words only while something is loading; no "live" light. */}
+      {loading && (
+        <div className="flex items-center gap-1.5">
+          <Loader2 className="w-3 h-3 animate-spin" />
+          <span className="font-bold">Loading…</span>
+        </div>
+      )}
 
       <div className="flex items-center gap-1">
-        <FileText className="w-2.5 h-2.5 text-slate-400" />
+        <FileText className="w-3 h-3 text-[var(--color-text-faint)]" />
         <span>{docCount} {docCount === 1 ? "doc" : "docs"}</span>
       </div>
 
       <div className="flex items-center gap-1">
-        <Folder className="w-2.5 h-2.5 text-slate-400" />
+        <Folder className="w-3 h-3 text-[var(--color-text-faint)]" />
         <span>{folderCount} {folderCount === 1 ? "folder" : "folders"}</span>
       </div>
 
       {selectedCount > 0 && (
         <div className="flex items-center gap-1 text-[var(--color-text)] font-bold">
-          <span>● {selectedCount} selected</span>
+          <span>{selectedCount} selected</span>
         </div>
       )}
 
       {stagedCount > 0 && (
         <div className="flex items-center gap-1 text-[var(--color-text)] font-bold">
-          <Layers className="w-2.5 h-2.5" />
+          <Layers className="w-3 h-3" />
           <span>{stagedCount} staged</span>
         </div>
       )}
@@ -62,33 +65,26 @@ export default function StatusFooter({
       <div className="flex-1" />
 
       {/* Density toggle */}
-      <div className="flex items-center gap-1 border border-slate-200 rounded-md p-0.5 bg-slate-50/80">
+      <div className="flex items-center gap-1 border border-[var(--color-border)] rounded-md p-0.5 bg-[var(--color-surface-2)]" role="group" aria-label="Row spacing">
         <button
           onClick={() => onDensityChange("compact")}
+          aria-pressed={density === "compact"}
           className={`px-1.5 py-0.5 rounded text-[11px] font-bold transition-colors ${
-            density === "compact" ? "bg-slate-900 text-white" : "text-slate-500 hover:text-slate-700"
+            density === "compact" ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
           }`}
         >
           Compact
         </button>
         <button
           onClick={() => onDensityChange("comfy")}
+          aria-pressed={density === "comfy"}
           className={`px-1.5 py-0.5 rounded text-[11px] font-bold transition-colors ${
-            density === "comfy" ? "bg-slate-900 text-white" : "text-slate-500 hover:text-slate-700"
+            density === "comfy" ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
           }`}
         >
           Comfy
         </button>
       </div>
-
-      <button
-        onClick={onOpenCommand}
-        className="flex items-center gap-1 px-2 py-0.5 rounded-md border border-slate-200 bg-slate-50/80 hover:bg-white hover:border-slate-300 transition-all text-slate-600 hover:text-slate-900"
-        title="Open command palette"
-      >
-        <Command className="w-2.5 h-2.5" />
-        <span>K</span>
-      </button>
     </div>
   );
 }

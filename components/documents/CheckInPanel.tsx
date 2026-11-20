@@ -23,8 +23,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  ArrowRight, CheckCircle2, Loader2, Paperclip, ShieldAlert, Upload, X,
+  ArrowRight, Check, CheckCircle2, Loader2, ShieldAlert, Upload, X,
 } from "lucide-react";
+import FileThumb from "@/components/ui/FileThumb";
+import { useFileDrag } from "@/hooks/useFileDrag";
+import { useDraft } from "@/hooks/useDraft";
+import { tryUpload } from "@/lib/uploadRetry";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/components/providers/ToastProvider";
 import RevUpModal from "@/components/documents/RevUpModal";
@@ -68,12 +72,15 @@ const MOC_STATES: Array<{ v: MocStatus; label: string }> = [
   { v: "none", label: "No MOC exists" },
 ];
 
-const TONE_SELECTED: Record<CheckInCard["tone"], string> = {
-  positive: "border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500",
-  neutral: "border-slate-500 bg-slate-50 ring-1 ring-slate-400",
-  action: "border-[var(--color-border-strong)] bg-[var(--color-surface-2)] ring-1 ring-[var(--color-border-strong)]",
-  publish: "border-[var(--color-border-strong)] bg-[var(--color-surface-2)] ring-1 ring-[var(--color-border-strong)]",
-};
+// A picked card reads as picked by a dark ring, whatever its kind: color is
+// kept for meaning, and a choice is not a status.
+const CARD_SELECTED = "border-[var(--color-text)] bg-[var(--color-surface-2)] ring-1 ring-[var(--color-text)]";
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 export default function CheckInPanel({
   document: doc, currentUser, episode, mySession, activeSessions, canPublish, folderPath, onDone,
@@ -127,6 +134,19 @@ export default function CheckInPanel({
   const [busy, setBusy] = useState(false);
   const [showRevUp, setShowRevUp] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // The note is kept on this device until the check-in goes through.
+  useDraft<string>(doc.id ? `checkin:${doc.id}` : null, note, setNote, (v) => !v.trim());
+
+  // Each attached file has its own state. Files that went up are kept, so
+  // a retry only sends the ones that didn't; the request is made once every
+  // file is up (or the person removes the one that won't go).
+  type FileState = { s: "up" | "done" | "failed"; error?: string };
+  const [fileStates, setFileStates] = useState<Map<File, FileState>>(() => new Map());
+  const setFileState = (f: File, st: FileState) => setFileStates((prev) => { const n = new Map(prev); n.set(f, st); return n; });
+  const uploadedRef = useRef(new Map<File, Record<string, unknown>>());
+  const ticketNoRef = useRef<string | null>(null);
+  const addFiles = (picked: File[]) => { if (picked.length) setFiles((prev) => [...prev, ...picked]); };
+  const fileDrag = useFileDrag(addFiles, busy);
 
   // If the card the user picked ever vanishes from the set (post-factsReady
   // this only happens when the handoff card retires because the last
@@ -203,23 +223,51 @@ export default function CheckInPanel({
   };
 
   // ── Drafting ticket for discrepancy / revision / minor correction ─────────
-  const createDraftingTicket = async (card: CheckInCard): Promise<{ id: string; number: string }> => {
-    if (!doc.orgId) throw new Error("This document has no workspace set.");
-    const ticketNumber = await generateTicketNumber(doc.orgId);
-
-    // Only cards that SHOW the upload UI attach files — anything picked under
-    // a previous card must not ride along invisibly.
-    const filesToAttach = card.allowUploads ? files : [];
-    const attachments: Array<Record<string, unknown>> = [];
-    for (const file of filesToAttach) {
-      const up = await uploadTicketAttachment({ orgId: doc.orgId, ticketId: ticketNumber, file });
-      attachments.push({
+  // One file: the transfer, wrapped so the corner card can offer "Try again"
+  // with the same file. Safe to repeat: it only stores the file; the request
+  // that lists it is made later, once.
+  const sendFile = async (file: File, ticketNo: string): Promise<Record<string, unknown>> => {
+    const have = uploadedRef.current.get(file);
+    if (have) return have;
+    const run = async () => {
+      const up = await uploadTicketAttachment({ orgId: doc.orgId!, ticketId: ticketNo, file });
+      return {
         id: crypto.randomUUID(), name: file.name, url: up.url,
         type: "Source", status: "submitted",
         size: (file.size / 1024 / 1024).toFixed(2) + " MB",
         uploadedBy: currentUser.email || "Unknown", uploadedAt: new Date().toISOString(),
+      } as Record<string, unknown>;
+    };
+    setFileState(file, { s: "up" });
+    try {
+      const att = await tryUpload(file.name, run, {
+        onRetried: (a) => { uploadedRef.current.set(file, a); setFileState(file, { s: "done" }); },
       });
+      uploadedRef.current.set(file, att);
+      setFileState(file, { s: "done" });
+      return att;
+    } catch (e) {
+      setFileState(file, { s: "failed", error: (e as Error)?.message || "It didn't upload." });
+      throw e;
     }
+  };
+
+  const createDraftingTicket = async (card: CheckInCard): Promise<{ id: string; number: string }> => {
+    if (!doc.orgId) throw new Error("This document has no workspace set.");
+    // One number for this request, kept across retries (files are stored under it).
+    const ticketNumber = ticketNoRef.current ?? await generateTicketNumber(doc.orgId);
+    ticketNoRef.current = ticketNumber;
+
+    // Only cards that SHOW the upload UI attach files — anything picked under
+    // a previous card must not ride along invisibly. All files go up side by
+    // side; one that fails never stops the others.
+    const filesToAttach = card.allowUploads ? files : [];
+    const sent = await Promise.allSettled(filesToAttach.map((f) => sendFile(f, ticketNumber)));
+    const failedN = sent.filter((r) => r.status === "rejected").length;
+    if (failedN > 0) {
+      throw new Error(`${failedN} file${failedN === 1 ? "" : "s"} didn't upload. Tap Try again beside ${failedN === 1 ? "it" : "them"}, or remove ${failedN === 1 ? "it" : "them"} and send.`);
+    }
+    const attachments = filesToAttach.map((f) => uploadedRef.current.get(f)!).filter(Boolean);
 
     const undocumented = card.moc === "required" && mocStatus === "none";
     const mocLine = card.moc === "required"
@@ -431,10 +479,11 @@ export default function CheckInPanel({
         }
       }
       setBusy(false);
+      setNote("");
       onDone();
     } catch (e) {
       console.error(e);
-      showToast({ type: "error", title: "Check-in failed", message: (e as Error).message });
+      showToast({ type: "error", title: "It didn't check in", message: (e as Error).message });
       setBusy(false);
     }
   };
@@ -465,10 +514,11 @@ export default function CheckInPanel({
             : `${userName} published Rev ${v.revisionLabel || "?"} and checked in.`,
       );
       setBusy(false);
+      setNote("");
       onDone();
     } catch (e) {
       console.error(e);
-      showToast({ type: "error", title: "Published, but check-in failed", message: (e as Error).message });
+      showToast({ type: "error", title: "Published, but it didn't check in", message: (e as Error).message });
       setBusy(false);
     }
   };
@@ -510,7 +560,8 @@ export default function CheckInPanel({
                 key={card.id}
                 type="button"
                 onClick={() => { setSelectedId(card.id); setMocStatus(null); setAlsoHold(false); }}
-                className={`w-full p-3 rounded-xl border-2 text-left transition-all ${isSel ? TONE_SELECTED[card.tone] : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}
+                aria-pressed={isSel}
+                className={`w-full p-3 rounded-xl border-2 text-left transition-all ${isSel ? CARD_SELECTED : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}
               >
                 <div className="font-bold text-sm text-[var(--color-text)]">{card.label}</div>
                 {isSel && <p className="text-[11px] text-[var(--color-text-muted)] leading-snug mt-1">{card.hint}</p>}
@@ -528,10 +579,10 @@ export default function CheckInPanel({
             onChange={(e) => setNote(e.target.value)}
             placeholder={selected.notePrompt}
             rows={3}
-            className="w-full p-3 rounded-xl border border-[var(--color-border)] text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+            className="w-full p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
           />
           <div className="text-[11px] text-[var(--color-text-muted)] mt-1">
-            Recorded verbatim on the register - this is the record the next person reads.
+            Saved on the record word for word. The next person reads it.
           </div>
         </div>
       )}
@@ -548,7 +599,8 @@ export default function CheckInPanel({
                 key={opt.v}
                 type="button"
                 onClick={() => { setMocStatus(opt.v); if (opt.v === "none") setMocNumber(""); }}
-                className={`flex-1 py-1 text-[11px] font-bold rounded transition-colors ${mocStatus === opt.v ? "bg-slate-900 text-white" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
+                aria-pressed={mocStatus === opt.v}
+                className={`flex-1 py-1 text-[11px] font-bold rounded transition-colors ${mocStatus === opt.v ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
               >
                 {opt.label}
               </button>
@@ -558,18 +610,17 @@ export default function CheckInPanel({
             <input
               value={mocNumber}
               onChange={(e) => setMocNumber(e.target.value)}
-              placeholder="MOC number - e.g. MOC-2026-014"
+              placeholder="MOC number: e.g. MOC-2026-014"
               className="w-full px-2.5 py-1.5 border border-[var(--color-border)] rounded-md text-xs focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
             />
           )}
           {mocStatus === "none" && (
-            <div className="flex items-start gap-1.5 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-md p-2">
+            <p className="flex items-start gap-1.5 border-l-2 border-amber-500 pl-2 text-[11px] text-amber-800 dark:text-amber-300">
               <ShieldAlert className="w-3.5 h-3.5 shrink-0 mt-0.5" />
               <span>
-                A drawing change with no MOC is an <b>undocumented field change</b> - this report goes to
-                Document Control flagged as a PSM finding. Reporting it is the right move; it will never be blocked.
+                This goes to Document Control flagged as an <b>undocumented field change</b>. Reporting it is right: it is never blocked.
               </span>
-            </div>
+            </p>
           )}
         </div>
       )}
@@ -582,35 +633,57 @@ export default function CheckInPanel({
             multiple
             className="hidden"
             onChange={(e) => {
-              const picked = Array.from(e.target.files ?? []);
-              if (picked.length) setFiles((prev) => [...prev, ...picked]);
+              addFiles(Array.from(e.target.files ?? []));
               e.target.value = "";
             }}
           />
           <button
             type="button"
+            {...fileDrag.bind}
             onClick={() => fileInputRef.current?.click()}
-            className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-dashed border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-slate-400 transition-colors"
+            className={`w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-dashed border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-slate-400 transition-colors ${fileDrag.ring}`}
           >
-            <Upload className="w-3.5 h-3.5" /> Attach redline photos or marked-up files
+            <Upload className="w-3.5 h-3.5" /> {fileDrag.over ? fileDrag.say : "Drop or attach redline photos or marked-up files"}
           </button>
           {files.length > 0 && (
-            <div className="mt-1.5 space-y-1">
-              {files.map((f, i) => (
-                <div key={`${f.name}-${i}`} className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
-                  <Paperclip className="w-3 h-3 shrink-0" />
-                  <span className="truncate flex-1">{f.name}</span>
-                  <button
-                    type="button"
-                    onClick={() => setFiles((prev) => prev.filter((_, j) => j !== i))}
-                    className="p-0.5 rounded hover:bg-[var(--color-surface-2)]"
-                    title="Remove"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              ))}
-            </div>
+            <ul className="mt-1.5 space-y-1.5">
+              {files.map((f, i) => {
+                const st = fileStates.get(f);
+                return (
+                  <li key={`${f.name}-${i}`} className="flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
+                    <FileThumb file={f} size={32} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-semibold text-[var(--color-text)]">{f.name}</span>
+                      <span className="block">
+                        {formatSize(f.size)}
+                        {st?.s === "up" && <> · <Loader2 className="inline w-3 h-3 animate-spin" /> Uploading…</>}
+                        {st?.s === "done" && <span className="text-emerald-700 dark:text-emerald-400"> · <Check className="inline w-3 h-3" /> Uploaded</span>}
+                        {st?.s === "failed" && <span className="text-rose-700 dark:text-rose-300"> · Didn&apos;t upload{st.error ? `: ${st.error}` : ""}</span>}
+                      </span>
+                    </span>
+                    {st?.s === "failed" && ticketNoRef.current && (
+                      <button
+                        type="button"
+                        onClick={() => { void sendFile(f, ticketNoRef.current!).catch(() => { /* its row says so */ }); }}
+                        className="shrink-0 px-2 py-1 rounded-md border border-[var(--color-border)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                      >
+                        Try again
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => { setFiles((prev) => prev.filter((_, j) => j !== i)); uploadedRef.current.delete(f); }}
+                      disabled={st?.s === "up"}
+                      className="p-1 rounded hover:bg-[var(--color-surface-2)] disabled:opacity-40"
+                      title="Remove"
+                      aria-label={`Remove ${f.name}`}
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
           )}
         </div>
       )}
@@ -624,8 +697,7 @@ export default function CheckInPanel({
             className="mt-0.5"
           />
           <span>
-            Also place a <b>Field Verification Needed</b> hold - stops new revisions publishing until the
-            discrepancy is resolved. Use it when the document is unsafe to work from.
+            Also place a <b>Field Verification Needed</b> hold. No new revision publishes until it&apos;s cleared.
           </span>
         </label>
       )}
@@ -634,7 +706,7 @@ export default function CheckInPanel({
       <button
         onClick={confirm}
         disabled={busy || !!problem}
-        className="w-full py-3 bg-slate-900 text-white rounded-xl font-bold text-sm hover:bg-slate-800 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center"
+        className="w-full py-3 bg-[var(--color-accent)] text-[var(--color-accent-fg)] rounded-xl font-bold text-sm hover:bg-[var(--color-accent-hover)] disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center"
       >
         {busy ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <ArrowRight className="w-4 h-4 mr-2" />}
         {buttonLabel}
