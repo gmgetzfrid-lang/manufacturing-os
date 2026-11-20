@@ -63,36 +63,37 @@ export default function ThreadRail(p: RailProps) {
             <input
               value={q} onChange={(e) => setQ(e.target.value)}
               placeholder="Search conversations"
-              className="w-full h-8 pl-8 pr-2 text-[13px] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]"
+              aria-label="Search conversations"
+              className="w-full h-9 pl-8 pr-2 text-[13px] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-border-strong)] focus:ring-2 focus:ring-[var(--color-border)]"
             />
           </div>
           <button onClick={p.onNew} title="New conversation" aria-label="New conversation"
-            className="shrink-0 h-8 w-8 inline-flex items-center justify-center rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 transition-opacity">
+            className="shrink-0 h-9 w-9 inline-flex items-center justify-center rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] hover:opacity-90 transition-opacity">
             <Plus className="w-4 h-4" />
           </button>
           {p.onClose && (
             <button onClick={p.onClose} title="Hide conversations" aria-label="Hide conversations"
-              className="shrink-0 h-8 w-8 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors">
+              className="shrink-0 h-9 w-9 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors">
               <PanelLeftClose className="w-4 h-4" />
             </button>
           )}
         </div>
         <div className="flex items-center gap-1.5 flex-wrap">
           <button onClick={() => setMine(false)} aria-pressed={!mine}
-            className={`text-[11px] font-black px-2 py-1 rounded-md border transition-colors ${!mine
+            className={`h-7 text-[12px] font-bold px-2.5 rounded-md border transition-colors ${!mine
               ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]"
               : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
             Everyone
           </button>
           <button onClick={() => setMine(true)} aria-pressed={mine}
-            className={`text-[11px] font-black px-2 py-1 rounded-md border transition-colors ${mine
+            className={`h-7 text-[12px] font-bold px-2.5 rounded-md border transition-colors ${mine
               ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]"
               : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
             Mine
           </button>
           {p.libraryFilter && (
             <button onClick={p.onClearLibraryFilter} title="Show every conversation" aria-label={`Stop showing only ${p.libraryFilter.name}`}
-              className="ml-auto inline-flex items-center gap-1 text-[11px] font-black px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[var(--color-text)] bg-[var(--color-surface-2)] max-w-[55%]">
+              className="ml-auto inline-flex items-center gap-1 h-7 text-[12px] font-bold px-2 rounded-md border border-[var(--color-border-strong)] text-[var(--color-text)] bg-[var(--color-surface-2)] max-w-[55%]">
               <span className="truncate">{p.libraryFilter.name}</span> <X className="w-3 h-3 shrink-0" />
             </button>
           )}
@@ -101,7 +102,7 @@ export default function ThreadRail(p: RailProps) {
 
       <div className="flex-1 overflow-y-auto px-2 pb-3">
         {p.error ? (
-          <p role="alert" className="px-2 py-3 text-[11px] font-bold text-red-700 dark:text-red-400">Couldn&apos;t load the conversations: {p.error}</p>
+          <p role="alert" className="px-2 py-3 text-[13px] font-semibold text-rose-700 dark:text-rose-400">Couldn&apos;t load the conversations: {p.error}</p>
         ) : p.loading && p.threads.length === 0 ? (
           <LoadingBlock what="conversations" rows={4} className="mx-1 mt-1" />
         ) : filtered.length === 0 ? (
@@ -125,7 +126,8 @@ export default function ThreadRail(p: RailProps) {
             {settled.length > 0 && (
               <div className="mt-2">
                 <button onClick={() => setSettledOpen((v) => !v)}
-                  className="w-full flex items-center gap-1 px-2 py-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] hover:text-[var(--color-text-muted)]">
+                  aria-expanded={settledOpen}
+                  className="w-full flex items-center gap-1 px-2 py-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
                   {settledOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
                   Settled <span className="font-bold normal-case tracking-normal">({settled.length})</span>
                 </button>
@@ -181,18 +183,19 @@ function Row({ t, p }: { t: ChatThread; p: RailProps }) {
             autoFocus value={title} onChange={(e) => setTitle(e.target.value)}
             onBlur={commitRename}
             onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") { setTitle(t.title); setRenaming(false); } }}
-            className="w-full h-7 px-2 text-xs rounded-md border border-[var(--color-accent-ring)] bg-[var(--color-surface)] text-[var(--color-text)] focus:outline-none"
+            aria-label="Conversation name"
+            className="w-full h-8 px-2 text-[13px] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-border)]"
           />
         </div>
       ) : (
-        <button onClick={() => p.onOpen(t)} className="w-full text-left px-2 py-1.5 pr-8">
+        <button onClick={() => p.onOpen(t)} aria-current={active ? "page" : undefined} className="w-full text-left px-2.5 py-2 pr-8">
           <div className="flex items-center gap-1.5 min-w-0">
             <Icon className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" />
-            <span className={`text-xs truncate ${active ? "font-black text-[var(--color-text)]" : "font-bold text-[var(--color-text)]"}`}>
+            <span className={`text-[13px] truncate ${active ? "font-extrabold text-[var(--color-text)]" : "font-semibold text-[var(--color-text)]"}`}>
               {t.title || "Untitled"}
             </span>
           </div>
-          <div className="pl-5 text-[11px] text-[var(--color-text-muted)] truncate">
+          <div className="pl-5 text-[11.5px] text-[var(--color-text-muted)] truncate">
             {libName ? `${libName} · ` : ""}{who} · {relativeTime(t.lastMessageAt)}
           </div>
         </button>
@@ -203,11 +206,11 @@ function Row({ t, p }: { t: ChatThread; p: RailProps }) {
         aria-label="More"
         aria-haspopup="menu"
         aria-expanded={menu}
-        className={`absolute right-1 top-1.5 p-1 rounded-md text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-opacity ${menu ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus:opacity-100"}`}>
+        className={`absolute right-1 top-2 p-1 rounded-md text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-opacity ${menu ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus:opacity-100 [@media(hover:none)]:opacity-100"}`}>
         <MoreHorizontal className="w-3.5 h-3.5" />
       </button>
       {menu && (
-        <div className="absolute right-1 top-8 z-20 w-44 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl p-1 animate-pop">
+        <div className="absolute right-1 top-9 z-20 w-44 rounded-xl bg-[var(--color-surface)] shadow-2xl ring-1 ring-[var(--color-border)] p-1 animate-pop">
           <MenuItem icon={t.pinned ? PinOff : Pin} label={t.pinned ? "Unpin" : "Pin"}
             onClick={() => { setMenu(false); p.onPin(t, !t.pinned); }} />
           <MenuItem icon={t.settledAt ? ArchiveRestore : Archive} label={t.settledAt ? "Reopen" : "Settle"}
@@ -225,7 +228,7 @@ function MenuItem({ icon: Icon, label, onClick, danger }: {
 }) {
   return (
     <button onClick={onClick}
-      className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${danger
+      className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-semibold transition-colors ${danger
         ? "text-rose-600 hover:bg-rose-500/10"
         : "text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
       <Icon className="w-3.5 h-3.5" /> {label}

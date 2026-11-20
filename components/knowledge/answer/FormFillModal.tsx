@@ -74,30 +74,31 @@ export default function FormFillModal({ orgId, documentId, formName, question, a
         onClose={onClose} />
       <ModalBody className="max-h-[70vh] space-y-4">
         {busy === "draft" && (
-          <div className="py-16 flex flex-col items-center gap-3 text-[var(--color-text-muted)]">
+          <div className="py-16 flex flex-col items-center gap-2.5 text-center text-[var(--color-text-muted)]" aria-busy="true" aria-live="polite">
             <Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-muted)]" />
-            <div className="text-sm font-bold text-[var(--color-text)]">Drafting every field from the answer and its proof</div>
-            <div className="text-xs">Names, signatures and numbers are left for you, never made up.</div>
+            <div className="text-[15px] font-bold text-[var(--color-text)]">Drafting every field from the answer and its proof…</div>
+            <div className="text-[13px]">Names, signatures and numbers are left for you, never made up.</div>
           </div>
         )}
         {error && (
-          <div role="alert" className="flex items-start gap-2 border-l-2 border-rose-500 pl-3 py-1 text-sm text-rose-800 dark:text-rose-300">
-            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
+          <div role="alert" className="flex items-start gap-2 text-[14px] font-semibold text-rose-700 dark:text-rose-300">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> <span>{draft ? "That didn't work: " : "Couldn't draft the form: "}{error}</span>
           </div>
         )}
         {draft && (
           <>
             {draft.notes && (
-              <div className="flex items-start gap-2 rounded-lg bg-[var(--color-surface-2)] px-3 py-2.5 text-[13px] text-[var(--color-text)]">
-                <Sparkles className="w-4 h-4 mt-0.5 shrink-0 text-[var(--color-text-muted)]" /> {draft.notes}
-              </div>
+              <p className="flex items-start gap-2 text-[13.5px] leading-relaxed text-[var(--color-text-muted)]">
+                <Sparkles className="w-4 h-4 mt-0.5 shrink-0" /> <span>{draft.notes}</span>
+              </p>
             )}
             {missing.length > 0 && (
-              <div className="border-l-2 border-amber-500 pl-3 py-1 text-[13px] text-amber-900 dark:text-amber-200">
-                <b>{missing.length} field{missing.length === 1 ? "" : "s"} need you:</b> {missing.slice(0, 8).map((f) => f.label).join(", ")}{missing.length > 8 ? "…" : ""}
-              </div>
+              <p className="flex items-start gap-2 text-[13.5px] text-amber-900 dark:text-amber-200">
+                <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" />
+                <span><b>{missing.length} field{missing.length === 1 ? "" : "s"} need you:</b> {missing.slice(0, 8).map((f) => f.label).join(", ")}{missing.length > 8 ? "…" : ""}</span>
+              </p>
             )}
-            <div className="space-y-3">
+            <div className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
               {draft.form.fields.map((f) => (
                 <FieldInput key={f.name} field={f} value={values[f.name] ?? ""} onChange={(v) => set(f.name, v)}
                   needsYou={!values[f.name]?.trim()} />
@@ -107,16 +108,16 @@ export default function FormFillModal({ orgId, documentId, formName, question, a
         )}
       </ModalBody>
       <ModalFooter>
-        <span className="mr-auto text-[11px] text-[var(--color-text-muted)]">Check every field before you submit it.</span>
+        <span className="mr-auto text-[12.5px] text-[var(--color-text-muted)] max-sm:hidden">Check every field before you submit it.</span>
         {draft && (
           <button type="button" onClick={() => void copyAll()}
-            className="inline-flex items-center gap-1.5 text-[13px] font-bold px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-[var(--color-border-strong)]">
+            className="inline-flex items-center gap-1.5 h-10 text-[13px] font-bold px-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)]">
             {copied ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />} {copied ? "Copied" : "Copy as text"}
           </button>
         )}
         <button type="button" onClick={() => void download()} disabled={!draft || busy !== null}
-          className="inline-flex items-center gap-1.5 text-[13px] font-bold px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
-          {busy === "download" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Download filled PDF
+          className="inline-flex items-center gap-1.5 h-10 text-[13.5px] font-extrabold px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] shadow-[0_10px_20px_-12px_var(--color-accent)] disabled:opacity-50 disabled:shadow-none">
+          {busy === "download" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} {busy === "download" ? "Filling the PDF…" : "Download filled PDF"}
         </button>
       </ModalFooter>
     </Modal>
@@ -130,17 +131,17 @@ function FieldInput({ field: f, value, onChange, needsYou }: {
   const ring = needsYou
     ? "border-amber-400 dark:border-amber-700 bg-amber-50/40 dark:bg-amber-950/10"
     : "border-[var(--color-border)] bg-[var(--color-surface)]";
-  const base = `w-full rounded-lg border px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-border-strong)] ${ring}`;
+  const base = `w-full rounded-lg border px-3 py-2 text-[14px] text-[var(--color-text)] focus:outline-none focus:border-[var(--color-border-strong)] focus:ring-2 focus:ring-[var(--color-border)] ${ring}`;
   return (
-    <div>
-      <label htmlFor={id} className="flex items-center gap-2 text-[12px] font-bold text-[var(--color-text-muted)] mb-1">
+    <div className="py-3">
+      <label htmlFor={id} className="flex items-center gap-2 text-[11px] font-extrabold uppercase tracking-[0.12em] text-[var(--color-text-muted)] mb-1.5">
         {f.label}
-        {needsYou && <span className="text-[11px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">needs you</span>}
+        {needsYou && <span className="text-[11px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">· needs you</span>}
       </label>
       {f.kind === "long" ? (
         <textarea id={id} value={value} onChange={(e) => onChange(e.target.value)} rows={Math.min(14, Math.max(4, Math.ceil(value.length / 90)))} className={`${base} leading-relaxed`} />
       ) : f.kind === "check" ? (
-        <label className="inline-flex items-center gap-2 text-sm text-[var(--color-text)]">
+        <label className="inline-flex items-center gap-2 text-[14px] text-[var(--color-text)]">
           <input id={id} type="checkbox" checked={/^(y|yes|true|x|checked|on|1)$/i.test(value)} onChange={(e) => onChange(e.target.checked ? "Yes" : "")} className="w-4 h-4 accent-[var(--color-text)]" />
           {f.label}
         </label>

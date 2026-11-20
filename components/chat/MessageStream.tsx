@@ -9,7 +9,7 @@
 //     scroll up.
 
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowDown } from "lucide-react";
+import { ArrowDown, AlertTriangle } from "lucide-react";
 import { StreamingAnswer } from "@/components/knowledge/answer/AnswerExperience";
 import type { ChatMessage, ChatScope } from "@/lib/chatClient";
 import { EXAMPLES, SCOPE_META } from "./shared";
@@ -118,14 +118,18 @@ export default function MessageStream({
                 {scope === "library" ? "Ask the library." : scope === "tools" ? "Ask the system." : "Ask the internet."}
               </h2>
               <p className="mt-3 text-[14px] sm:text-[15px] text-[var(--color-text-muted)]">{meta.hint}</p>
-              {emptyNote && <p className="mt-2 text-[13px] font-semibold text-amber-700 dark:text-amber-400">{emptyNote}</p>}
+              {emptyNote && (
+                <p className="mt-3 flex items-start gap-2 text-[13.5px] font-semibold text-amber-800 dark:text-amber-300">
+                  <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" /> {emptyNote}
+                </p>
+              )}
               <div className="mt-6 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Try</div>
               <div className="mt-2 flex flex-col divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
                 {EXAMPLES[scope].map((e) => (
                   <button key={e} onClick={() => onExample(e)}
-                    className="group flex items-center gap-3 py-3 text-left text-[14px] font-semibold text-[var(--color-text)] hover:text-[var(--color-accent)] transition-colors">
-                    <span className="flex-1">{e}</span>
-                    <ArrowDown className="w-4 h-4 -rotate-90 text-[var(--color-text-faint)] group-hover:text-[var(--color-accent)]" />
+                    className="group flex items-center gap-3 py-3 text-left text-[14.5px] font-semibold text-[var(--color-text)] transition-colors">
+                    <span className="flex-1 group-hover:underline decoration-[var(--color-border-strong)] underline-offset-4">{e}</span>
+                    <ArrowDown className="w-4 h-4 -rotate-90 text-[var(--color-text-faint)] group-hover:text-[var(--color-text)] group-hover:translate-x-0.5 transition-transform" />
                   </button>
                 ))}
               </div>
@@ -160,7 +164,7 @@ export default function MessageStream({
       </div>
       {!atBottom && !empty && (
         <button onClick={jump}
-          className="absolute left-1/2 -translate-x-1/2 bottom-3 inline-flex items-center gap-1.5 h-8 px-3 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-bold text-[var(--color-text)] shadow-lg hover:border-[var(--color-accent-ring)] transition-colors animate-pop">
+          className="absolute left-1/2 -translate-x-1/2 bottom-3 inline-flex items-center gap-1.5 h-8 px-3.5 rounded-full bg-[var(--color-ink)] text-[12.5px] font-bold text-[var(--color-ink-fg)] shadow-lg hover:opacity-90 transition-opacity animate-pop">
           <ArrowDown className="w-3.5 h-3.5" /> Latest
         </button>
       )}

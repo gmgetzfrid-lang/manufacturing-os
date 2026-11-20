@@ -1,21 +1,21 @@
 "use client";
 
 // components/knowledge/answer/AnswerExperience.tsx — the library answer,
-// rendered like an answer: hero card, numbered basis steps, imperatives
-// that never hide, sources grouped by document, instant proof cards, the
-// clarify / need rounds, and the thumbs that teach retrieval.
-//
-// Lifted verbatim out of the library page so the chat shell and the
-// library page render the SAME answer. Nothing here changed in behavior.
+// laid out like a document: the direct answer first in one big line, the
+// reasons as one connected path, what to check before acting, and the
+// sources beside it (below it on a phone) as quiet rows. Actions are quiet;
+// only the latest answer may carry one orange step forward. Also here: the
+// clarify / need rounds, the floating proof card, the thumbs that teach
+// retrieval, and the card that fills in while an answer streams.
 
 import React, { useEffect, useMemo, useState } from "react";
 import {
   BookOpen, Sparkles, Send, FileText, CheckCircle2, AlertTriangle, ExternalLink, History, Globe,
-  ChevronRight, ChevronDown, Copy, Check, Search, ScanSearch, PenLine, Quote, Eye,
+  ChevronRight, ChevronDown, Copy, Check, PenLine, Eye,
   ThumbsUp, ThumbsDown, FlaskConical, X, Waypoints, Loader2, Printer, Upload, RefreshCw, ShieldCheck,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
-import { Button } from "@/components/ui/Button";
+import StepPath from "@/components/ui/StepPath";
 import { Textarea } from "@/components/ui/Field";
 import {
   referencedQuote, hasSource, parseAnswerBlocks, extractCitationNumbers, proofTerms, highlightQuote, splitVerdict, quoteWindow,
@@ -36,6 +36,47 @@ import { useFileDrag } from "@/hooks/useFileDrag";
 import { useDraft } from "@/hooks/useDraft";
 
 export type DocLink = NonNullable<KnowledgeAnswer["mentionedDocs"]>[number];
+
+// ── The look, in one place ────────────────────────────────────────────────
+/** 11 px all-caps label: the name of a part of the answer. */
+const LABEL = "text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]";
+/** The direct answer: the one big line. */
+const HERO = "text-[20px] sm:text-[24px] leading-[1.3] font-extrabold tracking-[-0.015em] text-[var(--color-text)]";
+/** Body text of the answer. */
+const BODY = "text-[14.5px] leading-relaxed text-[var(--color-text)]";
+const QUIET_CORE = "inline-flex items-center justify-center gap-1.5 border border-[var(--color-border)] bg-[var(--color-surface)] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] disabled:opacity-40 transition-colors";
+/** A quiet action (copy, open a page, ask again). */
+const QUIET = `${QUIET_CORE} h-8 px-3 rounded-lg text-[12.5px]`;
+const QUIET_LG = `${QUIET_CORE} h-9 px-3.5 rounded-lg text-[13px]`;
+/** The one orange step forward, only ever on the latest answer. */
+const ORANGE = "inline-flex items-center justify-center gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-extrabold hover:bg-[var(--color-accent-hover)] shadow-[0_10px_20px_-12px_var(--color-accent)] disabled:opacity-40 disabled:shadow-none transition-colors";
+const act = (primary: boolean) => (primary ? ORANGE : QUIET_LG);
+/** A citation number, the same square everywhere it appears. */
+const NUM = "min-w-[1.5rem] h-6 px-1 rounded-md border border-[var(--color-border-strong)] font-mono text-[11px] font-bold text-[var(--color-text)] grid place-items-center";
+
+/** Steps joined by one line, top to bottom, so they read as one path: a
+ *  marker on the line for each, the step's text beside it. */
+function PathList({ items }: { items: Array<{ key: React.Key; marker: React.ReactNode; body: React.ReactNode; style?: React.CSSProperties }> }) {
+  return (
+    <ol className="relative">
+      {items.map((it, i) => (
+        <li key={it.key} style={it.style} className="relative pl-9 pb-3.5 last:pb-0">
+          {i < items.length - 1 && <span aria-hidden className="absolute left-[11px] top-6 bottom-0 w-0.5 bg-[var(--color-border)]" />}
+          <span className="absolute left-0 top-0 w-6 h-6 grid place-items-center">{it.marker}</span>
+          {it.body}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** The numbered dot of a step on a PathList. */
+function StepDot({ n }: { n: React.ReactNode }) {
+  return (
+    <span className="w-6 h-6 rounded-full border-2 border-[var(--color-text)] bg-[var(--color-surface)] font-mono text-[11px] font-bold text-[var(--color-text)] grid place-items-center">{n}</span>
+  );
+}
+
 const DocLinkContext = React.createContext<{ links: DocLink[]; open: ((d: DocLink) => void) | null }>({ links: [], open: null });
 
 // ── Instant proof ───────────────────────────────────────────────────────────
@@ -73,8 +114,8 @@ function ProofQuote({ c, context, className }: { c: KnowledgeCitation; context?:
   );
   if (!c.quote) {
     return (
-      <p className="text-[11px] italic text-[var(--color-text-muted)]">
-        The passage text wasn&apos;t stored for this answer - open the page to read it in the document.
+      <p className="text-[12.5px] text-[var(--color-text-muted)]">
+        The passage text wasn&apos;t stored for this answer. Open the page to read it in the document.
       </p>
     );
   }
@@ -93,23 +134,43 @@ function ProofQuote({ c, context, className }: { c: KnowledgeCitation; context?:
   );
 }
 
-const VERDICT_STYLE: Record<Verdict, { label: string; cls: string }> = {
-  yes: { label: "Yes", cls: "bg-emerald-600 text-white" },
-  conditional: { label: "Yes, with conditions", cls: "bg-amber-500 text-white dark:bg-amber-600" },
-  no: { label: "No", cls: "bg-rose-600 text-white" },
-  unsettled: { label: "Not settled", cls: "bg-slate-600 text-white dark:bg-slate-500" },
-  complies: { label: "Complies", cls: "bg-emerald-600 text-white" },
-  fails: { label: "Does not comply", cls: "bg-rose-600 text-white" },
-  undetermined: { label: "Can't determine", cls: "bg-slate-600 text-white dark:bg-slate-500" },
+// Status colors keep one meaning each: green done/fine, amber a condition
+// or a wait, red a problem. "Not settled" is plain ink.
+const GOOD = "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300";
+const WARN = "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300";
+const BAD = "bg-rose-50 text-rose-800 dark:bg-rose-950/40 dark:text-rose-300";
+const PLAIN = "bg-[var(--color-surface-2)] text-[var(--color-text)]";
+const VERDICT_STYLE: Record<Verdict, { label: string; cls: string; dot: string }> = {
+  yes: { label: "Yes", cls: GOOD, dot: "bg-emerald-500" },
+  conditional: { label: "Yes, with conditions", cls: WARN, dot: "bg-amber-500" },
+  no: { label: "No", cls: BAD, dot: "bg-rose-500" },
+  unsettled: { label: "Not settled", cls: PLAIN, dot: "bg-[var(--color-text-muted)]" },
+  complies: { label: "Complies", cls: GOOD, dot: "bg-emerald-500" },
+  fails: { label: "Does not comply", cls: BAD, dot: "bg-rose-500" },
+  undetermined: { label: "Can't determine", cls: PLAIN, dot: "bg-[var(--color-text-muted)]" },
 };
 
-/** The verdict as a badge — the yes/no lands before a single word is read. */
+/** The verdict as a tag — the yes/no lands before a single word is read. */
 function VerdictBadge({ verdict }: { verdict: Verdict }) {
   const v = VERDICT_STYLE[verdict];
   return (
-    <span className={`inline-flex items-center mb-1.5 px-2.5 py-1 rounded-md text-[12px] font-black uppercase tracking-[0.08em] shadow-sm ${v.cls}`}>
-      {v.label}
+    <span className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full text-[12px] font-extrabold uppercase tracking-[0.08em] ${v.cls}`}>
+      <span className={`w-2 h-2 rounded-full ${v.dot}`} aria-hidden />{v.label}
     </span>
+  );
+}
+
+/** The answer line once its verdict word is split off starts mid-sentence
+ *  ("test the line at…"): give it its capital back. */
+const capFirst = (t: string) => t.replace(/^([^A-Za-z0-9]*)([a-z])/, (_, pre: string, ch: string) => pre + ch.toUpperCase());
+
+/** The direct answer: its verdict, then the one big line. */
+function DirectAnswer({ verdict, children }: { verdict: Verdict | null; children: React.ReactNode }) {
+  return (
+    <div>
+      {verdict && <div className="mb-2.5"><VerdictBadge verdict={verdict} /></div>}
+      <div className={HERO}>{children}</div>
+    </div>
   );
 }
 
@@ -138,48 +199,46 @@ function ProofCard({ proof, onClose, onOpenPage }: {
   }, [onClose]);
   return (
     <>
-      <div className="fixed inset-0 z-40" onClick={onClose} />
+      {/* Opened over the answer: what's behind dims a little. */}
+      <div className="fixed inset-0 z-40 bg-[color-mix(in_srgb,var(--color-ink)_22%,transparent)]" onClick={onClose} />
       <div
         role="dialog" aria-label="Source proof"
-        className="fixed z-50 animate-pop rounded-2xl border-2 border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl overflow-hidden"
+        className="fixed z-50 animate-pop rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-2xl)] overflow-hidden"
         style={{ left: proof.x, width: Math.min(PROOF_W, typeof window !== "undefined" ? window.innerWidth - 24 : PROOF_W), ...(proof.up ? { bottom: proof.y } : { top: proof.y }) }}
       >
-        <div className="h-1 bg-[var(--color-text)]" />
-        <div className="px-4 py-3">
-          <div className="flex items-center gap-2 mb-2">
-            <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
-            <span className="text-xs font-black text-[var(--color-text)] truncate">{c.documentName ?? "Document"}</span>
-            <span className="text-[11px] font-bold text-[var(--color-text-muted)] shrink-0">
-              {pastJob ? "Past job" : <>p.{c.page}{c.section ? ` · ${c.section.slice(0, 30)}` : ""}</>}
+        <div className="px-4 pt-3 pb-4">
+          <div className="flex items-center gap-2">
+            <span className={`${LABEL} min-w-0 flex-1 truncate`}>
+              {pastJob ? "Past job" : <>Page {c.page}{c.section ? ` · ${c.section.slice(0, 30)}` : ""}</>}
             </span>
             <button onClick={onClose} aria-label="Close"
-              className="ml-auto shrink-0 p-1 rounded-md text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
-              <X className="w-3.5 h-3.5" />
+              className="shrink-0 w-8 h-8 grid place-items-center rounded-[10px] bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors">
+              <X className="w-4 h-4" />
             </button>
           </div>
+          <div className="mt-1 text-[15px] font-extrabold leading-snug text-[var(--color-text)]">{(c.documentName ?? "Document").replace(/\.pdf$/i, "")}</div>
           {c.claim && (
-            <div className="mb-1.5 text-[12px] font-black text-[var(--color-text)]">{c.claim}</div>
+            <div className="mt-0.5 text-[13px] text-[var(--color-text-muted)]">{c.claim}</div>
           )}
           <ProofQuote c={c} context={context}
-            className="border-l-2 border-[var(--color-border-strong)] pl-3 py-1 text-[12px] leading-relaxed text-[var(--color-text)] whitespace-pre-wrap max-h-52 overflow-y-auto" />
-          <div className="mt-2.5 flex items-center gap-2 flex-wrap">
+            className="mt-2.5 border-l-2 border-[var(--color-border-strong)] pl-3 py-0.5 text-[13px] leading-relaxed text-[var(--color-text)] whitespace-pre-wrap max-h-52 overflow-y-auto" />
+          <div className="mt-3 flex items-center gap-3 flex-wrap">
             {pastJob ? (
-              <a href={c.url} className="inline-flex items-center gap-1.5 text-[11px] font-black px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm hover:bg-[var(--color-accent-hover)] transition-colors">
-                <Eye className="w-3.5 h-3.5" /> Open the project
+              <a href={c.url} className={ORANGE}>
+                <Eye className="w-4 h-4" /> Open the project
               </a>
             ) : (
-            <button onClick={() => onOpenPage(c)}
-              className="inline-flex items-center gap-1.5 text-[11px] font-black px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm hover:bg-[var(--color-accent-hover)] transition-colors">
-              <Eye className="w-3.5 h-3.5" /> Open the page, highlighted
-            </button>
+              <button onClick={() => onOpenPage(c)} className={ORANGE}>
+                <Eye className="w-4 h-4" /> Open the page, highlighted
+              </button>
             )}
             {c.highlight ? (
-              <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3" /> Exact wording from the page
+              <span className="text-[12px] font-bold text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Exact wording from the page
               </span>
             ) : hits > 0 && (
-              <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3" /> {hits} claim term{hits === 1 ? "" : "s"} found in this passage
+              <span className="text-[12px] font-bold text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1">
+                <CheckCircle2 className="w-3.5 h-3.5" /> {hits} claim term{hits === 1 ? "" : "s"} found in this passage
               </span>
             )}
           </div>
@@ -208,7 +267,10 @@ export function InlineAnswer({ text, citations, onCite }: {
   // "(*)", and "**(*) Use in water service…**" used to print raw asterisks.
   // "(not from your library)" marks a statement no passage backs — it gets
   // its own tag so it can't pass for a cited fact.
-  const parts = text.split(new RegExp(`(\\[\\d{1,3}\\]|\\(not from your library[^)]*\\)|\\*\\*(?:[^*]|\\*(?!\\*))+?\\*\\*|\`[^\`]+\`${mentionAlt ? `|${mentionAlt}` : ""})`, "gi"));
+  // A citation number never wraps onto a line of its own: the space before
+  // it becomes a no-break space.
+  const glued = text.replace(/[ \t]+(?=\[\d{1,3}\])/g, "\u00A0");
+  const parts = glued.split(new RegExp(`(\\[\\d{1,3}\\]|\\(not from your library[^)]*\\)|\\*\\*(?:[^*]|\\*(?!\\*))+?\\*\\*|\`[^\`]+\`${mentionAlt ? `|${mentionAlt}` : ""})`, "gi"));
   // Adjacent markers ("[36][37][39]") read as one long number ("363739")
   // unless something separates them.
   const CITE_RE = /^\[(\d{1,3})\]$/;
@@ -219,7 +281,7 @@ export function InlineAnswer({ text, citations, onCite }: {
   const linkFor = (s: string) => links.find((d) => d.mention === s);
   const docChip = (d: DocLink, label: string, key: number) => (
     <button key={key} onClick={() => open?.(d)} title={`Open ${d.name} · p.${d.page}`}
-      className="inline-flex items-center gap-1 align-baseline mx-0.5 px-1.5 py-0.5 rounded-md border border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)] font-bold text-[0.85em] leading-none hover:bg-[var(--color-surface-2)] dark:hover:bg-[var(--color-surface-2)] hover:border-[var(--color-accent)] transition-colors cursor-pointer">
+      className="inline-flex items-center gap-1 align-baseline mx-0.5 px-1.5 py-0.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] font-bold text-[0.85em] leading-none hover:border-[var(--color-border-strong)] transition-colors cursor-pointer">
       <FileText className="w-3 h-3 shrink-0" />{label}
     </button>
   );
@@ -245,7 +307,7 @@ export function InlineAnswer({ text, citations, onCite }: {
                 // Minimal superscript anchor, not a filled badge: a solid
                 // chip on every line cluttered the reading flow (design
                 // review). p-1.5/-m-1 keeps a real tap target.
-                className="align-super text-[11px] font-black text-[var(--color-accent)] dark:text-[var(--color-text)] underline decoration-dotted decoration-[var(--color-border-strong)] underline-offset-2 hover:text-[var(--color-accent-hover)] dark:hover:text-[var(--color-text)] p-1.5 -m-1 cursor-pointer">
+                className="align-super text-[11px] font-black text-[var(--color-text)] underline decoration-dotted decoration-[var(--color-text-faint)] underline-offset-2 hover:decoration-solid hover:decoration-[var(--color-text)] p-1.5 -m-1 cursor-pointer">
                 {cite[1]}
               </button>
             );
@@ -256,7 +318,7 @@ export function InlineAnswer({ text, citations, onCite }: {
             return (
               <button key={i} onClick={(e) => { if (showProof) showProof(c, text, e.currentTarget.getBoundingClientRect()); }}
                 title={c.url.startsWith("/") ? `From a past job: ${c.title ?? ""}` : `From the web: ${c.title ?? c.url}`}
-                className="align-super text-[11px] font-black text-[var(--color-accent)] dark:text-[var(--color-text)] underline decoration-dotted decoration-[var(--color-border-strong)] underline-offset-2 hover:text-[var(--color-accent-hover)] p-1.5 -m-1 cursor-pointer">
+                className="align-super text-[11px] font-black text-[var(--color-text)] underline decoration-dotted decoration-[var(--color-text-faint)] underline-offset-2 hover:decoration-solid hover:decoration-[var(--color-text)] p-1.5 -m-1 cursor-pointer">
                 {cite[1]}
               </button>
             );
@@ -266,7 +328,7 @@ export function InlineAnswer({ text, citations, onCite }: {
         if (/^\(not from your library/i.test(part)) {
           return (
             <span key={i} title="General engineering knowledge or a code that isn't in this library - verify before relying on it"
-              className="inline-block align-baseline mx-0.5 px-1.5 rounded font-mono text-[11px] font-bold bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)] whitespace-nowrap">
+              className="inline-block align-baseline mx-0.5 px-1.5 rounded text-[11px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] whitespace-nowrap">
               not from your library
             </span>
           );
@@ -296,28 +358,22 @@ export function InlineAnswer({ text, citations, onCite }: {
   );
 }
 
-/** The draw-your-eyes-here tier: imperatives, hold points, gaps. Bigger
- *  type, heavier border, icon — impossible to skim past. */
+/** The draw-your-eyes-here tier: imperatives, hold points, gaps. The
+ *  warning sits on the line it is about, never in a box above. */
 function ImportantCallout({ text, citations, onCite }: {
   text: string;
   citations: KnowledgeCitation[];
   onCite: (c: KnowledgeCitation) => void;
 }) {
   return (
-    <div className="flex items-start gap-2 border-l-2 border-amber-500 pl-3 py-1">
+    <div className="flex items-start gap-2.5 py-0.5">
       <AlertTriangle className="w-4 h-4 text-amber-600 mt-1 shrink-0" />
-      <span className="text-[15px] font-bold text-amber-900 dark:text-amber-200 leading-snug">
+      <span className="text-[14.5px] font-semibold text-amber-900 dark:text-amber-200 leading-relaxed">
         <InlineAnswer text={text} citations={citations} onCite={onCite} />
       </span>
     </div>
   );
 }
-
-/** Section look: one quiet ink. Status colors mean status only, so sections
- *  are told apart by their numbered steps and headings, not by hue. */
-const SECTION_ACCENTS = [
-  { band: "bg-[var(--color-surface-2)] border border-[var(--color-border)]", text: "text-[var(--color-text-muted)] dark:text-[var(--color-text)]", bar: "bg-[var(--color-text)] text-[var(--color-surface)]", pill: "bg-[var(--color-surface-2)] text-[var(--color-text)]", num: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-transparent", hover: "hover:border-[var(--color-border-strong)]" },
-];
 
 /** A value chip you can TAKE with you: tap copies the exact value (torque,
  *  pressure, clause number) for field notes — no paragraph selection. */
@@ -335,8 +391,8 @@ function CopyChip({ value }: { value: string }) {
       }}
       title="Tap to copy"
       className={`mx-0.5 px-1.5 py-0.5 rounded-md border font-mono font-bold text-[0.92em] transition-colors cursor-pointer ${copied
-        ? "bg-emerald-100 dark:bg-emerald-950/50 border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300"
-        : "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)] hover:border-[var(--color-accent)]"}`}
+        ? "bg-emerald-50 dark:bg-emerald-950/50 border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300"
+        : "bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-border-strong)]"}`}
     >
       {copied ? "copied ✓" : value}
     </button>
@@ -347,13 +403,10 @@ function CopyChip({ value }: { value: string }) {
  *  COLLAPSED (everything else stays open, tap any header to toggle). */
 const DEEP_SECTION = /further|ancillary|reference|missing|not retrieved|beyond|background/i;
 
-/** One FACT presented like one: numbered, carded, its sources visible as
- *  buttons on the card (document · page → instant proof passage) — not a
- *  microscopic dot in front of 13px prose. */
-function FactCard({ n, alt, text, citations, onCite }: {
+/** One FACT presented like one: numbered, its sources right under it as
+ *  quiet buttons (document · page → the page itself, passage marked). */
+function FactCard({ n, text, citations, onCite }: {
   n: number;
-  /** Alternating row tint — soft separation instead of a border per fact. */
-  alt: boolean;
   text: string;
   citations: KnowledgeCitation[];
   onCite: (c: KnowledgeCitation) => void;
@@ -371,16 +424,16 @@ function FactCard({ n, alt, text, citations, onCite }: {
     if (sources.length >= 4) break;
   }
   return (
-    <div className={`flex items-start gap-2.5 rounded-lg px-3 py-2.5 ${alt ? "bg-[var(--color-surface-2)]/50" : ""}`}>
+    <div className="flex items-start gap-3 py-1.5">
       <span className="mt-1 shrink-0 w-5 text-right font-mono text-[11px] font-bold text-[var(--color-text-faint)] tabular-nums">
         {String(n).padStart(2, "0")}
       </span>
       <div className="flex-1 min-w-0">
-        <div className="text-sm text-[var(--color-text)] leading-relaxed">
+        <div className={BODY}>
           <InlineAnswer text={text} citations={citations} onCite={onCite} />
         </div>
         {sources.length > 0 && (
-          <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+          <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
             {/* These open the DOCUMENT ITSELF, at the cited page, passage
                 highlighted — the real paper is the proof. The superscript
                 anchors remain the quick in-place passage peek. */}
@@ -388,8 +441,8 @@ function FactCard({ n, alt, text, citations, onCite }: {
               <button key={c.n}
                 onClick={() => onCite(c)}
                 title={`Open ${c.documentName ?? "the document"} at page ${c.page} - passage highlighted`}
-                className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1.5 sm:py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] shadow-sm hover:border-[var(--color-accent)] hover:text-[var(--color-text)] dark:hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] dark:hover:bg-[var(--color-surface-2)] active:scale-[0.98] transition-all">
-                <Eye className="w-3 h-3 shrink-0 text-[var(--color-text-muted)]" />
+                className="inline-flex items-center gap-1 h-7 px-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[11.5px] font-bold text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-text)] transition-colors">
+                <Eye className="w-3 h-3 shrink-0" />
                 {(c.documentName ?? "Source").replace(/\.pdf$/i, "").slice(0, 26)} · p.{c.page}
               </button>
             ))}
@@ -401,24 +454,21 @@ function FactCard({ n, alt, text, citations, onCite }: {
 }
 
 /** Grouped, collapsible answer sections — the shared renderer for both the
- *  detail area and the no-hero fallback. Soft typographic headers (colored
- *  dot, hairline, chevron) instead of a bordered band per section; facts as
- *  alternating tinted rows instead of a box per line; deep-reference
- *  sections start collapsed, everything toggles. */
+ *  "More" area and the no-hero fallback. Each section is a numbered step on
+ *  one line running down the left, so the answer reads as a route; facts
+ *  are plain numbered rows; deep-reference sections start collapsed. */
 function SectionedBlocks({ blocks, citations, onCite }: {
   blocks: AnswerBlock[];
   citations: KnowledgeCitation[];
   onCite: (c: KnowledgeCitation) => void;
 }) {
   const sections = useMemo(() => {
-    const out: Array<{ label: string | null; accent: number; items: AnswerBlock[] }> = [];
-    let cur: { label: string | null; accent: number; items: AnswerBlock[] } = { label: null, accent: 0, items: [] };
-    let accent = -1;
+    const out: Array<{ label: string | null; items: AnswerBlock[] }> = [];
+    let cur: { label: string | null; items: AnswerBlock[] } = { label: null, items: [] };
     for (const b of blocks) {
       if (b.type === "label") {
         if (cur.label !== null || cur.items.length > 0) out.push(cur);
-        accent += 1;
-        cur = { label: b.text, accent: Math.max(0, accent), items: [] };
+        cur = { label: b.text, items: [] };
       } else {
         cur.items.push(b);
       }
@@ -452,29 +502,29 @@ function SectionedBlocks({ blocks, citations, onCite }: {
       }
       if (b.type === "bullet") {
         n += 1;
-        return <div key={i} style={enter(i)}><FactCard n={n} alt={n % 2 === 0} text={b.text} citations={citations} onCite={onCite} /></div>;
+        return <div key={i} style={enter(i)}><FactCard n={n} text={b.text} citations={citations} onCite={onCite} /></div>;
       }
       if (isCheck(b.text)) {
         return (
-          <div key={i} style={enter(i)} className="flex items-start gap-2 border-l-2 border-amber-500 pl-3 py-1 text-[13px] text-amber-800 dark:text-amber-300">
-            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+          <div key={i} style={enter(i)} className="flex items-start gap-2.5 py-0.5 text-[14px] text-amber-900 dark:text-amber-200">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" />
             <span><InlineAnswer text={b.text.replace(/^\*{0,2}Check:?\*{0,2}\s*/i, "")} citations={citations} onCite={onCite} /></span>
           </div>
         );
       }
       return (
-        <p key={i} style={enter(i)} className="text-sm text-[var(--color-text)] leading-relaxed px-3">
+        <p key={i} style={enter(i)} className={BODY}>
           <InlineAnswer text={b.text} citations={citations} onCite={onCite} />
         </p>
       );
     });
   };
-  // Which labeled section is LAST decides where the stepper rail ends — the
-  // rail runs node → node and stops at the final step instead of dangling.
+  // Which labeled section is LAST decides where the rail ends — the rail
+  // runs node → node and stops at the final step instead of dangling.
   const lastLabeled = sections.reduce((acc, sec, i) => (sec.label !== null ? i : acc), -1);
   let step = 0;
   return (
-    <div className="space-y-0">
+    <div>
       {sections.map((sec, si) => {
         if (sec.label === null) {
           return <div key={si} className="space-y-1.5 pb-2">{renderItems(sec.items)}</div>;
@@ -482,7 +532,6 @@ function SectionedBlocks({ blocks, citations, onCite }: {
         step += 1;
         const facts = sec.items.filter((b) => b.type === "bullet").length;
         const open = !closed.has(si);
-        const a = SECTION_ACCENTS[sec.accent % SECTION_ACCENTS.length];
         const isLast = si === lastLabeled;
         return (
           <div
@@ -491,30 +540,29 @@ function SectionedBlocks({ blocks, citations, onCite }: {
           >
             <button
               type="button"
+              aria-expanded={open}
               onClick={() => setClosed((prev) => {
                 const next = new Set(prev);
                 if (next.has(si)) next.delete(si); else next.add(si);
                 return next;
               })}
-              className="group/step w-full flex items-center gap-3 pt-4 pb-1.5 text-left"
+              className="group/step w-full flex items-center gap-3 pt-3 pb-1.5 text-left"
             >
-              {/* Numbered step node — the stepper's anchor point. */}
-              <span className={`shrink-0 w-6 h-6 rounded-full ${a.bar} text-[11px] font-black flex items-center justify-center shadow-sm ring-2 ring-[var(--color-surface)] transition-transform duration-200 group-hover/step:scale-110`}>
-                {step}
-              </span>
-              <span className="text-[16px] sm:text-[17px] font-black tracking-tight leading-tight text-[var(--color-text)] group-hover/step:text-[var(--color-text)] transition-colors">{sec.label}</span>
-              {facts > 0 && <span className="shrink-0 text-[11px] font-bold text-[var(--color-text-faint)]">· {facts} {facts === 1 ? "fact" : "facts"}</span>}
-              <span className="flex-1 h-px bg-[var(--color-border)]/70" />
+              {/* The step's node on the line. */}
+              <StepDot n={step} />
+              <span className="text-[14px] font-bold leading-snug text-[var(--color-text)] group-hover/step:underline decoration-[var(--color-border-strong)]">{sec.label}</span>
+              {facts > 0 && <span className="shrink-0 text-[12px] text-[var(--color-text-faint)]">{facts} {facts === 1 ? "fact" : "facts"}</span>}
+              <span className="flex-1" />
               <ChevronDown className={`w-4 h-4 text-[var(--color-text-faint)] shrink-0 transition-transform duration-200 ${open ? "" : "-rotate-90"}`} />
             </button>
-            {/* The rail: content hangs off a vertical connector dropping from
-                the step node to the next one — the answer READS as a route. */}
-            <div className={`ml-3 pl-5 sm:pl-6 ${open || !isLast ? "border-l-2 border-[var(--color-border)]/60" : ""} ${open ? "pb-4" : "pb-2"}`}>
+            {/* The rail: content hangs off the line dropping from this
+                step's node to the next one. */}
+            <div className={`ml-[11px] pl-[22px] ${open || !isLast ? "border-l-2 border-[var(--color-border)]" : ""} ${open ? "pb-3" : "pb-2"}`}>
               {open ? (
-                <div className="space-y-1.5">{renderItems(sec.items)}</div>
+                <div className="space-y-1">{renderItems(sec.items)}</div>
               ) : (
-                <div className="text-[11px] text-[var(--color-text-faint)] font-medium pl-3">
-                  {facts > 0 ? `${facts} ${facts === 1 ? "item" : "items"}, tap to open` : "tap to open"}
+                <div className="text-[12px] text-[var(--color-text-faint)]">
+                  {facts > 0 ? `${facts} ${facts === 1 ? "item" : "items"}, tap to open` : "Tap to open"}
                 </div>
               )}
             </div>
@@ -525,8 +573,8 @@ function SectionedBlocks({ blocks, citations, onCite }: {
   );
 }
 
-/** Structured answer: the Answer line as a hero callout, Basis/Check as
- *  compact labeled sections — never a wall of text. */
+/** Structured answer: the Answer line big, then the rest as steps on a
+ *  line — never a wall of text. */
 export function AnswerView({ answer, citations, onCite }: {
   answer: string;
   citations: KnowledgeCitation[];
@@ -537,30 +585,26 @@ export function AnswerView({ answer, citations, onCite }: {
   const rest = hero ? blocks.slice(1) : blocks;
   const heroV = hero ? splitVerdict(hero.text) : null;
   return (
-    <div className="space-y-2.5">
+    <div className="space-y-4">
       {hero && heroV && (
-        <div className="rounded-xl border-l-4 border-[var(--color-border-strong)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] px-4 py-3">
-          <div className="text-[11px] font-black uppercase tracking-[0.18em] text-[var(--color-text)] mb-1">Answer</div>
-          {heroV.verdict && <div><VerdictBadge verdict={heroV.verdict} /></div>}
-          <div className="text-base font-bold text-[var(--color-text)] leading-snug">
-            <InlineAnswer text={heroV.text} citations={citations} onCite={onCite} />
-          </div>
-        </div>
+        <DirectAnswer verdict={heroV.verdict}>
+          <InlineAnswer text={heroV.verdict ? capFirst(heroV.text) : heroV.text} citations={citations} onCite={onCite} />
+        </DirectAnswer>
       )}
       <SectionedBlocks key={answer} blocks={rest} citations={citations} onCite={onCite} />
     </div>
   );
 }
 
-/** While the AI works, show WHAT it's doing — staged progress beats a bare
- *  spinner. Stages advance on a timer that tracks the real pipeline order;
- *  the last stage holds until the answer lands. */
+/** While the AI works, show WHAT it's doing — staged progress on one path
+ *  beats a bare spinner. Stages advance on a timer that tracks the real
+ *  pipeline order; the last stage holds until the answer lands. */
 const ASK_STAGES = [
-  { icon: PenLine, label: "Writing search queries" },
-  { icon: Search, label: "Searching the library" },
-  { icon: ScanSearch, label: "Refining with different terms" },
-  { icon: Quote, label: "Reading the passages" },
-  { icon: Sparkles, label: "Composing the cited answer" },
+  "Writing search queries",
+  "Searching the library",
+  "Refining with different terms",
+  "Reading the passages",
+  "Composing the cited answer",
 ];
 
 export function AskProgress() {
@@ -570,28 +614,19 @@ export function AskProgress() {
     return () => clearInterval(t);
   }, []);
   return (
-    <div className="mt-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 animate-rise">
-      <div className="space-y-2.5">
-        {ASK_STAGES.map((s, i) => {
-          const Icon = s.icon;
-          const state = i < stage ? "done" : i === stage ? "active" : "todo";
-          return (
-            <div key={s.label} className={`flex items-center gap-2.5 text-xs transition-opacity ${state === "todo" ? "opacity-35" : ""}`}>
-              {state === "done"
-                ? <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                : state === "active"
-                  ? <Loader2 className="w-4 h-4 text-[var(--color-text-muted)] animate-spin shrink-0" />
-                  : <Icon className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />}
-              <span className={state === "active" ? "font-black text-[var(--color-text)]" : "font-bold text-[var(--color-text-muted)]"}>
-                {s.label}{state === "active" ? "…" : ""}
-              </span>
-            </div>
-          );
-        })}
-      </div>
+    <div className="mt-4 space-y-2.5 animate-rise" role="status" aria-live="polite">
+      <StepPath steps={ASK_STAGES} current={stage} />
+      <p className="max-sm:hidden flex items-center gap-2 text-[13px] font-bold text-[var(--color-text)]">
+        <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-muted)]" /> {ASK_STAGES[stage]}…
+      </p>
     </div>
   );
 }
+
+/** A choice chip: picked is ink, never orange. */
+const CHOICE = (on: boolean) => `h-8 px-3 rounded-lg border text-[12.5px] font-bold transition-colors ${on
+  ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]"
+  : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-[var(--color-border-strong)]"}`;
 
 // Clarify round (opt-in library feature): the AI found the answer across
 // several distinct aspects and asks WHICH before answering — select all that
@@ -610,36 +645,25 @@ export function ClarifyCard({ prompt, options, onAnswer }: {
     });
   };
   return (
-    <div className="mt-4 rounded-2xl border-2 border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] p-4 animate-rise">
-      <div className="flex items-start gap-2.5">
-        <div className="w-7 h-7 rounded-lg bg-[var(--color-text-muted)] flex items-center justify-center shrink-0">
-          <Sparkles className="w-3.5 h-3.5 text-[var(--color-surface)]" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="text-xs font-black text-[var(--color-text)]">One thing before I answer</div>
-          <p className="text-xs text-[var(--color-text)] mt-1">{prompt}</p>
-          <div className="mt-2.5 flex flex-wrap gap-1.5">
-            {options.map((o) => (
-              <button key={o} type="button" onClick={() => toggle(o)}
-                className={`text-[11px] font-black px-2.5 py-1.5 rounded-lg border transition-colors ${
-                  selected.has(o)
-                    ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]"
-                    : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-[var(--color-border-strong)]"}`}>
-                {o}
-              </button>
-            ))}
-          </div>
-          <div className="mt-3 flex items-center gap-2 flex-wrap">
-            <Button size="sm" onClick={() => onAnswer([...selected])} disabled={selected.size === 0}>
-              <Send className="w-3.5 h-3.5" /> Answer selected ({selected.size})
-            </Button>
-            <Button size="sm" variant="secondary" onClick={() => onAnswer(options)}>
-              Answer all of it
-            </Button>
-          </div>
-        </div>
+    <section className="mt-2 space-y-3 animate-rise" aria-label="One thing before I answer">
+      <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-amber-700 dark:text-amber-400">One thing before I answer</div>
+      <p className="text-[16px] font-bold leading-snug text-[var(--color-text)]">{prompt}</p>
+      <div className="flex flex-wrap gap-1.5">
+        {options.map((o) => (
+          <button key={o} type="button" onClick={() => toggle(o)} aria-pressed={selected.has(o)} className={CHOICE(selected.has(o))}>
+            {o}
+          </button>
+        ))}
       </div>
-    </div>
+      <div className="flex items-center gap-2 flex-wrap">
+        <button type="button" onClick={() => onAnswer([...selected])} disabled={selected.size === 0} className={ORANGE}>
+          <Send className="w-4 h-4" /> Answer selected ({selected.size})
+        </button>
+        <button type="button" onClick={() => onAnswer(options)} className={QUIET_LG}>
+          Answer all of it
+        </button>
+      </div>
+    </section>
   );
 }
 
@@ -655,28 +679,22 @@ export function NeedCard({ prompt, onProvide }: {
   const valueDraft = useDraft<string>(`need:${prompt.slice(0, 120)}`, value, setValue, (v) => !v.trim());
   const provide = (v: string) => { valueDraft.clear(); onProvide(v); };
   return (
-    <div className="mt-4 rounded-2xl border-2 border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] p-4 animate-rise">
-      <div className="flex items-start gap-2.5">
-        <div className="w-7 h-7 rounded-lg bg-[var(--color-text-muted)] flex items-center justify-center shrink-0">
-          <Sparkles className="w-3.5 h-3.5 text-[var(--color-surface)]" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="text-xs font-black text-[var(--color-text)]">I need a value from you to run this calculation</div>
-          <p className="text-xs text-[var(--color-text)] mt-1 whitespace-pre-wrap">{prompt}</p>
-          <div className="mt-2.5 flex items-end gap-2">
-            <Textarea value={value} onChange={(e) => setValue(e.target.value)} rows={1}
-              placeholder='e.g. "test temperature = 150°F, design pressure = 285 psig"'
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && value.trim()) provide(value.trim());
-              }}
-              className="flex-1 text-xs" />
-            <Button size="sm" onClick={() => provide(value.trim())} disabled={!value.trim()}>
-              <Send className="w-3.5 h-3.5" /> Calculate
-            </Button>
-          </div>
-        </div>
+    <section className="mt-2 space-y-3 animate-rise" aria-label="A value is needed">
+      <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-amber-700 dark:text-amber-400">I need a value from you to run this calculation</div>
+      <p className="text-[15px] font-semibold leading-relaxed text-[var(--color-text)] whitespace-pre-wrap">{prompt}</p>
+      <div className="flex items-end gap-2">
+        <Textarea value={value} onChange={(e) => setValue(e.target.value)} rows={1}
+          aria-label="The values"
+          placeholder='e.g. "test temperature = 150°F, design pressure = 285 psig"'
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && value.trim()) provide(value.trim());
+          }}
+          className="flex-1 text-[13.5px]" />
+        <button type="button" onClick={() => provide(value.trim())} disabled={!value.trim()} className={ORANGE}>
+          <Send className="w-4 h-4" /> Calculate
+        </button>
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -684,6 +702,7 @@ export function CopyButton({ text, label, onDark }: { text: string; label: strin
   const [copied, setCopied] = useState<boolean | "failed">(false);
   return (
     <button
+      type="button"
       onClick={() => {
         void copyText(text).then((ok) => {
           setCopied(ok ? true : "failed");
@@ -691,18 +710,18 @@ export function CopyButton({ text, label, onDark }: { text: string; label: strin
         });
       }}
       title={label}
-      className={`inline-flex items-center gap-1 text-[11px] font-black px-2 py-1 rounded-lg border transition-colors ${onDark
-        ? "border-white/25 text-slate-300 hover:text-white hover:bg-white/10"
-        : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
-      {copied === true ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />} {copied === true ? "Copied" : copied === "failed" ? "Copy blocked" : label}
+      className={onDark
+        ? "inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] text-[12.5px] font-bold text-[var(--color-ink-fg)] hover:bg-[var(--color-ink-line)] transition-colors"
+        : QUIET}>
+      {copied === true ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />} {copied === true ? "Copied" : copied === "failed" ? "Copy blocked" : label}
     </button>
   );
 }
 
-/** One source = one compact ROW. The answer above already synthesized this
+/** One source = one quiet ROW. The answer above already synthesized this
  *  material — showing quote previews by default read as the same info twice.
  *  Collapsed: identifiers only. Expanded (one tap): the verbatim quote +
- *  view-highlighted-page. Evidence stays one gesture away without competing
+ *  the highlighted page. Evidence stays one gesture away without competing
  *  with the answer. */
 export function SourceCard({ citation, onOpen, delay }: {
   citation: KnowledgeCitation;
@@ -712,45 +731,35 @@ export function SourceCard({ citation, onOpen, delay }: {
   const [expanded, setExpanded] = useState(false);
   const c = citation;
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden hover:border-[var(--color-border)] dark:hover:border-[var(--color-border)] transition-all animate-rise"
-      style={{ animationDelay: `${delay}ms` }}>
-      <button onClick={() => setExpanded((e) => !e)}
-        className="w-full px-3 py-2 flex items-center gap-2.5 text-left hover:bg-[var(--color-surface-2)]/50 transition-colors">
-        <span className="shrink-0 w-5.5 h-5.5 min-w-[1.375rem] min-h-[1.375rem] rounded-md bg-[var(--color-surface-2)] text-[var(--color-text)] text-[11px] font-black flex items-center justify-center">{c.n}</span>
-        <span className="text-xs font-black text-[var(--color-text)] truncate shrink-0 max-w-[38%]">
+    <div className="border-b border-[var(--color-border)] animate-rise" style={{ animationDelay: `${delay}ms` }}>
+      <button onClick={() => setExpanded((e) => !e)} aria-expanded={expanded}
+        className="w-full py-2.5 flex items-center gap-2.5 text-left">
+        <span className={NUM}>{c.n}</span>
+        <span className="text-[13.5px] font-bold text-[var(--color-text)] truncate min-w-0">
           {(c.documentName ?? "Document").replace(/\.pdf$/i, "")}
         </span>
         {c.tier && (
-          <span className={`shrink-0 text-[11px] font-black px-1.5 py-0.5 rounded border truncate max-w-36 ${
-            c.tier === "governing"
-              ? "bg-emerald-100 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800"
-              : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]"}`}
+          <span className={`shrink-0 text-[11px] font-extrabold uppercase tracking-[0.08em] px-1.5 py-0.5 rounded ${c.tier === "governing" ? GOOD : PLAIN}`}
             title={c.tier === "governing" ? "From the governing library - supersedes reference minimums" : "From a linked reference library"}>
-            {c.tier === "governing" ? "GOVERNING" : "REFERENCE"}
+            {c.tier === "governing" ? "Governing" : "Reference"}
           </span>
         )}
-        {c.section && (
-          <span className="text-[11px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)] border border-[var(--color-border)] dark:border-[var(--color-border)] truncate">
-            {c.section}
-          </span>
-        )}
-        <span className="shrink-0 text-[11px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border border-[var(--color-border)]">
-          p.{c.page}
+        <span className="shrink-0 text-[12px] text-[var(--color-text-muted)] truncate max-w-[40%]">
+          {c.section ? `${c.section} · ` : ""}p.{c.page}
         </span>
-        <ChevronDown className={`ml-auto shrink-0 w-3.5 h-3.5 text-[var(--color-text-muted)] transition-transform ${expanded ? "rotate-180" : ""}`} />
+        <ChevronDown className={`ml-auto shrink-0 w-4 h-4 text-[var(--color-text-muted)] transition-transform ${expanded ? "rotate-180" : ""}`} />
       </button>
       {expanded && (
-        <div className="px-3 pb-3 pt-1 border-t border-[var(--color-border)] animate-rise">
+        <div className="pb-3 pl-9 space-y-2 animate-rise">
           <ProofQuote c={c}
-            className="border-l-2 border-[var(--color-border-strong)] pl-3 py-1 text-[11px] leading-relaxed text-[var(--color-text)] whitespace-pre-wrap max-h-64 overflow-y-auto" />
-          <div className="mt-2 flex items-center gap-2">
-            <button onClick={() => onOpen(c)}
-              className="inline-flex items-center gap-1.5 text-[11px] font-black px-2.5 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] transition-colors">
-              <ExternalLink className="w-3 h-3" /> View highlighted page
+            className="border-l-2 border-[var(--color-border-strong)] pl-3 py-0.5 text-[13px] leading-relaxed text-[var(--color-text)] whitespace-pre-wrap max-h-64 overflow-y-auto" />
+          <div className="flex items-center gap-2 flex-wrap">
+            <button onClick={() => onOpen(c)} className={QUIET}>
+              <ExternalLink className="w-3.5 h-3.5" /> View highlighted page
             </button>
             {c.quote && <CopyButton text={referencedQuote(c)} label="Copy quote" />}
             {c.tier && c.libraryName && (
-              <span className="ml-auto text-[11px] text-[var(--color-text-muted)] font-bold">{c.libraryName}</span>
+              <span className="ml-auto text-[12px] text-[var(--color-text-muted)] font-bold">{c.libraryName}</span>
             )}
           </div>
         </div>
@@ -759,9 +768,9 @@ export function SourceCard({ citation, onOpen, delay }: {
   );
 }
 
-/** One piece of proof: what it proves, where it lives, and the exact words —
- *  marked — with the page one tap away. A cite tap in the answer opens and
- *  flashes the matching card. */
+/** One piece of proof, as a quiet row: what it proves, where it lives, and
+ *  (one tap) the exact words marked, with the page one tap further. A cite
+ *  tap in the answer opens and lights up the matching row. */
 function ProofItem({ c, onOpen, open, onToggle, flash, domId }: {
   c: KnowledgeCitation;
   onOpen: (c: KnowledgeCitation) => void;
@@ -772,45 +781,42 @@ function ProofItem({ c, onOpen, open, onToggle, flash, domId }: {
 }) {
   const doc = (c.documentName ?? "Document").replace(/\.pdf$/i, "");
   return (
-    <div id={domId}
-      className={`rounded-xl border bg-[var(--color-surface)] overflow-hidden scroll-mt-24 transition-shadow duration-300 ${flash
-        ? "border-[var(--color-border-strong)] shadow-[0_0_0_3px_rgba(249,115,22,0.25)]"
-        : "border-[var(--color-border)]"}`}>
+    <li id={domId}
+      className={`-mx-2 px-2 rounded-lg scroll-mt-24 transition-colors duration-500 ${flash ? "bg-[var(--color-surface-2)]" : ""}`}>
       <button onClick={onToggle} aria-expanded={open}
-        className="w-full px-3 py-2.5 grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2.5 text-left hover:bg-[var(--color-surface-2)]/50 transition-colors">
-        <span className="mt-0.5 min-w-[1.375rem] h-[1.375rem] px-1 rounded-md bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)] font-mono text-[11px] font-bold flex items-center justify-center">{c.n}</span>
+        className="group w-full py-2.5 grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 text-left">
+        <span className={NUM}>{c.n}</span>
         <span className="min-w-0">
-          <span className="block text-[13px] font-bold text-[var(--color-text)] leading-snug">{c.claim || doc}</span>
-          <span className="block mt-0.5 font-mono text-[11px] text-[var(--color-text-muted)] truncate">
+          <span className="block text-[13.5px] font-bold text-[var(--color-text)] leading-snug group-hover:underline decoration-[var(--color-border-strong)]">{c.claim || doc}</span>
+          <span className="block mt-0.5 text-[12px] text-[var(--color-text-muted)] truncate">
             {c.claim ? `${doc} · ` : ""}{c.section ? `${c.section.slice(0, 36)} · ` : ""}p.{c.page}
           </span>
         </span>
-        <ChevronDown className={`mt-1 w-3.5 h-3.5 text-[var(--color-text-muted)] transition-transform ${open ? "rotate-180" : ""}`} />
+        <ChevronDown className={`mt-1 w-4 h-4 text-[var(--color-text-faint)] transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
       {open && (
-        <div className="px-3 pb-3 space-y-2">
+        <div className="pb-3 pl-9 space-y-2">
           <ProofQuote c={c}
-            className="border-l-[3px] border-[var(--color-border)] bg-[var(--color-surface-2)]/50 rounded-r-md pl-3 pr-2 py-1.5 text-[12.5px] leading-relaxed text-[var(--color-text)] whitespace-pre-wrap max-h-56 overflow-y-auto" />
-          <div className="flex items-center gap-2 flex-wrap text-[11px]">
-            <button onClick={() => onOpen(c)}
-              className="inline-flex items-center gap-1.5 font-bold px-2.5 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-[var(--color-accent)] transition-colors">
-              <Eye className="w-3 h-3 text-[var(--color-text-muted)]" /> Open p.{c.page}{c.highlight ? " at these words" : ""}
+            className="border-l-2 border-[var(--color-border-strong)] pl-3 py-0.5 text-[13px] leading-relaxed text-[var(--color-text)] whitespace-pre-wrap max-h-56 overflow-y-auto" />
+          <div className="flex items-center gap-2 flex-wrap">
+            <button onClick={() => onOpen(c)} className={QUIET}>
+              <Eye className="w-3.5 h-3.5" /> Open p.{c.page}{c.highlight ? " at these words" : ""}
             </button>
             {(c.highlight || c.quote) && <CopyButton text={referencedQuote(c)} label="Copy quote" />}
             {!c.highlight && c.quote && (
-              <span className="text-[var(--color-text-faint)]">whole passage - no exact words given</span>
+              <span className="text-[12px] text-[var(--color-text-faint)]">Whole passage, no exact words given</span>
             )}
           </div>
         </div>
       )}
-    </div>
+    </li>
   );
 }
 
 /** The evidence trail, ranked by what each passage does for the answer:
  *  what decides it, what rules a restriction out or limits it, and the rest
  *  collapsed. Answers saved before evidence roles existed show one plain
- *  "Sources" tier in the order the answer used them. */
+ *  "Sources" group in the order the answer used them. */
 function ProofTrail({ citations, onOpen, openSet, onToggle, onShowRelated, showRelated, flashN, idPrefix }: {
   citations: KnowledgeCitation[];
   onOpen: (c: KnowledgeCitation) => void;
@@ -829,52 +835,51 @@ function ProofTrail({ citations, onOpen, openSet, onToggle, onShowRelated, showR
     <ProofItem key={c.n} c={c} onOpen={onOpen} open={openSet.has(c.n)} onToggle={() => onToggle(c.n)}
       flash={flashN === c.n} domId={`${idPrefix}-${c.n}`} />
   );
-  const tierHead = (label: string, dot: string, count: number) => (
-    <div className="flex items-center gap-2 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-      <span className={`w-2 h-2 rounded-full ${dot}`} />{label}
-      <span className="text-[var(--color-text-faint)]">{count}</span>
+  const rows = (list: KnowledgeCitation[]) => (
+    <ol className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">{list.map(item)}</ol>
+  );
+  const groupHead = (label: string, dot: string, count: number) => (
+    <div className="flex items-center gap-2 pb-2">
+      <span className={`w-2 h-2 rounded-full ${dot}`} aria-hidden />
+      <span className={LABEL}>{label}</span>
+      <span className="text-[11px] font-bold text-[var(--color-text-faint)]">{count}</span>
     </div>
   );
   if (citations.length === 0) {
-    return <p className="text-xs text-[var(--color-text-muted)]">No library passages were cited for this answer.</p>;
+    return <p className="text-[13px] text-[var(--color-text-muted)]">No library passages were cited for this answer.</p>;
   }
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {!hasRoles && (
-        <div className="space-y-2">{tierHead("Sources", "bg-[var(--color-text-muted)]", citations.length)}{citations.map(item)}</div>
+        <div>{groupHead("Sources", "bg-[var(--color-text-muted)]", citations.length)}{rows(citations)}</div>
       )}
       {decides.length > 0 && (
-        <div className="space-y-2">{tierHead("Decides the answer", "bg-emerald-500", decides.length)}{decides.map(item)}</div>
+        <div>{groupHead("Decides the answer", "bg-[var(--color-text)]", decides.length)}{rows(decides)}</div>
       )}
       {limits.length > 0 && (
-        <div className="space-y-2">{tierHead("Conditions & limits", "bg-amber-500", limits.length)}{limits.map(item)}</div>
+        <div>{groupHead("Conditions and limits", "bg-amber-500", limits.length)}{rows(limits)}</div>
       )}
       {related.length > 0 && (
-        <div className="space-y-2">
+        <div>
           <button onClick={() => onShowRelated(!showRelated)} aria-expanded={showRelated}
-            className="w-full flex items-center gap-2 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
-            <span className="w-2 h-2 rounded-full bg-slate-400" />
-            {decides.length + limits.length > 0 ? "Related, not needed for the answer" : "Sources"}
-            <span className="text-[var(--color-text-faint)]">{related.length}</span>
-            <ChevronDown className={`ml-auto w-3.5 h-3.5 transition-transform ${showRelated ? "rotate-180" : ""}`} />
+            className="w-full flex items-center gap-2 pb-2 text-left group">
+            <span className="w-2 h-2 rounded-full border border-[var(--color-text-faint)]" aria-hidden />
+            <span className={`${LABEL} min-w-0 truncate group-hover:text-[var(--color-text)]`}
+              title={decides.length + limits.length > 0 ? "Related passages, not needed for the answer" : undefined}>
+              {decides.length + limits.length > 0 ? "Related" : "Sources"}
+            </span>
+            <span className="text-[11px] font-bold text-[var(--color-text-faint)]">{related.length}</span>
+            <span className="ml-auto shrink-0 whitespace-nowrap inline-flex items-center gap-1 text-[12px] font-bold text-[var(--color-text-muted)] group-hover:text-[var(--color-text)]">
+              {showRelated ? "Hide" : `Show ${related.length}`}
+              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showRelated ? "rotate-180" : ""}`} />
+            </span>
           </button>
-          {showRelated && related.map(item)}
+          {showRelated && rows(related)}
         </div>
       )}
     </div>
   );
 }
-
-const VERDICT_BOX: Record<Verdict | "none", string> = {
-  yes: "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800",
-  conditional: "bg-amber-50 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800",
-  no: "bg-rose-50 dark:bg-rose-950/30 border-rose-300 dark:border-rose-800",
-  unsettled: "bg-slate-50 dark:bg-slate-900/40 border-slate-300 dark:border-slate-700",
-  complies: "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800",
-  fails: "bg-rose-50 dark:bg-rose-950/30 border-rose-300 dark:border-rose-800",
-  undetermined: "bg-slate-50 dark:bg-slate-900/40 border-slate-300 dark:border-slate-700",
-  none: "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] border-[var(--color-border)] dark:border-[var(--color-border)]",
-};
 
 /** "Answering for" — the AI's reading of the question, as chips. A dashed
  *  chip is an input the answer depends on that nobody gave. On the latest
@@ -890,21 +895,22 @@ function AnsweringFor({ chips, onCorrect }: { chips: string[]; onCorrect?: (valu
   };
   return (
     <div className="flex flex-wrap items-center gap-1.5">
-      <span className="text-[11px] text-[var(--color-text-muted)] mr-0.5">Answering for</span>
+      <span className="text-[12px] text-[var(--color-text-muted)] mr-0.5">Answering for</span>
       {chips.map((chip, i) => editing === i ? (
         <form key={i} className="inline-flex items-center gap-1"
           onSubmit={(e) => { e.preventDefault(); if (value.trim()) { onCorrect?.(value.trim()); setEditing(null); } }}>
           <input id={`af-${i}`} autoFocus value={value} onChange={(e) => setValue(e.target.value)}
+            aria-label="Correct this and ask again"
             onKeyDown={(e) => { if (e.key === "Escape") setEditing(null); }}
-            className="text-[12px] px-2 py-0.5 rounded-full border border-[var(--color-accent)] bg-[var(--color-surface)] text-[var(--color-text)] w-48 focus:outline-none" />
-          <button type="submit" className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-[var(--color-accent)] text-[var(--color-accent-fg)]">Re-ask</button>
+            className="h-7 text-[12.5px] px-2.5 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] w-52 focus:outline-none focus:ring-2 focus:ring-[var(--color-border)]" />
+          <button type="submit" className="h-7 text-[12px] font-bold px-2.5 rounded-full bg-[var(--color-text)] text-[var(--color-surface)]">Ask again</button>
         </form>
       ) : (
         <button key={i} type="button" onClick={() => start(i)} disabled={!onCorrect}
-          title={onCorrect ? (isMissingFact(chip) ? "Add this and re-ask" : "Correct this and re-ask") : undefined}
-          className={`inline-flex items-center gap-1 text-[12px] px-2.5 py-0.5 rounded-full border transition-colors ${isMissingFact(chip)
-            ? "border-dashed border-amber-500 text-amber-700 dark:text-amber-300"
-            : "border-[var(--color-border)] bg-[var(--color-surface-2)]/60 text-[var(--color-text)]"} ${onCorrect ? "hover:border-[var(--color-accent)] cursor-pointer" : "cursor-default"}`}>
+          title={onCorrect ? (isMissingFact(chip) ? "Add this and ask again" : "Correct this and ask again") : undefined}
+          className={`inline-flex items-center gap-1 h-7 text-[12.5px] px-2.5 rounded-full border transition-colors ${isMissingFact(chip)
+            ? "border-dashed border-amber-500 text-amber-800 dark:text-amber-300"
+            : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]"} ${onCorrect ? "hover:border-[var(--color-border-strong)] cursor-pointer" : "cursor-default"}`}>
           {chip}
           {onCorrect && <span className="text-[11px] text-[var(--color-text-faint)]">{isMissingFact(chip) ? "+" : "✎"}</span>}
         </button>
@@ -915,42 +921,39 @@ function AnsweringFor({ chips, onCorrect }: { chips: string[]; onCorrect?: (valu
 
 /** The one question that would finish the answer — asked AFTER the answer,
  *  never instead of it. Tap an option or type a value; it re-asks with it. */
-function OneQuestion({ followup, onAnswer }: {
+function OneQuestion({ followup, onAnswer, primary }: {
   followup: { question: string; options: string[] };
   onAnswer?: (value: string) => void;
+  primary: boolean;
 }) {
   const [value, setValue] = useState("");
   return (
-    <div className="rounded-lg border border-dashed border-amber-500/80 px-3.5 py-3 space-y-2">
-      <div className="text-[13.5px] text-[var(--color-text)]"><b>One thing would finish this:</b> {followup.question}</div>
+    <section className="space-y-2.5">
+      <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-amber-700 dark:text-amber-400">One thing would finish this</div>
+      <p className="text-[15px] font-bold leading-snug text-[var(--color-text)]">{followup.question}</p>
       {onAnswer && (
         <form className="flex flex-wrap items-center gap-1.5"
           onSubmit={(e) => { e.preventDefault(); if (value.trim()) onAnswer(`${followup.question} → ${value.trim()}`); }}>
           {followup.options.map((o) => (
-            <button key={o} type="button" onClick={() => onAnswer(`${followup.question} → ${o}`)}
-              className="text-[12.5px] px-2.5 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-[var(--color-accent)]">
+            <button key={o} type="button" onClick={() => onAnswer(`${followup.question} → ${o}`)} className={QUIET_LG}>
               {o}
             </button>
           ))}
-          <input id="one-question" value={value} onChange={(e) => setValue(e.target.value)} placeholder="Type the answer"
-            className="text-[12.5px] px-2.5 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] w-44 focus:outline-none focus:border-[var(--color-accent)]" />
-          <button type="submit" disabled={!value.trim()}
-            className="text-[12.5px] font-bold px-2.5 py-1 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] disabled:opacity-40">
+          <input id="one-question" value={value} onChange={(e) => setValue(e.target.value)} placeholder="Or type the answer"
+            aria-label="Type the answer"
+            className="h-9 text-[13px] px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] w-48 placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-border-strong)]" />
+          <button type="submit" disabled={!value.trim()} className={act(primary)}>
             Finish the answer
           </button>
         </form>
       )}
-    </div>
+    </section>
   );
 }
 
-/** Section heading inside the answer column. */
+/** The name of a part of the answer. */
 function PartHead({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)] mb-2">
-      {children}
-    </div>
-  );
+  return <div className={`${LABEL} mb-3`}>{children}</div>;
 }
 
 /** Copy (a menu: formatted for email or Word, plain text, Markdown for
@@ -965,7 +968,7 @@ const COPY_OPTIONS: Array<{ kind: CopyKind; label: string; hint: string }> = [
   { kind: "references", label: "References only", hint: "Each cited document, page and quote" },
 ];
 
-function ExportButtons({ question, answer, large = false }: { question: string; answer: KnowledgeAnswer; large?: boolean }) {
+function ExportButtons({ question, answer }: { question: string; answer: KnowledgeAnswer }) {
   const [state, setState] = useState<{ s: "idle" | "copied" | "failed"; label?: string }>({ s: "idle" });
   const [menu, setMenu] = useState(false);
   const flash = (s: "copied" | "failed", label?: string) => { setState({ s, label }); setTimeout(() => setState({ s: "idle" }), 1800); };
@@ -997,55 +1000,58 @@ function ExportButtons({ question, answer, large = false }: { question: string; 
     w.focus();
     setTimeout(() => w.print(), 250);
   };
-  const primary = large
-    ? "inline-flex items-center gap-1.5 text-[13px] font-bold px-3.5 py-2 bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm hover:bg-[var(--color-accent-hover)] transition-colors"
-    : "inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] transition-colors";
-  const secondary = large
-    ? "inline-flex items-center gap-1.5 text-[13px] font-bold px-3.5 py-2 rounded-lg border border-[var(--color-border-strong,var(--color-border))] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-[var(--color-border-strong)] transition-colors"
-    : `${primary} rounded-md`;
-  const icon = large ? "w-4 h-4" : "w-3 h-3";
   return (
     <div className="flex items-center gap-1.5 shrink-0">
       <div className="relative inline-flex">
-        <button type="button" onClick={() => void copy("formatted")} className={`${primary} ${large ? "rounded-l-lg" : "rounded-l-md"}`}
+        <button type="button" onClick={() => void copy("formatted")} className={`${QUIET_CORE} h-8 px-3 text-[12.5px] rounded-l-lg`}
           title="Copy the answer and its proof, formatted - pastes into email or Word looking like the card">
-          {state.s === "copied" ? <Check className={icon} /> : <Copy className={icon} />}
-          {state.s === "copied" ? `Copied - ${state.label}` : state.s === "failed" ? "Copy blocked" : "Copy"}
+          {state.s === "copied" ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+          {state.s === "copied" ? `Copied: ${state.label}` : state.s === "failed" ? "Copy blocked" : "Copy"}
         </button>
-        <button type="button" onClick={() => setMenu((v) => !v)} aria-haspopup="menu" aria-expanded={menu} title="Other ways to copy"
-          className={`${primary} ${large ? "rounded-r-lg border-l border-[var(--color-accent)] px-2" : "rounded-r-md border-l-0 px-1"}`}>
-          <ChevronDown className={icon} />
+        <button type="button" onClick={() => setMenu((v) => !v)} aria-haspopup="menu" aria-expanded={menu} title="Other ways to copy" aria-label="Other ways to copy"
+          className={`${QUIET_CORE} h-8 px-1.5 rounded-r-lg border-l-0`}>
+          <ChevronDown className="w-3.5 h-3.5" />
         </button>
         {menu && (
           <>
             <div className="fixed inset-0 z-40" onClick={() => setMenu(false)} />
-            <div role="menu" className="absolute right-0 top-full mt-1 z-50 w-64 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl py-1">
+            <div role="menu" className="absolute right-0 top-full mt-1 z-50 w-64 rounded-xl bg-[var(--color-surface)] shadow-2xl ring-1 ring-[var(--color-border)] py-1">
               {COPY_OPTIONS.map((o) => (
                 <button key={o.kind} role="menuitem" type="button" onClick={() => void copy(o.kind)}
                   className="w-full text-left px-3 py-2 hover:bg-[var(--color-surface-2)]">
-                  <div className="text-[12.5px] font-bold text-[var(--color-text)]">{o.label}</div>
-                  <div className="text-[11px] text-[var(--color-text-muted)]">{o.hint}</div>
+                  <div className="text-[13px] font-bold text-[var(--color-text)]">{o.label}</div>
+                  <div className="text-[12px] text-[var(--color-text-muted)]">{o.hint}</div>
                 </button>
               ))}
             </div>
           </>
         )}
       </div>
-      <button type="button" onClick={print} className={secondary} title="Print, or choose Save as PDF in the print dialog">
-        <Printer className={icon} /> {large ? "Print / save PDF" : "Print"}
+      <button type="button" onClick={print} className={QUIET} title="Print, or choose Save as PDF in the print dialog">
+        <Printer className="w-3.5 h-3.5" /> <span>Print<span className="max-sm:hidden"> / save PDF</span></span>
       </button>
     </div>
   );
 }
 
+/** What "I can settle this if you give me" asks for, and the best answer
+ *  meanwhile. An item with no words (a stray "*" left when an ask for a
+ *  document the library holds was removed) is not something to ask for. */
+function settleParts(items: AnswerBlock[]) {
+  const best = items.filter((b) => /^\*{0,2}best answer/i.test(b.text));
+  const needs = items.filter((b) => b.type !== "label" && !best.includes(b) && b.text.replace(/[*_\s:—–-]/g, "").length > 0);
+  return { best, needs };
+}
+
 /** "I can settle this if you give me…" — what's missing, why, where the
  *  standards point to it, and a place to drop it. Dropped files ride with
  *  the next question; Rethink re-asks with them. */
-function SettleBox({ items, inline, onAttach, onRethink }: {
+function SettleBox({ items, inline, onAttach, onRethink, primary }: {
   items: AnswerBlock[];
   inline: (text: string) => React.ReactNode;
   onAttach?: (files: File[]) => void;
   onRethink?: () => void;
+  primary: boolean;
 }) {
   const [added, setAdded] = useState<File[]>([]);
   const pick = React.useRef<HTMLInputElement>(null);
@@ -1056,24 +1062,21 @@ function SettleBox({ items, inline, onAttach, onRethink }: {
     setAdded((a) => [...a, ...files]);
   };
   const drag = useFileDrag((fs) => take(fs), !onAttach);
-  const best = items.filter((b) => /^\*{0,2}best answer/i.test(b.text));
-  // An item with no words (a stray "*" left when an ask for a document the
-  // library holds was removed) is not something to ask for.
-  const needs = items.filter((b) => b.type !== "label" && !best.includes(b) && b.text.replace(/[*_\s:—–-]/g, "").length > 0);
+  const { best, needs } = settleParts(items);
   if (needs.length === 0 && best.length === 0) return null;
   return (
-    <div className="rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-4 py-3.5 space-y-2.5">
-      {needs.length > 0 && <div className="text-[14px] font-bold text-[var(--color-text)]">I can settle this if you give me:</div>}
+    <section className="space-y-3">
+      {needs.length > 0 && <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-amber-700 dark:text-amber-400">I can settle this if you give me</div>}
       <ul className={needs.length ? "space-y-1.5" : "hidden"}>
         {needs.map((b, i) => (
-          <li key={i} className="grid grid-cols-[1rem_minmax(0,1fr)] gap-2 items-start text-[14px] leading-relaxed text-[var(--color-text)]">
-            <span className="mt-2 w-1.5 h-1.5 rounded-full bg-[var(--color-text-muted)]" />
+          <li key={i} className={`grid grid-cols-[1rem_minmax(0,1fr)] gap-2 items-start ${BODY}`}>
+            <span className="mt-2.5 w-1.5 h-1.5 rounded-full bg-[var(--color-text)]" aria-hidden />
             <span>{inline(b.text)}</span>
           </li>
         ))}
       </ul>
       {best.map((b, i) => (
-        <div key={i} className={`text-[13.5px] leading-relaxed text-[var(--color-text-muted)] ${needs.length ? "border-t border-[var(--color-border)] pt-2" : ""}`}>{inline(b.text)}</div>
+        <div key={i} className={`text-[14px] leading-relaxed text-[var(--color-text-muted)] ${needs.length ? "border-t border-[var(--color-border)] pt-2.5" : ""}`}>{inline(b.text)}</div>
       ))}
       {onAttach && (
         <div
@@ -1081,22 +1084,22 @@ function SettleBox({ items, inline, onAttach, onRethink }: {
           onClick={() => pick.current?.click()}
           onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick.current?.click(); } }}
           role="button" tabIndex={0}
-          className={`rounded-lg border-2 border-dashed px-3 py-3 text-center cursor-pointer transition-colors border-[var(--color-border)] hover:border-[var(--color-border-strong)] ${drag.ring}`}>
+          className={`rounded-xl border-2 border-dashed px-3 py-3.5 text-center cursor-pointer transition-colors border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] ${drag.ring}`}>
           <input ref={pick} id="settle-drop" type="file" multiple hidden
             accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
             onChange={(e) => { take(e.target.files); e.target.value = ""; }} />
-          <div className="text-[13px] font-bold text-[var(--color-text)] inline-flex items-center gap-1.5">
-            <Upload className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {drag.over ? drag.say : "Drop the document here, or a photo of the page"}
+          <div className="text-[13.5px] font-bold text-[var(--color-text)] inline-flex items-center gap-1.5">
+            <Upload className="w-4 h-4 text-[var(--color-text-muted)]" /> {drag.over ? drag.say : "Drop the document here, or a photo of the page"}
           </div>
-          <div className="text-[11.5px] text-[var(--color-text-muted)]">
-            {added.length > 0 ? "Added below; it goes with the rethink" : "PDF or image · it's read for this question, not added to the library"}
+          <div className="text-[12px] text-[var(--color-text-muted)]">
+            {added.length > 0 ? "Added below. It goes with the next ask." : "PDF or image · read for this question, not added to the library"}
           </div>
         </div>
       )}
       {added.length > 0 && (
         <ul className="flex flex-wrap gap-1.5">
           {added.map((f, i) => (
-            <li key={`${f.name}-${i}`} className="inline-flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] pl-1 pr-2 py-1 text-[11px] font-bold text-[var(--color-text)] max-w-[260px]">
+            <li key={`${f.name}-${i}`} className="inline-flex items-center gap-2 rounded-lg bg-[var(--color-surface-2)] pl-1 pr-2 py-1 text-[12px] font-bold text-[var(--color-text)] max-w-[260px]">
               <FileThumb file={f} size={32} />
               <span className="min-w-0 flex flex-col leading-tight"><span className="truncate">{f.name}</span><span className="font-semibold text-[var(--color-text-muted)]">{f.size >= 1048576 ? `${(f.size / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(f.size / 1024))} KB`}</span></span>
             </li>
@@ -1104,12 +1107,11 @@ function SettleBox({ items, inline, onAttach, onRethink }: {
         </ul>
       )}
       {onRethink && (
-        <button type="button" onClick={onRethink}
-          className="inline-flex items-center gap-1.5 text-[13px] font-bold px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] transition-colors">
-          <RefreshCw className="w-3.5 h-3.5" /> {added.length > 0 ? "Rethink with what I added" : "Rethink the answer"}
+        <button type="button" onClick={onRethink} className={act(primary)}>
+          <RefreshCw className="w-4 h-4" /> {added.length > 0 ? "Ask again with what I added" : "Ask again"}
         </button>
       )}
-    </div>
+    </section>
   );
 }
 
@@ -1133,68 +1135,71 @@ const DOC_TYPE_WORD: Record<string, string> = {
   procedure: "Procedure", std_drawing: "Standard drawing", pid: "Drawing", datasheet: "Data sheet", other: "Document",
 };
 
+/** The next answer shape that fits where the conversation is heading. */
+function helperStep(answer: KnowledgeAnswer, mode: string) {
+  const goal = answer.goal;
+  return goal?.kind === "deviation" && mode !== "deviation" ? { m: "deviation" as const, label: "Work up the deviation case" }
+    : goal?.kind === "compliance" && mode !== "compliance" ? { m: "compliance" as const, label: "Run it as a compliance check" }
+    : null;
+}
+
 /** The helper: where the conversation seems to be heading, the next step
  *  that fits, and the library documents to use for it — forms to fill,
  *  checklists to open. Offered, never assumed. */
-function HelperBand({ answer, mode, onRethink, onOpenDoc, onFill }: {
+function HelperBand({ answer, mode, onRethink, onOpenDoc, onFill, primary }: {
   answer: KnowledgeAnswer;
   mode: string;
   onRethink?: (m: "answer" | "compliance" | "explore" | "deviation") => void;
   onOpenDoc?: (d: DocLink) => void;
   onFill: (doc: NonNullable<KnowledgeAnswer["suggestedDocs"]>[number]) => void;
+  /** Which of its actions is the answer's one orange, if any. */
+  primary: "step" | "fill" | null;
 }) {
   const goal = answer.goal;
   const docs = answer.suggestedDocs ?? [];
-  const step = goal?.kind === "deviation" && mode !== "deviation" ? { m: "deviation" as const, label: "Work up the deviation case" }
-    : goal?.kind === "compliance" && mode !== "compliance" ? { m: "compliance" as const, label: "Run it as a compliance check" }
-    : null;
+  const step = helperStep(answer, mode);
+  const firstForm = docs.find((d) => d.form)?.documentId;
   if (!goal && docs.length === 0) return null;
   return (
-    <div className="rounded-xl border border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] px-4 py-3 space-y-2.5">
+    <section className="space-y-3">
+      <div className={LABEL}>{goal ? "Next step" : "From your library"}</div>
       {goal && (
-        <div className="text-[13.5px] leading-snug text-[var(--color-text)]">
-          <span className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text)] dark:text-[var(--color-text)] mr-1.5">Helper</span>
+        <p className={BODY}>
           Looks like you&apos;re working toward <b>{GOAL_LABEL[goal.kind] ?? goal.kind}</b>{goal.why ? <> - {goal.why}</> : null}.
-        </div>
+        </p>
       )}
-      {!goal && (
-        <div className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text)] dark:text-[var(--color-text)]">From your library</div>
+      {step && onRethink && (
+        <button type="button" onClick={() => onRethink(step.m)} className={act(primary === "step")}>
+          <RefreshCw className="w-4 h-4" /> {step.label}
+        </button>
       )}
-      {(step && onRethink) || docs.length > 0 ? (
-        <div className="flex flex-col gap-1.5">
-          {step && onRethink && (
-            <button type="button" onClick={() => onRethink(step.m)}
-              className="self-start inline-flex items-center gap-1.5 text-[13px] font-bold px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] transition-colors">
-              <RefreshCw className="w-3.5 h-3.5" /> {step.label}
-            </button>
-          )}
+      {docs.length > 0 && (
+        <ul className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
           {docs.map((d) => (
-            <div key={d.documentId} className="flex flex-wrap items-center gap-2 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] px-3 py-2">
+            <li key={d.documentId} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-2.5">
               <FileText className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-              <span className="min-w-0 flex-1">
-                <span className="block text-[13px] font-bold text-[var(--color-text)] truncate">
-                  <span className="font-mono text-[11px] uppercase tracking-wider text-[var(--color-text-muted)] mr-1.5">{DOC_TYPE_WORD[d.type] ?? "Document"}</span>
-                  {d.name.replace(/\.pdf$/i, "")}
-                </span>
-                {d.why && <span className="block text-[12px] text-[var(--color-text-muted)] truncate">{d.why}</span>}
+              <span className="min-w-0 flex-1 basis-48">
+                <span className="block text-[11px] font-extrabold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">{DOC_TYPE_WORD[d.type] ?? "Document"}</span>
+                <span className="block text-[14px] font-bold text-[var(--color-text)] truncate">{d.name.replace(/\.pdf$/i, "")}</span>
+                {d.why && <span className="block text-[12.5px] text-[var(--color-text-muted)] truncate">{d.why}</span>}
               </span>
-              {d.form && (
-                <button type="button" onClick={() => onFill(d)}
-                  className="inline-flex items-center gap-1.5 text-[12.5px] font-bold px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]">
-                  <PenLine className="w-3.5 h-3.5" /> Fill it in
-                </button>
-              )}
-              {d.fileKey && onOpenDoc && (
-                <button type="button" onClick={() => onOpenDoc({ id: d.documentId, name: d.name, fileKey: d.fileKey!, page: 1, mention: d.name })}
-                  className="inline-flex items-center gap-1.5 text-[12.5px] font-bold px-3 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-[var(--color-border-strong)]">
-                  <Eye className="w-3.5 h-3.5" /> Open
-                </button>
-              )}
-            </div>
+              <span className="flex items-center gap-1.5 shrink-0">
+                {d.form && (
+                  <button type="button" onClick={() => onFill(d)} className={act(primary === "fill" && d.documentId === firstForm)}>
+                    <PenLine className="w-4 h-4" /> Fill it in
+                  </button>
+                )}
+                {d.fileKey && onOpenDoc && (
+                  <button type="button" onClick={() => onOpenDoc({ id: d.documentId, name: d.name, fileKey: d.fileKey!, page: 1, mention: d.name })} className={QUIET_LG}>
+                    <Eye className="w-4 h-4" /> Open
+                  </button>
+                )}
+              </span>
+            </li>
           ))}
-        </div>
-      ) : null}
-    </div>
+        </ul>
+      )}
+    </section>
   );
 }
 
@@ -1202,29 +1207,31 @@ function HelperBand({ answer, mode, onRethink, onOpenDoc, onFill }: {
 function RethinkBar({ mode, onRethink }: { mode: string; onRethink: (m: "answer" | "compliance" | "explore" | "deviation") => void }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5">
-      <span className="text-[12px] text-[var(--color-text-muted)] mr-0.5">Not what you needed? Rethink as</span>
+      <span className="text-[12.5px] text-[var(--color-text-muted)] mr-1">Not what you needed? Ask again as</span>
       {MODES.map((m) => (
-        <button key={m.id} type="button" onClick={() => onRethink(m.id)} title={m.hint}
-          className={`text-[12px] font-bold px-2.5 py-1 rounded-md border transition-colors ${mode === m.id
-            ? "border-[var(--color-text)] bg-[var(--color-text)] dark:bg-[var(--color-surface-2)] text-[var(--color-surface)] dark:text-[var(--color-text)]"
-            : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-[var(--color-accent)]"}`}>
-          {mode === m.id ? "✓ " : ""}{m.label}
+        <button key={m.id} type="button" onClick={() => onRethink(m.id)} title={m.hint} aria-pressed={mode === m.id}
+          className={`inline-flex items-center gap-1 ${CHOICE(mode === m.id)}`}>
+          {mode === m.id && <Check className="w-3.5 h-3.5" />}{m.label}
         </button>
       ))}
     </div>
   );
 }
 
-/** The full answer, laid out answer-first: what the AI understood, the
- *  verdict, the short chain of why, what to check before acting, the one
- *  question that would finish it, and everything else collapsed — with the
- *  ranked proof trail beside it (below it on narrow screens). A cite tap
- *  jumps to its proof card instead of opening a floating popup. */
-export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc, onFollowup, onRethink, onAttach, showQuestion = true }: {
+/** The full answer, laid out like a document: what kind of answer it is,
+ *  the verdict and the direct answer in one big line, the short chain of
+ *  why as one connected path, what to check before acting, the one
+ *  question that would finish it, and everything else folded — with the
+ *  ranked sources beside it (below it on narrow screens). A cite tap jumps
+ *  to its source row instead of opening a floating popup. */
+export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc, onFollowup, onRethink, onAttach, showQuestion = true, latest = false }: {
   question: string;
   answer: KnowledgeAnswer;
   /** The chat shell shows the question as its own bubble — no echo there. */
   showQuestion?: boolean;
+  /** The newest answer in the conversation: it alone may carry the one
+   *  orange step forward. Older answers keep every action, all quiet. */
+  latest?: boolean;
   onCite: (c: KnowledgeCitation) => void;
   /** Open a sheet in the viewer with a tag ringed (equipment table rows). */
   onOpenTag?: (documentId: string, page: number, tag: string, documentName: string) => void;
@@ -1284,7 +1291,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
 
   const proofCtx = {
     show: (c: KnowledgeCitation, context: string, anchor: DOMRect) => {
-      // A cited library passage: open its proof card in the trail and bring
+      // A cited library passage: open its proof row in the trail and bring
       // it into view. Anything else gets the floating proof card.
       if (!c.url && libraryCitations.some((x) => x.n === c.n)) {
         setOpenSet((prev) => new Set(prev).add(c.n));
@@ -1328,53 +1335,61 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
       {inline(text)}
       {!hasSource(text) && (
         <span title="No citation - this line isn't tied to a page in your documents. Don't rely on it without checking."
-          className="ml-1.5 inline-block align-baseline px-1.5 rounded font-mono text-[11px] font-bold bg-rose-100 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 whitespace-nowrap">
+          className="ml-1.5 inline-block align-baseline px-1.5 rounded text-[11px] font-bold bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 whitespace-nowrap">
           no source
         </span>
       )}
     </>
   );
-  // Why: numbered steps; headings become small group labels.
+  // Why: numbered steps on one connected line; headings become small group
+  // labels on the same line.
   const renderWhy = (blocks: AnswerBlock[]) => {
     let n = 0;
-    return blocks.map((b, i) => {
-      if (b.type === "label") {
-        return <div key={i} className="pt-1 text-[12px] font-bold text-[var(--color-text-muted)]">{b.text}</div>;
-      }
-      if (b.type === "bullet") {
-        n += 1;
-        return (
-          <div key={i} className="grid grid-cols-[1.5rem_minmax(0,1fr)] gap-2.5 items-start">
-            <span className="mt-0.5 w-6 h-6 rounded-full border border-[var(--color-border)] font-mono text-[11px] text-[var(--color-text-muted)] flex items-center justify-center">{n}</span>
-            <div className="text-[14px] leading-relaxed text-[var(--color-text)]">{sourced(b.text)}</div>
-          </div>
-        );
-      }
-      return <p key={i} className="text-[14px] leading-relaxed text-[var(--color-text)]">{sourced(b.text)}</p>;
-    });
+    return (
+      <PathList items={blocks.map((b, i) => {
+        if (b.type === "label") {
+          return { key: i, marker: <span className="w-2.5 h-2.5 rounded-full bg-[var(--color-border-strong)]" />, body: <div className="pt-0.5 text-[13px] font-bold text-[var(--color-text-muted)]">{b.text}</div> };
+        }
+        if (b.type === "bullet") {
+          n += 1;
+          return { key: i, marker: <StepDot n={n} />, body: <div className={BODY}>{sourced(b.text)}</div> };
+        }
+        return { key: i, marker: <span className="w-2 h-2 rounded-full bg-[var(--color-text-muted)]" />, body: <p className={BODY}>{sourced(b.text)}</p> };
+      })} />
+    );
   };
   // Before you act: a checklist; "!" lines are the MUSTs and look it.
   const renderBefore = (blocks: AnswerBlock[]) => blocks.map((b, i) => {
     if (b.type === "label") {
-      return <div key={i} className="pt-1 text-[12px] font-bold text-[var(--color-text-muted)]">{b.text}</div>;
+      return <div key={i} className="pt-1 text-[13px] font-bold text-[var(--color-text-muted)]">{b.text}</div>;
     }
     if (b.type === "important") {
       return (
-        <div key={i} className="grid grid-cols-[1.125rem_minmax(0,1fr)] gap-2 items-start border-l-2 border-amber-500 px-2 py-1">
-          <AlertTriangle className="mt-0.5 w-4 h-4 text-amber-600" />
-          <div className="text-[14px] font-semibold leading-relaxed text-amber-950 dark:text-amber-100">{sourced(b.text)}</div>
+        <div key={i} className="grid grid-cols-[1.25rem_minmax(0,1fr)] gap-2.5 items-start">
+          <AlertTriangle className="mt-1 w-4 h-4 text-amber-600" />
+          <div className="text-[14.5px] font-semibold leading-relaxed text-amber-900 dark:text-amber-200">{sourced(b.text)}</div>
         </div>
       );
     }
     return (
-      <div key={i} className="grid grid-cols-[1.125rem_minmax(0,1fr)] gap-2 items-start px-2">
-        <span className="mt-1 w-3.5 h-3.5 rounded-[3px] border-[1.5px] border-[var(--color-text-muted)]" />
-        <div className="text-[14px] leading-relaxed text-[var(--color-text)]">{sourced(b.text)}</div>
+      <div key={i} className="grid grid-cols-[1.25rem_minmax(0,1fr)] gap-2.5 items-start">
+        <span aria-hidden className="mt-1 w-4 h-4 rounded-[4px] border-[1.5px] border-[var(--color-text-muted)]" />
+        <div className={BODY}>{sourced(b.text)}</div>
       </div>
     );
   });
 
-  const verdictKey: Verdict | "none" = heroV?.verdict ?? "none";
+  // The one orange: the step that moves this answer forward, and only on
+  // the latest answer. Everything else stays quiet.
+  const settle = heroV ? settleParts(parts.settle) : { best: [], needs: [] };
+  const step = helperStep(answer, mode);
+  const hasForm = (answer.suggestedDocs ?? []).some((d) => d.form);
+  const primary: "followup" | "settle" | "step" | "fill" | null = !latest ? null
+    : answer.followup && onFollowup ? "followup"
+    : settle.needs.length + settle.best.length > 0 && onRethink ? "settle"
+    : step && onRethink ? "step"
+    : hasForm && shapeOrgId ? "fill"
+    : null;
 
   return (
     <DocLinkContext.Provider value={docLinkCtx}>
@@ -1403,223 +1418,224 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
         onClose={() => setShaping(false)}
       />
     )}
-    <div className={`${showQuestion ? "mt-4" : ""} space-y-3 @container`}>
+    <div className={`${showQuestion ? "mt-4" : ""} space-y-6 @container`}>
       {showQuestion && (
-        <div className="text-[11px] text-[var(--color-text-muted)] animate-rise">
+        <div className="text-[12.5px] text-[var(--color-text-muted)] animate-rise">
           You asked: <i>&ldquo;{question}&rdquo;</i>
         </div>
       )}
 
-      {/* A REPLAYED answer must never masquerade as a fresh run. */}
+      {/* A REPLAYED answer must never pass for a fresh run. */}
       {answer.provider === "memory" && (
-        <div className="rounded-xl border-2 border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] px-3.5 py-2.5 text-[11px] font-bold text-[var(--color-text)] dark:text-[var(--color-text)] flex items-center gap-2">
-          <History className="w-4 h-4 shrink-0" />
+        <p className="flex items-start gap-2 text-[13px] leading-relaxed text-[var(--color-text-muted)]">
+          <History className="w-4 h-4 mt-0.5 shrink-0" />
           <span>
-            <b className="font-black">Replayed from your team&apos;s record</b> - this is a PAST answer, shown
-            without a new AI run. Its wording and formatting are whatever was saved at the time. Use
-            &ldquo;Ask fresh anyway&rdquo; on the asked-before card for a new run.
+            <b className="font-bold text-[var(--color-text)]">Replayed from your team&apos;s record.</b> A past answer,
+            shown without a new AI run. Its wording is what was saved at the time. To get a new run, ask the question fresh.
           </span>
-        </div>
+        </p>
       )}
 
-      <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm overflow-hidden animate-rise">
-        <div className="grid @min-[760px]:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
-          {/* ── The answer column ── */}
-          <div className="min-w-0 p-4 sm:p-5 space-y-5">
-            {/* Header bar: what kind of answer this is, and the one place to
-                send it — always visible at the top, never hunted for. */}
-            <div className="flex items-center justify-between gap-2 flex-wrap pb-3 border-b border-[var(--color-border)]">
-              <span className="inline-flex items-center gap-2 flex-wrap">
-                <span className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-                  {MODES.find((m) => m.id === mode)?.label ?? "Direct answer"}
+      <article className="grid @min-[760px]:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] animate-rise">
+        {/* ── The answer column ── */}
+        <div className="min-w-0 space-y-6 @min-[760px]:pr-8">
+          {/* What kind of answer this is and what it drew on, and the
+              quiet ways to take it with you. */}
+          <div className="flex items-center justify-between gap-x-3 gap-y-2 flex-wrap">
+            <span className="inline-flex items-center gap-x-3 gap-y-1 flex-wrap min-w-0">
+              <span className={LABEL}>{MODES.find((m) => m.id === mode)?.label ?? "Direct answer"}</span>
+              {/* What this answer was allowed to draw on — visible, not assumed. */}
+              {answer.knowledgeSource === "documents" && (
+                <span title="Every statement is cited to a page in this library, or is something you said - no AI training knowledge, no web"
+                  className="inline-flex items-center gap-1 text-[12px] font-bold text-emerald-700 dark:text-emerald-400">
+                  <ShieldCheck className="w-3.5 h-3.5" /> Documents only
                 </span>
-                {/* What this answer was allowed to draw on — visible, not assumed. */}
-                {answer.knowledgeSource === "documents" && (
-                  <span title="Every statement is cited to a page in this library, or is something you said - no AI training knowledge, no web"
-                    className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300">
-                    <ShieldCheck className="w-3 h-3" /> Documents only
-                  </span>
-                )}
-                {answer.knowledgeSource === "documents_and_web" && (
-                  <span title="Web was on for this question: documents first and they govern; every web statement links to the page it came from"
-                    className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]">
-                    <Globe className="w-3 h-3" /> Documents + web{webCitations.length > 0 ? ` · ${webCitations.length} web source${webCitations.length === 1 ? "" : "s"}` : " · web not needed"}
-                  </span>
-                )}
-                {/* The Reasoning Skills this question fit — so their help is
-                    seen, and the Skill Library is one tap away. */}
-                {(answer.skillsApplied ?? []).map((sk) => (
-                  <a key={sk.id || sk.name} href="/intelligence/skills" title="A Reasoning Skill shaped this answer - open the Skill Library to see or change it"
-                    className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)] hover:underline">
-                    <Sparkles className="w-3 h-3" /> {sk.name}
-                  </a>
+              )}
+              {answer.knowledgeSource === "documents_and_web" && (
+                <span title="Web was on for this question: documents first and they govern; every web statement links to the page it came from"
+                  className="inline-flex items-center gap-1 text-[12px] font-bold text-[var(--color-text-muted)]">
+                  <Globe className="w-3.5 h-3.5" /> Documents + web{webCitations.length > 0 ? ` · ${webCitations.length} web source${webCitations.length === 1 ? "" : "s"}` : " · web not needed"}
+                </span>
+              )}
+              {/* The Reasoning Skills this question fit — so their help is
+                  seen, and the Skill Library is one tap away. */}
+              {(answer.skillsApplied ?? []).map((sk) => (
+                <a key={sk.id || sk.name} href="/intelligence/skills" title="A Reasoning Skill shaped this answer - open the Skill Library to see or change it"
+                  className="inline-flex items-center gap-1 text-[12px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline">
+                  <Sparkles className="w-3.5 h-3.5" /> {sk.name}
+                </a>
+              ))}
+            </span>
+            <ExportButtons question={question} answer={answer} />
+          </div>
+
+          {/* The answer first, in the biggest type on the page. */}
+          {heroV ? (
+            <DirectAnswer verdict={heroV.verdict}>{inline(heroV.verdict ? capFirst(heroV.text) : heroV.text)}</DirectAnswer>
+          ) : (
+            <AnswerView answer={answer.answer} citations={answer.citations} onCite={onCite} />
+          )}
+
+          {(answer.answeringFor ?? []).length > 0 && (
+            <AnsweringFor chips={answer.answeringFor!} onCorrect={onFollowup} />
+          )}
+
+          {heroV && parts.settle.length > 0 && (
+            <SettleBox items={parts.settle} inline={inline} onAttach={onAttach}
+              onRethink={onRethink ? () => onRethink(mode) : undefined} primary={primary === "settle"} />
+          )}
+
+          {heroV && parts.why.length > 0 && (
+            <section>
+              <PartHead>{mode === "compliance" ? "Findings" : "Why"}</PartHead>
+              {renderWhy(parts.why)}
+            </section>
+          )}
+
+          {heroV && parts.trail.length > 0 && (
+            <details className="group border-y border-[var(--color-border)] py-3">
+              <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden flex items-center gap-2 text-[13.5px] font-bold text-[var(--color-text)]">
+                <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)] transition-transform group-open:rotate-90" />
+                Engineering trail, the full chain step by step
+                <span className="ml-auto text-[12px] font-normal text-[var(--color-text-faint)]">{parts.trail.filter((b) => b.type !== "label").length} steps</span>
+              </summary>
+              <div className="mt-3">{renderWhy(parts.trail)}</div>
+            </details>
+          )}
+
+          {heroV && parts.before.length > 0 && (
+            <section>
+              <PartHead>{mode === "compliance" ? "Required corrections" : "Before you act"}</PartHead>
+              <div className="space-y-2">{renderBefore(parts.before)}</div>
+            </section>
+          )}
+
+          {heroV && parts.dontMiss.length > 0 && (
+            <section>
+              <div className="mb-3 flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-[0.14em] text-rose-700 dark:text-rose-400">
+                <AlertTriangle className="w-3.5 h-3.5" /> Don&apos;t miss
+              </div>
+              <div className="space-y-2">
+                {parts.dontMiss.filter((b) => b.type !== "label").map((b, i) => (
+                  <div key={i} className="grid grid-cols-[1.25rem_minmax(0,1fr)] gap-2.5 items-start">
+                    <span aria-hidden className="mt-2 ml-1 w-2 h-2 rounded-full bg-rose-500" />
+                    <div className={BODY}>{sourced(b.text)}</div>
+                  </div>
                 ))}
-              </span>
-              <ExportButtons question={question} answer={answer} large />
-            </div>
-
-            {(answer.answeringFor ?? []).length > 0 && (
-              <AnsweringFor chips={answer.answeringFor!} onCorrect={onFollowup} />
-            )}
-
-            <div className={`rounded-xl border px-4 py-3.5 ${VERDICT_BOX[verdictKey]}`}>
-              <div className="flex items-start justify-between gap-2">
-                {heroV?.verdict
-                  ? <VerdictBadge verdict={heroV.verdict} />
-                  : <span className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text)] dark:text-[var(--color-text)]">Answer</span>}
               </div>
-              <div className="mt-1 text-[16.5px] font-semibold leading-snug text-[var(--color-text)]">
-                {heroV ? inline(heroV.text) : <AnswerView answer={answer.answer} citations={answer.citations} onCite={onCite} />}
+            </section>
+          )}
+
+          {answer.followup && (
+            <OneQuestion followup={answer.followup} onAnswer={onFollowup} primary={primary === "followup"} />
+          )}
+
+          <HelperBand answer={answer} mode={mode} onRethink={onRethink} onOpenDoc={onOpenDoc} onFill={setFilling}
+            primary={primary === "step" || primary === "fill" ? primary : null} />
+
+          {heroV && parts.more.length > 0 && (
+            <details className="group border-t border-[var(--color-border)] pt-3">
+              <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden flex items-center gap-2 text-[13.5px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+                <ChevronRight className="w-4 h-4 transition-transform group-open:rotate-90" />
+                More: related rules, drafts, what would go further
+              </summary>
+              <div className="mt-2">
+                <SectionedBlocks key={answer.answer} blocks={parts.more} citations={answer.citations} onCite={onCite} />
               </div>
-            </div>
+            </details>
+          )}
 
-            <HelperBand answer={answer} mode={mode} onRethink={onRethink} onOpenDoc={onOpenDoc} onFill={setFilling} />
-
-            {heroV && parts.settle.length > 0 && (
-              <SettleBox items={parts.settle} inline={inline} onAttach={onAttach}
-                onRethink={onRethink ? () => onRethink(mode) : undefined} />
-            )}
-
-            {heroV && parts.why.length > 0 && (
-              <div>
-                <PartHead>{mode === "compliance" ? "Findings" : "Why"}</PartHead>
-                <div className="space-y-2.5">{renderWhy(parts.why)}</div>
-              </div>
-            )}
-
-            {heroV && parts.trail.length > 0 && (
-              <details className="group rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 px-3 py-2">
-                <summary className="cursor-pointer list-none flex items-center gap-1.5 text-[12.5px] font-bold text-[var(--color-text)]">
-                  <ChevronRight className="w-3.5 h-3.5 transition-transform group-open:rotate-90" />
-                  Engineering trail - the full chain, step by step
-                  <span className="font-mono text-[11px] font-normal text-[var(--color-text-faint)]">{parts.trail.filter((b) => b.type !== "label").length} steps</span>
-                </summary>
-                <div className="mt-2.5 space-y-2.5">{renderWhy(parts.trail)}</div>
-              </details>
-            )}
-
-            {heroV && parts.before.length > 0 && (
-              <div>
-                <PartHead>{mode === "compliance" ? "Required corrections" : "Before you act"}</PartHead>
-                <div className="space-y-1.5">{renderBefore(parts.before)}</div>
-              </div>
-            )}
-
-            {heroV && parts.dontMiss.length > 0 && (
-              <div className="rounded-lg border border-rose-200 dark:border-rose-900 bg-rose-50/60 dark:bg-rose-950/20 px-3 py-2.5">
-                <div className="flex items-center gap-1.5 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-rose-700 dark:text-rose-300 mb-1.5">
-                  <AlertTriangle className="w-3.5 h-3.5" /> Don&apos;t miss
-                </div>
-                <div className="space-y-1.5">
-                  {parts.dontMiss.filter((b) => b.type !== "label").map((b, i) => (
-                    <div key={i} className="text-[14px] leading-relaxed text-[var(--color-text)]">{sourced(b.text)}</div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {answer.followup && (
-              <OneQuestion followup={answer.followup} onAnswer={onFollowup} />
-            )}
-
-            {heroV && parts.more.length > 0 && (
-              <details className="group border-t border-[var(--color-border)] pt-3">
-                <summary className="cursor-pointer list-none flex items-center gap-1.5 text-[12.5px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
-                  <ChevronRight className="w-3.5 h-3.5 transition-transform group-open:rotate-90" />
-                  More - related rules, drafts, what would go further
-                </summary>
-                <div className="mt-2">
-                  <SectionedBlocks key={answer.answer} blocks={parts.more} citations={answer.citations} onCite={onCite} />
-                </div>
-              </details>
-            )}
-
+          <div className="pt-4 border-t border-[var(--color-border)] space-y-3">
             {onRethink && answer.mode !== "internet" && <RethinkBar mode={mode} onRethink={onRethink} />}
-
-            <div className="pt-3 border-t border-[var(--color-border)] flex items-center gap-2 flex-wrap text-[11px] text-[var(--color-text-muted)]">
+            <div className="flex items-center gap-2 flex-wrap text-[12px] text-[var(--color-text-muted)]">
               {canShape && shapeOrgId && shapeUid && (
                 <button onClick={() => setShaping(true)}
                   title="AI proposes how this answer attributes to the org graph - you curate, it writes"
-                  className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-md border border-[var(--color-border)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-text)] dark:hover:text-[var(--color-text)] transition-colors">
-                  <Waypoints className="w-3 h-3" /> Shape the graph
+                  className={QUIET}>
+                  <Waypoints className="w-3.5 h-3.5" /> Shape the graph
                 </button>
               )}
-              <span className="font-bold ml-auto">{answer.provider} · {answer.model}</span>
-              <span>·</span>
-              <span>{libraryCitations.length} source{libraryCitations.length === 1 ? "" : "s"}</span>
-              <span>·</span>
-              {/* Version beacon: which renderer produced this card. */}
-              <span className="font-black text-[var(--color-text)]" title="Answer renderer version">fmt14</span>
+              <span className="ml-auto">
+                {answer.provider} · {answer.model} · {libraryCitations.length} source{libraryCitations.length === 1 ? "" : "s"} ·{" "}
+                {/* Version beacon: which renderer produced this card. */}
+                <span className="font-bold" title="Answer renderer version">fmt15</span>
+              </span>
             </div>
           </div>
+        </div>
 
-          {/* ── The proof trail ── */}
-          <aside className="min-w-0 p-4 sm:p-5 border-t @min-[760px]:border-t-0 @min-[760px]:border-l border-[var(--color-border)] bg-[var(--color-surface-2)]/40">
-            <div className="flex items-baseline justify-between gap-2 mb-3">
-              <h3 className="text-[15px] font-black text-[var(--color-text)]">Proof</h3>
-              <span className="font-mono text-[11px] text-[var(--color-text-faint)]">tap a number in the answer to jump here</span>
-            </div>
-            <ProofTrail citations={libraryCitations} onOpen={onCite} openSet={openSet} onToggle={toggle}
-              showRelated={showRelated} onShowRelated={setShowRelated} flashN={flashN} idPrefix={idPrefix} />
-            {webCitations.length > 0 && (
-              <div className="mt-5 space-y-2">
-                <div className="flex items-center gap-2 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text)] dark:text-[var(--color-text)]">
-                  <Globe className="w-3.5 h-3.5" /> From the web <span className="text-[var(--color-text-faint)]">{webCitations.length}</span>
-                </div>
-                <p className="text-[11px] text-[var(--color-text-muted)]">
-                  Not your controlled documents. A web page about a code is not the code - verify against the publication.
-                </p>
+        {/* ── The sources: quiet rows, beside the answer (below on a phone) ── */}
+        <aside aria-label="Sources"
+          className="min-w-0 mt-8 pt-6 border-t border-[var(--color-border)] @min-[760px]:mt-0 @min-[760px]:pt-0 @min-[760px]:border-t-0 @min-[760px]:pl-8 @min-[760px]:border-l">
+          <div className="flex items-baseline justify-between gap-2 mb-4">
+            <h3 className="text-[15px] font-extrabold text-[var(--color-text)]">Sources</h3>
+            <span className="text-[12px] text-[var(--color-text-faint)] text-right">Tap a number in the answer to jump here</span>
+          </div>
+          <ProofTrail citations={libraryCitations} onOpen={onCite} openSet={openSet} onToggle={toggle}
+            showRelated={showRelated} onShowRelated={setShowRelated} flashN={flashN} idPrefix={idPrefix} />
+          {webCitations.length > 0 && (
+            <div className="mt-6">
+              <div className="flex items-center gap-2 pb-1">
+                <Globe className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
+                <span className={LABEL}>From the web</span>
+                <span className="text-[11px] font-bold text-[var(--color-text-faint)]">{webCitations.length}</span>
+              </div>
+              <p className="pb-2 text-[12.5px] text-[var(--color-text-muted)]">
+                Not your controlled documents. A web page about a code is not the code: check it against the publication.
+              </p>
+              <ol className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
                 {webCitations.map((c) => {
                   let host = c.url ?? "";
                   try { host = new URL(c.url ?? "").hostname.replace(/^www\./, ""); } catch { /* keep */ }
                   return (
-                    <div key={c.n} id={`${idPrefix}-w-${c.n}`}
-                      className={`rounded-xl border bg-[var(--color-surface)] px-3 py-2.5 space-y-1.5 scroll-mt-24 transition-shadow duration-300 ${flashN === c.n
-                        ? "border-[var(--color-border-strong)] shadow-[0_0_0_3px_rgba(14,165,233,0.25)]" : "border-[var(--color-border)]"}`}>
-                      <div className="flex items-start gap-2">
-                        <span className="mt-0.5 min-w-[1.375rem] h-[1.375rem] px-1 rounded-md bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)] font-mono text-[11px] font-bold flex items-center justify-center">{c.n}</span>
+                    <li key={c.n} id={`${idPrefix}-w-${c.n}`}
+                      className={`-mx-2 px-2 rounded-lg py-2.5 space-y-2 scroll-mt-24 transition-colors duration-500 ${flashN === c.n ? "bg-[var(--color-surface-2)]" : ""}`}>
+                      <div className="flex items-start gap-3">
+                        <span className={NUM}>{c.n}</span>
                         <span className="min-w-0">
-                          <span className="block text-[13px] font-bold text-[var(--color-text)] leading-snug">{c.title ?? host}</span>
-                          <span className="block font-mono text-[11px] text-[var(--color-text-muted)] truncate">{host}</span>
+                          <span className="block text-[13.5px] font-bold text-[var(--color-text)] leading-snug">{c.title ?? host}</span>
+                          <span className="block text-[12px] text-[var(--color-text-muted)] truncate">{host}</span>
                         </span>
                       </div>
                       {c.quote && (
-                        <blockquote className="border-l-[3px] border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)]/50 rounded-r-md pl-3 pr-2 py-1.5 text-[12.5px] leading-relaxed text-[var(--color-text)] italic">
+                        <blockquote className="ml-9 border-l-2 border-[var(--color-border-strong)] pl-3 py-0.5 text-[13px] leading-relaxed text-[var(--color-text)] italic">
                           &ldquo;{c.quote}&rdquo;
                         </blockquote>
                       )}
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <a href={c.url} target="_blank" rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-border-strong)]">
-                          <ExternalLink className="w-3 h-3 text-[var(--color-text-muted)]" /> Open the page
+                      <div className="ml-9 flex items-center gap-2 flex-wrap">
+                        <a href={c.url} target="_blank" rel="noopener noreferrer" className={QUIET}>
+                          <ExternalLink className="w-3.5 h-3.5" /> Open the page
                         </a>
                         {c.quote && <CopyButton text={referencedQuote(c)} label="Copy quote" />}
                       </div>
-                    </div>
+                    </li>
                   );
                 })}
+              </ol>
+            </div>
+          )}
+          {jobCitations.length > 0 && (
+            <div className="mt-6">
+              <div className="flex items-center gap-2 pb-1">
+                <span className={LABEL}>From past jobs</span>
+                <span className="text-[11px] font-bold text-[var(--color-text-faint)]">{jobCitations.length}</span>
               </div>
-            )}
-            {jobCitations.length > 0 && (
-              <div className="mt-5 space-y-2">
-                <div className="flex items-center gap-2 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text)] dark:text-[var(--color-text)]">
-                  From past jobs <span className="text-[var(--color-text-faint)]">{jobCitations.length}</span>
-                </div>
-                <p className="text-[11px] text-[var(--color-text-muted)]">Kept at the close-out reviews of earlier projects.</p>
+              <p className="pb-2 text-[12.5px] text-[var(--color-text-muted)]">Kept at the close-out reviews of earlier projects.</p>
+              <ol className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
                 {jobCitations.map((c) => (
-                  <div key={c.n} className={`rounded-xl border bg-[var(--color-surface)] px-3 py-2.5 space-y-1.5 ${flashN === c.n ? "border-[var(--color-border-strong)]" : "border-[var(--color-border)]"}`}>
-                    <div className="flex items-start gap-2">
-                      <span className="mt-0.5 min-w-[1.375rem] h-[1.375rem] px-1 rounded-md bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)] font-mono text-[11px] font-bold flex items-center justify-center">{c.n}</span>
-                      <span className="min-w-0 text-[12.5px] leading-relaxed text-[var(--color-text)]">{c.quote ?? c.title}</span>
+                  <li key={c.n} className={`-mx-2 px-2 rounded-lg py-2.5 space-y-2 transition-colors duration-500 ${flashN === c.n ? "bg-[var(--color-surface-2)]" : ""}`}>
+                    <div className="flex items-start gap-3">
+                      <span className={NUM}>{c.n}</span>
+                      <span className="min-w-0 text-[13.5px] leading-relaxed text-[var(--color-text)]">{c.quote ?? c.title}</span>
                     </div>
-                    <a href={c.url} className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-accent)]">Open the project</a>
-                  </div>
+                    <a href={c.url} className={`ml-9 ${QUIET}`}>Open the project</a>
+                  </li>
                 ))}
-              </div>
-            )}
-          </aside>
-        </div>
-      </div>
+              </ol>
+            </div>
+          )}
+        </aside>
+      </article>
 
       {/* Interactive equipment register — the deterministic table behind
           "show me all equipment". Every sheet chip rings the tag. */}
@@ -1633,25 +1649,26 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
           onOpen={onOpenDoc ? (r) => onOpenDoc({ id: r.documentId, name: r.documentName, fileKey: r.fileKey!, page: r.page, mention: r.code }) : undefined} />
       )}
 
-      {/* You-need-this-book cards: referenced documents no library holds */}
+      {/* You-need-this-book: referenced documents no library holds. A
+          problem with this answer, so it sits right under it. */}
       {(answer.missingDocs ?? []).length > 0 && (
-        <div className="border-l-2 border-rose-500 pl-3 py-1 animate-rise">
-          <div className="flex items-center gap-2 text-sm font-black text-rose-800 dark:text-rose-300 mb-1.5">
-            <BookOpen className="w-4 h-4" /> You need {answer.missingDocs!.length === 1 ? "this document" : "these documents"}
+        <section className="pt-4 border-t border-[var(--color-border)] space-y-2.5 animate-rise">
+          <div className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-[0.14em] text-rose-700 dark:text-rose-400">
+            <BookOpen className="w-3.5 h-3.5" /> You need {answer.missingDocs!.length === 1 ? "this document" : "these documents"}
           </div>
           <div className="flex flex-wrap gap-1.5">
             {answer.missingDocs!.map((d) => (
-              <span key={d} className="text-[11px] font-black px-2.5 py-1 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)]">
+              <span key={d} className="inline-flex items-center h-7 px-2.5 rounded-lg bg-[var(--color-surface-2)] text-[12.5px] font-bold text-[var(--color-text)]">
                 {d}
               </span>
             ))}
           </div>
-          <p className="mt-2 text-[11px] text-rose-700 dark:text-rose-400">
+          <p className="text-[13px] leading-relaxed text-[var(--color-text-muted)]">
             The passages reference {answer.missingDocs!.length === 1 ? "this document" : "these documents"} for part of the answer,
             but {answer.missingDocs!.length === 1 ? "it isn't" : "they aren't"} in this library or its linked libraries.
             Add {answer.missingDocs!.length === 1 ? "it" : "them"} to a linked library or pull the physical copy.
           </p>
-        </div>
+        </section>
       )}
     </div>
     </ProofContext.Provider>
@@ -1719,36 +1736,37 @@ export function AnswerFeedback({ questionId, onRated, question, citations }: {
     }
   };
   const btn = (active: boolean) =>
-    `p-1.5 rounded-lg border transition-colors ${active
+    `w-8 h-8 grid place-items-center rounded-lg border transition-colors ${active
       ? "border-[var(--color-text)] text-[var(--color-surface)] bg-[var(--color-text)]"
-      : "border-[var(--color-border)] text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`;
+      : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
   return (
-    <div className="mt-2">
-      <div className="flex items-center justify-end gap-2 text-[11px] text-[var(--color-text-muted)] flex-wrap">
+    <div className="mt-4">
+      <div className="flex items-center justify-end gap-2 text-[12.5px] text-[var(--color-text-muted)] flex-wrap">
         {canTest && !testSaved && (
-          <button onClick={() => setTesting(true)} className="mr-auto inline-flex items-center gap-1 font-bold text-[var(--color-accent)] hover:underline" title="Mark what a right answer must do - every future version is checked against it">
+          <button onClick={() => setTesting(true)} className="mr-auto inline-flex items-center gap-1.5 font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline" title="Mark what a right answer must do - every future version is checked against it">
             <FlaskConical className="w-3.5 h-3.5" /> Make this a test case
           </button>
         )}
         {testSaved && <span className="mr-auto font-bold text-[var(--color-text)]">Saved as a test case. See Answer tests on the library page.</span>}
-        {rateError && <span role="alert" className="font-bold text-red-700 dark:text-red-400">{rateError}</span>}
-        {!rateError && state === 1 && <span className="font-bold text-emerald-600 dark:text-emerald-400">Saved. Similar questions will start from these pages.</span>}
+        {rateError && <span role="alert" className="font-bold text-rose-700 dark:text-rose-400">{rateError}</span>}
+        {!rateError && state === 1 && <span className="font-bold text-emerald-700 dark:text-emerald-400">Saved. Similar questions will start from these pages.</span>}
         {!rateError && state === -1 && <span className="font-bold">{reasonsSent ? "Thanks. That tells us where to look." : "What went wrong?"}</span>}
         {!rateError && state === 0 && <span className="font-bold">Did this answer it?</span>}
         <button onClick={() => void rate(1)} className={btn(state === 1)} aria-pressed={state === 1} aria-label="Right answer" title="Right answer: teach retrieval these pages">
-          <ThumbsUp className="w-3.5 h-3.5" />
+          <ThumbsUp className="w-4 h-4" />
         </button>
         <button onClick={() => void rate(-1)} className={btn(state === -1)} aria-pressed={state === -1} aria-label="Wrong answer" title="Wrong or missed the point">
-          <ThumbsDown className="w-3.5 h-3.5" />
+          <ThumbsDown className="w-4 h-4" />
         </button>
       </div>
       {state === -1 && (
-        <div className="mt-1.5 flex flex-wrap justify-end gap-1">
+        <div className="mt-2 flex flex-wrap justify-end gap-1.5">
           {WRONG_REASONS.map((r) => {
             const on = reasons.includes(r.code);
             return (
               <button key={r.code} onClick={() => void sendReasons(on ? reasons.filter((x) => x !== r.code) : [...reasons, r.code])}
-                className={`rounded-full border px-2 py-0.5 text-[11px] font-bold ${on ? "border-rose-400 bg-rose-50 text-rose-800 dark:bg-rose-950/40 dark:text-rose-200" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                aria-pressed={on}
+                className={`h-7 rounded-full border px-2.5 text-[12px] font-bold transition-colors ${on ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)]"}`}>
                 {r.label}
               </button>
             );
@@ -1776,53 +1794,69 @@ export function AnswerFeedback({ questionId, onRated, question, citations }: {
   );
 }
 
+/** Sources as quiet rows: a library passage opens in place (its quote, and
+ *  the page one tap further); a web source or past job is a link. */
 export function CitationChips({ citations, onOpen }: {
   citations: KnowledgeCitation[];
   onOpen: (c: KnowledgeCitation) => void;
 }) {
   if (citations.length === 0) return null;
   return (
-    <div className="mt-3 space-y-1.5">
-      {citations.map((c) => c.url?.startsWith("/") ? (
-        // A past job → its project.
-        <a key={c.n} href={c.url} title={c.quote ?? c.title}
-          className="inline-flex items-center gap-1 text-[11px] font-black px-2 py-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors mr-1.5">
-          [{c.n}] {(c.title ?? "Past job").slice(0, 40)}
-        </a>
-      ) : c.url ? (
-        // Internet citation → the web source itself.
-        <a key={c.n} href={c.url} target="_blank" rel="noopener noreferrer"
-          title={c.url}
-          className="inline-flex items-center gap-1 text-[11px] font-black px-2 py-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors mr-1.5">
-          <Globe className="w-2.5 h-2.5" /> {(c.title ?? c.url).slice(0, 40)}
-          <ExternalLink className="w-2.5 h-2.5" />
-        </a>
-      ) : (
-        // Library citation → expandable verbatim passage + open-in-viewer.
-        <details key={c.n} className="group rounded-xl border border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] overflow-hidden">
-          <summary className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
-            <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-muted)] transition-transform group-open:rotate-90 shrink-0" />
-            <span className="text-[11px] font-black text-[var(--color-text)] dark:text-[var(--color-text)] truncate">
-              [{c.n}] {(c.documentName ?? "Document").replace(/\.pdf$/i, "").slice(0, 40)}
-              {c.section ? <span className="text-[var(--color-text)]"> · {c.section.slice(0, 36)}</span> : ""} · p.{c.page}
-            </span>
-            <span className="ml-auto shrink-0 text-[11px] font-bold uppercase tracking-wider text-[var(--color-text)] group-open:hidden">view source</span>
-          </summary>
-          <div className="px-3 pb-3">
-            {c.quote ? (
-              <blockquote className="border-l-2 border-[var(--color-border-strong)] pl-3 py-1 text-[11px] leading-relaxed text-[var(--color-text)] bg-[var(--color-surface)] rounded-r-lg whitespace-pre-wrap max-h-40 overflow-y-auto">
-                {c.quote}
-              </blockquote>
-            ) : (
-              <p className="text-[11px] text-[var(--color-text-muted)] italic">Passage text wasn&apos;t stored for this older answer - open the page to read it.</p>
-            )}
-            <button onClick={() => onOpen(c)}
-              className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-black px-2.5 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] transition-colors">
-              <ExternalLink className="w-3 h-3" /> Open page {c.page} - passage highlighted
-            </button>
-          </div>
-        </details>
-      ))}
+    <div className="mt-5">
+      <div className="flex items-center gap-2 pb-2">
+        <span className={LABEL}>Sources</span>
+        <span className="text-[11px] font-bold text-[var(--color-text-faint)]">{citations.length}</span>
+      </div>
+      <ol className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
+        {citations.map((c) => c.url?.startsWith("/") ? (
+          // A past job → its project.
+          <li key={c.n}>
+            <a href={c.url} title={c.quote ?? c.title} className="group flex items-center gap-3 py-2.5">
+              <span className={NUM}>{c.n}</span>
+              <span className="min-w-0 flex-1 truncate text-[13.5px] font-bold text-[var(--color-text)] group-hover:underline">{(c.title ?? "Past job").slice(0, 60)}</span>
+              <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
+            </a>
+          </li>
+        ) : c.url ? (
+          // Internet citation → the web source itself.
+          <li key={c.n}>
+            <a href={c.url} target="_blank" rel="noopener noreferrer" title={c.url} className="group flex items-center gap-3 py-2.5">
+              <span className={NUM}>{c.n}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[13.5px] font-bold text-[var(--color-text)] group-hover:underline">{c.title ?? c.url}</span>
+                <span className="block truncate text-[12px] text-[var(--color-text-muted)]">{(() => { try { return new URL(c.url ?? "").hostname.replace(/^www\./, ""); } catch { return c.url ?? ""; } })()}</span>
+              </span>
+              <ExternalLink className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
+            </a>
+          </li>
+        ) : (
+          // Library citation → its verbatim passage, and the page itself.
+          <li key={c.n}>
+            <details className="group">
+              <summary className="flex items-center gap-3 py-2.5 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
+                <span className={NUM}>{c.n}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13.5px] font-bold text-[var(--color-text)]">{(c.documentName ?? "Document").replace(/\.pdf$/i, "")}</span>
+                  <span className="block truncate text-[12px] text-[var(--color-text-muted)]">{c.section ? `${c.section.slice(0, 40)} · ` : ""}p.{c.page}</span>
+                </span>
+                <ChevronDown className="w-4 h-4 text-[var(--color-text-faint)] shrink-0 transition-transform group-open:rotate-180" />
+              </summary>
+              <div className="pb-3 pl-9 space-y-2">
+                {c.quote ? (
+                  <blockquote className="border-l-2 border-[var(--color-border-strong)] pl-3 py-0.5 text-[13px] leading-relaxed text-[var(--color-text)] whitespace-pre-wrap max-h-40 overflow-y-auto">
+                    {c.quote}
+                  </blockquote>
+                ) : (
+                  <p className="text-[12.5px] text-[var(--color-text-muted)]">The passage text wasn&apos;t stored for this older answer. Open the page to read it.</p>
+                )}
+                <button onClick={() => onOpen(c)} className={QUIET}>
+                  <ExternalLink className="w-3.5 h-3.5" /> Open page {c.page}, passage highlighted
+                </button>
+              </div>
+            </details>
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }
@@ -1831,13 +1865,13 @@ export function CitationChips({ citations, onOpen }: {
 // ── While the answer is being written ────────────────────────────────────────
 //
 // Nobody should watch raw text typing itself out. Until the Answer line is
-// complete the reader sees the card's own shape, shimmering, with a stage
-// tracker that follows the real pipeline. The moment the Answer line lands
-// it takes its place in the card; Why and the checklist fill in step by
-// step; the proof column waits for the evidence and says so.
+// complete the reader sees the answer's own shape, shimmering, under a path
+// of stages that follows the real pipeline, in words. The moment the Answer
+// line lands it takes its place; Why and the checklist fill in step by
+// step; the sources column waits for the evidence and says so.
 
 const STAGES = [
-  { label: "Understanding the question", match: /starting|attachment|search queries/i },
+  { label: "Reading the question", match: /starting|attachment|search queries/i },
   { label: "Searching the library", match: /searching the library|nothing matched|rewriting the search/i },
   { label: "Following references", match: /reviewing|chasing/i },
   { label: "Reading the pages", match: /printed page|fetched page|reading \d/i },
@@ -1848,9 +1882,10 @@ const STAGES = [
 const EVIDENCE_SPLIT = /\n\s*(?:#{1,4}\s*)?\*{0,2}Evidence:?\*{0,2}:?\s*(?:\n|$)/i;
 
 function Shimmer({ className }: { className: string }) {
+  const round = /\brounded-/.test(className) ? "" : "rounded-md";
   return (
     <div aria-hidden
-      className={`rounded-md bg-[linear-gradient(90deg,var(--color-surface-2)_0%,var(--color-border)_50%,var(--color-surface-2)_100%)] bg-[length:200%_100%] motion-safe:animate-[shimmer_1.8s_linear_infinite] ${className}`} />
+      className={`${round} bg-[linear-gradient(90deg,var(--color-surface-2)_0%,var(--color-border)_50%,var(--color-surface-2)_100%)] bg-[length:200%_100%] motion-safe:animate-[shimmer_1.8s_linear_infinite] ${className}`} />
   );
 }
 
@@ -1863,36 +1898,29 @@ function StageTracker({ stage, status, compact }: { stage: number; status: strin
   }, []);
   if (compact) {
     return (
-      <div className="flex items-center gap-2 text-[11.5px] text-[var(--color-text-muted)]" role="status" aria-live="polite">
-        <Loader2 className="w-3 h-3 animate-spin shrink-0" />
-        {STAGES[stage].label}<span className="text-[var(--color-text-faint)]">· {elapsed}s</span>
+      <div className="flex items-center gap-2 text-[12.5px] text-[var(--color-text-muted)]" role="status" aria-live="polite">
+        <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+        <span className="font-bold text-[var(--color-text)]">{STAGES[stage].label}…</span>
+        <span className="text-[var(--color-text-faint)] tabular-nums">{elapsed}s</span>
       </div>
     );
   }
+  const extra = status && !STAGES[stage].label.toLowerCase().startsWith(status.toLowerCase().slice(0, 12)) ? status : null;
   return (
     <div className="space-y-3" role="status" aria-live="polite">
-      <div className="flex items-center gap-1.5">
-        {STAGES.map((s, i) => (
-          <div key={s.label} className="flex-1 h-1 rounded-full overflow-hidden bg-[var(--color-surface-2)]">
-            <div className={`h-full rounded-full transition-all duration-700 ease-out ${i < stage ? "w-full bg-[var(--color-text-muted)]"
-              : i === stage ? "w-full bg-[var(--color-text)] motion-safe:animate-pulse"
-              : "w-0"}`} />
-          </div>
-        ))}
+      <StepPath steps={STAGES.map((s) => s.label)} current={stage} />
+      <div className="flex items-center gap-2 text-[13px] min-w-0">
+        <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0 text-[var(--color-text-muted)]" />
+        <span className="max-sm:hidden font-bold text-[var(--color-text)] shrink-0">{STAGES[stage].label}…</span>
+        {extra && <span className="min-w-0 truncate text-[var(--color-text-muted)]">{extra}</span>}
+        <span className="ml-auto shrink-0 text-[12px] text-[var(--color-text-faint)] tabular-nums">{elapsed}s</span>
       </div>
-      <div className="flex items-baseline justify-between gap-3">
-        <div className="text-[14px] font-bold text-[var(--color-text)]">{STAGES[stage].label}</div>
-        <div className="font-mono text-[11px] text-[var(--color-text-faint)] tabular-nums">{elapsed}s</div>
-      </div>
-      {status && !STAGES[stage].label.toLowerCase().startsWith(status.toLowerCase().slice(0, 12)) && (
-        <div className="-mt-2 text-[12px] text-[var(--color-text-muted)]">{status}</div>
-      )}
     </div>
   );
 }
 
-/** The answer card, filling in as the answer streams. `draft` is the raw
- *  streamed text; only COMPLETE lines are shown, so nothing ever types. */
+/** The answer, filling in as it streams. `draft` is the raw streamed text;
+ *  only COMPLETE lines are shown, so nothing ever types. */
 export function StreamingAnswer({ status, draft }: { status: string; draft: string }) {
   const [body, ...afterEvidence] = draft.split(EVIDENCE_SPLIT);
   const inEvidence = afterEvidence.length > 0;
@@ -1905,100 +1933,82 @@ export function StreamingAnswer({ status, draft }: { status: string; draft: stri
   const stage = inEvidence ? 5 : heroV ? 4 : Math.max(0, statusStage);
   const inline = (text: string) => <InlineAnswer text={text} citations={[]} onCite={() => undefined} />;
   const reveal = { animation: "rise 0.4s var(--ease-fluid) both" } as React.CSSProperties;
+  const why = parts.why.filter((b) => b.type !== "label");
 
   return (
-    <div className="@container">
-      <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm overflow-hidden">
-        <div className="grid @min-[760px]:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
-          <div className="min-w-0 p-4 sm:p-5 space-y-5">
-            <StageTracker stage={stage} status={status} compact={!!heroV} />
+    <article className="@container space-y-6" aria-busy="true" aria-label="The answer is being written">
+      {/* The stages run the full width, so every step reads in words. */}
+      <StageTracker stage={stage} status={status} compact={!!heroV} />
+      <div className="grid @min-[760px]:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+        <div className="min-w-0 space-y-6 @min-[760px]:pr-8">
+          {heroV ? (
+            <div style={reveal}><DirectAnswer verdict={heroV.verdict}>{inline(heroV.verdict ? capFirst(heroV.text) : heroV.text)}</DirectAnswer></div>
+          ) : (
+            <div className="space-y-3" aria-hidden>
+              <Shimmer className="h-6 w-11/12" />
+              <Shimmer className="h-6 w-3/4" />
+            </div>
+          )}
 
-            {meta.answeringFor.length > 0 ? (
-              <div style={reveal}><AnsweringFor chips={meta.answeringFor} /></div>
-            ) : !heroV && (
-              <div className="flex gap-1.5"><Shimmer className="h-6 w-24 rounded-full" /><Shimmer className="h-6 w-32 rounded-full" /><Shimmer className="h-6 w-20 rounded-full" /></div>
-            )}
+          {meta.answeringFor.length > 0 ? (
+            <div style={reveal}><AnsweringFor chips={meta.answeringFor} /></div>
+          ) : !heroV && (
+            <div className="flex gap-1.5"><Shimmer className="h-7 w-24 rounded-full" /><Shimmer className="h-7 w-32 rounded-full" /><Shimmer className="h-7 w-20 rounded-full" /></div>
+          )}
 
-            {heroV ? (
-              <div style={reveal} className={`rounded-xl border px-4 py-3.5 ${VERDICT_BOX[heroV.verdict ?? "none"]}`}>
-                {heroV.verdict
-                  ? <VerdictBadge verdict={heroV.verdict} />
-                  : <span className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text)] dark:text-[var(--color-text)]">Answer</span>}
-                <div className="mt-1 text-[16.5px] font-semibold leading-snug text-[var(--color-text)]">{inline(heroV.text)}</div>
-              </div>
-            ) : (
-              <div className="rounded-xl border border-[var(--color-border)] px-4 py-4 space-y-2.5">
-                <Shimmer className="h-5 w-36" />
-                <Shimmer className="h-4 w-full" />
-                <Shimmer className="h-4 w-5/6" />
-              </div>
-            )}
+          {heroV ? (
+            <section>
+              <PartHead>Why</PartHead>
+              <PathList items={[
+                ...why.map((b, i) => ({ key: i, style: reveal, marker: <StepDot n={i + 1} />, body: <div className={BODY}>{inline(b.text)}</div> })),
+                ...(parts.before.length === 0 && !inEvidence
+                  ? [{ key: "more", marker: <Shimmer className="w-6 h-6 rounded-full" />, body: <Shimmer className="mt-1 h-4 w-4/5" /> }]
+                  : []),
+              ]} />
+            </section>
+          ) : (
+            <section aria-hidden>
+              <PathList items={["w-11/12", "w-3/4", "w-5/6"].map((w) => ({
+                key: w, marker: <Shimmer className="w-6 h-6 rounded-full" />, body: <Shimmer className={`mt-1 h-4 ${w}`} />,
+              }))} />
+            </section>
+          )}
 
-            {heroV && (
-              <div>
-                <PartHead>Why</PartHead>
-                <div className="space-y-2.5">
-                  {parts.why.filter((b) => b.type !== "label").map((b, i) => (
-                    <div key={i} style={reveal} className="grid grid-cols-[1.5rem_minmax(0,1fr)] gap-2.5 items-start">
-                      <span className="mt-0.5 w-6 h-6 rounded-full border border-[var(--color-border)] font-mono text-[11px] text-[var(--color-text-muted)] flex items-center justify-center">{i + 1}</span>
-                      <div className="text-[14px] leading-relaxed text-[var(--color-text)]">{inline(b.text)}</div>
-                    </div>
-                  ))}
-                  {parts.before.length === 0 && !inEvidence && (
-                    <div className="grid grid-cols-[1.5rem_minmax(0,1fr)] gap-2.5 items-center">
-                      <Shimmer className="w-6 h-6 rounded-full" /><Shimmer className="h-4 w-4/5" />
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {heroV && parts.before.length > 0 && (
-              <div style={reveal}>
-                <PartHead>Before you act</PartHead>
-                <div className="space-y-1.5">
-                  {parts.before.filter((b) => b.type !== "label").map((b, i) => (
-                    <div key={i} style={reveal} className="grid grid-cols-[1.125rem_minmax(0,1fr)] gap-2 items-start px-2">
-                      {b.type === "important"
-                        ? <AlertTriangle className="mt-0.5 w-4 h-4 text-amber-600" />
-                        : <span className="mt-1 w-3.5 h-3.5 rounded-[3px] border-[1.5px] border-[var(--color-text-muted)]" />}
-                      <div className="text-[14px] leading-relaxed text-[var(--color-text)]">{inline(b.text)}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {!heroV && (
-              <div className="space-y-2.5">
-                {["w-11/12", "w-3/4", "w-5/6"].map((w) => (
-                  <div key={w} className="grid grid-cols-[1.5rem_minmax(0,1fr)] gap-2.5 items-center">
-                    <Shimmer className="w-6 h-6 rounded-full" /><Shimmer className={`h-4 ${w}`} />
+          {heroV && parts.before.length > 0 && (
+            <section style={reveal}>
+              <PartHead>Before you act</PartHead>
+              <div className="space-y-2">
+                {parts.before.filter((b) => b.type !== "label").map((b, i) => (
+                  <div key={i} style={reveal} className="grid grid-cols-[1.25rem_minmax(0,1fr)] gap-2.5 items-start">
+                    {b.type === "important"
+                      ? <AlertTriangle className="mt-1 w-4 h-4 text-amber-600" />
+                      : <span aria-hidden className="mt-1 w-4 h-4 rounded-[4px] border-[1.5px] border-[var(--color-text-muted)]" />}
+                    <div className={BODY}>{inline(b.text)}</div>
                   </div>
                 ))}
               </div>
-            )}
-          </div>
-
-          <aside className="min-w-0 p-4 sm:p-5 border-t @min-[760px]:border-t-0 @min-[760px]:border-l border-[var(--color-border)] bg-[var(--color-surface-2)]/40">
-            <div className="flex items-baseline justify-between gap-2 mb-3">
-              <h3 className="text-[15px] font-black text-[var(--color-text)]">Proof</h3>
-              <span className="font-mono text-[11px] text-[var(--color-text-faint)]">
-                {inEvidence ? "marking the exact words on each page" : "arrives with the answer"}
-              </span>
-            </div>
-            <div className="space-y-2">
-              {[0, 1, 2].map((i) => (
-                <div key={i} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 space-y-2">
-                  <div className="flex items-center gap-2.5"><Shimmer className="w-6 h-6" /><Shimmer className="h-4 flex-1" /></div>
-                  <Shimmer className="h-3 w-2/5" />
-                  <Shimmer className="h-12 w-full" />
-                </div>
-              ))}
-            </div>
-          </aside>
+            </section>
+          )}
         </div>
+
+        <aside aria-label="Sources"
+          className="min-w-0 mt-8 pt-6 border-t border-[var(--color-border)] @min-[760px]:mt-0 @min-[760px]:pt-0 @min-[760px]:border-t-0 @min-[760px]:pl-8 @min-[760px]:border-l">
+          <div className="flex items-baseline justify-between gap-2 mb-4">
+            <h3 className="text-[15px] font-extrabold text-[var(--color-text)]">Sources</h3>
+            <span className="text-[12px] text-[var(--color-text-faint)]">
+              {inEvidence ? "Marking the exact words on each page…" : "They arrive with the answer"}
+            </span>
+          </div>
+          <ol className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]" aria-hidden>
+            {[0, 1, 2].map((i) => (
+              <li key={i} className="py-3 flex items-start gap-3">
+                <Shimmer className="w-6 h-6" />
+                <div className="flex-1 space-y-2"><Shimmer className="h-4 w-4/5" /><Shimmer className="h-3 w-2/5" /></div>
+              </li>
+            ))}
+          </ol>
+        </aside>
       </div>
-    </div>
+    </article>
   );
 }

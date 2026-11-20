@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import FileThumb from "@/components/ui/FileThumb";
 import { useFileDrag } from "@/hooks/useFileDrag";
+import { useIsMobile } from "@/hooks/useIsMobile";
 import { SourcesMenu, AnswerMenu, SkillHint } from "./AskControls";
 import type { AnswerSkill } from "@/lib/answerSkills";
 import type { ChatScope, ChatAttachment } from "@/lib/chatClient";
@@ -77,6 +78,8 @@ export default function Composer({
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const drag = useFileDrag(onAddFiles, busy);
+  const isMobile = useIsMobile();
+  const placeholder = disabledReason ?? (isMobile ? SCOPE_META[scope].short : SCOPE_META[scope].placeholder);
 
   // Auto-grow: measure, cap at ~8 lines, then scroll inside. Measured again
   // when the box changes width (a first measure taken before the layout
@@ -87,8 +90,16 @@ export default function Composer({
     const measure = () => {
       ta.style.height = "0px";
       const max = 8 * 24 + 16;
-      ta.style.height = `${Math.min(ta.scrollHeight, max)}px`;
-      ta.style.overflowY = ta.scrollHeight > max ? "auto" : "hidden";
+      // An empty box is as tall as its hint, so a hint that wraps on a
+      // phone is never cut off under the controls.
+      let h = ta.scrollHeight;
+      if (!ta.value && ta.placeholder) {
+        ta.value = ta.placeholder;
+        h = ta.scrollHeight;
+        ta.value = "";
+      }
+      ta.style.height = `${Math.min(h, max)}px`;
+      ta.style.overflowY = h > max ? "auto" : "hidden";
     };
     measure();
     if (typeof ResizeObserver === "undefined") return;
@@ -96,7 +107,7 @@ export default function Composer({
     const ro = new ResizeObserver(() => { if (ta.clientWidth !== w) { w = ta.clientWidth; measure(); } });
     ro.observe(ta);
     return () => ro.disconnect();
-  }, [value]);
+  }, [value, placeholder]);
 
 
   const canSend = !busy && value.trim().length > 0 && !disabledReason && attachments.every((a) => a.att !== null || a.error);
@@ -113,12 +124,10 @@ export default function Composer({
     if (files.length > 0) { e.preventDefault(); onAddFiles(files); }
   };
 
-  const meta = SCOPE_META[scope];
-
   return (
     <div
       {...drag.bind}
-      className={`relative rounded-2xl border bg-[var(--color-surface)] shadow-[0_12px_40px_-18px_rgba(2,6,23,0.45)] transition-colors border-[var(--color-border-strong)] focus-within:border-[var(--color-accent-ring)] ${drag.ring}`}
+      className={`relative rounded-2xl border bg-[var(--color-surface)] shadow-[var(--shadow-card)] transition-colors border-[var(--color-border-strong)] focus-within:border-[var(--color-text-muted)] ${drag.ring}`}
     >
       {drag.over && (
         <div className="absolute inset-0 z-10 rounded-2xl bg-[var(--color-surface-2)] flex flex-col items-center justify-center text-sm font-black text-[var(--color-text)] pointer-events-none">
@@ -131,7 +140,7 @@ export default function Composer({
         <div className="px-3 pt-3 flex flex-wrap gap-1.5">
           {attachments.map((a) => (
             <div key={a.localId} title={a.error ?? `${a.name} · ${fmtBytes(a.size)}`}
-              className={`inline-flex items-center gap-1.5 pl-1 pr-1.5 py-1 rounded-lg border text-[11px] font-bold max-w-[300px] ${a.error
+              className={`inline-flex items-center gap-1.5 pl-1 pr-1.5 py-1 rounded-lg border text-[12px] font-bold max-w-[300px] ${a.error
                 ? "border-rose-300 bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300"
                 : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]"}`}>
               {a.file
@@ -172,7 +181,7 @@ export default function Composer({
         onPaste={onPaste}
         rows={1}
         autoFocus={autoFocus}
-        placeholder={disabledReason ?? meta.placeholder}
+        placeholder={placeholder}
         disabled={!!disabledReason}
         className="w-full resize-none bg-transparent px-4 pt-3.5 pb-2 text-[15px] leading-6 text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none disabled:opacity-60"
       />
@@ -202,7 +211,7 @@ export default function Composer({
 
         {instructionsActive && (
           <button onClick={onToggleInstructions} title="Instructions apply to this conversation"
-            className="h-8 inline-flex items-center gap-1 px-2 rounded-lg text-[11px] font-black border border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]">
+            className="h-8 inline-flex items-center gap-1 px-2 rounded-lg text-[12px] font-bold border border-[var(--color-border)] text-[var(--color-text)] bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)]">
             <SlidersHorizontal className="w-3.5 h-3.5" /> {instructionCount}
           </button>
         )}

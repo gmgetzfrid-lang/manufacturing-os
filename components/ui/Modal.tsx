@@ -60,7 +60,7 @@ export function Modal({
       aria-modal="true"
     >
       <div
-        className="absolute inset-0 bg-slate-900/50 backdrop-blur-[3px] animate-in fade-in"
+        className="absolute inset-0 bg-[var(--color-ink)]/50 backdrop-blur-[3px] animate-in fade-in"
         onClick={dismissable ? onClose : undefined}
       />
       <div

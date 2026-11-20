@@ -4,12 +4,14 @@
 // glance lives here instead of the stream: a cited page (the viewer,
 // docked), a past answer under review, an attachment, and the
 // instructions for this conversation plus your own standing profile.
+// Each pane opens the same way: where you are in small caps, the thing's
+// name big, one line of its state, then the content; at most one orange.
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import {
-  X, Maximize2, History, SlidersHorizontal, Paperclip, FileText, AlertTriangle, Redo2, Save, ArrowUpToLine, Loader2, CheckCircle2,
+  X, AlertTriangle, Redo2, Save, ArrowUpToLine, Loader2, CheckCircle2,
 } from "lucide-react";
 import type { ChatThread, PastAnswer, ChatProfile, ChatAttachment } from "@/lib/chatClient";
 import { attachmentUrl } from "@/lib/chatClient";
@@ -62,14 +64,16 @@ export default function RightPanel({
 }) {
   const [popped, setPopped] = useState(false);
 
-  const header = (title: string, Icon: React.ComponentType<{ className?: string }>, extra?: React.ReactNode) => (
-    <div className="h-14 px-4 border-b border-[var(--color-border)] flex items-center gap-2 shrink-0">
-      <Icon className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-      <span className="text-[14px] font-bold text-[var(--color-text)] truncate flex-1">{title}</span>
-      {extra}
-      <button onClick={onClose} title="Close panel" aria-label="Close" className="w-8 h-8 grid place-items-center rounded-[10px] bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
-        <X className="w-4 h-4" />
-      </button>
+  const header: PaneHeader = (kicker, title, sub) => (
+    <div className="px-5 pt-4 pb-4 border-b border-[var(--color-border)] shrink-0">
+      <div className="flex items-center gap-2 min-h-9">
+        <div className="min-w-0 flex-1 truncate text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{kicker}</div>
+        <button onClick={onClose} title="Close panel" aria-label="Close panel" className="w-9 h-9 grid place-items-center rounded-[10px] bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+      <h2 className="mt-1.5 text-[26px] leading-[1.1] font-black tracking-[-0.02em] text-[var(--color-text)] line-clamp-2 break-words">{title}</h2>
+      {sub && <div className="mt-1.5 text-[13.5px] text-[var(--color-text-muted)]">{sub}</div>}
     </div>
   );
 
@@ -84,22 +88,17 @@ export default function RightPanel({
         />
       );
     }
+    // The viewer draws its own panel header (where you are, the document's
+    // name, the page) so nothing is said twice.
     return (
-      <div className="h-full flex flex-col">
-        {header(t.title.replace(/\.pdf$/i, ""), FileText, (
-          <button onClick={() => setPopped(true)} title="Open large" aria-label="Open large" className="p-1 rounded-md text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
-            <Maximize2 className="w-4 h-4" />
-          </button>
-        ))}
-        <div className="flex-1 min-h-0">
-          <CitedPageViewer
-            key={`${t.fileKey}:${t.page}:${t.sourceIndex ?? 0}`}
-            embedded
-            fileKey={t.fileKey} page={t.page} quote={t.quote} title={t.title} section={t.section}
-            orgId={orgId} documentId={t.documentId} tags={t.tags} sources={t.sources} initialIndex={t.sourceIndex}
-            onClose={onClose}
-          />
-        </div>
+      <div className="h-full">
+        <CitedPageViewer
+          key={`${t.fileKey}:${t.page}:${t.sourceIndex ?? 0}`}
+          embedded
+          fileKey={t.fileKey} page={t.page} quote={t.quote} title={t.title} section={t.section}
+          orgId={orgId} documentId={t.documentId} tags={t.tags} sources={t.sources} initialIndex={t.sourceIndex}
+          onClose={onClose} onExpand={() => setPopped(true)}
+        />
       </div>
     );
   }
@@ -109,16 +108,17 @@ export default function RightPanel({
     const payload = past.payload;
     return (
       <div className="h-full flex flex-col">
-        {header("Asked before", History)}
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          <div className="text-[11px] text-[var(--color-text-muted)]">
+        {header("Asked before",
+          changed && changed.length > 0 ? "Its sources changed." : "Answered before.",
+          <>
             {(past.userName ?? "Someone").split("@")[0]} asked on {new Date(past.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
-            {past.threadTitle ? <> in <Link className="font-bold hover:underline" href={`/assistant?thread=${past.threadId}`}>{past.threadTitle}</Link></> : null}
-          </div>
-          <div className="rounded-xl bg-[var(--color-surface-2)] border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-text)]">{past.question}</div>
+            {past.threadTitle ? <> in <Link className="font-bold text-[var(--color-text)] hover:underline" href={`/assistant?thread=${past.threadId}`}>{past.threadTitle}</Link></> : null}
+          </>)}
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+          <div className="rounded-2xl rounded-tr-md bg-[var(--color-surface-2)] px-4 py-2.5 text-[14.5px] leading-relaxed text-[var(--color-text)]">{past.question}</div>
           {changed && changed.length > 0 && (
-            <div className="flex items-start gap-2 border-l-2 border-amber-500 pl-2 text-[11px] font-bold text-amber-800 dark:text-amber-300">
-              <AlertTriangle className="w-4 h-4 shrink-0 mt-px" />
+            <div className="flex items-start gap-2 text-[13px] font-semibold text-amber-800 dark:text-amber-300">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
               <span>The sources moved on since this was answered: {changed.join("; ")}. Ask fresh to be safe.</span>
             </div>
           )}
@@ -135,10 +135,10 @@ export default function RightPanel({
               onCite={onCite} />
           )}
         </div>
-        <div className="p-3 border-t border-[var(--color-border)] shrink-0">
+        <div className="px-5 py-3.5 border-t border-[var(--color-border)] shrink-0">
           <button onClick={() => onReuse(past)}
-            className="w-full inline-flex items-center justify-center gap-1.5 h-9 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] transition-colors">
-            <Redo2 className="w-3.5 h-3.5" /> Use this answer here (no AI call)
+            className="w-full inline-flex items-center justify-center gap-2 h-11 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-extrabold hover:bg-[var(--color-accent-hover)] shadow-[0_12px_24px_-12px_var(--color-accent)] transition-colors">
+            <Redo2 className="w-4 h-4" /> Use this answer here (no AI call)
           </button>
         </div>
       </div>
@@ -158,9 +158,12 @@ export default function RightPanel({
   );
 }
 
+/** Where you are, the thing's name (big), and one line of its state. */
+type PaneHeader = (kicker: React.ReactNode, title: React.ReactNode, sub?: React.ReactNode) => React.ReactNode;
+
 function AttachmentPane({ att, header }: {
   att: ChatAttachment;
-  header: (title: string, Icon: React.ComponentType<{ className?: string }>, extra?: React.ReactNode) => React.ReactNode;
+  header: PaneHeader;
 }) {
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
@@ -171,22 +174,20 @@ function AttachmentPane({ att, header }: {
   }, [att.path]);
   return (
     <div className="h-full flex flex-col">
-      {header(att.name, Paperclip)}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        <p className="text-[11px] text-[var(--color-text-muted)]">
-          {fmtBytes(att.size)} · for that question only. Not indexed, not a controlled document.
-        </p>
+      {header(`Attachment · ${att.kind === "image" ? "Image" : "PDF"}`, att.name,
+        `${fmtBytes(att.size)} · for that question only. Not indexed, not a controlled document.`)}
+      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
         {att.kind === "image" ? (
           <AttachmentCard a={att} onOpen={() => { if (url) window.open(url, "_blank", "noopener"); }} large />
         ) : url ? (
-          <iframe src={url} title={att.name} className="w-full h-[70vh] rounded-lg border border-[var(--color-border)] bg-white" />
+          <iframe src={url} title={att.name} className="w-full h-[70vh] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]" />
         ) : failed ? (
-          <p role="alert" className="text-xs font-semibold text-red-700 dark:text-red-400">Couldn&apos;t open the file: {failed}</p>
+          <p role="alert" className="flex items-start gap-2 text-[13.5px] font-semibold text-rose-700 dark:text-rose-400"><AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> Couldn&apos;t open the file: {failed}</p>
         ) : (
-          <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Loading the file…</div>
+          <div className="flex items-center gap-2 text-[13.5px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Loading the file…</div>
         )}
         {url && (
-          <a href={url} target="_blank" rel="noopener noreferrer" className="inline-block text-[11px] font-black text-[var(--color-accent)] hover:underline">Open in a new tab</a>
+          <a href={url} target="_blank" rel="noopener noreferrer" className="inline-block text-[13px] font-bold text-[var(--color-accent)] hover:underline">Open in a new tab</a>
         )}
       </div>
     </div>
@@ -196,7 +197,7 @@ function AttachmentPane({ att, header }: {
 function InstructionsPane({
   header, thread, libraries, canPromote, instructions, onSaveInstructions, profile, onSaveProfile, standingCount, onPromote,
 }: {
-  header: (title: string, Icon: React.ComponentType<{ className?: string }>, extra?: React.ReactNode) => React.ReactNode;
+  header: PaneHeader;
   thread: ChatThread | null;
   libraries: KnowledgeLibrary[];
   canPromote: boolean;
@@ -223,77 +224,83 @@ function InstructionsPane({
   useEffect(() => { setProf(profile); }, [profile]);
 
   const flash = (what: string) => { setSaved(what); setTimeout(() => setSaved(null), 1800); };
-  const field = "w-full px-3 py-2 text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]";
+  const field = "w-full px-3 py-2 text-[13.5px] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-border-strong)] focus:ring-2 focus:ring-[var(--color-border)]";
+  const label = "text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mb-1";
+  const own = instructions.trim() ? 1 : 0;
+  const total = own + standingCount;
 
   return (
     <div className="h-full flex flex-col">
-      {header("Instructions", SlidersHorizontal)}
-      <div className="flex-1 overflow-y-auto p-4 space-y-5">
-        <section>
-          <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1">This conversation</div>
-          <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
+      {header("Instructions",
+        total === 0 ? "None yet." : `${total} ${total === 1 ? "applies" : "apply"} here.`,
+        `${own ? "This conversation has its own" : "Nothing set for this conversation"} · ${standingCount} from the org playbook`)}
+      <div className="flex-1 overflow-y-auto px-5 divide-y divide-[var(--color-border)]">
+        <section className="py-4">
+          <label htmlFor="chat-instructions" className={`block ${label}`}>This conversation</label>
+          <p className="text-[12.5px] text-[var(--color-text-muted)] mb-2">
             Applied to every answer in this conversation only. {thread ? "" : "Saved once the conversation starts."}
           </p>
-          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={5}
+          <textarea id="chat-instructions" value={text} onChange={(e) => setText(e.target.value)} rows={5}
             placeholder={'e.g. "Answer in SI units. Treat EP 5-5-1 as governing. Keep it to the piping class."'}
             className={`${field} resize-y min-h-[88px]`} />
           <div className="mt-2 flex items-center gap-2 flex-wrap">
             <button disabled={saving !== null || text === instructions}
               onClick={() => void run("instructions", () => onSaveInstructions(text))}
-              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-40 transition-colors">
+              className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-extrabold hover:bg-[var(--color-accent-hover)] disabled:opacity-40 transition-colors">
               {saving === "instructions" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Save
             </button>
             {canPromote && text.trim() && (
               <button disabled={saving !== null}
                 title="Make this a standing instruction for everyone's library answers (Org Playbook)"
                 onClick={() => void run("promote", () => onPromote(text.trim()))}
-                className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)] text-[11px] font-black hover:bg-[var(--color-surface-2)] disabled:opacity-40 transition-colors">
+                className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text)] text-[13px] font-bold hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] disabled:opacity-40 transition-colors">
                 {saving === "promote" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowUpToLine className="w-3.5 h-3.5" />} Promote to playbook
               </button>
             )}
-            {saved && saved !== "profile" && <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-400"><CheckCircle2 className="w-3.5 h-3.5" /> Saved</span>}
+            {saved && saved !== "profile" && <span className="inline-flex items-center gap-1 text-[12.5px] font-bold text-emerald-700 dark:text-emerald-400"><CheckCircle2 className="w-4 h-4" /> Saved</span>}
           </div>
-          {saveError && saveError.what !== "profile" && <p role="alert" className="mt-1.5 text-[11px] font-semibold text-red-700 dark:text-red-400">Not saved: {saveError.msg}</p>}
+          {saveError && saveError.what !== "profile" && <p role="alert" className="mt-1.5 text-[12.5px] font-semibold text-rose-700 dark:text-rose-400">Not saved: {saveError.msg}</p>}
         </section>
 
-        <section>
-          <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1">Standing instructions</div>
-          <p className="text-[11px] text-[var(--color-text-muted)]">
+        <section className="py-4">
+          <div className={label}>Standing instructions</div>
+          <p className="text-[13px] text-[var(--color-text-muted)]">
             {standingCount > 0
               ? <>{standingCount} org playbook instruction{standingCount === 1 ? "" : "s"} appl{standingCount === 1 ? "ies" : "y"} to every library answer. </>
               : <>No org playbook instructions yet. </>}
-            <Link href="/admin/ai-instructions" className="font-bold text-[var(--color-accent)] dark:text-[var(--color-text)] hover:underline">Open playbooks</Link>
+            <Link href="/admin/ai-instructions" className="font-bold text-[var(--color-accent)] hover:underline">Open playbooks</Link>
           </p>
         </section>
 
-        <section>
-          <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1">About you</div>
-          <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
+        <section className="py-4">
+          <div className={label}>About you</div>
+          <p className="text-[12.5px] text-[var(--color-text-muted)] mb-2">
             Sent with every question you ask. Nothing here is guessed.
           </p>
           <div className="space-y-2">
             <input value={prof.discipline} onChange={(e) => setProf({ ...prof, discipline: e.target.value })}
-              placeholder="Discipline, e.g. Mechanical / rotating equipment" className={field} />
+              aria-label="Discipline" placeholder="Discipline, e.g. Mechanical / rotating equipment" className={field} />
             <input value={prof.units} onChange={(e) => setProf({ ...prof, units: e.target.value })}
-              placeholder="Preferred units, e.g. US customary, SI" className={field} />
+              aria-label="Preferred units" placeholder="Preferred units, e.g. US customary, SI" className={field} />
             <select value={prof.defaultLibraryId ?? ""} onChange={(e) => setProf({ ...prof, defaultLibraryId: e.target.value || null })}
-              className={field}>
+              aria-label="Default library" className={field}>
               <option value="">Default library: none</option>
               {libraries.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
             </select>
             <textarea value={prof.notes} onChange={(e) => setProf({ ...prof, notes: e.target.value })} rows={3}
+              aria-label="Anything every answer should know"
               placeholder="Anything every answer should know, e.g. &quot;I work the crude unit; assume carbon steel unless told.&quot;"
               className={`${field} resize-y`} />
           </div>
           <div className="mt-2 flex items-center gap-2">
             <button disabled={saving !== null}
               onClick={() => void run("profile", () => onSaveProfile(prof))}
-              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[11px] font-black hover:bg-[var(--color-surface-2)] disabled:opacity-40 transition-colors">
+              className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-[13px] font-bold hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] disabled:opacity-40 transition-colors">
               {saving === "profile" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Save profile
             </button>
-            {saved === "profile" && <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-400"><CheckCircle2 className="w-3.5 h-3.5" /> Saved</span>}
+            {saved === "profile" && <span className="inline-flex items-center gap-1 text-[12.5px] font-bold text-emerald-700 dark:text-emerald-400"><CheckCircle2 className="w-4 h-4" /> Saved</span>}
           </div>
-          {saveError?.what === "profile" && <p role="alert" className="mt-1.5 text-[11px] font-semibold text-red-700 dark:text-red-400">Not saved: {saveError.msg}</p>}
+          {saveError?.what === "profile" && <p role="alert" className="mt-1.5 text-[12.5px] font-semibold text-rose-700 dark:text-rose-400">Not saved: {saveError.msg}</p>}
         </section>
       </div>
     </div>

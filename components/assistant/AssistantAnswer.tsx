@@ -1,9 +1,10 @@
 "use client";
 
-// The controller's answer, rendered like an answer — not a wall of text.
-// Same visual language as the knowledge library chat: hero callout up top,
-// accent-bar section headers, orange-dot bullets, amber warning callouts,
-// value chips, and every document the answer names as a click-to-open chip.
+// The controller's answer, read like a document — not a wall of text.
+// Same look as the library answer: the direct answer first in one big line,
+// small all-caps part names on a hairline, plain bullets, amber warnings on
+// the line they are about, value chips, and every document the answer names
+// as a click-to-open chip.
 // The parser (parseAnswerBlocks) guarantees structure even when the model
 // ignores its format — run-on paragraphs are exploded into bullets there.
 // Theme tokens throughout, so it reads the same in dark mode as the rest.
@@ -24,7 +25,7 @@ function Inline({ text, docs }: { text: string; docs: MentionedDoc[] }) {
   const linkFor = (s: string) => docs.find((d) => d.mention === s);
   const chip = (d: MentionedDoc, label: string, key: number) => (
     <Link key={key} href={d.openUrl} title={`Open ${d.title || d.number || label}`}
-      className="inline-flex items-center gap-1 align-baseline mx-0.5 px-1.5 py-0.5 rounded-md border border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)] font-bold text-[0.85em] leading-none hover:bg-[var(--color-surface-2)] dark:hover:bg-[var(--color-surface-2)] hover:border-[var(--color-accent)] transition-colors">
+      className="inline-flex items-center gap-1 align-baseline mx-0.5 px-1.5 py-0.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] font-bold text-[0.85em] leading-none hover:border-[var(--color-border-strong)] transition-colors">
       <FileText className="w-3 h-3 shrink-0" />{label}
     </Link>
   );
@@ -40,7 +41,7 @@ function Inline({ text, docs }: { text: string; docs: MentionedDoc[] }) {
           const dl = linkFor(inner);
           if (dl) return chip(dl, inner, i);
           return (
-            <code key={i} className="mx-0.5 px-1.5 py-0.5 rounded-md bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] border border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)] font-mono font-bold text-[0.92em]">
+            <code key={i} className="mx-0.5 px-1.5 py-0.5 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text)] font-mono font-bold text-[0.92em]">
               {inner}
             </code>
           );
@@ -64,28 +65,25 @@ export default function AssistantAnswer({ answer, mentionedDocs }: {
   return (
     <div className="space-y-2.5">
       {hero && (
-        <div className="rounded-xl border-l-4 border-[var(--color-border-strong)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] px-4 py-3">
-          <div className="text-[11px] font-black uppercase tracking-[0.18em] text-[var(--color-text)] mb-1">Answer</div>
-          <div className="text-[15px] font-bold text-[var(--color-text)] leading-snug">
-            <Inline text={hero.text} docs={docs} />
-          </div>
+        // The answer first, in the biggest type on the page.
+        <div className="pb-2 text-[20px] sm:text-[24px] leading-[1.3] font-extrabold tracking-[-0.015em] text-[var(--color-text)]">
+          <Inline text={hero.text} docs={docs} />
         </div>
       )}
       {rest.map((b, i) => {
         if (b.type === "label") {
           return (
-            <div key={i} className="flex items-center gap-2 pt-3 first:pt-0">
-              <span className="w-1 h-4 rounded-full bg-[var(--color-text-muted)] shrink-0" />
-              <span className="text-[13px] font-black text-[var(--color-text)]">{b.text}</span>
+            <div key={i} className="flex items-center gap-3 pt-4 first:pt-0">
+              <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{b.text}</span>
               <span className="flex-1 h-px bg-[var(--color-border)]" />
             </div>
           );
         }
         if (b.type === "important") {
           return (
-            <div key={i} className="flex items-start gap-2.5 border-l-2 border-amber-500 pl-3 py-1">
-              <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
-              <span className="text-[14px] font-bold text-amber-900 dark:text-amber-200 leading-snug">
+            <div key={i} className="flex items-start gap-2.5 py-0.5">
+              <AlertTriangle className="w-4 h-4 text-amber-600 mt-1 shrink-0" />
+              <span className="text-[14.5px] font-semibold text-amber-900 dark:text-amber-200 leading-relaxed">
                 <Inline text={b.text} docs={docs} />
               </span>
             </div>
@@ -93,14 +91,14 @@ export default function AssistantAnswer({ answer, mentionedDocs }: {
         }
         if (b.type === "bullet") {
           return (
-            <div key={i} className="flex items-start gap-2 text-sm text-[var(--color-text)] leading-relaxed">
-              <span className="mt-[8px] w-1 h-1 rounded-full bg-[var(--color-text-muted)] shrink-0" />
+            <div key={i} className="flex items-start gap-2.5 text-[14.5px] text-[var(--color-text)] leading-relaxed">
+              <span className="mt-[10px] w-1.5 h-1.5 rounded-full bg-[var(--color-text)] shrink-0" />
               <span><Inline text={b.text} docs={docs} /></span>
             </div>
           );
         }
         return (
-          <p key={i} className="text-sm text-[var(--color-text)] leading-relaxed">
+          <p key={i} className="text-[14.5px] text-[var(--color-text)] leading-relaxed">
             <Inline text={b.text} docs={docs} />
           </p>
         );

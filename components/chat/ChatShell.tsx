@@ -16,7 +16,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { PanelLeftOpen, Square, BookOpen, Waypoints, GitPullRequest, Puzzle, Gauge, Settings2 } from "lucide-react";
+import { PanelLeftOpen, Square, BookOpen, Waypoints, GitPullRequest, Puzzle, Gauge, Settings2, AlertTriangle } from "lucide-react";
 import MoreMenu from "@/components/ui/MoreMenu";
 import { useDraft, clearDraft } from "@/hooks/useDraft";
 import { useRole } from "@/components/providers/RoleContext";
@@ -105,6 +105,14 @@ export default function ChatShell() {
 
   // ── Panel + memory ──
   const [panel, setPanel] = useState<PanelState | null>(null);
+  // A reading panel needs the room: on a laptop-width screen, opening it
+  // folds the conversations rail (one tap on the band brings it back).
+  const panelShown = panel !== null;
+  useEffect(() => {
+    if (!panelShown || isMobile || window.innerWidth >= 1500) return;
+    const t = setTimeout(() => setRailOpen(false), 0);
+    return () => clearTimeout(t);
+  }, [panelShown, isMobile]);
   const [past, setPast] = useState<PastAnswer | null>(null);
   const [pastChanged, setPastChanged] = useState<string[] | null>(null);
   const dismissedRef = useRef("");
@@ -738,8 +746,9 @@ export default function ChatShell() {
         </div>
 
         {threadError && (
-          <p role="alert" className="mx-auto max-w-3xl w-full px-4 pt-3 text-[13px] font-semibold text-red-700 dark:text-red-400">
-            <span className="border-l-2 border-red-500 pl-2">{threadError}</span>
+          // Said in place, at the top of the conversation it is about.
+          <p role="alert" className="mx-auto max-w-3xl w-full px-4 sm:px-6 pt-4 flex items-start gap-2 text-[13.5px] font-semibold text-rose-700 dark:text-rose-400">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {threadError}
           </p>
         )}
         <MessageStream
@@ -806,10 +815,14 @@ export default function ChatShell() {
         </div>
       </div>
 
-      {/* Panel */}
+      {/* Panel: docked beside the stream on a wide screen; on a phone a
+          sheet over the chat, which dims behind it. */}
+      {panelOpen && isMobile && (
+        <div aria-hidden className="absolute inset-0 z-30 bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)]" onClick={() => setPanel(null)} />
+      )}
       {panelOpen && (
         <div className={isMobile
-          ? "absolute inset-0 z-40 bg-[var(--color-surface)]"
+          ? "absolute inset-x-0 bottom-0 top-3 z-40 rounded-t-[20px] overflow-hidden shadow-[0_-30px_60px_-30px_rgb(0_0_0/0.6)] bg-[var(--color-surface)] animate-rise"
           : "w-[420px] xl:w-[500px] 2xl:w-[560px] shrink-0 rounded-2xl overflow-hidden shadow-[var(--shadow-card)] bg-[var(--color-surface)]"}>
           <RightPanel
             state={panel!} onClose={() => setPanel(null)} orgId={orgId} thread={active} libraries={libraries}

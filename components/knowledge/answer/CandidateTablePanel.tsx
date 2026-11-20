@@ -16,16 +16,19 @@ export default function CandidateTablePanel({ table, onOpen }: {
   const fieldCols = table.differ.map((d) => d.field).filter((f) => !/^rating$/i.test(f)).slice(0, 4);
   const hasRating = table.rows.some((r) => r.rating);
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-      <div className="px-4 py-2.5 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
-        <ListFilter className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-sm font-black text-[var(--color-text)]">Shortlist - {table.rows.length} {table.rows.length === 1 ? "entry" : "entries"}{table.catalog ? ` from ${table.catalog}` : ""}</span>
-        <span className="text-[11px] text-[var(--color-text-muted)]">{table.basis}</span>
+    // A plain section under the answer: a label, the table on hairlines.
+    <section className="pt-4 border-t border-[var(--color-border)]">
+      <div className="flex items-center gap-2 flex-wrap pb-1">
+        <ListFilter className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
+        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Shortlist</span>
+        <span className="text-[14px] font-bold text-[var(--color-text)]">{table.rows.length} {table.rows.length === 1 ? "entry" : "entries"}{table.catalog ? ` from ${table.catalog}` : ""}</span>
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-[12px]">
+      <p className="pb-2 text-[12.5px] text-[var(--color-text-muted)]">{table.basis}</p>
+      {/* Wide: it scrolls sideways, and the fade at the edge says so. */}
+      <div className="overflow-x-auto [mask-image:linear-gradient(to_right,black_calc(100%-24px),transparent)] pr-6">
+        <table className="w-full text-[13px]">
           <thead>
-            <tr className="bg-[var(--color-surface-2)] text-left text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+            <tr className="border-y border-[var(--color-border)] text-left text-[11px] font-extrabold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
               <th className="px-3 py-1.5">Code</th>
               {hasRating && <th className="px-3 py-1.5">Rating</th>}
               <th className="px-3 py-1.5">For</th>
@@ -38,7 +41,7 @@ export default function CandidateTablePanel({ table, onOpen }: {
               <tr key={`${r.documentId}:${r.code}:${r.page}`} className="border-t border-[var(--color-border)] align-top">
                 <td className="px-3 py-1.5 whitespace-nowrap">
                   {onOpen && r.fileKey ? (
-                    <button onClick={() => onOpen(r)} className="inline-flex items-center gap-1 font-mono font-bold text-[var(--color-accent)] hover:underline" title={`Open ${r.documentName} p.${r.page}`}>
+                    <button onClick={() => onOpen(r)} className="inline-flex items-center gap-1 font-mono font-bold text-[var(--color-text)] underline decoration-[var(--color-border-strong)] underline-offset-2 hover:decoration-[var(--color-text)]" title={`Open ${r.documentName} p.${r.page}`}>
                       {r.code} <ExternalLink className="w-3 h-3" />
                     </button>
                   ) : <span className="font-mono font-bold">{r.code}</span>}
@@ -62,11 +65,11 @@ export default function CandidateTablePanel({ table, onOpen }: {
         </table>
       </div>
       {(table.differ.length > 0 || table.related > 0) && (
-        <div className="px-4 py-2 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] space-y-0.5">
+        <div className="pt-2.5 border-t border-[var(--color-border)] text-[12.5px] text-[var(--color-text-muted)] space-y-0.5">
           {table.differ.length > 0 && <div><b className="text-[var(--color-text)]">Narrow it by:</b> {table.differ.map((d) => `${d.field} (${d.values.join(" / ")})`).join(" · ")}</div>}
           {table.related > 0 && <div>{table.related} more {table.related === 1 ? "entry" : "entries"} matched only on a related word - not shown.</div>}
         </div>
       )}
-    </div>
+    </section>
   );
 }
