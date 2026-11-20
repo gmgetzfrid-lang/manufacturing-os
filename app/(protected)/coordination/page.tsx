@@ -169,7 +169,7 @@ function CoordinationInner() {
   return (
     <div className="min-h-full bg-[var(--color-canvas)] text-[var(--color-text)] p-6">
       <div className="max-w-7xl mx-auto">
-        <ViewTabs title="Home" tabs={HOME_VIEWS} variant="dark" />
+        <ViewTabs title="Home" tabs={HOME_VIEWS} />
         <div className="flex items-start justify-between mb-2 flex-wrap gap-3">
           <div>
             <h1 className="text-2xl font-black text-[var(--color-text)] flex items-center gap-3">
