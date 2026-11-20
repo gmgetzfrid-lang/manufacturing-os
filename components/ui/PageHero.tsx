@@ -63,7 +63,7 @@ export function PageHero({
   return (
     <>
       <section
-        className={`relative rounded-[20px] bg-[var(--color-ink)] text-white px-5 sm:px-8 lg:px-10 pt-4 sm:pt-6 ${overlap ? "pb-20 sm:pb-24" : "pb-7 sm:pb-8 mb-5"} ${className}`}
+        className={`relative rounded-[20px] bg-[var(--color-band)] text-white px-5 sm:px-8 lg:px-10 pt-4 sm:pt-6 ${overlap ? "pb-20 sm:pb-24" : "pb-7 sm:pb-8 mb-5"} ${className}`}
       >
         <div className="flex items-center gap-2 min-h-9">
           {back && (back.href ? (

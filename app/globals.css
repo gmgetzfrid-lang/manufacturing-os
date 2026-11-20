@@ -28,13 +28,17 @@
   --color-border: #e7e4dd;        /* hairlines */
   --color-border-strong: #d4d0c7;
 
-  /* The page band: the back layer every page's answer sits on. */
-  --color-ink: #0b1220;
-  --color-ink-2: #121b2c;         /* controls on the band */
-  --color-ink-line: #26324a;      /* lines and borders on the band */
-  --color-ink-fg: #e2e8f0;        /* control text on the band */
-  --color-ink-text: #aab3c2;      /* the line under the answer */
-  --color-ink-muted: #8b95a7;     /* labels on the band */
+  /* The color pair: charcoal and royal blue cover the big areas and set
+     the mood (charcoal: the side menu, text, dimming; royal blue: the band
+     every page's answer sits on, and "you are here" in the menu). The
+     third color, orange, stays small: only on what you tap. */
+  --color-ink: #11141a;           /* charcoal */
+  --color-band: #1c3fbd;          /* royal blue */
+  --color-ink-2: rgb(255 255 255 / 0.1);   /* controls on the band */
+  --color-ink-line: rgb(255 255 255 / 0.22); /* lines and borders on the band */
+  --color-ink-fg: #ffffff;        /* control text on the band */
+  --color-ink-text: #d6defa;      /* the line under the answer */
+  --color-ink-muted: #b9c6f2;     /* labels on the band */
   /* Cards float on the paper: a tight contact shadow plus a soft drop. */
   --shadow-card: 0 1px 2px rgb(11 18 32 / 0.06), 0 24px 48px -28px rgb(11 18 32 / 0.42);
 
@@ -118,9 +122,8 @@
   --color-canvas: #0b1120;
   --color-surface: #111827;
   --color-surface-2: #0f172a;
-  --color-ink: #04070d;
-  --color-ink-2: #0c1322;
-  --color-ink-line: #1f2a3d;
+  --color-ink: #0a0c10;
+  --color-band: #1a3594;
   --shadow-card: 0 1px 2px rgb(0 0 0 / 0.4), 0 24px 48px -28px rgb(0 0 0 / 0.75);
 
   /* Viz categorical — dark-surface steps, separately validated (never an
@@ -177,6 +180,22 @@ body {
    ring + soft shadow), so every card reads identically. `hover-lift`
    adds the subtle rise-on-hover used for clickable cards/tiles. Both
    compose with Tailwind utilities and are theme/dark-mode aware. */
+/* The side menu is the charcoal half of the pair: its own colors, so
+   everything inside it reads light on dark. */
+.surface-charcoal {
+  --color-canvas: #11141a;
+  --color-surface: #1b1f27;
+  --color-surface-2: #1b1f27;
+  --color-text: #f3f4f6;
+  --color-text-muted: #a3abb8;
+  --color-text-faint: #747d8c;
+  --color-border: #262b35;
+  --color-border-strong: #353b47;
+  background-color: #11141a;
+  color: #f3f4f6;
+}
+.dark .surface-charcoal { --color-canvas: #0a0c10; background-color: #0a0c10; }
+
 @utility card-surface {
   background-color: var(--color-surface);
   box-shadow: var(--shadow-card);

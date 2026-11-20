@@ -9,7 +9,7 @@ export default function OfflinePage() {
   return (
     <div className="min-h-dvh bg-[var(--color-canvas)] px-4 py-6">
       <div className="mx-auto w-full max-w-xl">
-        <section className="rounded-[20px] bg-[var(--color-ink)] px-5 sm:px-8 pt-5 sm:pt-6 pb-20 sm:pb-24 text-white">
+        <section className="rounded-[20px] bg-[var(--color-band)] px-5 sm:px-8 pt-5 sm:pt-6 pb-20 sm:pb-24 text-white">
           <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--color-ink-muted)]">
             <WifiOff className="w-3.5 h-3.5" /> No connection
           </div>

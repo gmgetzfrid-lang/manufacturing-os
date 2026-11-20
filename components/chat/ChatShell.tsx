@@ -705,7 +705,7 @@ export default function ChatShell() {
 
       {/* Stream */}
       <div className="flex-1 min-w-0 flex flex-col rounded-[20px] overflow-hidden bg-[var(--color-surface)] shadow-[var(--shadow-card)]">
-        <div className="px-3 sm:px-5 py-2.5 flex items-center gap-2.5 shrink-0 bg-[var(--color-ink)] text-white">
+        <div className="px-3 sm:px-5 py-2.5 flex items-center gap-2.5 shrink-0 bg-[var(--color-band)] text-white">
           {!railOpen && (
             <button onClick={() => setRailOpen(true)} title="Conversations" aria-label="Show conversations"
               className="h-9 w-9 -ml-1 inline-flex items-center justify-center rounded-[10px] text-[var(--color-ink-fg)] hover:bg-[var(--color-ink-2)]">

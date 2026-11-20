@@ -110,7 +110,7 @@ const TONE_ICON: Record<Tone, string> = {
 // tap, never for where you are.
 const ACCENT_ICON_STYLE: React.CSSProperties = { color: '#ffffff' };
 // Where you are: an ink pill on the paper.
-const ACTIVE_BG_STYLE: React.CSSProperties = { backgroundColor: 'var(--color-ink)' };
+const ACTIVE_BG_STYLE: React.CSSProperties = { backgroundColor: 'var(--color-band)' };
 
 export default function Sidebar({
   mobileOpen = false,
@@ -311,7 +311,7 @@ export default function Sidebar({
       )}
       <aside
         aria-hidden={isMobile && !mobileOpen}
-        className={`${collapsed ? 'w-16' : 'w-64'}    h-full flex flex-col text-[var(--color-text-muted)] shrink-0 fixed inset-y-0 left-0 z-[70] md:relative md:inset-auto md:z-auto transition-[transform,width] duration-200 ease-out bg-[var(--color-canvas)] ${mobileOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'} md:translate-x-0`}
+        className={`${collapsed ? 'w-16' : 'w-64'}    surface-charcoal h-full flex flex-col text-[var(--color-text-muted)] shrink-0 fixed inset-y-0 left-0 z-[70] md:relative md:inset-auto md:z-auto transition-[transform,width] duration-200 ease-out bg-[var(--color-canvas)] ${mobileOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'} md:translate-x-0`}
       >
         {/* Warm brand seam down the trailing edge — a quiet accent that ties
             the rail to the brand in either theme. */}
