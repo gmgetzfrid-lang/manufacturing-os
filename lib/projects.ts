@@ -259,6 +259,19 @@ export async function listProjects(f: ListProjectsFilters): Promise<Project[]> {
   return rows;
 }
 
+/** The ids of the projects a person is part of: the ones they own, plus
+ *  the ones they are a member of. Used to show "your projects" first. */
+export async function myProjectIds(orgId: string, userId: string): Promise<Set<string>> {
+  const [owned, member] = await Promise.all([
+    supabase.from("projects").select("id").eq("org_id", orgId).eq("owner_user_id", userId),
+    supabase.from("project_members").select("project_id").eq("user_id", userId),
+  ]);
+  const ids = new Set<string>();
+  for (const r of (owned.data ?? []) as { id: string }[]) ids.add(r.id);
+  for (const r of (member.data ?? []) as { project_id: string }[]) ids.add(r.project_id);
+  return ids;
+}
+
 export async function getProject(projectId: string): Promise<Project | null> {
   const { data } = await supabase.from("projects").select("*").eq("id", projectId).maybeSingle();
   return data ? rowToProject(data as Record<string, unknown>) : null;
